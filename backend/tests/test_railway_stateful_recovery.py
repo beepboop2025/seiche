@@ -1024,18 +1024,18 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "postgres pitr enable" in text
     assert "postgres pitr schedule set --daily --weekly --monthly" in text
     assert "postgres pitr backup lock" in text
-    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 2
+    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 3
     assert text.count('seiche-s3-object-lock.sh" put-verify') == 4
     assert (
         text.count("d2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c")
-        == 2
+        == 3
     )
     assert "DownloadedSHA256" in text
     assert "--content-md5" in object_lock_client
     assert '"fileb://$KEY_PATH"' in object_lock_client
     assert "--sse-customer-algorithm AES256" in object_lock_client
     assert "get-object-lock-configuration" in object_lock_client
-    assert '--version-id "$version_id"' in object_lock_client
+    assert '"--version-id=$version_id"' in object_lock_client
     assert "AWS_REQUEST_CHECKSUM_CALCULATION=when_required" in object_lock_client
     assert "SSECustomerKeyVerified" in text
     assert "SSECustomerKeyMD5" not in text
@@ -1047,11 +1047,11 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "extract_log_result" in text
     assert '"palimpsest_china_state": receipt["palimpsest_china_state"]' in text
     assert '"palimpsest_china_state": recovery["palimpsest_china_state"]' in text
-    assert text.count("--candidate candidate-receipt.json") == 2
-    assert text.count("--shadow shadow-receipt.json") == 2
+    assert text.count("--candidate candidate-receipt.json") == 3
+    assert text.count("--shadow shadow-receipt.json") == 3
     assert "candidate-receipt.json shadow-receipt.json" in text
     assert "seiche.railway-offsite-preflight-receipt.v1" in text
-    assert text.count("actions/attest-build-provenance@") == 3
+    assert text.count("actions/attest-build-provenance@") == 5
     assert (
         "postgres:18.6-bookworm@sha256:"
         "1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af"
@@ -1088,9 +1088,9 @@ def test_recovery_ci_uses_signed_https_and_fixed_members_not_ssh_or_volume_files
         "railway volume " in line and " files " in line
         for line in workflow.replace("\\\n", " ").splitlines()
     )
-    assert workflow.count("/api/internal/v1/railway-control/commands") == 2
-    assert workflow.count("prepare_unsigned_command") == 2
-    assert workflow.count("command_signing_bytes") == 2
+    assert workflow.count("/api/internal/v1/railway-control/commands") == 3
+    assert workflow.count("prepare_unsigned_command") == 3
+    assert workflow.count("command_signing_bytes") == 3
     assert "/api/internal/v1/railway-control/recovery/$request_id/$member" in workflow
     assert '--header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN"' in workflow
     assert '--header "Authorization: Bearer $download_bearer"' in workflow
@@ -1517,7 +1517,7 @@ def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> N
     )
     assert workflow.count("environment: railway-stateful-recovery-admin") == 1
     assert workflow.count("environment: railway-stateful-recovery-monitor") == 1
-    assert workflow.count("environment: railway-stateful-recovery-export") == 2
+    assert workflow.count("environment: railway-stateful-recovery-export") == 3
 
 
 def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path):

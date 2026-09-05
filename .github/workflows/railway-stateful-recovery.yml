@@ -15,6 +15,19 @@ on:
           - preflight-offsite
           - monitor
           - export-recovery
+          - resume-offsite
+      offsite_receipt_version:
+        description: "resume-offsite only: exact immutable original-N3 receipt version"
+        required: false
+        type: string
+      offsite_receipt_sha256:
+        description: "resume-offsite only: exact immutable original-N3 receipt SHA-256"
+        required: false
+        type: string
+      offsite_receipt_size:
+        description: "resume-offsite only: exact immutable original-N3 receipt byte length"
+        required: false
+        type: string
       source_sha:
         description: "Optional exact current main SHA for reviewed native-backup or monitor repairs"
         required: false
@@ -591,8 +604,8 @@ jobs:
                   ".github/workflows/railway-stateful-recovery.yml"
               ),
               "commit": os.environ["GITHUB_SHA"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "created_at": os.environ["PREFLIGHT_AT"],
               "production_data": False,
               "authority_changed": False,
@@ -643,8 +656,8 @@ jobs:
                   ".github/workflows/railway-stateful-recovery.yml"
               ),
               "commit": os.environ["GITHUB_SHA"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "canary": {
                   "bucket": os.environ["S3_BUCKET"],
                   "key": os.environ["CANARY_KEY"],
@@ -723,7 +736,8 @@ jobs:
     if: >-
       github.repository == 'beepboop2025/seiche' &&
       ((github.event_name == 'workflow_dispatch' &&
-        (inputs.operation == 'monitor' || inputs.operation == 'export-recovery')) ||
+        (inputs.operation == 'monitor' || inputs.operation == 'export-recovery' ||
+         (inputs.operation == 'resume-offsite' && github.ref == 'refs/heads/main'))) ||
        (github.event_name == 'schedule' &&
         vars.RAILWAY_STATEFUL_PHASE6_ENABLED == 'true'))
     runs-on: ubuntu-latest
@@ -832,7 +846,7 @@ jobs:
           RAILWAY_POSTGRES_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_SERVICE_ID }}
           RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
           RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
-          ALLOW_EMPTY_EXPORT_PROOF: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'export-recovery' }}
+          ALLOW_EMPTY_EXPORT_PROOF: ${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'export-recovery' || (inputs.operation == 'resume-offsite' && github.ref == 'refs/heads/main')) }}
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-monitor
         run: |
           set -euo pipefail
@@ -1100,6 +1114,7 @@ jobs:
           if [ "$ALLOW_EMPTY_EXPORT_PROOF" != true ]; then
             PYTHONPATH="$GITHUB_WORKSPACE/backend" LOG_PATH=stateful-results.ndjson \
               DEPLOYMENT_ID="$deployment" RELEASE_SHA="$release" python3 -B - <<'PY'
+          import json
           import os
           from datetime import UTC, datetime
           from pathlib import Path
@@ -1116,6 +1131,14 @@ jobs:
           paired = result.evidence
           if paired["recovery_receipt"]["request_id"] != paired["offsite_receipt"]["request_id"]:
               raise SystemExit("latest Railway and off-site receipts are not paired")
+          identity = {
+              "paired_request_id": paired["recovery_receipt"]["request_id"],
+              "recovery_receipt_sha256": paired["recovery_receipt_sha256"],
+              "offsite_receipt_sha256": paired["offsite_receipt_sha256"],
+          }
+          Path("monitor-pair-identity.json").write_text(
+              json.dumps(identity, sort_keys=True, separators=(",", ":")) + "\n"
+          )
           PY
           fi
           {
@@ -1126,6 +1149,58 @@ jobs:
             echo "- State volume and PostgreSQL native backups are fresh and scheduled."
             echo "- Origin and public edge agree on Railway production authority."
           } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Record the accepted monitor identity
+        env:
+          MONITORED_DEPLOYMENT: ${{ steps.proof.outputs.deployment_id }}
+          MONITORED_RELEASE: ${{ steps.proof.outputs.release_sha }}
+          BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'export-recovery' || (inputs.operation == 'resume-offsite' && github.ref == 'refs/heads/main')) }}
+        run: |
+          python3 -I -S - <<'PYMONITOR'
+          import json
+          import os
+          import re
+          import subprocess
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "railway-recovery-monitor"
+          bootstrap = os.environ["BOOTSTRAP"] == "true"
+          pair = {"paired_request_id": None, "recovery_receipt_sha256": None, "offsite_receipt_sha256": None}
+          if not bootstrap:
+              selected = json.loads((root / "monitor-pair-identity.json").read_bytes())
+              if set(selected) != set(pair) or any(
+                  not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                  for value in selected.values()
+              ):
+                  raise SystemExit("strict monitor pair identity is invalid")
+              pair = selected
+          proof = {
+              "schema": "seiche.railway-recovery-monitor-proof.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml",
+              "controller_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "controller_workflow_sha": os.environ["GITHUB_SHA"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "observed_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "release_sha": os.environ["MONITORED_RELEASE"],
+              "deployment_id": os.environ["MONITORED_DEPLOYMENT"],
+              "bootstrap": bootstrap,
+              **pair,
+              "status": "pass",
+          }
+          destination = root / "monitor-proof.json"
+          destination.write_text(json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n")
+          PYMONITOR
+
+      - name: Retain the accepted monitor identity
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-recovery-monitor-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/railway-recovery-monitor/monitor-proof.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Remove the private PostgreSQL probe transport
         if: always()
@@ -2240,5 +2315,504 @@ jobs:
             ${{ runner.temp }}/railway-recovery-export/proof/offsite-members.txt
             ${{ runner.temp }}/railway-recovery-export/proof/offsite-heads/*.json
             ${{ runner.temp }}/railway-recovery-export/proof/offsite-receipt.head.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # One-off continuation: retain original N3 application and failed-run identity.
+  # A new controller on protected main reads immutable backups; no export or PUT.
+  resume-offsite:
+    needs: monitor
+    if: >-
+      always() && needs.monitor.result == 'success' &&
+      github.repository == 'beepboop2025/seiche' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' && inputs.operation == 'resume-offsite'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: railway-stateful-recovery-export
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+        env:
+          POSTGRES_PASSWORD: phase6-restore-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out the exact default-branch identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up the recovery verifier
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install the project and checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check './backend[collectors,postgres]'
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+          read_tools="$RUNNER_TEMP/railway-read-tools"
+          mkdir -p "$read_tools"
+          git show "$GITHUB_SHA:ops/railway/retry_read.py" >"$read_tools/railway"
+          chmod 0755 "$read_tools/railway"
+          echo "RAILWAY_REAL_BIN=$tool_dir/railway" >>"$GITHUB_ENV"
+          echo "$read_tools" >>"$GITHUB_PATH"
+          aws_archive="${RUNNER_TEMP}/awscli-2.36.35.zip"
+          aws_installer="${RUNNER_TEMP}/awscli-installer"
+          aws_install_root="${RUNNER_TEMP}/awscli"
+          aws_tool_dir="${RUNNER_TEMP}/aws-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.36.35.zip' \
+            --output "$aws_archive"
+          echo 'd2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c  '"$aws_archive" |
+            sha256sum --check --strict
+          mkdir -p "$aws_installer" "$aws_tool_dir"
+          unzip -q "$aws_archive" -d "$aws_installer"
+          "$aws_installer/aws/install" --install-dir "$aws_install_root" \
+            --bin-dir "$aws_tool_dir"
+          echo "$aws_tool_dir" >>"$GITHUB_PATH"
+          "$aws_tool_dir/aws" --version 2>&1 | grep -Eq '^aws-cli/2\.36\.35 '
+
+      - name: Verify original failed run and download its immutable offsite recovery
+        id: resume
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
+          S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
+          S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          S3_SSE_C_KEY_B64: ${{ secrets.SEICHE_OFFSITE_S3_SSE_C_KEY_B64 }}
+          OFFSITE_RECEIPT_VERSION: ${{ inputs.offsite_receipt_version }}
+          OFFSITE_RECEIPT_SHA256: ${{ inputs.offsite_receipt_sha256 }}
+          OFFSITE_RECEIPT_SIZE: ${{ inputs.offsite_receipt_size }}
+          DEPLOYMENT_ID: ${{ needs.monitor.outputs.deployment_id }}
+          RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-resume
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B ops/railway/resume_recovery.py
+
+      - name: Repeat the isolated filesystem and PostgreSQL restore of immutable original bytes
+        env:
+          EVIDENCE_ROOT: ${{ steps.resume.outputs.evidence_root }}
+          SNAPSHOT_ID: ${{ steps.resume.outputs.snapshot_id }}
+          RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
+          PGPASSWORD: phase6-restore-only
+          RESTORE_DSN: postgresql://postgres@127.0.0.1:5432/postgres
+        run: |
+          set -euo pipefail
+          cd "$EVIDENCE_ROOT"
+          SNAPSHOT_ID="$SNAPSHOT_ID" RELEASE_SHA="$RELEASE_SHA" \
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          from seiche import stateful_migration as migration
+          from seiche import stateful_recovery as recovery
+
+          bundle = recovery._bundle_identity(
+              Path("bundle"),
+              snapshot_id=os.environ["SNAPSHOT_ID"],
+              commit=os.environ["RELEASE_SHA"],
+          )
+          proof_root = Path("proof/filesystem-restore").resolve()
+          proof_root.mkdir(mode=0o700)
+          nbs_result, trees = migration.restore_filesystem_generation(
+              bundle,
+              proof_root,
+              runtime_uid=os.geteuid(),
+              runtime_gid=os.getegid(),
+          )
+          receipt = json.loads(Path("recovery-receipt.json").read_bytes())
+          if nbs_result != receipt["filesystem"]["nbs_full_store_audit_result"]:
+              raise SystemExit("reverse-restore NBS audit differs from export")
+          if dict(trees) != receipt["filesystem"]["tree_sha256"]:
+              raise SystemExit("reverse-restore filesystem trees differ from export")
+          state = migration.palimpsest_china_state_from_audit(
+              bundle.palimpsest_china_state_audit
+          )
+          if state != receipt["palimpsest_china_state"]:
+              raise SystemExit("reverse-restore Palimpsest China state differs")
+          shutil.rmtree(proof_root)
+          PY
+          docker run --rm --network host --env PGPASSWORD \
+            postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af \
+            psql --host 127.0.0.1 --username postgres --dbname postgres \
+              --set ON_ERROR_STOP=1 --command \
+              "CREATE DATABASE seiche_phase6_restore TEMPLATE template0 ENCODING 'UTF8';"
+          docker run --rm --network host \
+            --env PGPASSWORD \
+            --volume "$EVIDENCE_ROOT/bundle:/recovery:ro" \
+            postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af \
+            pg_restore --exit-on-error --no-owner --no-privileges \
+              --host 127.0.0.1 --username postgres \
+              --dbname=seiche_phase6_restore \
+              /recovery/seiche.dump
+          RESTORE_TARGET_DSN='postgresql://postgres@127.0.0.1:5432/seiche_phase6_restore' \
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          from seiche import stateful_migration as migration
+
+          receipt = json.loads(Path("recovery-receipt.json").read_bytes())
+          counts = migration.inspect_postgres_counts(os.environ["RESTORE_TARGET_DSN"])
+          floor = tuple(receipt["snapshot"]["critical_table_count_floor"])
+          if any(actual < minimum for actual, minimum in zip(counts, floor)):
+              raise SystemExit("reverse-restore PostgreSQL counts are below export floors")
+          proof = {
+              "schema": "seiche.railway-reverse-restore-proof.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-recovery.yml"
+              ),
+              "commit": receipt["commit"],
+              "request_id": receipt["request_id"],
+              "recovery_receipt_sha256": hashlib.sha256(
+                  Path("recovery-receipt.json").read_bytes()
+              ).hexdigest(),
+              "filesystem_tree_sha256": receipt["filesystem"]["tree_sha256"],
+              "palimpsest_china_state": receipt["palimpsest_china_state"],
+              "nbs_full_store_audit_result": receipt["filesystem"][
+                  "nbs_full_store_audit_result"
+              ],
+              "postgres_counts": list(counts),
+              "postgres_count_floor": list(floor),
+              "restored_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+                  "+00:00", "Z"
+              ),
+              "authority_changed": False,
+              "research_only": True,
+              "can_publish": False,
+              "can_execute": False,
+          }
+          Path("proof/resume-reverse-restore.json").write_text(
+              json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+
+      - name: Acknowledge the exact original offsite receipt through governed control
+        id: offsite
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM: ${{ secrets.SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM }}
+          EVIDENCE_ROOT: ${{ steps.resume.outputs.evidence_root }}
+          SNAPSHOT_ID: ${{ steps.resume.outputs.snapshot_id }}
+          REQUEST_ID: ${{ steps.resume.outputs.request_id }}
+          DEPLOYMENT_ID: ${{ needs.monitor.outputs.deployment_id }}
+          RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          test "$RELEASE_SHA" = f092bf2c5880065c97f40be5afb7805f91bcd0b0
+          test "$DEPLOYMENT_ID" = f18f0c80-89cf-41da-8049-c0b1c23efe35
+          cd "$EVIDENCE_ROOT"
+          printf '%s\n' '07f555a4ae24baeb4dadb9bbd71bd15f599614d6307b21bc3f43e130e25d37b7  proof/reverse-restore.json' | sha256sum --check --strict
+          test -s proof/resume-reverse-restore.json
+          PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B \
+            -m seiche.stateful_recovery validate-monitor \
+            recovery-receipt.json offsite-receipt.json \
+            --request request.json --activation activation-receipt.json \
+            --candidate candidate-receipt.json --shadow shadow-receipt.json \
+            --deployment-id "$DEPLOYMENT_ID" --release-sha "$RELEASE_SHA"
+          current_replica() {
+            local destination="$1" variables
+            variables=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          print(json.dumps({"deploymentId": os.environ["DEPLOYMENT_ID"]}, separators=(",", ":")))
+          PY
+            )
+            # GraphQL variable names are literal, not shell expansions.
+            # shellcheck disable=SC2016
+            railway api \
+              'query Runtime($deploymentId: String!) { deployment(id: $deploymentId) { id projectId environmentId serviceId status instances { id status } } }' \
+              --variables "$variables" >"$destination"
+            RUNTIME="$destination" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+              RAILWAY_PROJECT_ID="$RAILWAY_PROJECT_ID" \
+              RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+              RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          value = json.loads(Path(os.environ["RUNTIME"]).read_text())["data"]["deployment"]
+          expected = {
+              "id": os.environ["DEPLOYMENT_ID"],
+              "projectId": os.environ["RAILWAY_PROJECT_ID"],
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+              "status": "SUCCESS",
+          }
+          if any(value.get(key) != item for key, item in expected.items()):
+              raise SystemExit("off-site deployment identity differs")
+          instances = value.get("instances")
+          if not isinstance(instances, list) or len(instances) != 1 or instances[0].get("status") != "RUNNING":
+              raise SystemExit("off-site deployment is not singly RUNNING")
+          replica = instances[0].get("id")
+          if re.fullmatch(
+              r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+              r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+              str(replica),
+          ) is None:
+              raise SystemExit("off-site replica identity is invalid")
+          print(replica)
+          PY
+          }
+          submission_replica_id=$(current_replica proof/offsite-runtime-submission.json)
+          printf '%s\n' "$submission_replica_id" >proof/replica-id.txt
+          issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          expires_at=$(date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          nonce=$(openssl rand -hex 32)
+          ISSUED_AT="$issued_at" EXPIRES_AT="$expires_at" NONCE="$nonce" \
+            COMMAND_PATH=proof/offsite-command.json \
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from seiche import stateful_control as control
+          from seiche import stateful_migration as migration
+
+          private = serialization.load_pem_private_key(
+              os.environ["SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM"].encode(),
+              password=None,
+          )
+          if not isinstance(private, Ed25519PrivateKey):
+              raise SystemExit("off-site acknowledgment signer is not Ed25519")
+          public_raw = private.public_key().public_bytes(
+              serialization.Encoding.Raw,
+              serialization.PublicFormat.Raw,
+          )
+          key_id = hashlib.sha256(public_raw).hexdigest()
+          if key_id != control.RECOVERY_KEY_ID:
+              raise SystemExit("off-site signer is not the governed recovery key")
+          recovery_sha256 = hashlib.sha256(Path("recovery-receipt.json").read_bytes()).hexdigest()
+          payload = {
+              "recovery_request_sha256": hashlib.sha256(Path("request.json").read_bytes()).hexdigest(),
+              "recovery_receipt_sha256": recovery_sha256,
+              "offsite_receipt": json.loads(Path("offsite-receipt.json").read_bytes()),
+          }
+          environment = {
+              "SEICHE_RELEASE_SHA": os.environ["RELEASE_SHA"],
+              "SEICHE_RAILWAY_STATEFUL_MODE": "production",
+              "RAILWAY_PROJECT_ID": os.environ["RAILWAY_PROJECT_ID"],
+              "RAILWAY_ENVIRONMENT_ID": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "RAILWAY_SERVICE_ID": os.environ["RAILWAY_SERVICE_ID"],
+              "RAILWAY_DEPLOYMENT_ID": os.environ["DEPLOYMENT_ID"],
+              "SEICHE_RAILWAY_VOLUME_ID": os.environ["RAILWAY_VOLUME_ID"],
+          }
+          unsigned = control.prepare_unsigned_command(
+              control.OFFSITE_ACKNOWLEDGMENT_OPERATION,
+              payload,
+              environment,
+              issued_at=os.environ["ISSUED_AT"],
+              expires_at=os.environ["EXPIRES_AT"],
+              nonce=os.environ["NONCE"],
+              key_id=key_id,
+          )
+          signed = {
+              **unsigned,
+              "signature": base64.b64encode(
+                  private.sign(control.command_signing_bytes(unsigned))
+              ).decode("ascii"),
+          }
+          body = migration.canonical_document(signed)
+          control.validate_command(body, environment)
+          Path(os.environ["COMMAND_PATH"]).write_bytes(body)
+          PY
+          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --header 'Content-Type: application/json' \
+            --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+            --data-binary '@proof/offsite-command.json' \
+            --output proof/offsite-command-response.json --write-out '%{http_code}' \
+            "$RAILWAY_ORIGIN/api/internal/v1/railway-control/commands")
+          if [ "$status" != 202 ]; then
+            printf 'Railway control submission returned HTTP %s; reconcile the command journal before retrying.\n' "$status" >&2
+            exit 1
+          fi
+          python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+          command = json.loads(Path("proof/offsite-command.json").read_bytes())
+          response = json.loads(Path("proof/offsite-command-response.json").read_bytes())
+          if (
+              set(response) != {"status", "command_id", "lifecycle"}
+              or response.get("status") != "accepted"
+              or response.get("command_id") != command["command_id"]
+              or response.get("lifecycle") not in {"created", "reused"}
+          ):
+              raise SystemExit("off-site command acknowledgement is invalid")
+          PY
+          replica_id="$submission_replica_id"
+          paired=0
+          for _attempt in $(seq 1 60); do
+            railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --deployment --json --since "$issued_at" \
+              --filter 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' \
+              >proof/offsite-result.ndjson || true
+            replica_id=$(current_replica proof/offsite-runtime-current.json)
+            printf '%s\n' "$replica_id" >proof/replica-id.txt
+            if PYTHONPATH="$GITHUB_WORKSPACE/backend" LOG_PATH=proof/offsite-result.ndjson \
+                REQUEST_ID="$REQUEST_ID" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+                RELEASE_SHA="$RELEASE_SHA" REPLICA_ID="$replica_id" \
+                SUBMISSION_REPLICA_ID="$submission_replica_id" \
+                NOT_BEFORE="$issued_at" python -B - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from seiche.stateful_control import ControlContractError, extract_log_result
+
+          results = []
+          body = Path(os.environ["LOG_PATH"]).read_bytes()
+          for lifecycle in ("created", "reused"):
+              for replica_id in {
+                  os.environ["SUBMISSION_REPLICA_ID"],
+                  os.environ["REPLICA_ID"],
+              }:
+                  try:
+                      result = extract_log_result(
+                          body,
+                          expected_kind="recovery_offsite_paired",
+                          expected_lifecycle=lifecycle,
+                          expected_request_id=os.environ["REQUEST_ID"],
+                          expected_commit=os.environ["RELEASE_SHA"],
+                          expected_deployment_id=os.environ["DEPLOYMENT_ID"],
+                          expected_replica_id=replica_id,
+                          not_before=os.environ["NOT_BEFORE"],
+                      )
+                  except ControlContractError:
+                      continue
+                  results.append(result)
+          if not results or len({item.evidence_sha256 for item in results}) != 1:
+              raise SystemExit("exact paired recovery result is absent or inconsistent")
+          selected = max(results, key=lambda item: item.logged_at_unix_ns)
+          evidence = selected.evidence
+          expected_recovery = hashlib.sha256(Path("recovery-receipt.json").read_bytes()).hexdigest()
+          expected_offsite = hashlib.sha256(Path("offsite-receipt.json").read_bytes()).hexdigest()
+          if (
+              evidence.get("recovery_receipt_sha256") != expected_recovery
+              or evidence.get("offsite_receipt_sha256") != expected_offsite
+              or evidence.get("recovery_receipt") != json.loads(Path("recovery-receipt.json").read_bytes())
+              or evidence.get("offsite_receipt") != json.loads(Path("offsite-receipt.json").read_bytes())
+          ):
+              raise SystemExit("paired recovery evidence differs from immutable off-site bytes")
+          Path("proof/paired-recovery-evidence.json").write_bytes(selected.evidence_body)
+          PY
+            then
+              paired=1
+              break
+            fi
+            sleep 5
+          done
+          test "$paired" = 1
+          echo "receipt_path=$EVIDENCE_ROOT/offsite-receipt.json" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Original N3 recovery continuation"
+            echo
+            echo "- Original export: run 33980619784 attempt 1"
+            echo "- Immutable original export downloaded and isolated restore repeated"
+            echo "- Original request and restore-proof bytes preserved"
+            echo "- Governed recovery acknowledgment verified against exact paired receipt bytes"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain the private portable-recovery evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-recovery-resumed-${{ steps.resume.outputs.snapshot_id }}-${{ steps.resume.outputs.request_id }}
+          path: |
+            ${{ steps.resume.outputs.evidence_root }}/activation-receipt.json
+            ${{ steps.resume.outputs.evidence_root }}/candidate-receipt.json
+            ${{ steps.resume.outputs.evidence_root }}/shadow-receipt.json
+            ${{ steps.resume.outputs.evidence_root }}/request.json
+            ${{ steps.resume.outputs.evidence_root }}/recovery-receipt.json
+            ${{ steps.resume.outputs.evidence_root }}/offsite-receipt.json
+            ${{ steps.resume.outputs.evidence_root }}/proof
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: OIDC-attest the exact recovery receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.resume.outputs.receipt_path }}
+
+      - name: OIDC-attest the immutable off-site receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.offsite.outputs.receipt_path }}
+
+      - name: Retain bounded continuation failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-recovery-resume-failure-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/railway-recovery-resume/request.json
+            ${{ runner.temp }}/railway-recovery-resume/recovery-receipt.json
+            ${{ runner.temp }}/railway-recovery-resume/offsite-receipt.json
+            ${{ runner.temp }}/railway-recovery-resume/proof/original-*.json
+            ${{ runner.temp }}/railway-recovery-resume/proof/resume-lineage.json
+            ${{ runner.temp }}/railway-recovery-resume/proof/reverse-restore.json
+            ${{ runner.temp }}/railway-recovery-resume/proof/resume-reverse-restore.json
+            ${{ runner.temp }}/railway-recovery-resume/proof/resume-offsite-heads/*.json
+            ${{ runner.temp }}/railway-recovery-resume/proof/offsite-command-response.json
+            ${{ runner.temp }}/railway-recovery-resume/proof/paired-recovery-evidence.json
           if-no-files-found: ignore
           retention-days: 30
