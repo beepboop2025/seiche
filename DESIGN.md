@@ -1,6 +1,6 @@
 # Seiche — Design Document
 
-> **Historical.** 2026-07-06 v1 design log — not current product documentation. Current source release candidate: 0.12.1 estuary; verify the live release identity separately.
+> **Historical.** 2026-07-06 v1 design log — not current product documentation. Current source release candidate: 0.12.2 estuary; verify the live release identity separately.
 
 > A **seiche** is a standing wave in an enclosed body of water: invisible from the shore,
 > until it sloshes over the edge. Funding stress behaves the same way. This tool detects

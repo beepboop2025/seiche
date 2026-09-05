@@ -3,12 +3,12 @@
   "@type": "SoftwareSourceCode",
   "name": "Seiche: World-markets evidence terminal",
   "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits. Canonical citations remain explicit. Seiche is research software, not investment advice; missing and stale evidence remains explicit.",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "datePublished": "2026-09-05",
   "codeRepository": "https://github.com/beepboop2025/seiche",
   "issueTracker": "https://github.com/beepboop2025/seiche/issues",
   "url": "https://seiche.info",
-  "downloadUrl": "https://pypi.org/project/seiche/0.12.1/",
+  "downloadUrl": "https://pypi.org/project/seiche/0.12.2/",
   "license": "https://spdx.org/licenses/AGPL-3.0-or-later.html",
   "author": [
     {

@@ -25,8 +25,8 @@ not configured, leave the ledger at `prepared` and restore the OIDC path.
 ```bash
 gh workflow run publish-openbb.yml \
   --repo beepboop2025/seiche \
-  --ref v0.12.1 \
-  -f release_tag=v0.12.1 \
+  --ref v0.12.2 \
+  -f release_tag=v0.12.2 \
   -f openbb_version=0.1.0
 ```
 

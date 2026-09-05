@@ -115,3 +115,11 @@ jobs:
           backend/tests/test_railway_telegram.py
       - name: Run Telegram bot contracts
         run: python -m pytest -q bot/tests
+
+      - name: Prove the Linux control API and root journal permission boundary
+        timeout-minutes: 2
+        run: >-
+          sudo --preserve-env=PYTHONPATH
+          "$(command -v python)" -B -m pytest -q
+          backend/tests/test_railway_stateful_control.py
+          -k test_real_runtime_user_can_submit_sync_and_replay_but_not_rewrite_journal

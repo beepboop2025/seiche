@@ -21,7 +21,7 @@ NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 def _snapshot() -> dict:
     return {
         "generated_at": "2026-09-02T11:30:00Z",
-        "version": "0.12.1 test",
+        "version": "0.12.2 test",
         "engines": {
             "composite": {
                 "ok": True,

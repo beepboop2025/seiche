@@ -23,12 +23,12 @@ test("agent routes map only to shipped Seiche MCP tools", () => {
 test("health receipt exposes release, evidence count, faults, and exact clock", () => {
   assert.equal(
     formatHealthReceipt({
-      version: "0.12.1 estuary",
+      version: "0.12.2 estuary",
       generated_at: "2026-09-02T22:04:12+00:00",
       provenance: [{}, {}],
       faults: [],
     }),
-    "0.12.1 estuary · 2026-09-02T22:04:12.000Z · 2 provenance · 0 faults",
+    "0.12.2 estuary · 2026-09-02T22:04:12.000Z · 2 provenance · 0 faults",
   );
 });
 

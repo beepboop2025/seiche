@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
+import tempfile
 import textwrap
 from types import SimpleNamespace
 
@@ -392,6 +394,83 @@ def test_atomic_submission_is_byte_idempotent_across_accepted_archive(
         runtime_gid=gid,
         root_uid=uid,
     ).lifecycle == "reused"
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" or os.geteuid() != 0,
+    reason="requires Linux root to exercise the actual root/runtime UID boundary",
+)
+def test_real_runtime_user_can_submit_sync_and_replay_but_not_rewrite_journal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    environment = _environment()
+    body, key_id, public = _signed_command(
+        control.ACTIVATION_OPERATION, _activation_payload(), environment,
+        Ed25519PrivateKey.generate(), now=now,
+    )
+    _install_test_signers(
+        monkeypatch, {key_id: (public, frozenset({control.ACTIVATION_OPERATION}))},
+    )
+    runtime_uid, runtime_gid = 10001, 10001
+
+    def as_runtime(action):
+        reader, writer = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(reader)
+            try:
+                os.setgroups([runtime_gid])
+                os.setgid(runtime_gid)
+                os.setuid(runtime_uid)
+                action()
+            except BaseException as exc:
+                os.write(writer, f"{type(exc).__name__}: {exc}".encode())
+                os._exit(1)
+            os._exit(0)
+        os.close(writer)
+        with os.fdopen(reader, "rb") as stream:
+            error = stream.read().decode()
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0, error
+
+    # pytest's normal temporary parent is intentionally inaccessible to UID 10001.
+    with tempfile.TemporaryDirectory(prefix="seiche-control-uids-") as directory:
+        root = Path(directory)
+        os.chown(root, 0, runtime_gid)
+        root.chmod(0o750)
+        control.prepare_control_dropbox(platform_root=root, runtime_gid=runtime_gid)
+
+        def submit():
+            result = control.submit_command(body, environment, platform_root=root, now=now)
+            assert result.lifecycle == "created"
+
+        as_runtime(submit)
+        proposal = control.pending_commands(
+            environment, operations=frozenset({control.ACTIVATION_OPERATION}),
+            platform_root=root, now=now,
+        )[0]
+        control.seal_command(proposal, platform_root=root)
+        accepted = control.accepted_commands_root(root) / f"{proposal.command.command_id}.json"
+        assert accepted.read_bytes() == body
+        assert accepted.stat().st_uid == 0
+
+        def replay_and_attack():
+            assert control.submit_command(
+                body, _environment("production"), platform_root=root, now=now,
+            ).lifecycle == "reused"
+            for path in (
+                accepted,
+                control.accepted_commands_root(root) / "forged.json",
+                control.processing_commands_root(root) / "forged.json",
+            ):
+                with pytest.raises(PermissionError):
+                    path.write_bytes(b"forged")
+            with pytest.raises(PermissionError):
+                accepted.unlink()
+
+        as_runtime(replay_and_attack)
+        assert accepted.read_bytes() == body
 
 
 def test_fresh_wrong_mode_command_never_enters_dropbox(

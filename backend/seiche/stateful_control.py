@@ -85,6 +85,8 @@ SIGNER_REGISTRY_PATH = (
     / "governance"
     / "railway-control-signers.json"
 )
+# The API opens these directories to verify metadata and fsync atomic proposals.
+# Its group needs read access; root retains exclusive writes to durable journals.
 CONTROL_ROOT_NAME = "railway-control"
 DROPBOX_NAME = "dropbox"
 PROCESSING_NAME = "processing"
@@ -608,16 +610,16 @@ def prepare_control_dropbox(
     staging = control / STAGING_NAME
     try:
         control.mkdir(mode=0o750, parents=True, exist_ok=True)
-        dropbox.mkdir(mode=0o1730, exist_ok=True)
-        processing.mkdir(mode=0o710, exist_ok=True)
-        accepted.mkdir(mode=0o710, exist_ok=True)
-        staging.mkdir(mode=0o1730, exist_ok=True)
+        dropbox.mkdir(mode=0o1770, exist_ok=True)
+        processing.mkdir(mode=0o750, exist_ok=True)
+        accepted.mkdir(mode=0o750, exist_ok=True)
+        staging.mkdir(mode=0o1770, exist_ok=True)
         for path, mode in (
             (control, 0o750),
-            (dropbox, 0o1730),
-            (processing, 0o710),
-            (accepted, 0o710),
-            (staging, 0o1730),
+            (dropbox, 0o1770),
+            (processing, 0o750),
+            (accepted, 0o750),
+            (staging, 0o1770),
         ):
             flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
             flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -635,28 +637,28 @@ def prepare_control_dropbox(
         dropbox,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o1730,
+        mode=0o1770,
     )
     os.close(descriptor)
     descriptor = _open_directory(
         processing,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(descriptor)
     descriptor = _open_directory(
         accepted,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(descriptor)
     descriptor = _open_directory(
         staging,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o1730,
+        mode=0o1770,
     )
     os.close(descriptor)
     return dropbox
@@ -687,7 +689,7 @@ def submit_command(
         dropbox,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o1730,
+        mode=0o1770,
     )
     os.close(descriptor)
     accepted = accepted_commands_root(platform_root)
@@ -695,7 +697,7 @@ def submit_command(
         accepted,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(descriptor)
     accepted_path = accepted / f"{command.command_id}.json"
@@ -718,7 +720,7 @@ def submit_command(
         processing,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(descriptor)
     processing_path = processing / f"{command.command_id}.json"
@@ -753,7 +755,7 @@ def submit_command(
         staging,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o1730,
+        mode=0o1770,
     )
     os.close(descriptor)
     try:
@@ -825,7 +827,7 @@ def pending_commands(
         dropbox,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o1730,
+        mode=0o1770,
     )
     os.close(descriptor)
     processing = processing_commands_root(platform_root)
@@ -833,7 +835,7 @@ def pending_commands(
         processing,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(descriptor)
     _repair_accepted_commands(
@@ -939,7 +941,7 @@ def _repair_inflight_submission(
         staging,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o1730,
+        mode=0o1770,
     )
     os.close(descriptor)
     entries = tuple(staging.iterdir())
@@ -1072,7 +1074,7 @@ def _repair_accepted_commands(
         accepted,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(directory)
     entries = sorted(accepted.iterdir(), key=lambda item: item.name)
@@ -1148,7 +1150,7 @@ def seal_command(
         processing,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(descriptor)
     if pending.path.parent != processing or pending.path.name != (
@@ -1160,7 +1162,7 @@ def seal_command(
         accepted,
         uid=root_uid,
         gid=runtime_gid,
-        mode=0o710,
+        mode=0o750,
     )
     os.close(descriptor)
     accepted_entries = tuple(accepted.iterdir())

@@ -1208,7 +1208,10 @@ jobs:
             --output "$EVIDENCE_ROOT/activation-command-response.json" \
             --write-out '%{http_code}' \
             "$RAILWAY_ORIGIN/api/internal/v1/railway-control/commands")
-          test "$status" = 202
+          if [ "$status" != 202 ]; then
+            printf 'Railway control submission returned HTTP %s; reconcile the command journal before retrying.\n' "$status" >&2
+            exit 1
+          fi
           COMMAND="$EVIDENCE_ROOT/activation-command.json" \
             RESPONSE="$EVIDENCE_ROOT/activation-command-response.json" \
             OUTPUT="$GITHUB_OUTPUT" python3 -I -S - <<'PY'
