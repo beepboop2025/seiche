@@ -94,6 +94,7 @@ def accept_grant(
             "application predecessor pointer is absent"
         )
     _pointer(active_path, pending)
+    archive_completed_requests(request, parent, platform=platform)
     if predecessor["schema"] == cutover.ACTIVATION_RECEIPT_SCHEMA:
         old_grant = authority / "activation-grant.json"
         retired = authority / "superseded" / f"{predecessor['grant_sha256']}.json"
@@ -121,6 +122,64 @@ def accept_grant(
     # After it, only this request/deployment may resume, including after expiry.
     _seal(accepted, envelope)
     return accepted
+
+
+def archive_completed_requests(request, parent, *, platform):
+    """Preserve old request bytes outside the successor's active work queue."""
+    from seiche import stateful_recovery as recovery
+
+    requests = platform / "recovery-requests"
+    history = platform / "recovery-request-history"
+    cutover._prepare_authority_directory(history, runtime_gid=migration.RUNTIME_GID)
+    archived = history / request["parent"]["activation_sha256"]
+    cutover._prepare_authority_directory(requests, runtime_gid=migration.RUNTIME_GID)
+    if archived.exists() and tuple(requests.iterdir()):
+        raise application.ApplicationContractError(
+            "historical recovery queue conflicts with active requests"
+        )
+    source = archived if archived.exists() else requests
+    if source.is_symlink() or not source.is_dir():
+        raise application.ApplicationContractError(
+            "historical recovery queue is unsafe"
+        )
+    paths = tuple(source.iterdir())
+    if len(paths) > recovery.MAX_RECOVERY_EVIDENCE_DIRECTORIES:
+        raise application.ApplicationContractError(
+            "historical recovery queue is unbounded"
+        )
+    for path in paths:
+        if path.name != f"{path.stem}.json":
+            raise application.ApplicationContractError(
+                "historical recovery member is invalid"
+            )
+        application._hex(path.stem, 64, "historical recovery request")
+        old_request = application.read_document(path)
+        recovery.validate_request(
+            old_request, activation_receipt=parent["activation"], require_fresh=False
+        )
+        if old_request["request_id"] != path.stem:
+            raise application.ApplicationContractError(
+                "historical recovery filename differs"
+            )
+        receipt = application.read_document(
+            platform
+            / "recovery-receipts"
+            / f"{old_request['snapshot_id']}-{old_request['request_id']}.json"
+        )
+        recovery.validate_receipt(
+            receipt,
+            request=old_request,
+            activation_receipt=parent["activation"],
+            candidate_receipt=parent["candidate"],
+            shadow_receipt=parent["shadow"],
+        )
+    if source == requests and paths:
+        os.rename(requests, archived)
+        migration._fsync_directory(history)
+        migration._fsync_directory(platform)
+        cutover._prepare_authority_directory(
+            requests, runtime_gid=migration.RUNTIME_GID
+        )
 
 
 def pointer_value(request, candidate, grant, state):
@@ -317,6 +376,13 @@ def _run_locked(request, railway):
     dsn = migration._target_dsn(base_dsn, request["parent"]["database"])
     environment = runtime_environment(os.environ, request, parent, dsn)
     started = migration._iso_now()
+    # /tmp is new after a container restart, including an accepted transition
+    # interrupted before its activation receipt was sealed.
+    home = Path("/tmp/seiche-home")
+    home.mkdir(mode=0o700, exist_ok=True)
+    if home.is_symlink() or not home.is_dir():
+        raise application.ApplicationContractError("application runtime home is unsafe")
+    os.chown(home, migration.RUNTIME_UID, migration.RUNTIME_GID)
     if activation_path.exists():
         if not accepted:
             raise application.ApplicationContractError(
@@ -422,9 +488,6 @@ def _run_locked(request, railway):
                 activation_path,
                 started,
             )
-        home = Path("/tmp/seiche-home")
-        home.mkdir(mode=0o700, exist_ok=True)
-        os.chown(home, migration.RUNTIME_UID, migration.RUNTIME_GID)
         api = cutover._spawn(
             cutover.api_command(environment.get("PORT", "")), environment
         )

@@ -478,3 +478,71 @@ def test_application_context_keeps_exact_source_recipe_and_closed_extra_member()
                 "COPY . /migration/",
             )
         )
+
+
+def test_old_recovery_queue_is_preserved_without_poisoning_successor_loop(
+    transition, monkeypatch
+):
+    platform, old_environment, request, _, _, parent = transition
+    old_request = recovery_request(
+        parent["activation"], now=datetime.now(UTC) - timedelta(minutes=5)
+    )
+    recovery.publish_request(
+        app.canonical(old_request),
+        old_environment,
+        platform_root=platform,
+        runtime_gid=os.getegid(),
+    )
+    monkeypatch.setattr(
+        migration, "inspect_postgres_counts", lambda _: (12, 22, 32, 42)
+    )
+    monkeypatch.setattr(migration, "_audit_nbs", lambda _: "verified_head")
+    monkeypatch.setattr(
+        recovery,
+        "_dump_postgres",
+        lambda path, dsn: path.write_bytes(b"PGDMP" + b"x" * 2048),
+    )
+    exported = recovery.export_snapshot(
+        old_environment,
+        old_request,
+        platform_root=platform,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    receipt_path, _ = recovery.finalize_receipt(
+        old_environment,
+        old_request,
+        exported,
+        platform_root=platform,
+        writers_stopped_at=exported.started_at,
+        writers_restarted_at=exported.completed_at,
+        worker_commands=cutover.worker_commands(),
+        runtime_gid=os.getegid(),
+    )
+    receipt_bytes = receipt_path.read_bytes()
+    _, new_environment, _ = _runtime_fixture(transition, monkeypatch)
+    new_environment["SEICHE_RAILWAY_CONTROL_ENABLED"] = "1"
+    with pytest.raises(recovery.RecoveryContractError, match="binding"):
+        recovery.next_pending_request(
+            new_environment, platform_root=platform, runtime_gid=os.getegid()
+        )
+    runtime.archive_completed_requests(request, parent, platform=platform)
+    preserved = (
+        platform
+        / "recovery-request-history"
+        / request["parent"]["activation_sha256"]
+        / f"{old_request['request_id']}.json"
+    )
+    assert preserved.read_bytes() == app.canonical(old_request)
+    assert receipt_path.read_bytes() == receipt_bytes
+    assert (
+        recovery.next_pending_request(
+            new_environment, platform_root=platform, runtime_gid=os.getegid()
+        )
+        is None
+    )
+    recovery.reemit_latest_recovery_results(
+        new_environment, platform_root=platform, runtime_gid=os.getegid()
+    )
+    runtime.archive_completed_requests(request, parent, platform=platform)
+    assert preserved.read_bytes() == app.canonical(old_request)

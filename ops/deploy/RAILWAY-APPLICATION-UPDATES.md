@@ -73,6 +73,12 @@ the migration grant (or supersedes the previous application pointer), durably
 accepts the new grant, starts writers, seals the new activation receipt and starts
 the production API. Old receipts remain unchanged. Root-owned directories and a
 lifetime lock serialize updates; only the active application may restart writers.
+Completed predecessor requests are validated against their original activation
+and atomically moved to `recovery-request-history/<parent-activation-sha>/` before
+new authority is accepted. Their bytes and receipt files remain unchanged. This
+keeps the current recovery loop from interpreting historical work as a new request.
+Online SQLite backup uses bounded pages and yields between them so API metering
+can write during the copy; an individual copy has a fifteen-minute deadline.
 
 ## Interrupted operations and final acceptance
 

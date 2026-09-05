@@ -1464,3 +1464,35 @@ def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> N
     assert workflow.count("environment: railway-stateful-recovery-admin") == 1
     assert workflow.count("environment: railway-stateful-recovery-monitor") == 1
     assert workflow.count("environment: railway-stateful-recovery-export") == 2
+
+
+def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path):
+    path = tmp_path / "live.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE evidence (id INTEGER PRIMARY KEY, payload BLOB)")
+        connection.executemany("INSERT INTO evidence VALUES (?, zeroblob(4096))", [(n,) for n in range(600)])
+    wrote_during_copy = False
+
+    def write_between_pages(_seconds):
+        nonlocal wrote_during_copy
+        if not wrote_during_copy:
+            with sqlite3.connect(path, timeout=0.1) as writer:
+                writer.execute("INSERT INTO evidence VALUES (1000, 'metered MCP call')")
+            wrote_during_copy = True
+
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as live:
+        with sqlite3.connect(tmp_path / "copy.sqlite") as snapshot:
+            recovery._copy_sqlite_online(live, snapshot, pause=write_between_pages)
+            assert wrote_during_copy
+            assert snapshot.execute("PRAGMA quick_check").fetchone() == ("ok",)
+            assert snapshot.execute("SELECT COUNT(*) FROM evidence").fetchone() == (601,)
+
+
+def test_online_copy_cannot_hold_the_export_open_indefinitely(tmp_path: Path):
+    ticks = iter((0, 901))
+    with sqlite3.connect(tmp_path / "live.sqlite") as live:
+        live.execute("CREATE TABLE evidence (id INTEGER)")
+        live.commit()
+        with sqlite3.connect(tmp_path / "copy.sqlite") as snapshot:
+            with pytest.raises(recovery.RecoveryContractError, match="fifteen minutes"):
+                recovery._copy_sqlite_online(live, snapshot, clock=lambda: next(ticks))

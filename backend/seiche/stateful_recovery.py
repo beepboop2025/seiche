@@ -1009,6 +1009,25 @@ def _archive_roots(destination: Path, roots: Mapping[str, Path]) -> None:
         raise RecoveryContractError("recovery archive creation failed") from exc
 
 
+def _copy_sqlite_online(
+    live: sqlite3.Connection,
+    snapshot: sqlite3.Connection,
+    *,
+    clock=time.monotonic,
+    pause=time.sleep,
+) -> None:
+    """Release the source read lock between bounded pages so API writes continue."""
+    deadline = clock() + 900
+
+    def progress(_status: int, remaining: int, _total: int) -> None:
+        if clock() >= deadline:
+            raise RecoveryContractError("online SQLite copy exceeded fifteen minutes")
+        if remaining:
+            pause(0.001)
+
+    live.backup(snapshot, pages=256, progress=progress, sleep=0.01)
+
+
 def _snapshot_api(
     source: Path,
     destination: Path,
@@ -1032,7 +1051,7 @@ def _snapshot_api(
     try:
         with sqlite3.connect(f"file:{source_database}?mode=ro", uri=True) as live:
             with sqlite3.connect(target_database) as snapshot:
-                live.backup(snapshot)
+                _copy_sqlite_online(live, snapshot)
                 if snapshot.execute("PRAGMA quick_check").fetchone() != ("ok",):
                     raise RecoveryContractError("recovery SQLite backup is corrupt")
         source_room_root = source / "_agent_room"
@@ -1068,7 +1087,7 @@ def _snapshot_api(
                 f"file:{source_room_database}?mode=ro", uri=True
             ) as live_room:
                 with sqlite3.connect(target_room_database) as snapshot_room:
-                    live_room.backup(snapshot_room)
+                    _copy_sqlite_online(live_room, snapshot_room)
                     if snapshot_room.execute("PRAGMA quick_check").fetchone() != (
                         "ok",
                     ):
