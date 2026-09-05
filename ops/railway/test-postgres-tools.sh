@@ -21,14 +21,16 @@ mkdir "$scratch/context" "$scratch/proof"
 docker build --target stateful-tools -t "$image" \
   -f "$root/ops/railway/Dockerfile.stateful" "$scratch/context"
 docker run --rm --interactive --network none \
-  --volume "$root/backend/seiche:/source/seiche:ro" \
+  --volume "$root:/source:ro" \
   "$image" python -I -B - <<'PY'
 from pathlib import Path
+import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, "/source")
+sys.path.insert(0, "/source/backend")
 from seiche import stateful_application as application
 
 with tempfile.TemporaryDirectory() as directory:
@@ -50,6 +52,27 @@ with tempfile.TemporaryDirectory() as directory:
     else:
         raise AssertionError("runtime accepted a tampered signed approval")
 print("Linux runtime SSH approval verification and tamper rejection passed")
+spec = importlib.util.spec_from_file_location("application_builder", "/source/ops/railway/build_application_context.py")
+builder = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(builder)
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    root.chmod(0o755)
+    previous_mask = os.umask(0o077)
+    try:
+        builder.stage_parent(root / "parent", {"candidate": {"immutable": True}})
+    finally:
+        os.umask(previous_mask)
+    def runtime_user():
+        os.setgroups([])
+        os.setgid(10001)
+        os.setuid(10001)
+    subprocess.run([sys.executable, "-I", "-B", "-c",
+        "import json,sys; from pathlib import Path; p=Path(sys.argv[1]); assert json.loads(p.read_bytes())=={'immutable':True}; "
+        "assert not __import__('os').access(p,__import__('os').W_OK)",
+        str(root / "parent/candidate.json")], preexec_fn=runtime_user, check=True)
+    (root / "parent").chmod(0o700)
+print("Linux runtime UID can read but cannot rewrite staged parent receipts")
 PY
 docker network create --internal "$network" >/dev/null
 docker run --detach --name "$server" --network "$network" \

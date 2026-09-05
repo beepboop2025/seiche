@@ -24,6 +24,16 @@ def render_dockerfile(source: str) -> str:
     return source.replace(marker, marker + "COPY parent/ /migration/parent/\n")
 
 
+def stage_parent(directory: Path, documents: dict) -> None:
+    """COPY must retain read-only receipts readable by the runtime UID."""
+    directory.mkdir(mode=0o700)
+    for name, value in documents.items():
+        path = directory / f"{name}.json"
+        path.write_bytes(application.canonical(value))
+        path.chmod(0o444)
+    directory.chmod(0o555)
+
+
 def build_context(
     repo: Path, commit: str, parent_dir: Path, railway_path: Path, output: Path
 ) -> dict:
@@ -67,9 +77,7 @@ def build_context(
         application.read_document(railway_path), deployment=False
     )
     output.mkdir(mode=0o700)
-    (output / "parent").mkdir(mode=0o700)
-    for name, value in parent.items():
-        (output / "parent" / f"{name}.json").write_bytes(application.canonical(value))
+    stage_parent(output / "parent", parent)
     archive = git(repo, "archive", "--format=tar", commit)
     (output / "source.tar").write_bytes(archive)
     subprocess.run(
