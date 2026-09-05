@@ -514,11 +514,19 @@ jobs:
               output.write(f"needs_upload={str(seen != set(expected)).lower()}\n")
           PY
 
+      - name: Stage upload copies without mutating the verified inventory
+        if: steps.pypi_state.outputs.needs_upload == 'true'
+        run: |
+          set -euo pipefail
+          mkdir openbb-upload
+          cp "openbb-verified/$EXPECTED_WHEEL_NAME" openbb-upload/
+          cp "openbb-verified/$EXPECTED_SDIST_NAME" openbb-upload/
+
       - name: Publish OpenBB extension to PyPI (trusted publishing)
         if: steps.pypi_state.outputs.needs_upload == 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # release/v1
         with:
-          packages-dir: openbb-verified
+          packages-dir: openbb-upload
           skip-existing: true
 
       - name: Poll PyPI for the exact complete immutable OpenBB inventory

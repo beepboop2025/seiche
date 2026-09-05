@@ -698,7 +698,7 @@ class WorkflowContracts(unittest.TestCase):
             "Smoke both verified OpenBB artifact formats",
             'version("openbb-seiche") == os.environ["EXPECTED_VERSION"]',
             "pypa/gh-action-pypi-publish@",
-            "packages-dir: openbb-verified",
+            "packages-dir: openbb-upload",
             "skip-existing: true",
             'project_name = "openbb-seiche"',
             "https://pypi.org/pypi/",
