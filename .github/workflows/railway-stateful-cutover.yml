@@ -348,7 +348,7 @@ jobs:
             "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$SOURCE_SHA:$SNAPSHOT_ID:cutover-candidate" |
             sha256sum | awk '{print $1}')
           requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          cp ops/railway/Dockerfile.stateful "$UPLOAD_ROOT/Dockerfile"
+          git show "$GITHUB_SHA:ops/railway/Dockerfile.stateful" >"$UPLOAD_ROOT/Dockerfile"
           cp ops/railway/railway.cutover.json "$UPLOAD_ROOT/railway.json"
           TARGET="$SOURCE_SHA" SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
             SOURCE_BUNDLE_SHA256="$source_bundle_sha256" REQUEST_ID="$request_id" \

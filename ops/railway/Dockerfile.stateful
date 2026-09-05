@@ -92,4 +92,7 @@ EXPOSE 8080
 # Railway volumes are root-mounted. The closed request-schema dispatcher picks
 # the non-authoritative Phase-4 shadow or writer-fenced Phase-5 cutover; each
 # root supervisor then drops every long-lived child to uid/gid 10001.
-ENTRYPOINT ["/usr/bin/tini", "--", "python", "-I", "-B", "/workspace/backend/seiche/stateful_entrypoint.py"]
+# Isolated mode ignores PYTHONPATH and the script's parent directory. Select
+# the verified, read-only source explicitly so repository-relative governance
+# and recovery helpers resolve against /workspace, never site-packages.
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-I", "-B", "-c", "import runpy, sys; sys.path.insert(0, '/workspace/backend'); runpy.run_module('seiche.stateful_entrypoint', run_name='__main__')"]

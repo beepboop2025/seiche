@@ -1230,7 +1230,11 @@ def test_cutover_workflow_and_host_tools_cannot_auto_move_authority() -> None:
     assert '"HETZNER_DATABASE_URL"' in workflow
     assert "$CONTROL_ROOT/evidence/AUTHORITY-FENCE.json" in workflow
     assert '"x-seiche-railway-deployment"' in workflow
-    assert "stateful_entrypoint.py" in dockerfile
+    assert "seiche.stateful_entrypoint" in dockerfile
+    assert (
+        'git show "$GITHUB_SHA:ops/railway/Dockerfile.stateful" '
+        '>"$UPLOAD_ROOT/Dockerfile"' in workflow
+    )
     assert railway["deploy"] == {
         "healthcheckPath": "/healthz",
         "healthcheckTimeout": 3600,
