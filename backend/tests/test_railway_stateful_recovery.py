@@ -1341,7 +1341,9 @@ def test_reverse_restore_heredoc_executes_cleanup_and_passes_password_by_env(
         encoding="utf-8",
     )
     (package / "stateful_migration.py").write_text(
-        "def restore_filesystem_generation(*args, **kwargs):\n"
+        "def restore_filesystem_generation(bundle, staging, **kwargs):\n"
+        "    assert staging.is_absolute(), 'activation audit requires an absolute path'\n"
+        "    assert staging == staging.resolve(), 'activation audit requires a normalized path'\n"
         "    return 'verified_head', {'state': 'd' * 64}\n"
         "\n"
         "def palimpsest_china_state_from_audit(*args, **kwargs):\n"

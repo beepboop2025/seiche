@@ -1687,7 +1687,7 @@ jobs:
               snapshot_id=os.environ["SNAPSHOT_ID"],
               commit=os.environ["RELEASE_SHA"],
           )
-          proof_root = Path("proof/filesystem-restore")
+          proof_root = Path("proof/filesystem-restore").resolve()
           proof_root.mkdir(mode=0o700)
           nbs_result, trees = migration.restore_filesystem_generation(
               bundle,
