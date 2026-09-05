@@ -766,3 +766,18 @@ def validate_runtime(
     ):
         raise ApplicationContractError("application runtime migration binding differs")
     return value
+
+
+def candidate_parent_release(
+    environment: Mapping[str, str], *, process_release_sha: str
+) -> str:
+    """Bind candidate-only cache reads to the signed, recovered parent release."""
+    candidate = validate_runtime(environment, production=False)
+    request = validate_request(read_document(REQUEST_PATH), current=False)
+    if (
+        process_release_sha != request["commit"]
+        or candidate["request"]["sha256"] != digest(request)
+    ):
+        raise ApplicationContractError("application cache request identity differs")
+    parent = load_parent(request, current=True)
+    return parent["activation"]["commit"]

@@ -1117,6 +1117,21 @@ class PostgresMarketRepository:
             return None
         return json.loads(row[0]) if isinstance(row[0], str) else row[0]
 
+    def load_active_release_handoff_read_only(self) -> dict | None:
+        """Read existing candidate state without schema convergence or DML."""
+        with self._connect() as connection, connection.transaction():
+            connection.execute("SET TRANSACTION READ ONLY")
+            row = connection.execute(
+                """SELECT handoff.envelope
+                     FROM active_release_snapshot_handoff AS active
+                     JOIN release_snapshot_handoffs AS handoff
+                       ON handoff.handoff_id = active.handoff_id
+                    WHERE active.singleton=1"""
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0]) if isinstance(row[0], str) else row[0]
+
     def activate_release_handoff(
         self,
         handoff_id: str,

@@ -2584,6 +2584,19 @@ def _stateful_preactivation_read_only() -> bool:
     }
 
 
+def _application_parent_release() -> str | None:
+    if (
+        os.getenv("SEICHE_RAILWAY_STATEFUL_MODE") != "cutover_candidate"
+        or not os.getenv("SEICHE_RAILWAY_APPLICATION_REQUEST_ID")
+    ):
+        return None
+    from seiche.stateful_application import candidate_parent_release
+
+    return candidate_parent_release(
+        os.environ, process_release_sha=capture_process_release_sha()
+    )
+
+
 def restore_cached_snapshot(*, read_only: bool = False) -> str | None:
     """Hydrate the in-process cache without fetching or running an engine.
 
@@ -2608,9 +2621,28 @@ def restore_cached_snapshot(*, read_only: bool = False) -> str | None:
     log = logging.getLogger("seiche.assemble")
     durable = None
     try:
-        from seiche.repository import get_repository
+        from seiche.repository import PostgresMarketRepository, get_repository
 
         repository = get_repository()
+        parent_sha = _application_parent_release()
+        if parent_sha is not None:
+            if not isinstance(repository, PostgresMarketRepository):
+                raise ValueError("application parent handoff requires PostgreSQL")
+            payload, receipt, producer_sha, handoff_id = _validated_handoff(
+                repository.load_active_release_handoff_read_only(),
+                expected_release_sha=parent_sha,
+            )
+            # Reading the signed parent is not a rebuild by this application.
+            # Retain the original envelope and clocks; no handoff is promoted.
+            _cache.update(
+                at=time.time(),
+                payload=payload,
+                source="application_parent",
+                release_receipt=receipt,
+                release_handoff_id=handoff_id,
+                producer_sha=producer_sha,
+            )
+            return "application_parent"
         requested_handoff = os.getenv("SEICHE_PREBUILT_HANDOFF_ID", "").strip()
         if requested_handoff:
             if re.fullmatch(r"[0-9a-f]{64}", requested_handoff) is None:
@@ -2991,6 +3023,33 @@ def cached_snapshot_was_rebuilt() -> bool:
         "rebuilt",
         "prebuilt",
     }
+
+
+def cached_application_parent_ready() -> bool:
+    """Prove a candidate's borrowed cache without granting rebuild authority."""
+    if _cache.get("source") != "application_parent":
+        return False
+    payload = _safe_memory_snapshot()
+    if payload is None:
+        return False
+    try:
+        parent_sha = _application_parent_release()
+        if parent_sha is None:
+            return False
+        envelope = {
+            **_handoff_body(
+                payload, _cache.get("release_receipt"), _cache.get("producer_sha")
+            ),
+            "handoff_id": _cache.get("release_handoff_id"),
+        }
+        _validated_handoff(
+            envelope,
+            expected_release_sha=parent_sha,
+            expected_handoff_id=_cache.get("release_handoff_id"),
+        )
+    except Exception:  # noqa: BLE001 - invalid candidate proof cannot grant readiness
+        return False
+    return True
 
 
 def cached_snapshot_release_receipt() -> dict | None:

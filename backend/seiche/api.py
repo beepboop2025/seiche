@@ -3554,9 +3554,14 @@ async def railway_stateful_health(response: Response):
             content={"status": "shadow_receipt_unavailable"},
             headers={"Cache-Control": "no-store", "Retry-After": "10"},
         )
+    parent_ready = (
+        mode == "cutover_candidate"
+        and bool(os.getenv("SEICHE_RAILWAY_APPLICATION_REQUEST_ID"))
+        and assemble.cached_application_parent_ready()
+    )
     candidate = _health_response(
         response,
-        require_rebuilt=True,
+        require_rebuilt=not parent_ready,
         include_release_candidate=False,
     )
     if isinstance(candidate, Response):
