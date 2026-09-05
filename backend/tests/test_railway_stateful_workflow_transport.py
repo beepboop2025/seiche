@@ -59,6 +59,7 @@ def test_postgres_probe_refuses_other_commands_and_instances(tmp_path, monkeypat
         "RAILWAY_POSTGRES_SERVICE_ID": "postgres",
         "RUNNER_TEMP": str(tmp_path),
         "GITHUB_PATH": str(tmp_path / "job-path"),
+        "GITHUB_ENV": str(tmp_path / "job-env"),
     }.items():
         monkeypatch.setenv(key, value)
     response = {
@@ -72,11 +73,20 @@ def test_postgres_probe_refuses_other_commands_and_instances(tmp_path, monkeypat
         }
     }
     monkeypatch.setattr(
-        subprocess, "check_output", lambda *a, **kw: json.dumps(response)
+        subprocess,
+        "check_output",
+        lambda args, **kw: (
+            "SSH_AGENT_PID=12345;\n" if args[0] == "ssh-agent" else json.dumps(response)
+        ),
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0)
     )
     exec(compile(setup, "probe-setup", "exec"), {})
     root = tmp_path / "postgres-health-probe"
     assert (root / "identity").stat().st_mode & 0o777 == 0o600
+    assert "SSH_AUTH_SOCK=" in (tmp_path / "job-env").read_text()
+    assert (root / "agent-pid").read_text() == "12345"
     calls = []
     monkeypatch.setattr(
         subprocess,

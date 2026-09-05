@@ -97,6 +97,14 @@ jobs:
           private = root / "identity"
           private.write_text(key)
           private.chmod(0o600)
+          # The CLI preflights local key discovery before invoking its transport.
+          agent = subprocess.check_output(["ssh-agent", "-s", "-a", str(root / "agent.sock")], text=True)
+          agent_pid = re.search(r"SSH_AGENT_PID=(\d+);", agent).group(1)
+          agent_env = dict(os.environ, SSH_AUTH_SOCK=str(root / "agent.sock"), SSH_AGENT_PID=agent_pid)
+          subprocess.run(["ssh-add", str(private)], env=agent_env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          (root / "agent-pid").write_text(agent_pid)
+          with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
+              stream.write("SSH_AUTH_SOCK=" + str(root / "agent.sock") + "\nSSH_AGENT_PID=" + agent_pid + "\n")
           known = root / "known_hosts"
           known.write_text("ssh.railway.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8X3z81/tuP7CvmK3ZqWgwEvHUR6b04oi2lQJGld2C1\n")
           known.chmod(0o600)
@@ -457,13 +465,21 @@ jobs:
           python3 -I -S - <<'PYCLEAN'
           import os
           import shutil
+          import signal
           from pathlib import Path
           root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
+          pid_file = root / "agent-pid"
+          if pid_file.exists():
+              try:
+                  os.kill(int(pid_file.read_text()), signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
           if root.exists():
               shutil.rmtree(root)
           PYCLEAN
 
       - name: Retain the private native-backup evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: railway-recovery-admin-${{ github.sha }}-${{ github.run_id }}
@@ -772,6 +788,14 @@ jobs:
           private = root / "identity"
           private.write_text(key)
           private.chmod(0o600)
+          # The CLI preflights local key discovery before invoking its transport.
+          agent = subprocess.check_output(["ssh-agent", "-s", "-a", str(root / "agent.sock")], text=True)
+          agent_pid = re.search(r"SSH_AGENT_PID=(\d+);", agent).group(1)
+          agent_env = dict(os.environ, SSH_AUTH_SOCK=str(root / "agent.sock"), SSH_AGENT_PID=agent_pid)
+          subprocess.run(["ssh-add", str(private)], env=agent_env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          (root / "agent-pid").write_text(agent_pid)
+          with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
+              stream.write("SSH_AUTH_SOCK=" + str(root / "agent.sock") + "\nSSH_AGENT_PID=" + agent_pid + "\n")
           known = root / "known_hosts"
           known.write_text("ssh.railway.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8X3z81/tuP7CvmK3ZqWgwEvHUR6b04oi2lQJGld2C1\n")
           known.chmod(0o600)
@@ -1103,8 +1127,15 @@ jobs:
           python3 -I -S - <<'PYCLEAN'
           import os
           import shutil
+          import signal
           from pathlib import Path
           root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
+          pid_file = root / "agent-pid"
+          if pid_file.exists():
+              try:
+                  os.kill(int(pid_file.read_text()), signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
           if root.exists():
               shutil.rmtree(root)
           PYCLEAN
