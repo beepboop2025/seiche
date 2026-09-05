@@ -386,12 +386,290 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         return "a" * 40 if tag == "market-corpus-v1.0.0" else "d" * 40
 
     monkeypatch.setattr(gate, "_verify_annotated_signed_tag", stale_receipt_tag)
+    monkeypatch.setattr(
+        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.12.3"
+    )
+    monkeypatch.setattr(
+        gate,
+        "_run_git",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, stdout=expected_sha + "\n"
+        ),
+    )
     with pytest.raises(gate.PublicationGateError, match="does not target"):
         gate.verify_market_corpus_release(
             ROOT,
             expected_sha=expected_sha,
             signer_fingerprint="SHA256:" + "A" * 43,
         )
+
+
+def _content_git(root, *args):
+    return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
+
+
+@pytest.fixture
+def content_repo(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _content_git(root, "init", "-q")
+    for key, value in (
+        ("user.name", "seiche-desk"),
+        ("user.email", "desk@seiche.info"),
+        ("commit.gpgsign", "false"),
+        ("tag.gpgsign", "false"),
+        ("core.filemode", "true"),
+    ):
+        _content_git(root, "config", key, value)
+    for relative in (*gate.RELEASE_IDENTITY_PATHS, gate.AI_CATALOG_PATH):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+    _content_git(root, "add", ".")
+    _content_git(root, "commit", "-q", "-m", "release fixture")
+    return root
+
+
+def _content_commit(
+    root, changes, *, subject="dispatch: daily", author="desk@seiche.info"
+):
+    for relative, body in changes.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    _content_git(root, "add", ".")
+    _content_git(
+        root,
+        "commit",
+        "-q",
+        "--allow-empty",
+        "--author",
+        f"desk <{author}>",
+        "-m",
+        subject,
+    )
+    return _content_git(root, "rev-parse", "HEAD")
+
+
+def _sign_content_release(root, *, receipt=True):
+    key = root.parent / "fixture-signing-key"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+        check=True,
+    )
+    allowed = root / "ops/deploy/release-allowed-signers"
+    allowed.parent.mkdir(parents=True)
+    allowed.write_text("fixture " + key.with_suffix(".pub").read_text())
+    _content_git(root, "config", "gpg.format", "ssh")
+    _content_git(root, "config", "user.signingkey", str(key))
+    _content_git(root, "add", ".")
+    _content_git(root, "commit", "-q", "--amend", "--no-edit", "-S")
+    tags = ["v0.12.3", "market-corpus-v1.0.0"]
+    if receipt:
+        tags.append(gate._market_corpus_publication_receipt(_market_entry())["tag"])
+    for tag in tags:
+        _content_git(root, "tag", "-s", "-m", "signed fixture", tag)
+    fingerprint = subprocess.check_output(
+        ["ssh-keygen", "-E", "sha256", "-lf", str(key) + ".pub"], text=True
+    ).split()[1]
+    return _content_git(root, "rev-parse", "HEAD"), fingerprint
+
+
+def test_signed_corpus_receipt_accepts_exact_release_and_daily_weekly_descendants(
+    content_repo,
+):
+    root = content_repo
+    release, fingerprint = _sign_content_release(root)
+    gate.verify_market_corpus_release(
+        root, expected_sha=release, signer_fingerprint=fingerprint
+    )
+    _content_commit(
+        root,
+        {
+            "frontend/public/dispatches/2026-09-05-daily.md": "daily",
+            "frontend/public/dispatches/index.json": "[]",
+            "frontend/public/articles/2026-09-05-cash.md": "article",
+            "frontend/public/articles/2026-09-05-cash.json": "{}",
+            "frontend/public/articles/learning.json": "{}",
+            "backend/seiche/dispatches/2026-09-05-daily.desk.md": "desk",
+            "backend/seiche/dispatches/state.json": "{}",
+            "backend/seiche/dispatches/odds_ledger.jsonl": "{}\n",
+        },
+    )
+    head = _content_commit(
+        root,
+        {
+            "frontend/public/dispatches/index.json": '["weekly"]',
+            "backend/seiche/dispatches/2026-09-07-week-ahead.desk.md": "weekly",
+            "backend/seiche/dispatches/weekly_state.json": "{}",
+        },
+        subject="week ahead: funding calendar",
+    )
+    tag, _ = gate.verify_market_corpus_release(
+        root, expected_sha=head, signer_fingerprint=fingerprint
+    )
+    assert _content_git(root, "rev-parse", f"{tag}^{{commit}}") == release
+    assert head != release
+
+
+def test_fresh_exact_head_corpus_receipt_keeps_existing_independent_release_path(
+    content_repo,
+):
+    root = content_repo
+    release, fingerprint = _sign_content_release(root, receipt=False)
+    _content_commit(root, {"backend/seiche/example.py": "# independent release\n"})
+    _content_git(root, "commit", "-q", "--amend", "--no-edit", "-S")
+    head = _content_git(root, "rev-parse", "HEAD")
+    tag = gate._market_corpus_publication_receipt(_market_entry())["tag"]
+    _content_git(root, "tag", "-s", "-m", "fresh exact-head receipt", tag)
+    assert (
+        gate.verify_signed_release(
+            root, version="0.12.3", expected_sha=head, signer_fingerprint=fingerprint
+        )
+        == "v0.12.3"
+    )
+    assert (
+        gate.verify_market_corpus_release(
+            root, expected_sha=head, signer_fingerprint=fingerprint
+        )[0]
+        == tag
+    )
+    assert release != head
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend/seiche/assemble.py",
+        ".github/workflows/publish.yml",
+        gate.AI_CATALOG_PATH,
+        "server.json",
+    ],
+)
+def test_generated_content_rejects_even_reverted_release_or_code_drift(
+    content_repo, path
+):
+    root = content_repo
+    release, fingerprint = _sign_content_release(root)
+    target = root / path
+    original = target.read_text() if target.exists() else None
+    _content_commit(root, {path: (original or "") + "\n# drift\n"})
+    if original is None:
+        target.unlink()
+    else:
+        target.write_text(original)
+    head = _content_commit(root, {}, subject="week ahead: reverted drift")
+    # The old endpoint-only release identity comparison still passes.
+    gate.verify_signed_release(
+        root, version="0.12.3", expected_sha=head, signer_fingerprint=fingerprint
+    )
+    with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
+        gate.verify_market_corpus_release(
+            root, expected_sha=head, signer_fingerprint=fingerprint
+        )
+    assert release != head
+
+
+@pytest.mark.parametrize(
+    ("path", "author", "subject"),
+    [
+        ("frontend/public/articles/tool.py", "desk@seiche.info", "dispatch: daily"),
+        (
+            "frontend/public/articles/nested/hidden.json",
+            "desk@seiche.info",
+            "dispatch: daily",
+        ),
+        (
+            "frontend/public/articles/misleading\nname.md",
+            "desk@seiche.info",
+            "dispatch: daily",
+        ),
+        (
+            "backend/seiche/dispatches/__init__.py",
+            "desk@seiche.info",
+            "dispatch: daily",
+        ),
+        (
+            "backend/seiche/dispatches/unknown.json",
+            "desk@seiche.info",
+            "dispatch: daily",
+        ),
+        ("frontend/public/articles/cash.md", "intruder@example.com", "dispatch: daily"),
+        ("frontend/public/articles/cash.md", "desk@seiche.info", "fix: bypass"),
+    ],
+)
+def test_generated_content_rejects_unauthorized_lane(
+    content_repo, path, author, subject
+):
+    release = _content_git(content_repo, "rev-parse", "HEAD")
+    head = _content_commit(content_repo, {path: "test"}, author=author, subject=subject)
+    with pytest.raises(gate.PublicationGateError, match="generated-content commit"):
+        gate._verify_generated_content_descendants(
+            content_repo, release=release, head=head
+        )
+
+
+@pytest.mark.parametrize("mode", ["executable", "symlink", "gitlink"])
+def test_generated_content_rejects_nonregular_file_modes(content_repo, mode):
+    root = content_repo
+    release = _content_git(root, "rev-parse", "HEAD")
+    relative = "frontend/public/articles/cash.md"
+    target = root / relative
+    target.parent.mkdir(parents=True)
+    if mode == "gitlink":
+        _content_git(
+            root, "update-index", "--add", "--cacheinfo", f"160000,{release},{relative}"
+        )
+    else:
+        if mode == "symlink":
+            target.symlink_to("../../../../server.json")
+        else:
+            target.write_text("executable")
+            target.chmod(0o755)
+        _content_git(root, "add", relative)
+    _content_git(root, "commit", "-q", "-m", "dispatch: unsafe mode")
+    head = _content_git(root, "rev-parse", "HEAD")
+    with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
+        gate._verify_generated_content_descendants(root, release=release, head=head)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "frontend/public/articles/old.md",
+        "backend/seiche/example.py",
+    ],
+)
+def test_generated_content_checks_both_sides_of_renames(content_repo, source):
+    root = content_repo
+    release = _content_commit(root, {source: "same content\n"})
+    destination = root / "frontend/public/articles/new.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    (root / source).rename(destination)
+    head = _content_commit(root, {})
+    if source.endswith(".py"):
+        with pytest.raises(
+            gate.PublicationGateError, match="forbidden path or file mode"
+        ):
+            gate._verify_generated_content_descendants(root, release=release, head=head)
+    else:
+        gate._verify_generated_content_descendants(root, release=release, head=head)
+
+
+def test_generated_content_rejects_merge_and_empty_commits(content_repo):
+    root = content_repo
+    release = _content_git(root, "rev-parse", "HEAD")
+    empty = _content_commit(root, {})
+    with pytest.raises(gate.PublicationGateError, match="no verifiable changes"):
+        gate._verify_generated_content_descendants(root, release=release, head=empty)
+    # A merge of two otherwise acceptable desk commits is still outside this lane.
+    left = _content_commit(root, {"frontend/public/articles/left.md": "left"})
+    _content_git(root, "checkout", "-q", "--detach", empty)
+    _content_commit(root, {"frontend/public/articles/right.md": "right"})
+    _content_git(root, "merge", "--no-ff", "-q", "-m", "dispatch: merge", left)
+    head = _content_git(root, "rev-parse", "HEAD")
+    with pytest.raises(gate.PublicationGateError, match="single-parent"):
+        gate._verify_generated_content_descendants(root, release=empty, head=head)
 
 
 def test_release_identity_rejects_an_unknown_unsigned_catalog_entry(tmp_path):

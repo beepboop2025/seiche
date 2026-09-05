@@ -662,12 +662,116 @@ def verify_market_corpus_release(
         root, tag=receipt_tag, head=expected_sha, git_config=git_config
     )
     if receipt_target != expected_sha:
-        raise PublicationGateError(
-            "Market Atlas publication receipt tag does not target the workflow SHA"
+        release_version = _canonical_catalog_entry(catalog).get("version")
+        if (
+            not isinstance(release_version, str)
+            or VERSION_RE.fullmatch(release_version) is None
+        ):
+            raise PublicationGateError("canonical release version is malformed")
+        release_tag = verify_signed_release(
+            root,
+            version=release_version,
+            expected_sha=expected_sha,
+            signer_fingerprint=signer_fingerprint,
+        )
+        release_target = _run_git(
+            root, "rev-parse", f"{release_tag}^{{commit}}"
+        ).stdout.strip()
+        if receipt_target != release_target:
+            raise PublicationGateError(
+                "Market Atlas publication receipt tag does not target the workflow "
+                "SHA or the signed Seiche release"
+            )
+        _verify_generated_content_descendants(
+            root, release=release_target, head=expected_sha
         )
     receipt_catalog = _read_tagged_json(root, receipt_tag, AI_CATALOG_PATH)
     _verify_market_corpus_tagged_identity(catalog, receipt_catalog)
     return receipt_tag, entry
+
+
+def _verify_generated_content_descendants(
+    root: Path, *, release: str, head: str
+) -> None:
+    """Admit only the daily/weekly desk lane after an immutable release receipt."""
+    if (
+        COMMIT_RE.fullmatch(release) is None
+        or COMMIT_RE.fullmatch(head) is None
+        or _run_git(
+            root, "merge-base", "--is-ancestor", release, head, check=False
+        ).returncode
+    ):
+        raise PublicationGateError(
+            "generated-content history is not a release descendant"
+        )
+    commits = _run_git(
+        root, "rev-list", "--reverse", "--topo-order", f"{release}..{head}"
+    ).stdout.splitlines()
+    previous = release
+    for commit in commits:
+        identity = (
+            _run_git_bytes(
+                root,
+                "show",
+                "-s",
+                "--no-show-signature",
+                "--format=%P%x00%ae%x00%s",
+                commit,
+            )
+            .stdout.rstrip(b"\n")
+            .split(b"\0")
+        )
+        if (
+            len(identity) != 3
+            or identity[0] != previous.encode("ascii")
+            or identity[1] != b"desk@seiche.info"
+            or not identity[2].startswith((b"dispatch: ", b"week ahead: "))
+        ):
+            raise PublicationGateError(
+                "generated-content commit is not a single-parent daily/weekly desk commit"
+            )
+        changes = _run_git_bytes(
+            root,
+            "diff-tree",
+            "--raw",
+            "-r",
+            "-z",
+            "--no-renames",
+            "--no-commit-id",
+            "--no-abbrev",
+            previous,
+            commit,
+            "--",
+        ).stdout.split(b"\0")
+        if len(changes) < 3 or changes[-1] != b"" or len(changes) % 2 != 1:
+            raise PublicationGateError(
+                "generated-content commit has no verifiable changes"
+            )
+        for metadata, path in zip(changes[:-1:2], changes[1:-1:2]):
+            if (
+                re.fullmatch(
+                    rb":(?:100644 100644 [0-9a-f]{40} [0-9a-f]{40} M"
+                    rb"|000000 100644 0{40} [0-9a-f]{40} A"
+                    rb"|100644 000000 [0-9a-f]{40} 0{40} D)",
+                    metadata,
+                )
+                is None
+                or re.fullmatch(
+                    rb"(?:frontend/public/(?:dispatches|articles)/"
+                    rb"[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:md|json)"
+                    rb"|backend/seiche/dispatches/(?:"
+                    rb"[A-Za-z0-9][A-Za-z0-9_.-]*\.desk\.md"
+                    rb"|state\.json|weekly_state\.json|odds_ledger\.jsonl))",
+                    path,
+                )
+                is None
+            ):
+                raise PublicationGateError(
+                    "generated-content commit changes a forbidden path or file mode"
+                )
+        previous = commit
+    if previous != head:
+        raise PublicationGateError("generated-content history is incomplete")
 
 
 def _request_bytes(

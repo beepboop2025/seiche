@@ -158,6 +158,26 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    PyPI receipts are green, rerun the original exact-SHA static jobs; never
    bypass this gate to advertise a package version that does not yet exist.
 
+   Once that release is published, daily and weekly desk commits can publish
+   with its existing corpus receipt. The fallback requires the receipt tag to
+   target the independently verified signed `v{version}` release. Every commit
+   from that release to the workflow SHA must have one parent, author
+   `desk@seiche.info`, and a subject beginning `dispatch: ` or `week ahead: `.
+   Each commit must change at least one regular, nonexecutable (`100644`)
+   generated file, confined to these direct-child paths:
+
+   - `frontend/public/dispatches/*.md` and `*.json`;
+   - `frontend/public/articles/*.md` and `*.json`, including `learning.json`;
+   - `backend/seiche/dispatches/*.desk.md`, `state.json`, `weekly_state.json`,
+     and `odds_ledger.jsonl`.
+
+   Nested paths, source files, release metadata, workflows, executable files,
+   symlinks, gitlinks, empty commits, and merges refuse this fallback. Git
+   changes are checked per commit with rename detection disabled, so reverting
+   an intervening code or catalog edit does not restore eligibility. A fresh
+   signed corpus receipt on the exact workflow SHA retains its existing
+   independent-release path; none of these rules permit moving an old tag.
+
 5. **Confirm the Zenodo GitHub integration is enabled before releasing.** Sign
    in at <https://zenodo.org/account/settings/github/>, synchronize repositories,
    and verify that `beepboop2025/seiche` is toggled **On**. Zenodo archives new
