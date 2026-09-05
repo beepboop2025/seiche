@@ -168,8 +168,11 @@ def _percentile_3y(series: pd.Series, cadence: str) -> float | None:
         return None
     latest = float(trailing.iloc[-1])
     raw = trailing.to_numpy(dtype=float)
-    below = int(np.sum(raw < latest))
-    equal = int(np.sum(np.isclose(raw, latest, rtol=1e-10, atol=1e-12)))
+    tied = np.isclose(raw, latest, rtol=1e-10, atol=1e-12)
+    # Rounded economic ties can differ after floating-point subtraction.
+    # Keep the below/tied groups disjoint so their midrank stays in [0, 100].
+    below = int(np.sum((raw < latest) & ~tied))
+    equal = int(np.sum(tied))
     return _number(100.0 * (below + 0.5 * equal) / len(raw), 1)
 
 
