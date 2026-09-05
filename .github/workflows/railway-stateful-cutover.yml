@@ -35,11 +35,15 @@ on:
         required: false
         type: string
       deployment_id:
-        description: "Activation only: exact Railway candidate deployment UUID"
+        description: "Activation or resume: exact Railway candidate deployment UUID"
         required: false
         type: string
       candidate_run_id:
-        description: "Activation only: GitHub run containing the attested candidate artifact"
+        description: "Activation: attested candidate run; resume: original run that submitted the deployment"
+        required: false
+        type: string
+      candidate_request_base64:
+        description: "Resume only: exact canonical request read from the existing candidate; also supply deployment_id and candidate_run_id"
         required: false
         type: string
       confirmation:
@@ -66,6 +70,7 @@ jobs:
     timeout-minutes: 90
     environment: railway-stateful-cutover-candidate
     permissions:
+      actions: read
       attestations: write
       contents: read
       id-token: write
@@ -114,6 +119,17 @@ jobs:
           echo "$tool_dir" >>"$GITHUB_PATH"
           "$tool_dir/railway" --version
 
+      - name: Load the signed controller helpers and bounded Railway read retries
+        run: |
+          set -euo pipefail
+          helpers="$RUNNER_TEMP/cutover-controller"
+          mkdir -p "$helpers"
+          git show "$GITHUB_SHA:ops/railway/retry_read.py" >"$helpers/railway"
+          git show "$GITHUB_SHA:ops/railway/verify_cutover_resume.py" >"$RUNNER_TEMP/cutover-resume.py"
+          chmod 0755 "$helpers/railway"
+          echo "RAILWAY_REAL_BIN=$RUNNER_TEMP/railway-tools/railway" >>"$GITHUB_ENV"
+          echo "$helpers" >>"$GITHUB_PATH"
+
       - name: Prove the fenced source and isolated Railway target
         id: control
         env:
@@ -127,6 +143,7 @@ jobs:
           SNAPSHOT_ID: ${{ inputs.snapshot_id }}
           FENCE_SHA256: ${{ inputs.authority_fence_sha256 }}
           FENCE_BASE64: ${{ inputs.authority_fence_base64 }}
+          RESUME_REQUEST: ${{ inputs.candidate_request_base64 }}
           CONFIRMATION: ${{ inputs.confirmation }}
           CONTROL_ROOT: ${{ runner.temp }}/railway-cutover-control
         run: |
@@ -218,6 +235,16 @@ jobs:
           }
           if names & forbidden:
               raise SystemExit("stateful service contains a forbidden control secret")
+          if os.environ["RESUME_REQUEST"]:
+              expected = {
+                  "SEICHE_RAILWAY_VOLUME_ID": os.environ["EXPECTED_VOLUME_ID"],
+                  "SEICHE_RAILWAY_CUTOVER_SNAPSHOT_ID": os.environ["SNAPSHOT_ID"],
+                  "SEICHE_RAILWAY_AUTHORITY_FENCE_SHA256": os.environ["FENCE_SHA256"],
+                  "SEICHE_RAILWAY_CONTROL_ENABLED": "1",
+                  "SEICHE_RAILWAY_EDGE_TOKEN": os.environ["RAILWAY_EDGE_TOKEN"],
+              }
+              if any(entries.get(name) != value for name, value in expected.items()):
+                  raise SystemExit("resume service variables differ from the frozen candidate")
 
           PY
           rm -f variables.json
@@ -263,6 +290,9 @@ jobs:
           PY
           test "$(git -C "$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}')" = \
             "$(grep '^tree=' "$GITHUB_OUTPUT" | cut -d= -f2)"
+          if test -n "$RESUME_REQUEST"; then
+            exit 0
+          fi
           railway variable set \
             "SEICHE_RAILWAY_VOLUME_ID=$RAILWAY_VOLUME_ID" \
             "SEICHE_RAILWAY_CUTOVER_SNAPSHOT_ID=$SNAPSHOT_ID" \
@@ -291,10 +321,22 @@ jobs:
           SHADOW_RECEIPT_SHA256: ${{ steps.control.outputs.shadow_receipt_sha256 }}
           FENCE_PATH: ${{ steps.control.outputs.fence_path }}
           UPLOAD_ROOT: ${{ runner.temp }}/railway-cutover-upload
+          RESUME_REQUEST: ${{ inputs.candidate_request_base64 }}
+          RESUME_RUN_ID: ${{ inputs.candidate_run_id }}
+          RESUME_DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "$UPLOAD_ROOT"
           test "$(git rev-parse 'HEAD^{commit}')" = "$SOURCE_SHA"
+          if test -n "$RESUME_REQUEST"; then
+            PYTHONPATH=backend python3 -B "$RUNNER_TEMP/cutover-resume.py"
+            exit 0
+          fi
           git archive --format=tar "$SOURCE_SHA" >"$UPLOAD_ROOT/source.tar"
           git bundle create "$UPLOAD_ROOT/source.bundle" HEAD
           git bundle verify "$UPLOAD_ROOT/source.bundle"
@@ -381,8 +423,17 @@ jobs:
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
           UPLOAD_ROOT: ${{ steps.request.outputs.upload_root }}
+          RESUME_DEPLOYMENT_ID: ${{ steps.request.outputs.resume_deployment_id }}
+          RESUME_NOT_BEFORE: ${{ steps.request.outputs.resume_not_before }}
         run: |
           set -euo pipefail
+          if test -n "$RESUME_DEPLOYMENT_ID"; then
+            {
+              echo "deployment_id=$RESUME_DEPLOYMENT_ID"
+              echo "not_before=$RESUME_NOT_BEFORE"
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           deployment_not_before=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
           deployment_json=$(railway up "$UPLOAD_ROOT" --path-as-root --detach --json \
             --project "$RAILWAY_PROJECT_ID" \
@@ -782,6 +833,16 @@ jobs:
           tar -xzf "$archive" -C "$tool_dir" railway
           chmod 0755 "$tool_dir/railway"
           echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Load the signed controller helper for bounded Railway read retries
+        run: |
+          set -euo pipefail
+          helpers="$RUNNER_TEMP/cutover-controller"
+          mkdir -p "$helpers"
+          git show "$GITHUB_SHA:ops/railway/retry_read.py" >"$helpers/railway"
+          chmod 0755 "$helpers/railway"
+          echo "RAILWAY_REAL_BIN=$RUNNER_TEMP/railway-tools/railway" >>"$GITHUB_ENV"
+          echo "$helpers" >>"$GITHUB_PATH"
 
       - name: Recover and validate the exact candidate chain
         id: candidate

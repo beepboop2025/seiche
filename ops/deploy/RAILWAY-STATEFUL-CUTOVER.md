@@ -184,6 +184,24 @@ Dispatch `railway-stateful-cutover` on the exact reviewed main workflow SHA with
 - `authority_fence_base64=CANONICAL_FENCE_ONE_LINE_BASE64`
 - `confirmation=HETZNER_FROZEN_RAILWAY_READ_ONLY`
 
+If the deployment was submitted successfully but the workflow failed while
+reading its deployment status, preserve the running candidate. Read its exact
+canonical `/migration/request.json` through the authenticated operator channel.
+Dispatch `operation=candidate` again with the same source, snapshot, and fence,
+plus `candidate_request_base64`, the original `candidate_run_id`, and the exact
+`deployment_id`. Resume accepts only a completed main run whose sole failed step
+was the deployment read wait and whose source-validation and submission steps
+succeeded. It binds the original run attempt to the request ID and deployment
+log, verifies signed controller ancestry, and performs the full health,
+restart/reuse, origin, artifact, and attestation proof. It does not upload another
+image or change service variables. An accepted activation uses the successful
+resumed run ID and the same current workflow commit. A failure before deployment
+submission is not resumable this way.
+
+Railway reads retry transport failures at most three times, with a 90-second
+per-attempt timeout. Provider mutations, including restart and activation, are
+never repeated automatically after ambiguous results.
+
 The candidate job validates the supplied canonical fence bytes against their
 digest, proves the service, volume, sole Railway domain, PostgreSQL reference,
 closed final snapshot, exact source archive/bundle,
