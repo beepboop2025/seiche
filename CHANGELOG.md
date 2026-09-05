@@ -11,6 +11,33 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-09-05
+
+### Added
+
+- Added an exact-SHA, project-scoped Railway stateful control transport for
+  domainless shadows, read-only cutover candidates, writer activation, native
+  backup proof, locked off-site recovery export, and post-cutover monitoring.
+- Added a public agent-evidence route visualization that distinguishes evidence
+  discovery, policy evaluation, receipts, and broker-owned execution controls.
+
+### Fixed
+
+- Accepted the narrowly bounded FRED IORB scheduled-effective-date convention
+  without permitting arbitrary future evidence clocks; the prior collection
+  timestamp remains the evidence clock and all other future values fail closed.
+- Bound archive runtime identity to verified release receipts, aligned the
+  PostgreSQL client ABI, corrected shadow entrypoint dispatch, normalized empty
+  Railway domain wrappers, retried transient read-only status polls, and
+  required populated databases before shadow or candidate acceptance.
+
+### Security
+
+- Kept Hetzner as sole writer through three independently receipted shadows.
+  Railway activation requires an exact candidate receipt, a short-lived signed
+  grant, authenticated edge proof, recovery evidence, and an explicit host
+  authority acknowledgement; no payment or agent route gains order authority.
+
 ## [0.12.0] - 2026-09-02
 
 ### Added
@@ -183,7 +210,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/beepboop2025/seiche/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/beepboop2025/seiche/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/beepboop2025/seiche/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/beepboop2025/seiche/compare/v0.10.1...v0.11.0

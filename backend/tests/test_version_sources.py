@@ -2,7 +2,7 @@
 
 The MCP handshake, hosted registry listing, and build metadata describe the
 deployed server and must agree. The optional PyPI transport advertises the same
-0.12.0 distribution release and twelve-tool public surface so the release and
+0.12.1 distribution release and twelve-tool public surface so the release and
 immutable registry entry point at the same artifact.
 """
 
@@ -42,7 +42,7 @@ def test_hosted_version_sources_agree():
 
 
 def test_registry_stdio_package_matches_hosted_surface():
-    """The registry card pins the 0.12.0 / twelve-tool public surface."""
+    """The registry card pins the 0.12.1 / twelve-tool public surface."""
     server = _server_json()
     package = server["packages"][0]
     description = package["environmentVariables"][0]["description"]
@@ -50,14 +50,14 @@ def test_registry_stdio_package_matches_hosted_surface():
 
     assert package["registryType"] == "pypi"
     assert package["identifier"] == "seiche"
-    assert package["version"] == hosted == "0.12.0"
+    assert package["version"] == hosted == "0.12.1"
     assert package["transport"] == {"type": "stdio"}
     assert "twelve free public tools" in description
     assert "latest_article" in description
     assert "money_market_context" in description
     assert "world_markets_context" in description
     assert "trade_safety_risk_context" in description
-    assert "0.12.0" in description
+    assert "0.12.1" in description
 
 
 def test_pypi_readme_proves_the_official_mcp_registry_namespace():

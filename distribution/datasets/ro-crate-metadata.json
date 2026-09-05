@@ -15,7 +15,7 @@
       "version": "0.1.0-draft",
       "dateCreated": "2026-08-21",
       "datePublished": "2026-08-21",
-      "url": "https://github.com/beepboop2025/seiche/tree/v0.12.0/distribution/datasets",
+      "url": "https://github.com/beepboop2025/seiche/tree/v0.12.1/distribution/datasets",
       "license": {"@id": "https://www.financialresearch.gov/legal-notices/"},
       "creator": {"@id": "https://seiche.info/#organization"},
       "publisher": {"@id": "https://seiche.info/#organization"},

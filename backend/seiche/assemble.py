@@ -380,7 +380,7 @@ _build_generation = 0  # completed build/lock epochs; restores do not advance it
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.12.0"
+VERSION = "0.12.1"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 

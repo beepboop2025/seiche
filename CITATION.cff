@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use Seiche in research, please cite this software release."
 title: "Seiche: World-markets evidence terminal"
 type: software
-version: "0.12.0"
-date-released: 2026-09-02
+version: "0.12.1"
+date-released: 2026-09-05
 authors:
   - family-names: "Mrinal"
     alias: "beepboop2025"
@@ -22,9 +22,9 @@ keywords:
   - research software
 license: AGPL-3.0-or-later
 repository-code: "https://github.com/beepboop2025/seiche"
-repository-artifact: "https://pypi.org/project/seiche/0.12.0/"
+repository-artifact: "https://pypi.org/project/seiche/0.12.1/"
 url: "https://seiche.info"
 identifiers:
   - type: url
-    value: "https://github.com/beepboop2025/seiche/tree/v0.12.0"
+    value: "https://github.com/beepboop2025/seiche/tree/v0.12.1"
     description: "Immutable Git release tag"
