@@ -116,7 +116,7 @@ Actions artifact.
 
 Never put Railway, GitHub, Hetzner, off-site, or signing credentials in the
 stateful service. The edge token is an ingress secret, not signing authority.
-Phase 6 CI has no Railway SSH, SFTP, SCP, or volume-file capability: it submits
+Phase 6 runtime export jobs have no Railway SSH, SFTP, SCP, or volume-file capability: they submit
 signed commands over the exact HTTPS origin and reads canonical result
 envelopes from exact-deployment logs. The origin's lowercase no-port host must
 equal the runtime `RAILWAY_PUBLIC_DOMAIN`; the edge token is required on every
@@ -364,3 +364,23 @@ snapshot/restore, authority, delivery-idempotency, update-offset, native-backup,
 and monitoring contract for `/var/lib/seiche-bot`; follow
 `RAILWAY-TELEGRAM.md`. Until its activation receipt and first production
 monitor exist, do not claim the Seiche bot workload has moved to Railway.
+
+## Native PostgreSQL health probe authentication
+
+The native-backup admin and monitor environments additionally hold
+`RAILWAY_RECOVERY_PROBE_SSH_KEY`. Railway's PITR status command probes
+pgBackRest and `pg_stat_archiver` through SSH; an API project token alone
+cannot authenticate those probes. The protected jobs resolve and verify the
+PostgreSQL instance against the exact project, environment and service before
+installing a transport wrapper. It accepts only that target and the two
+checksum-bound read-only commands emitted by CLI 5.43.1. Host keys are pinned,
+interactive authentication and user SSH configuration are disabled, and no
+volume-file or arbitrary command transport is exposed by the wrapper.
+
+Railway registers SSH keys at account/workspace level, not per service. Keep
+this dedicated key only in the reviewed recovery environments and a protected
+operator recovery store; registration is broader than the wrapper's allowed
+target. Rotate or revoke it through the owning Railway account. It must never
+be installed in the stateful application or included in evidence artifacts.
+The final cutover and signed runtime export paths retain their HTTPS-only
+transport.
