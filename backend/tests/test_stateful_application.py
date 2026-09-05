@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import os
 from pathlib import Path
 import subprocess
+import traceback
 
 import pytest
 
@@ -348,14 +349,24 @@ def _runtime_fixture(transition, monkeypatch):
         app.canonical(parent["candidate"])
     )
     monkeypatch.setattr(app, "REQUEST_PATH", image / "request.json")
-    environment.update(
+    # Run the real environment builder and filesystem audits as the fixture owner.
+    monkeypatch.setattr(
+        cutover.candidate_environment,
+        "__kwdefaults__",
         {
-            "SEICHE_RELEASE_SHA": request["commit"],
-            "SEICHE_RAILWAY_APPLICATION_REQUEST_ID": request["request_id"],
-            "SEICHE_RAILWAY_CUTOVER_REQUEST_ID": request["request_id"],
-            "RAILWAY_DEPLOYMENT_ID": candidate["railway"]["deployment_id"],
-            "SEICHE_DATABASE_URL": "postgresql://test/" + request["parent"]["database"],
-        }
+            **cutover.candidate_environment.__kwdefaults__,
+            "runtime_uid": os.geteuid(),
+            "runtime_gid": os.getegid(),
+        },
+    )
+    environment["RAILWAY_DEPLOYMENT_ID"] = candidate["railway"]["deployment_id"]
+    environment = runtime.runtime_environment(
+        environment,
+        request,
+        parent,
+        migration._target_dsn(
+            "postgresql://test/postgres", request["parent"]["database"]
+        ),
     )
     activation = runtime.render_activation(
         request, candidate, grant, parent, migration._iso_now()
@@ -372,6 +383,66 @@ def _runtime_fixture(transition, monkeypatch):
         runtime.pointer_value(request, candidate, grant, "active"),
     )
     return platform, environment, activation
+
+
+@pytest.mark.parametrize("dsn_kind", ["uri", "target_uri", "target_keywords", "quoted"])
+def test_runtime_accepts_exact_database_in_real_runtime_environment(
+    transition, monkeypatch, dsn_kind
+):
+    _, environment, activation = _runtime_fixture(transition, monkeypatch)
+    _, _, request, _, _, _ = transition
+    name = request["parent"]["database"]
+    if dsn_kind == "uri":
+        dsn = f"postgresql://desk:p%40ss%20word@test/{name}?sslmode=require"
+    elif dsn_kind == "target_uri":
+        dsn = migration._target_dsn(
+            "postgresql://desk:p%40ss%20word@test/postgres?sslmode=require", name
+        )
+    elif dsn_kind == "target_keywords":
+        dsn = migration._target_dsn(
+            "host=test dbname=postgres user=desk password='quoted secret' sslmode=require",
+            name,
+        )
+    else:
+        dsn = f"host=test dbname='{name}' user=desk password='quote\\' and space'"
+    environment["SEICHE_DATABASE_URL"] = dsn
+    assert cutover.validate_activation_runtime(environment) == activation
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://test/other",
+        "host=test dbname=other password=sentinel-secret",
+        "postgresql://desk:sentinel-secret@test/{database}?dbname=other",
+        "host=test dbname={database} dbname=other",
+        "host=test user=desk password=sentinel-secret",
+        "postgresql://test/",
+        "",
+        None,
+        "host=test password='sentinel-secret",
+        "postgresql://desk:sentinel-secret@test/{database}?invalid_option=sentinel-secret",
+        "dbname={database}\x00 dbname=other",
+    ],
+)
+def test_runtime_rejects_wrong_missing_or_malformed_database_without_secret_leakage(
+    transition, monkeypatch, dsn
+):
+    _, environment, _ = _runtime_fixture(transition, monkeypatch)
+    _, _, request, _, _, _ = transition
+    if dsn is None:
+        environment.pop("SEICHE_DATABASE_URL")
+    else:
+        environment["SEICHE_DATABASE_URL"] = dsn.format(
+            database=request["parent"]["database"]
+        )
+    with pytest.raises(
+        app.ApplicationContractError, match="^application runtime database "
+    ) as error:
+        cutover.validate_activation_runtime(environment)
+    rendered = "".join(traceback.format_exception(error.value))
+    assert "sentinel-secret" not in rendered
+    assert len(str(error.value)) < 80
 
 
 def _fake_postgres_snapshot(path, _dsn):

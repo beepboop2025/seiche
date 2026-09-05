@@ -682,12 +682,19 @@ def _runtime_paths(environment: Mapping[str, str], request: Mapping[str, Any]) -
     }
     if any(environment.get(key) != str(path) for key, path in expected.items()):
         raise ApplicationContractError("application runtime data paths differ")
-    from urllib.parse import urlsplit
+    dsn = environment.get("SEICHE_DATABASE_URL", "")
+    if not isinstance(dsn, str) or len(dsn) > MAX_DOCUMENT_BYTES or "\x00" in dsn:
+        raise ApplicationContractError("application runtime database is invalid")
+    try:
+        from psycopg.conninfo import conninfo_to_dict
 
-    if (
-        urlsplit(environment.get("SEICHE_DATABASE_URL", "")).path
-        != "/" + request["parent"]["database"]
-    ):
+        database = conninfo_to_dict(dsn).get("dbname")
+    except Exception:
+        # libpq parser errors can contain connection text, including credentials.
+        raise ApplicationContractError(
+            "application runtime database is invalid"
+        ) from None
+    if database != request["parent"]["database"]:
         raise ApplicationContractError("application runtime database differs")
 
 
