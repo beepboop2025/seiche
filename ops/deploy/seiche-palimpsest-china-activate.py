@@ -1267,6 +1267,8 @@ def run(arguments: list[str]) -> int:
 
 
 def main() -> int:
+    # Root can write even beside 0444 modules; keep the sealed inventory exact.
+    sys.dont_write_bytecode = True
     os.umask(0o077)
     try:
         return run(sys.argv[1:])
