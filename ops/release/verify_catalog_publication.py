@@ -81,6 +81,20 @@ RELEASE_IDENTITY_PATHS = (
 )
 
 
+# Operational publication repair must never become an unsigned source bypass.
+# These existing files may be modified only by an explicitly labelled commit
+# signed by the externally pinned release signer. Application/package, catalog,
+# workflow and trust-root changes remain outside this narrow descendant class.
+PUBLICATION_CONTROLLER_PATHS = frozenset({
+    "ops/release/verify_catalog_publication.py",
+    "backend/tests/test_catalog_publication_gate.py",
+    "backend/tests/test_publish_scripts.py",
+    "backend/tests/test_railway_stateful_control.py",
+})
+PUBLICATION_CONTROLLER_AUTHOR = b"beepboop2025@users.noreply.github.com"
+PUBLICATION_CONTROLLER_SUBJECT = b"publication-controller: "
+
+
 class PublicationGateError(RuntimeError):
     """The catalog cannot yet be published truthfully."""
 
@@ -683,7 +697,8 @@ def verify_market_corpus_release(
                 "SHA or the signed Seiche release"
             )
         _verify_generated_content_descendants(
-            root, release=release_target, head=expected_sha
+            root, release=release_target, head=expected_sha,
+            signer_fingerprint=signer_fingerprint,
         )
     receipt_catalog = _read_tagged_json(root, receipt_tag, AI_CATALOG_PATH)
     _verify_market_corpus_tagged_identity(catalog, receipt_catalog)
@@ -691,9 +706,9 @@ def verify_market_corpus_release(
 
 
 def _verify_generated_content_descendants(
-    root: Path, *, release: str, head: str
+    root: Path, *, release: str, head: str, signer_fingerprint: str | None = None
 ) -> None:
-    """Admit only the daily/weekly desk lane after an immutable release receipt."""
+    """Admit strict desk content and signed, scoped publication repairs."""
     if (
         COMMIT_RE.fullmatch(release) is None
         or COMMIT_RE.fullmatch(head) is None
@@ -721,10 +736,28 @@ def _verify_generated_content_descendants(
             .stdout.rstrip(b"\n")
             .split(b"\0")
         )
-        if (
-            len(identity) != 3
-            or identity[0] != previous.encode("ascii")
-            or identity[1] != b"desk@seiche.info"
+        if len(identity) != 3 or identity[0] != previous.encode("ascii"):
+            raise PublicationGateError(
+                "generated-content commit is not a single-parent release descendant"
+            )
+        controller = (
+            identity[1] == PUBLICATION_CONTROLLER_AUTHOR
+            and identity[2].startswith(PUBLICATION_CONTROLLER_SUBJECT)
+        )
+        if controller:
+            if signer_fingerprint is None:
+                raise PublicationGateError(
+                    "generated-content controller commit requires a pinned signer"
+                )
+            git_config = _signing_git_config(root, signer_fingerprint)
+            if _run_git(
+                root, "-c", git_config, "verify-commit", commit, check=False
+            ).returncode:
+                raise PublicationGateError(
+                    "generated-content controller commit has an invalid signature"
+                )
+        elif (
+            identity[1] != b"desk@seiche.info"
             or not identity[2].startswith((b"dispatch: ", b"week ahead: "))
         ):
             raise PublicationGateError(
@@ -748,6 +781,17 @@ def _verify_generated_content_descendants(
                 "generated-content commit has no verifiable changes"
             )
         for metadata, path in zip(changes[:-1:2], changes[1:-1:2]):
+            if controller:
+                if (
+                    re.fullmatch(
+                        rb":100644 100644 [0-9a-f]{40} [0-9a-f]{40} M", metadata
+                    ) is None
+                    or path not in {name.encode("ascii") for name in PUBLICATION_CONTROLLER_PATHS}
+                ):
+                    raise PublicationGateError(
+                        "generated-content controller commit changes a forbidden path or file mode"
+                    )
+                continue
             if (
                 re.fullmatch(
                     rb":(?:100644 100644 [0-9a-f]{40} [0-9a-f]{40} M"
@@ -1155,6 +1199,11 @@ def main(argv: list[str] | None = None) -> int:
     receipt.update(
         {
             "releaseTag": tag,
+            # Publication HEAD may include signed controller fixes and strict
+            # generated desk content; the immutable application tag stays fixed.
+            "releaseRevision": _run_git(
+                root, "rev-parse", f"{tag}^{{commit}}"
+            ).stdout.strip(),
             "revision": args.expected_sha,
             "independentCatalogReleases": [
                 {"identifier": MARKET_CORPUS_ENTRY, "tag": corpus_tag, **corpus_receipt}

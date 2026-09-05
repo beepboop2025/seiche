@@ -674,6 +674,170 @@ def test_generated_content_rejects_merge_and_empty_commits(content_repo):
         gate._verify_generated_content_descendants(root, release=empty, head=head)
 
 
+
+def _signed_controller_fixture(root):
+    for relative in gate.PUBLICATION_CONTROLLER_PATHS:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# initial publication support\n")
+    _content_git(root, "add", ".")
+    _content_git(root, "commit", "-q", "-m", "publication support fixture")
+    return _sign_content_release(root)
+
+
+def _controller_commit(root, changes, *, sign=True, author=None, subject=None):
+    head = _content_commit(
+        root, changes,
+        author=author or gate.PUBLICATION_CONTROLLER_AUTHOR.decode(),
+        subject=subject or "publication-controller: repair publication contracts",
+    )
+    if sign:
+        _content_git(root, "commit", "-q", "--amend", "--no-edit", "--allow-empty", "-S")
+        head = _content_git(root, "rev-parse", "HEAD")
+    return head
+
+
+def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
+    content_repo, monkeypatch, capsys
+):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    controller = _controller_commit(root, {
+        relative: "# reviewed publication repair\n"
+        for relative in gate.PUBLICATION_CONTROLLER_PATHS
+    })
+    for head in (
+        controller,
+        _content_commit(root, {"frontend/public/articles/cash.md": "daily"}),
+        _content_commit(
+            root, {"frontend/public/dispatches/week.md": "weekly"},
+            subject="week ahead: funding calendar",
+        ),
+    ):
+        # Check the real signed-release and corpus gates at each publication head.
+        current = _content_git(root, "rev-parse", "HEAD")
+        _content_git(root, "checkout", "-q", "--detach", head)
+        assert gate.verify_signed_release(
+            root, version="0.12.3", expected_sha=head, signer_fingerprint=fingerprint
+        ) == "v0.12.3"
+        receipt, _ = gate.verify_market_corpus_release(
+            root, expected_sha=head, signer_fingerprint=fingerprint
+        )
+        assert _content_git(root, "rev-parse", f"{receipt}^{{commit}}") == release
+        assert _content_git(root, "rev-parse", "v0.12.3^{commit}") == release
+        _content_git(root, "checkout", "-q", "--detach", current)
+    # Exercise the real CLI identity output; public network receipt collection
+    # is a separate concern and is intentionally stubbed in this offline test.
+    monkeypatch.setattr(gate, "verify_public_receipts", lambda _version: {})
+    monkeypatch.setattr(gate, "verify_market_corpus_receipts", lambda _entry: {})
+    assert gate.main([
+        "--root", str(root), "--expected-sha", head,
+        "--signer-fingerprint", fingerprint,
+    ]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["revision"] == head
+    assert report["releaseRevision"] == release
+    assert report["releaseRevision"] != report["revision"]
+    assert report["releaseTag"] == "v0.12.3"
+
+
+@pytest.mark.parametrize("failure", ["unsigned", "wrong-key", "missing-pin"])
+def test_controller_descendants_require_the_pinned_signature(content_repo, failure):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    if failure == "wrong-key":
+        key = root.parent / "untrusted-controller-key"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+            check=True,
+        )
+        _content_git(root, "config", "user.signingkey", str(key))
+    head = _controller_commit(
+        root, {"backend/tests/test_publish_scripts.py": "# repaired\n"},
+        sign=failure != "unsigned",
+    )
+    with pytest.raises(gate.PublicationGateError, match="signature|pinned signer"):
+        gate._verify_generated_content_descendants(
+            root, release=release, head=head,
+            signer_fingerprint=None if failure == "missing-pin" else fingerprint,
+        )
+
+
+@pytest.mark.parametrize("path", [
+    ".github/workflows/publish.yml",
+    "backend/seiche/assemble.py",
+    "backend/tests/unreviewed_test.py",
+    "ops/release/unreviewed.py",
+    "frontend/public/articles/mixed.md",
+])
+def test_signed_controller_rejects_every_unlisted_path(content_repo, path):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    head = _controller_commit(root, {
+        "backend/tests/test_publish_scripts.py": "# repair\n", path: "# forbidden\n",
+    })
+    with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
+        gate._verify_generated_content_descendants(
+            root, release=release, head=head, signer_fingerprint=fingerprint
+        )
+
+
+@pytest.mark.parametrize("failure", ["wrong-author", "wrong-subject", "empty"])
+def test_signed_controller_requires_explicit_identity_and_changes(content_repo, failure):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    head = _controller_commit(
+        root, {} if failure == "empty" else {
+            "backend/tests/test_publish_scripts.py": "# repair\n",
+        },
+        author="intruder@example.com" if failure == "wrong-author" else None,
+        subject="fix: unrelated" if failure == "wrong-subject" else None,
+    )
+    with pytest.raises(gate.PublicationGateError, match="generated-content commit"):
+        gate._verify_generated_content_descendants(
+            root, release=release, head=head, signer_fingerprint=fingerprint
+        )
+
+
+@pytest.mark.parametrize("failure", ["executable", "symlink", "deletion"])
+def test_signed_controller_only_modifies_existing_regular_files(content_repo, failure):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    path = root / "backend/tests/test_publish_scripts.py"
+    if failure == "executable":
+        path.chmod(0o755)
+    else:
+        path.unlink()
+        if failure == "symlink":
+            path.symlink_to("../../server.json")
+    head = _controller_commit(root, {})
+    with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
+        gate._verify_generated_content_descendants(
+            root, release=release, head=head, signer_fingerprint=fingerprint
+        )
+
+
+def test_signed_controller_merge_and_reverted_code_drift_remain_rejected(content_repo):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    original = (root / "backend/seiche/assemble.py").read_text()
+    _controller_commit(root, {"backend/seiche/assemble.py": "# drift\n"})
+    reverted = _controller_commit(root, {"backend/seiche/assemble.py": original})
+    with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
+        gate._verify_generated_content_descendants(
+            root, release=release, head=reverted, signer_fingerprint=fingerprint
+        )
+    _content_git(root, "checkout", "-q", "--detach", release)
+    left = _controller_commit(root, {"backend/tests/test_publish_scripts.py": "# left\n"})
+    _content_git(root, "checkout", "-q", "--detach", release)
+    _controller_commit(root, {"backend/tests/test_railway_stateful_control.py": "# right\n"})
+    _content_git(root, "merge", "--no-ff", "-q", "-S", "-m", "publication-controller: merge", left)
+    head = _content_git(root, "rev-parse", "HEAD")
+    with pytest.raises(gate.PublicationGateError, match="single-parent"):
+        gate._verify_generated_content_descendants(
+            root, release=release, head=head, signer_fingerprint=fingerprint
+        )
+
 def test_release_identity_rejects_an_unknown_unsigned_catalog_entry(tmp_path):
     catalog_path = tmp_path / gate.AI_CATALOG_PATH
     catalog_path.parent.mkdir(parents=True)

@@ -134,15 +134,17 @@ def _install_test_signers(
 
 
 @pytest.mark.parametrize(
-    ("workflow", "operation", "mode"),
+    ("workflow", "operation", "mode", "expected_program_count"),
     [
-        ("railway-stateful-cutover.yml", control.ACTIVATION_OPERATION, "cutover_candidate"),
-        ("railway-stateful-recovery.yml", control.RECOVERY_EXPORT_OPERATION, "production"),
-        ("railway-stateful-recovery.yml", control.OFFSITE_ACKNOWLEDGMENT_OPERATION, "production"),
+        ("railway-stateful-cutover.yml", control.ACTIVATION_OPERATION, "cutover_candidate", 1),
+        ("railway-stateful-recovery.yml", control.RECOVERY_EXPORT_OPERATION, "production", 1),
+        # Normal export and immutable-offsite continuation both sign acknowledgments.
+        ("railway-stateful-recovery.yml", control.OFFSITE_ACKNOWLEDGMENT_OPERATION, "production", 2),
     ],
 )
 def test_actual_workflow_signing_program_validates_in_the_runtime_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workflow: str, operation: str, mode: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workflow: str, operation: str,
+    mode: str, expected_program_count: int,
 ) -> None:
     text = (ROOT / ".github/workflows" / workflow).read_text()
     constant = {
@@ -156,7 +158,7 @@ def test_actual_workflow_signing_program_validates_in_the_runtime_mode(
         if "control.validate_command(body, environment)" in match.group(1)
         and f"control.{constant}," in match.group(1)
     ]
-    assert len(programs) == 1
+    assert len(programs) == expected_program_count
     now = datetime.now(UTC).replace(microsecond=0)
     private = Ed25519PrivateKey.generate()
     public = _public_key(private)
@@ -199,12 +201,15 @@ def test_actual_workflow_signing_program_validates_in_the_runtime_mode(
         "NONCE": "9" * 64,
     }.items():
         monkeypatch.setenv(name, value)
-    exec(compile(programs[0], workflow, "exec"), {})
-    body = (tmp_path / "command.json").read_bytes()
-    assert control.validate_command(body, _environment(mode), now=now).operation == operation
-    wrong_mode = "production" if mode == "cutover_candidate" else "cutover_candidate"
-    with pytest.raises(control.ControlContractError, match="unavailable in this mode"):
-        control.validate_command(body, _environment(wrong_mode), now=now)
+    for index, program in enumerate(programs):
+        command_path = tmp_path / "command.json"
+        command_path.unlink(missing_ok=True)
+        exec(compile(program, f"{workflow}:signer-{index + 1}", "exec"), {})
+        body = command_path.read_bytes()
+        assert control.validate_command(body, _environment(mode), now=now).operation == operation
+        wrong_mode = "production" if mode == "cutover_candidate" else "cutover_candidate"
+        with pytest.raises(control.ControlContractError, match="unavailable in this mode"):
+            control.validate_command(body, _environment(wrong_mode), now=now)
 
 
 def test_release_registry_pins_operation_separated_ed25519_keys() -> None:

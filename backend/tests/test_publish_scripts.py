@@ -149,11 +149,11 @@ def test_static_publish_reuses_only_an_exact_sha_gate():
     restore_block = workflow[restored:verified]
 
     assert restored < verified < tested < exported
-    assert "seiche-publish-gate-v1-${{ runner.os }}-py312-${{ github.sha }}" in workflow
+    assert "seiche-publish-gate-v1-${{ runner.os }}-py312-${{ env.PUBLICATION_SOURCE_SHA }}" in workflow
     assert "restore-keys:" not in restore_block
     assert "[ \"$CACHE_HIT\" = \"true\" ]" in workflow
-    assert "= \"$GITHUB_SHA\"" in workflow
+    assert "= \"$PUBLICATION_SOURCE_SHA\"" in workflow
     assert "if: steps.publish-gate.outputs.run-full-suite == 'true'" in workflow
-    assert 'printf \'%s\\n\' "$GITHUB_SHA"' in workflow[tested:exported]
+    assert 'printf \'%s\\n\' "$PUBLICATION_SOURCE_SHA"' in workflow[tested:exported]
     assert "-o faulthandler_timeout=300" in workflow[tested:exported]
     assert "--pystack-threshold" not in workflow[tested:exported]
