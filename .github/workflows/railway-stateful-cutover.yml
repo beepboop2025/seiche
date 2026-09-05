@@ -677,12 +677,13 @@ jobs:
             railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --deployment --json --since "$DEPLOYMENT_NOT_BEFORE" \
+              --deployment --json --since "$restart_not_before" \
               --filter 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' >"$reused_logs" || true
-            test "$(grep -c 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' "$reused_logs" || true)" -ge 2 && break
+            grep -q 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' "$reused_logs" && break
             sleep 5
           done
           PYTHONPATH=backend LOG_PATH="$reused_logs" RECEIPT_PATH="$receipt" \
+            CREATED_LOG_PATH="$log_path" \
             REQUEST_ID="$REQUEST_ID" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
             CREATED_REPLICA_ID="$CREATED_REPLICA_ID" \
             REUSED_REPLICA_ID="$reused_replica_id" NOT_BEFORE="$DEPLOYMENT_NOT_BEFORE" \
@@ -690,22 +691,26 @@ jobs:
             python3 -B - <<'PY'
           import os
           from pathlib import Path
-          from seiche.stateful_control import extract_log_results
+          from seiche.stateful_control import extract_log_result
           from seiche.stateful_migration import rfc3339_utc_nanoseconds
 
-          results = extract_log_results(
-              Path(os.environ["LOG_PATH"]).read_bytes(),
-              expected_kind="candidate",
-              expected_request_id=os.environ["REQUEST_ID"],
-              expected_commit=os.environ["SOURCE_SHA"],
-              expected_deployment_id=os.environ["DEPLOYMENT_ID"],
-              expected_replicas={
-                  "created": os.environ["CREATED_REPLICA_ID"],
-                  "reused": os.environ["REUSED_REPLICA_ID"],
-              },
-              not_before=os.environ["NOT_BEFORE"],
-          )
-          if results["created"].evidence_body != Path(os.environ["RECEIPT_PATH"]).read_bytes():
+          results = {}
+          for lifecycle, path, replica, since in (
+              ("created", "CREATED_LOG_PATH", "CREATED_REPLICA_ID", "NOT_BEFORE"),
+              ("reused", "LOG_PATH", "REUSED_REPLICA_ID", "RESTART_NOT_BEFORE"),
+          ):
+              results[lifecycle] = extract_log_result(
+                  Path(os.environ[path]).read_bytes(),
+                  expected_kind="candidate",
+                  expected_lifecycle=lifecycle,
+                  expected_request_id=os.environ["REQUEST_ID"],
+                  expected_commit=os.environ["SOURCE_SHA"],
+                  expected_deployment_id=os.environ["DEPLOYMENT_ID"],
+                  expected_replica_id=os.environ[replica],
+                  not_before=os.environ[since],
+              )
+          accepted = Path(os.environ["RECEIPT_PATH"]).read_bytes()
+          if any(result.evidence_body != accepted for result in results.values()):
               raise SystemExit("candidate restart changed the accepted receipt")
           boundary = rfc3339_utc_nanoseconds(
               os.environ["RESTART_NOT_BEFORE"], label="candidate restart boundary",

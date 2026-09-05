@@ -288,6 +288,7 @@ def test_restart_proof_requires_new_runtime_even_when_old_log_is_delayed(
     rows = []
     for lifecycle, replica, started, logged in (
         ("created", created, "2026-09-05T03:00:00Z", "2026-09-05T03:01:00Z"),
+        ("reused", created, "2026-09-05T03:02:00Z", "2026-09-05T03:03:00Z"),
         (
             "reused",
             reused,
@@ -314,7 +315,11 @@ def test_restart_proof_requires_new_runtime_even_when_old_log_is_delayed(
                 }
             )
         )
-    logs.write_text("\n".join(rows) + "\n")
+    created_logs = tmp_path / "created.ndjson"
+    created_logs.write_text("\n".join(rows[:2]) + "\n")
+    # A provider may return an old row despite --since; the local boundary
+    # still excludes it, including when this restart changes the replica.
+    logs.write_text("\n".join(rows[1:]) + "\n")
     for key, value in {
         "SOURCE_SHA": commit,
         "REQUEST_ID": request,
@@ -324,12 +329,16 @@ def test_restart_proof_requires_new_runtime_even_when_old_log_is_delayed(
         "NOT_BEFORE": "2026-09-05T02:59:00Z",
         "RESTART_NOT_BEFORE": "2026-09-05T03:05:00Z",
         "LOG_PATH": str(logs),
+        "CREATED_LOG_PATH": str(created_logs),
         "RECEIPT_PATH": str(receipt),
     }.items():
         monkeypatch.setenv(key, value)
     script = _restart_script('PYTHONPATH=backend LOG_PATH="$reused_logs"')
     if fresh_runtime:
         exec(compile(script, str(WORKFLOW), "exec"), {})
+        logs.write_text(rows[1] + "\n")
+        with pytest.raises(control.ControlContractError, match="incomplete"):
+            exec(compile(script, str(WORKFLOW), "exec"), {})
     else:
         with pytest.raises(SystemExit, match="fresh restart"):
             exec(compile(script, str(WORKFLOW), "exec"), {})
