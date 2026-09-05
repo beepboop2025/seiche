@@ -15,6 +15,8 @@ import subprocess
 REPOSITORY = "beepboop2025/seiche"
 WORKFLOW = ".github/workflows/railway-stateful-cutover.yml"
 WAIT_STEP = "Wait for the exact candidate deployment"
+RUNTIME_STEP = "Prove the exact candidate runtime"
+RECEIPT_STEP = "Retrieve and validate the immutable candidate receipt"
 REQUIRED_STEPS = (
     "Authenticate the signed application source independently of the workflow",
     "Prove the fenced source and isolated Railway target",
@@ -94,8 +96,13 @@ def validate_binding(
         if len(selected) != 1 or selected[0].get("conclusion") != "success":
             raise ValueError("source candidate was not successfully submitted")
     failed = [s for s in steps if s.get("conclusion") == "failure"]
-    if len(failed) != 1 or failed[0].get("name") != WAIT_STEP:
-        raise ValueError("resume is limited to a failed deployment read wait")
+    if len(failed) != 1 or failed[0].get("name") not in {WAIT_STEP, RECEIPT_STEP}:
+        raise ValueError("resume is limited to post-submission candidate proof")
+    if failed[0]["name"] == RECEIPT_STEP:
+        for name in (WAIT_STEP, RUNTIME_STEP):
+            selected = [s for s in steps if s.get("name") == name]
+            if len(selected) != 1 or selected[0].get("conclusion") != "success":
+                raise ValueError("receipt resume requires successful runtime proof")
     clean = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", logs)
     observed = re.findall(
         r"(?m)^restore-candidate\tWait for the exact candidate deployment\t"

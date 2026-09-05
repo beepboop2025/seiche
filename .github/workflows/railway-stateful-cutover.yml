@@ -723,13 +723,30 @@ jobs:
           ):
               raise SystemExit("candidate reuse does not prove a fresh restart")
           PY
-          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 30 \
-            --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
-            --dump-header "$EVIDENCE_ROOT/origin.headers" \
-            --output "$EVIDENCE_ROOT/origin.json" --write-out '%{http_code}' \
-            "$RAILWAY_ORIGIN/api/health")
-          test "$status" = 200
+          # A running replica and its reuse receipt can precede API readiness.
+          # Retry reads only; this does not issue another restart or deployment.
+          origin_deadline=$((SECONDS + 180))
+          status=000
+          while [ "$SECONDS" -lt "$origin_deadline" ]; do
+            status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 5 --max-time 10 \
+              --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+              --dump-header "$EVIDENCE_ROOT/origin.headers" \
+              --output "$EVIDENCE_ROOT/origin.json" --write-out '%{http_code}' \
+              "$RAILWAY_ORIGIN/api/health") || status=000
+            [ "$status" = 200 ] && break
+            case "$status" in
+              000|502|503|504)
+                printf 'Candidate origin is not ready (HTTP %s); retrying read\n' "$status"
+                ;;
+              *) printf 'Candidate origin returned unexpected HTTP %s\n' "$status" >&2; exit 1 ;;
+            esac
+            sleep 3
+          done
+          if [ "$status" != 200 ]; then
+            printf 'Candidate origin readiness deadline exceeded (HTTP %s)\n' "$status" >&2
+            exit 1
+          fi
           HEADERS="$EVIDENCE_ROOT/origin.headers" DEPLOYMENT="$DEPLOYMENT_ID" \
             TARGET="$SOURCE_SHA" python3 -I -S - <<'PY'
           import os

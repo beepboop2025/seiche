@@ -80,6 +80,36 @@ def test_resume_binds_original_run_request_and_deployment():
     assert check(fixture()) == "2026-09-05T03:00:00Z"
 
 
+def receipt_failure_fixture():
+    values = fixture()
+    steps = values[2]["jobs"][0]["steps"]
+    steps[-1]["conclusion"] = "success"
+    steps.extend([
+        {"name": RESUME["RUNTIME_STEP"], "conclusion": "success"},
+        {"name": RESUME["RECEIPT_STEP"], "conclusion": "failure"},
+    ])
+    return values
+
+
+def test_resume_receipt_failure_preserves_original_request_and_deployment():
+    assert check(receipt_failure_fixture()) == "2026-09-05T03:00:00Z"
+    values = receipt_failure_fixture()
+    values[4]["id"] = "22222222-2222-4222-8222-222222222222"
+    with pytest.raises(ValueError, match="differs from original job log"):
+        check(values)
+
+
+@pytest.mark.parametrize("name", [RESUME["WAIT_STEP"], RESUME["RUNTIME_STEP"]])
+@pytest.mark.parametrize("conclusion", ["skipped", "failure", "cancelled"])
+def test_receipt_resume_requires_all_prior_runtime_proofs(name, conclusion):
+    values = receipt_failure_fixture()
+    for step in values[2]["jobs"][0]["steps"]:
+        if step["name"] == name:
+            step["conclusion"] = conclusion
+    with pytest.raises(ValueError):
+        check(values)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

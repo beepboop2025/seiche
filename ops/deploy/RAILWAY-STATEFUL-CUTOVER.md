@@ -185,13 +185,16 @@ Dispatch `railway-stateful-cutover` on the exact reviewed main workflow SHA with
 - `confirmation=HETZNER_FROZEN_RAILWAY_READ_ONLY`
 
 If the deployment was submitted successfully but the workflow failed while
-reading its deployment status, preserve the running candidate. Read its exact
+reading its deployment status or proving the immutable receipt after a
+successful runtime check, preserve the running candidate. Read its exact
 canonical `/migration/request.json` through the authenticated operator channel.
 Dispatch `operation=candidate` again with the same source, snapshot, and fence,
 plus `candidate_request_base64`, the original `candidate_run_id`, and the exact
 `deployment_id`. Resume accepts only a completed main run whose sole failed step
-was the deployment read wait and whose source-validation and submission steps
-succeeded. It binds the original run attempt to the request ID and deployment
+was the deployment read wait or immutable-receipt proof and whose source-validation
+and submission steps succeeded. Receipt-proof resumes additionally require both
+the deployment wait and runtime check to have succeeded. It binds the original run
+attempt to the request ID and deployment
 log, verifies signed controller ancestry, and performs the full health,
 restart/reuse, origin, artifact, and attestation proof. It does not upload another
 image or change service variables. An accepted activation uses the successful
