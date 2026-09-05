@@ -230,7 +230,12 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    `distribution/submissions.csv`; keep a surface `prepared` or `pending` until
    its own checks above pass.
 
-8. **Publish and submit the OpenBB extension.** Configure the PyPI pending or
+8. **Verify the independently published OpenBB extension.** Version `0.1.0`
+   is already published from Seiche `v0.12.1` with a
+   [successful verification receipt](https://github.com/beepboop2025/seiche/actions/runs/33942222780).
+   Do not dispatch another publication of that immutable version for `v0.12.2`.
+   The following records the original publication procedure; a future OpenBB
+   update requires its own new version. Configure the PyPI pending or
    trusted publisher for project `openbb-seiche`, workflow
    `publish-openbb.yml`, and environment `pypi-openbb`. Invoke the workflow
    explicitly with both independently versioned identities. Its unprivileged
@@ -241,8 +246,8 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    ```bash
    gh workflow run publish-openbb.yml \
      --repo beepboop2025/seiche \
-     --ref v0.12.2 \
-     -f release_tag=v0.12.2 \
+     --ref v0.12.1 \
+     -f release_tag=v0.12.1 \
      -f openbb_version=0.1.0
    ```
    After the immutable PyPI page and clean-install receipt are public, use

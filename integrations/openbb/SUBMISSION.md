@@ -1,8 +1,12 @@
 # OpenBB publication and listing packet
 
 `openbb-seiche` is an independently versioned OpenBB provider and router. The
-package is ready for PyPI trusted publication, but neither a PyPI page nor an
-OpenBB ecosystem listing is claimed until its public receipt exists.
+[0.1.0 package is published on PyPI](https://pypi.org/project/openbb-seiche/0.1.0/)
+from the signed Seiche `v0.12.1` tag. The
+[trusted publication and clean-install verification](https://github.com/beepboop2025/seiche/actions/runs/33942222780)
+succeeded on 5 September 2026. An OpenBB ecosystem listing remains unclaimed
+until its separate review and public entry are verified. Do not republish this
+immutable OpenBB version when the independently versioned Seiche runtime changes.
 
 ## Publication gate
 
@@ -25,8 +29,8 @@ not configured, leave the ledger at `prepared` and restore the OIDC path.
 ```bash
 gh workflow run publish-openbb.yml \
   --repo beepboop2025/seiche \
-  --ref v0.12.2 \
-  -f release_tag=v0.12.2 \
+  --ref v0.12.1 \
+  -f release_tag=v0.12.1 \
   -f openbb_version=0.1.0
 ```
 
