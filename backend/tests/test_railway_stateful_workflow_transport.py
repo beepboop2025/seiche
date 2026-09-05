@@ -40,13 +40,14 @@ def test_phase_five_and_six_have_no_native_file_or_shell_transport() -> None:
 def test_detached_checkout_bundles_advertise_the_exact_head() -> None:
     for path in (SHADOW, CUTOVER, TELEGRAM):
         text = _workflow(path)
-        assert 'test "$(git rev-parse \'HEAD^{commit}\')" = "$GITHUB_SHA"' in text
+        source_var = "SOURCE_SHA" if path == CUTOVER else "GITHUB_SHA"
+        assert f'test "$(git rev-parse \'HEAD^{{commit}}\')" = "${source_var}"' in text
         assert 'git bundle create "$UPLOAD_ROOT/source.bundle" HEAD' in text
         assert (
             'git bundle create "$UPLOAD_ROOT/source.bundle" "$GITHUB_SHA"' not in text
         )
         assert 'git bundle list-heads "$UPLOAD_ROOT/source.bundle"' in text
-        assert '"$GITHUB_SHA HEAD"' in text
+        assert f'"${source_var} HEAD"' in text
 
 
 def test_activation_uses_attested_input_and_signed_origin_command() -> None:

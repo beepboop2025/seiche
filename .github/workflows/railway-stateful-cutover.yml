@@ -10,6 +10,10 @@ on:
         options:
           - candidate
           - activate
+      source_commit:
+        description: "Exact signed release commit already sealed in the authority fence (defaults to workflow commit)"
+        required: false
+        type: string
       snapshot_id:
         description: "Candidate only: final frozen snapshot, for example 20260823T010203Z"
         required: false
@@ -43,6 +47,11 @@ on:
         required: true
         type: string
 
+# The workflow revision is the attested control identity. The application
+# revision remains bound to the frozen snapshot, shadow receipt, and grant.
+env:
+  SOURCE_SHA: ${{ inputs.source_commit || github.sha }}
+
 permissions:
   contents: read
 
@@ -67,6 +76,25 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Authenticate the signed application source independently of the workflow
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          signer_file="$GITHUB_WORKSPACE/ops/deploy/release-allowed-signers"
+          git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signer_file" \
+            verify-commit "$GITHUB_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" "$GITHUB_SHA"
+          git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signer_file" \
+            verify-commit "$SOURCE_SHA"
+          git checkout --detach "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          {
+            echo "- Reviewed workflow commit: \`$GITHUB_SHA\`"
+            echo "- Signed application commit: \`$SOURCE_SHA\`"
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Install the checksum-pinned Railway CLI
         run: |
@@ -106,7 +134,7 @@ jobs:
           test "$GITHUB_REPOSITORY" = beepboop2025/seiche
           test "$GITHUB_REF" = refs/heads/main
           test "$CONFIRMATION" = HETZNER_FROZEN_RAILWAY_READ_ONLY
-          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$SNAPSHOT_ID" =~ ^20[0-9]{6}T[0-9]{6}Z$ ]]
           [[ "$FENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
@@ -126,7 +154,7 @@ jobs:
           ) is None:
               raise SystemExit("Railway edge token is invalid")
           PY
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test -z "$(git status --short --untracked-files=no)"
           mkdir -p "$CONTROL_ROOT/evidence"
           chmod 0700 "$CONTROL_ROOT" "$CONTROL_ROOT/evidence"
@@ -203,7 +231,7 @@ jobs:
             "$CONTROL_ROOT/evidence/AUTHORITY-FENCE.json" \
             >"$CONTROL_ROOT/evidence/fence.sha256"
           test "$(cat "$CONTROL_ROOT/evidence/fence.sha256")" = "$FENCE_SHA256"
-          SNAPSHOT_ID="$SNAPSHOT_ID" TARGET="$GITHUB_SHA" \
+          SNAPSHOT_ID="$SNAPSHOT_ID" TARGET="$SOURCE_SHA" \
             FENCE_SHA256="$FENCE_SHA256" EVIDENCE="$CONTROL_ROOT/evidence" \
             OUTPUT="$GITHUB_OUTPUT" python3 -I -S - <<'PY'
           import json
@@ -233,7 +261,7 @@ jobs:
               for name, value in outputs.items():
                   stream.write(f"{name}={value}\n")
           PY
-          test "$(git rev-parse 'HEAD^{tree}')" = \
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}')" = \
             "$(grep '^tree=' "$GITHUB_OUTPUT" | cut -d= -f2)"
           railway variable set \
             "SEICHE_RAILWAY_VOLUME_ID=$RAILWAY_VOLUME_ID" \
@@ -266,21 +294,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$UPLOAD_ROOT"
-          test "$(git rev-parse 'HEAD^{commit}')" = "$GITHUB_SHA"
-          git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
+          test "$(git rev-parse 'HEAD^{commit}')" = "$SOURCE_SHA"
+          git archive --format=tar "$SOURCE_SHA" >"$UPLOAD_ROOT/source.tar"
           git bundle create "$UPLOAD_ROOT/source.bundle" HEAD
           git bundle verify "$UPLOAD_ROOT/source.bundle"
           test "$(git bundle list-heads "$UPLOAD_ROOT/source.bundle")" = \
-            "$GITHUB_SHA HEAD"
+            "$SOURCE_SHA HEAD"
           source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
           source_bundle_sha256=$(sha256sum "$UPLOAD_ROOT/source.bundle" | awk '{print $1}')
           request_id=$(printf '%s\n' \
-            "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_SHA:$SNAPSHOT_ID:cutover-candidate" |
+            "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$SOURCE_SHA:$SNAPSHOT_ID:cutover-candidate" |
             sha256sum | awk '{print $1}')
           requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           cp ops/railway/Dockerfile.stateful "$UPLOAD_ROOT/Dockerfile"
           cp ops/railway/railway.cutover.json "$UPLOAD_ROOT/railway.json"
-          TARGET="$GITHUB_SHA" SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
+          TARGET="$SOURCE_SHA" SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
             SOURCE_BUNDLE_SHA256="$source_bundle_sha256" REQUEST_ID="$request_id" \
             REQUESTED_AT="$requested_at" REQUEST_PATH="$UPLOAD_ROOT/request.json" \
             python3 -I -S - <<'PY'
@@ -341,7 +369,7 @@ jobs:
           test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 5
           {
             echo "request_id=$request_id"
-            echo "target=$GITHUB_SHA"
+            echo "target=$SOURCE_SHA"
             echo "upload_root=$UPLOAD_ROOT"
           } >>"$GITHUB_OUTPUT"
 
@@ -360,7 +388,7 @@ jobs:
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
-            --message "seiche-cutover-candidate:$GITHUB_SHA:${{ inputs.snapshot_id }}:$GITHUB_RUN_ID")
+            --message "seiche-cutover-candidate:$SOURCE_SHA:${{ inputs.snapshot_id }}:$GITHUB_RUN_ID")
           deployment_id=$(DEPLOYMENT_JSON="$deployment_json" python3 -I -S - <<'PY'
           import json
           import os
@@ -523,7 +551,7 @@ jobs:
               expected_kind="candidate",
               expected_lifecycle="created",
               expected_request_id=os.environ["REQUEST_ID"],
-              expected_commit=os.environ["GITHUB_SHA"],
+              expected_commit=os.environ["SOURCE_SHA"],
               expected_deployment_id=os.environ["DEPLOYMENT_ID"],
               expected_replica_id=os.environ["REPLICA_ID"],
               not_before=os.environ["NOT_BEFORE"],
@@ -616,7 +644,7 @@ jobs:
               Path(os.environ["LOG_PATH"]).read_bytes(),
               expected_kind="candidate",
               expected_request_id=os.environ["REQUEST_ID"],
-              expected_commit=os.environ["GITHUB_SHA"],
+              expected_commit=os.environ["SOURCE_SHA"],
               expected_deployment_id=os.environ["DEPLOYMENT_ID"],
               expected_replicas={
                   "created": os.environ["CREATED_REPLICA_ID"],
@@ -635,7 +663,7 @@ jobs:
             "$RAILWAY_ORIGIN/api/health")
           test "$status" = 200
           HEADERS="$EVIDENCE_ROOT/origin.headers" DEPLOYMENT="$DEPLOYMENT_ID" \
-            TARGET="$GITHUB_SHA" python3 -I -S - <<'PY'
+            TARGET="$SOURCE_SHA" python3 -I -S - <<'PY'
           import os
           from pathlib import Path
 
@@ -700,6 +728,25 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Authenticate the signed application source independently of the workflow
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          signer_file="$GITHUB_WORKSPACE/ops/deploy/release-allowed-signers"
+          git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signer_file" \
+            verify-commit "$GITHUB_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" "$GITHUB_SHA"
+          git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signer_file" \
+            verify-commit "$SOURCE_SHA"
+          git checkout --detach "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          {
+            echo "- Reviewed workflow commit: \`$GITHUB_SHA\`"
+            echo "- Signed application commit: \`$SOURCE_SHA\`"
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Install the checksum-pinned Railway CLI
         run: |
@@ -775,7 +822,7 @@ jobs:
           ):
               raise SystemExit("candidate workflow run identity is invalid")
           PY
-          artifact_name="railway-cutover-candidate-$GITHUB_SHA-$REQUEST_ID"
+          artifact_name="railway-cutover-candidate-$SOURCE_SHA-$REQUEST_ID"
           gh run download "$CANDIDATE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "$artifact_name" --dir "$EVIDENCE_ROOT"
           test -z "$(find "$EVIDENCE_ROOT" -mindepth 1 ! -type f -print -quit)"
@@ -799,7 +846,7 @@ jobs:
             sha256sum --check --strict
           RECEIPT="$EVIDENCE_ROOT/candidate-receipt.json" \
             EXPECTED_REQUEST="$REQUEST_ID" EXPECTED_DEPLOYMENT="$DEPLOYMENT_ID" \
-            EXPECTED_COMMIT="$GITHUB_SHA" OUTPUT="$GITHUB_OUTPUT" \
+            EXPECTED_COMMIT="$SOURCE_SHA" OUTPUT="$GITHUB_OUTPUT" \
             python3 -I -S - <<'PY'
           import json
           import os
@@ -866,7 +913,7 @@ jobs:
           probe public-candidate 'https://api.seiche.info/api/health' ''
           for prefix in origin-candidate public-candidate; do
             HEADERS="$EVIDENCE_ROOT/$prefix.headers" \
-              DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$GITHUB_SHA" \
+              DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$SOURCE_SHA" \
               python3 -I -S - <<'PY'
           import os
           from pathlib import Path
@@ -890,7 +937,7 @@ jobs:
           OBSERVED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             BODY="$EVIDENCE_ROOT/public-candidate.json" \
             DESTINATION="$EVIDENCE_ROOT/public-probe.json" \
-            DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$GITHUB_SHA" \
+            DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$SOURCE_SHA" \
             python3 -I -S - <<'PY'
           import hashlib
           import json
@@ -951,7 +998,7 @@ jobs:
                   "beepboop2025/seiche/"
                   ".github/workflows/railway-stateful-cutover.yml"
               ),
-              "commit": os.environ["GITHUB_SHA"],
+              "commit": os.environ["SOURCE_SHA"],
               "request_id": os.environ["REQUEST_ID"],
               "candidate_receipt_sha256": os.environ["RECEIPT_SHA256"],
               "fence_sha256": os.environ["FENCE_SHA256"],
@@ -1030,7 +1077,7 @@ jobs:
               "grant": json.loads(Path(os.environ["EVIDENCE_ROOT"], "activation-grant.json").read_bytes()),
           }
           environment = {
-              "SEICHE_RELEASE_SHA": os.environ["GITHUB_SHA"],
+              "SEICHE_RELEASE_SHA": os.environ["SOURCE_SHA"],
               "RAILWAY_PROJECT_ID": os.environ["RAILWAY_PROJECT_ID"],
               "RAILWAY_ENVIRONMENT_ID": os.environ["RAILWAY_ENVIRONMENT_ID"],
               "RAILWAY_SERVICE_ID": os.environ["RAILWAY_SERVICE_ID"],
@@ -1131,7 +1178,7 @@ jobs:
           test "$status" = 200
           for prefix in origin-production public-production; do
             HEADERS="$EVIDENCE_ROOT/$prefix.headers" \
-              DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$GITHUB_SHA" \
+              DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$SOURCE_SHA" \
               python3 -I -S - <<'PY'
           import os
           from pathlib import Path
@@ -1232,7 +1279,7 @@ jobs:
                           expected_kind="activation",
                           expected_lifecycle=lifecycle,
                           expected_request_id=os.environ["REQUEST_ID"],
-                          expected_commit=os.environ["GITHUB_SHA"],
+                          expected_commit=os.environ["SOURCE_SHA"],
                           expected_deployment_id=os.environ["DEPLOYMENT_ID"],
                           expected_replica_id=replica_id,
                           not_before=os.environ["NOT_BEFORE"],
@@ -1278,7 +1325,7 @@ jobs:
       - name: Retain the private activation evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: railway-cutover-activation-${{ github.sha }}-${{ inputs.request_id }}
+          name: railway-cutover-activation-${{ env.SOURCE_SHA }}-${{ inputs.request_id }}
           path: ${{ steps.activation.outputs.evidence_root }}
           if-no-files-found: error
           retention-days: 90

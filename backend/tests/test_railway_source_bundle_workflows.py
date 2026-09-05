@@ -26,7 +26,8 @@ def _git(cwd: Path, *arguments: str) -> str:
 def test_source_bundle_workflows_pin_the_detached_head() -> None:
     for path in WORKFLOWS:
         workflow = path.read_text(encoding="utf-8")
-        assert 'test "$(git rev-parse \'HEAD^{commit}\')" = "$GITHUB_SHA"' in workflow
+        source_var = "SOURCE_SHA" if "cutover" in path.name else "GITHUB_SHA"
+        assert f'test "$(git rev-parse \'HEAD^{{commit}}\')" = "${source_var}"' in workflow
         assert 'git bundle create "$UPLOAD_ROOT/source.bundle" HEAD' in workflow
         assert (
             'git bundle create "$UPLOAD_ROOT/source.bundle" "$GITHUB_SHA"'
@@ -34,7 +35,7 @@ def test_source_bundle_workflows_pin_the_detached_head() -> None:
         )
         assert 'git bundle verify "$UPLOAD_ROOT/source.bundle"' in workflow
         assert 'git bundle list-heads "$UPLOAD_ROOT/source.bundle"' in workflow
-        assert '"$GITHUB_SHA HEAD"' in workflow
+        assert f'"${source_var} HEAD"' in workflow
 
 
 def test_detached_checkout_bundle_advertises_the_exact_commit(tmp_path: Path) -> None:

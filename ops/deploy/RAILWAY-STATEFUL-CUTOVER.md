@@ -173,7 +173,10 @@ partial attempt is a reconciliation event, not permission to delete evidence.
 
 ## 4. Restore the read-only candidate
 
-Dispatch `railway-stateful-cutover` on the exact main SHA with:
+Dispatch `railway-stateful-cutover` on the exact reviewed main workflow SHA with:
+
+- `source_commit=SIGNED_RELEASE_SHA` (omit only when application and workflow
+  commits are identical)
 
 - `operation=candidate`
 - `snapshot_id=FINAL_SNAPSHOT_ID`
@@ -288,7 +291,8 @@ path after a Railway activation receipt exists.
 
 ## 6. Activate Railway
 
-Dispatch the same workflow on the exact SHA with:
+Dispatch the same workflow on the same reviewed main workflow SHA, with the
+same `source_commit` used for the candidate, and:
 
 - `operation=activate`
 - `request_id=ACCEPTED_REQUEST_ID`
@@ -299,7 +303,15 @@ Dispatch the same workflow on the exact SHA with:
 
 The separately protected job downloads a closed candidate artifact, rejects
 symlinks or extra members, and verifies its GitHub OIDC attestation against the
-exact repository, workflow, main ref, and SHA. It directly probes the Railway
+exact repository, workflow, main ref, and workflow SHA. Both operations
+independently authenticate the application commit's SSH signature and require
+it to be an ancestor of that workflow commit. The source archive, fence,
+shadow, runtime headers, candidate receipt, and activation grant all bind that
+application commit. This permits reviewed orchestration repairs without
+changing a frozen release or pretending that its workflow bytes changed.
+The two identities appear separately in the run summary. The application
+commit is not used as an OIDC signer digest when the workflow differs.
+It directly probes the Railway
 origin and public edge, builds the immutable public probe and activation grant,
 then signs a short-lived `activation` command with the protected operation key.
 The command binds the exact project, environment, service, deployment, volume,
