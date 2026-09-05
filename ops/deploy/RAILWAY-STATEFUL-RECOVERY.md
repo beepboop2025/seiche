@@ -162,6 +162,10 @@ Hetzner or enable schedules yet.
    receipt pair so the export can bootstrap or repair it. That exception never
    relaxes native backup, PITR, headroom, or production-identity checks, and the
    operation cannot succeed until its new receipt pair validates.
+   Before sampling either API health body, the monitor waits up to fifteen
+   minutes for the first production board. Only the documented HTTP 503
+   warm-up states are retryable; other failures stop immediately. The samples
+   taken after readiness must still pass the fifteen-minute freshness limit.
 2. Review the private artifact and both production OIDC attestations. Confirm
    the activation-bound recovery receipt, uninterrupted API probe log, isolated
    reverse-restore proof, off-site receipt, every per-object SHA-256, version

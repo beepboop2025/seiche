@@ -929,6 +929,11 @@ jobs:
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-backups.json
+          git -C "$GITHUB_WORKSPACE" show \
+            "$GITHUB_SHA:ops/railway/wait_production_ready.py" \
+            >"$RUNNER_TEMP/wait_production_ready.py"
+          python3 -I -S "$RUNNER_TEMP/wait_production_ready.py" \
+            --origin "$RAILWAY_ORIGIN" --output runtime.json --timeout-seconds 900
           origin_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
             --connect-timeout 10 --max-time 30 \
             --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
@@ -938,13 +943,8 @@ jobs:
             --connect-timeout 10 --max-time 30 \
             --dump-header public.headers --output public.json \
             --write-out '%{http_code}' 'https://api.seiche.info/api/health')
-          runtime_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 30 \
-            --output runtime.json --write-out '%{http_code}' \
-            "$RAILWAY_ORIGIN/healthz")
           test "$origin_status" = 200
           test "$public_status" = 200
-          test "$runtime_status" = 200
 
           EXPECTED_VOLUME_ID="$RAILWAY_VOLUME_ID" \
             EXPECTED_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
