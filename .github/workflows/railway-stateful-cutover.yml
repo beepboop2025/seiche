@@ -878,16 +878,21 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")
-          RUN_JSON="$run_json" EXPECTED_SHA="$GITHUB_SHA" python3 -I -S - <<'PY'
+          candidate_workflow_sha=$(RUN_JSON="$run_json" EXPECTED_SHA="$GITHUB_SHA" python3 -I -S - <<'PY'
           import json
           import os
+          from pathlib import Path
+          import re
+          import subprocess
 
           value = json.loads(os.environ["RUN_JSON"])
+          candidate_sha = value.get("head_sha")
           expected = {
               "event": "workflow_dispatch",
-              "head_sha": os.environ["EXPECTED_SHA"],
+              "status": "completed",
               "conclusion": "success",
               "head_branch": "main",
+              "id": int(os.environ["CANDIDATE_RUN_ID"]),
           }
           path, _, path_ref = str(value.get("path", "")).partition("@")
           repository = value.get("head_repository")
@@ -897,9 +902,22 @@ jobs:
               or path_ref not in {"", "refs/heads/main"}
               or not isinstance(repository, dict)
               or repository.get("full_name") != "beepboop2025/seiche"
+              or re.fullmatch(r"[0-9a-f]{40}", str(candidate_sha)) is None
           ):
               raise SystemExit("candidate workflow run identity is invalid")
+          # A signed descendant controller can repair activation without
+          # replacing the previously attested candidate or its application.
+          signer_file = Path(os.environ["GITHUB_WORKSPACE"]) / "ops/deploy/release-allowed-signers"
+          for arguments in (
+              ["merge-base", "--is-ancestor", candidate_sha, os.environ["EXPECTED_SHA"]],
+              ["merge-base", "--is-ancestor", os.environ["SOURCE_SHA"], candidate_sha],
+              ["-c", "gpg.format=ssh", "-c", f"gpg.ssh.allowedSignersFile={signer_file}",
+               "verify-commit", candidate_sha],
+          ):
+              subprocess.run(["git", *arguments], check=True, stdout=subprocess.DEVNULL)
+          print(candidate_sha)
           PY
+          )
           artifact_name="railway-cutover-candidate-$SOURCE_SHA-$REQUEST_ID"
           gh run download "$CANDIDATE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "$artifact_name" --dir "$EVIDENCE_ROOT"
@@ -915,9 +933,9 @@ jobs:
           gh attestation verify "$EVIDENCE_ROOT/candidate-receipt.json" \
             --repo beepboop2025/seiche \
             --signer-workflow beepboop2025/seiche/.github/workflows/railway-stateful-cutover.yml \
-            --signer-digest "$GITHUB_SHA" \
+            --signer-digest "$candidate_workflow_sha" \
             --source-ref refs/heads/main \
-            --source-digest "$GITHUB_SHA" \
+            --source-digest "$candidate_workflow_sha" \
             --deny-self-hosted-runners \
             --format json >"$EVIDENCE_ROOT/candidate-attestation.json"
           echo "$EXPECTED_RECEIPT_SHA256  $EVIDENCE_ROOT/candidate-receipt.json" |
@@ -1156,6 +1174,7 @@ jobs:
           }
           environment = {
               "SEICHE_RELEASE_SHA": os.environ["SOURCE_SHA"],
+              "SEICHE_RAILWAY_STATEFUL_MODE": "cutover_candidate",
               "RAILWAY_PROJECT_ID": os.environ["RAILWAY_PROJECT_ID"],
               "RAILWAY_ENVIRONMENT_ID": os.environ["RAILWAY_ENVIRONMENT_ID"],
               "RAILWAY_SERVICE_ID": os.environ["RAILWAY_SERVICE_ID"],

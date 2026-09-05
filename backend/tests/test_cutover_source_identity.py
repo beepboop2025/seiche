@@ -134,6 +134,76 @@ def test_signed_unrelated_source_cannot_be_selected(signed_repository) -> None:
     assert _git(repository, "rev-parse", "HEAD") == controller
 
 
+def _run_candidate_identity(
+    repository: Path, source: str, controller: str, candidate: str, **overrides
+) -> subprocess.CompletedProcess[str]:
+    workflow = WORKFLOW.read_text()
+    block = workflow.split('candidate_workflow_sha=$(RUN_JSON=', 1)[1]
+    program = textwrap.dedent(
+        block.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+    )
+    run = {
+        "id": 123,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "head_branch": "main",
+        "head_sha": candidate,
+        "path": ".github/workflows/railway-stateful-cutover.yml",
+        "head_repository": {"full_name": "beepboop2025/seiche"},
+        **overrides,
+    }
+    return subprocess.run(
+        ["python3", "-I", "-S", "-c", program],
+        cwd=repository, capture_output=True, text=True,
+        env={
+            **os.environ, "RUN_JSON": json.dumps(run), "EXPECTED_SHA": controller,
+            "SOURCE_SHA": source, "CANDIDATE_RUN_ID": "123",
+            "GITHUB_WORKSPACE": str(repository),
+        },
+    )
+
+
+def test_activation_repair_retains_signed_ancestor_candidate(signed_repository) -> None:
+    repository, source, candidate = signed_repository
+    _git(repository, "commit", "--allow-empty", "-m", "signed activation repair")
+    controller = _git(repository, "rev-parse", "HEAD")
+    result = _run_candidate_identity(repository, source, controller, candidate)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == candidate
+    workflow = WORKFLOW.read_text().split("Recover and validate the exact candidate chain", 1)[1]
+    assert '--signer-digest "$candidate_workflow_sha"' in workflow
+    assert '--source-digest "$candidate_workflow_sha"' in workflow
+
+
+@pytest.mark.parametrize("kind", ["unsigned", "unrelated", "before_source"])
+def test_activation_rejects_untrusted_candidate_lineage(signed_repository, kind) -> None:
+    repository, source, controller = signed_repository
+    if kind == "unsigned":
+        _git(repository, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "unsigned")
+        candidate = _git(repository, "rev-parse", "HEAD")
+        _git(repository, "commit", "--allow-empty", "-m", "signed repair")
+        controller = _git(repository, "rev-parse", "HEAD")
+    elif kind == "unrelated":
+        _git(repository, "checkout", "--detach", source)
+        _git(repository, "commit", "--allow-empty", "-m", "different signed lineage")
+        candidate = _git(repository, "rev-parse", "HEAD")
+    else:
+        candidate, source = source, controller
+    assert _run_candidate_identity(repository, source, controller, candidate).returncode != 0
+
+
+@pytest.mark.parametrize("overrides", [
+    {"id": 124}, {"conclusion": "failure"}, {"status": "in_progress"},
+    {"head_branch": "unreviewed"}, {"event": "pull_request"},
+    {"path": ".github/workflows/unrelated.yml"},
+    {"head_repository": {"full_name": "other/repository"}},
+])
+def test_activation_rejects_foreign_or_unsuccessful_candidate_run(signed_repository, overrides) -> None:
+    repository, source, controller = signed_repository
+    assert _run_candidate_identity(repository, source, controller, controller, **overrides).returncode != 0
+
+
 def test_tree_check_works_outside_the_checkout(signed_repository) -> None:
     repository, source, _ = signed_repository
     _git(repository, "checkout", "--detach", source)

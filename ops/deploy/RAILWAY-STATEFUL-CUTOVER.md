@@ -195,7 +195,14 @@ succeeded. It binds the original run attempt to the request ID and deployment
 log, verifies signed controller ancestry, and performs the full health,
 restart/reuse, origin, artifact, and attestation proof. It does not upload another
 image or change service variables. An accepted activation uses the successful
-resumed run ID and the same current workflow commit. A failure before deployment
+resumed run ID. An activation-only controller repair may use a newer signed
+descendant of the candidate's controller: the activation job verifies both Git
+ancestry and the candidate controller signature, and pins the downloaded receipt's
+OIDC signer and source to the original successful candidate run. It still requires
+the same signed application, request, deployment, fence, and receipt bytes. The
+command signer supplies `cutover_candidate` mode to its local validator; recovery
+and off-site acknowledgement signers supply `production`. Runtime mode checks
+remain mandatory. A failure before deployment
 submission is not resumable this way.
 
 Railway reads retry transport failures at most three times, with a 90-second

@@ -9,7 +9,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
+import textwrap
 from types import SimpleNamespace
 
 from cryptography.hazmat.primitives import serialization
@@ -127,6 +129,80 @@ def _install_test_signers(
     signers: dict[str, tuple[bytes, frozenset[str]]],
 ) -> None:
     monkeypatch.setattr(control, "load_signer_registry", lambda _path: signers)
+
+
+@pytest.mark.parametrize(
+    ("workflow", "operation", "mode"),
+    [
+        ("railway-stateful-cutover.yml", control.ACTIVATION_OPERATION, "cutover_candidate"),
+        ("railway-stateful-recovery.yml", control.RECOVERY_EXPORT_OPERATION, "production"),
+        ("railway-stateful-recovery.yml", control.OFFSITE_ACKNOWLEDGMENT_OPERATION, "production"),
+    ],
+)
+def test_actual_workflow_signing_program_validates_in_the_runtime_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workflow: str, operation: str, mode: str
+) -> None:
+    text = (ROOT / ".github/workflows" / workflow).read_text()
+    constant = {
+        control.ACTIVATION_OPERATION: "ACTIVATION_OPERATION",
+        control.RECOVERY_EXPORT_OPERATION: "RECOVERY_EXPORT_OPERATION",
+        control.OFFSITE_ACKNOWLEDGMENT_OPERATION: "OFFSITE_ACKNOWLEDGMENT_OPERATION",
+    }[operation]
+    programs = [
+        textwrap.dedent(match.group(1))
+        for match in re.finditer(r"<<'PY'\n(.*?)\n          PY", text, re.DOTALL)
+        if "control.validate_command(body, environment)" in match.group(1)
+        and f"control.{constant}," in match.group(1)
+    ]
+    assert len(programs) == 1
+    now = datetime.now(UTC).replace(microsecond=0)
+    private = Ed25519PrivateKey.generate()
+    public = _public_key(private)
+    key_id = hashlib.sha256(public).hexdigest()
+    pem = private.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    monkeypatch.setattr(control, "ACTIVATION_KEY_ID", key_id)
+    monkeypatch.setattr(control, "RECOVERY_KEY_ID", key_id)
+    _install_test_signers(monkeypatch, {key_id: (public, frozenset({operation}))})
+    monkeypatch.chdir(tmp_path)
+    for name, document in {
+        "activation-grant.json": _activation_payload()["grant"],
+        "public-probe.json": _activation_payload()["public_probe"],
+        "request.json": _recovery_payload(now)["request"],
+        "recovery-receipt.json": {"receipt": "test-only"},
+    }.items():
+        (tmp_path / name).write_bytes(migration.canonical_document(document))
+    (tmp_path / "offsite-receipt.json").write_bytes(migration.canonical_document({
+        "request_id": REQUEST_ID,
+        "commit": COMMIT,
+        "recovery_receipt_sha256": hashlib.sha256(
+            (tmp_path / "recovery-receipt.json").read_bytes()
+        ).hexdigest(),
+    }))
+    for name, value in {
+        **_environment(mode),
+        "SOURCE_SHA": COMMIT,
+        "RELEASE_SHA": COMMIT,
+        "DEPLOYMENT_ID": DEPLOYMENT_ID,
+        "RAILWAY_VOLUME_ID": _environment(mode)["SEICHE_RAILWAY_VOLUME_ID"],
+        "SEICHE_RAILWAY_ACTIVATION_SIGNING_KEY_PEM": pem,
+        "SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM": pem,
+        "EVIDENCE_ROOT": str(tmp_path),
+        "COMMAND_PATH": str(tmp_path / "command.json"),
+        "ISSUED_AT": _iso(now),
+        "EXPIRES_AT": _iso(now + timedelta(minutes=10)),
+        "NONCE": "9" * 64,
+    }.items():
+        monkeypatch.setenv(name, value)
+    exec(compile(programs[0], workflow, "exec"), {})
+    body = (tmp_path / "command.json").read_bytes()
+    assert control.validate_command(body, _environment(mode), now=now).operation == operation
+    wrong_mode = "production" if mode == "cutover_candidate" else "cutover_candidate"
+    with pytest.raises(control.ControlContractError, match="unavailable in this mode"):
+        control.validate_command(body, _environment(wrong_mode), now=now)
 
 
 def test_release_registry_pins_operation_separated_ed25519_keys() -> None:

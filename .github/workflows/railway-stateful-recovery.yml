@@ -756,6 +756,12 @@ jobs:
           tar -xzf "$archive" -C "$tool_dir" railway
           chmod 0755 "$tool_dir/railway"
           echo "$tool_dir" >>"$GITHUB_PATH"
+          read_tools="$RUNNER_TEMP/railway-read-tools"
+          mkdir -p "$read_tools"
+          git show "$GITHUB_SHA:ops/railway/retry_read.py" >"$read_tools/railway"
+          chmod 0755 "$read_tools/railway"
+          echo "RAILWAY_REAL_BIN=$tool_dir/railway" >>"$GITHUB_ENV"
+          echo "$read_tools" >>"$GITHUB_PATH"
 
       - name: Install the bounded PostgreSQL health probe transport
         env:
@@ -1198,6 +1204,12 @@ jobs:
           tar -xzf "$archive" -C "$tool_dir" railway
           chmod 0755 "$tool_dir/railway"
           echo "$tool_dir" >>"$GITHUB_PATH"
+          read_tools="$RUNNER_TEMP/railway-read-tools"
+          mkdir -p "$read_tools"
+          git show "$GITHUB_SHA:ops/railway/retry_read.py" >"$read_tools/railway"
+          chmod 0755 "$read_tools/railway"
+          echo "RAILWAY_REAL_BIN=$tool_dir/railway" >>"$GITHUB_ENV"
+          echo "$read_tools" >>"$GITHUB_PATH"
           aws_archive="${RUNNER_TEMP}/awscli-2.36.35.zip"
           aws_installer="${RUNNER_TEMP}/awscli-installer"
           aws_install_root="${RUNNER_TEMP}/awscli"
@@ -1481,6 +1493,7 @@ jobs:
           payload = {"request": json.loads(Path("request.json").read_bytes())}
           environment = {
               "SEICHE_RELEASE_SHA": os.environ["RELEASE_SHA"],
+              "SEICHE_RAILWAY_STATEFUL_MODE": "production",
               "RAILWAY_PROJECT_ID": os.environ["RAILWAY_PROJECT_ID"],
               "RAILWAY_ENVIRONMENT_ID": os.environ["RAILWAY_ENVIRONMENT_ID"],
               "RAILWAY_SERVICE_ID": os.environ["RAILWAY_SERVICE_ID"],
@@ -2032,6 +2045,7 @@ jobs:
           }
           environment = {
               "SEICHE_RELEASE_SHA": os.environ["RELEASE_SHA"],
+              "SEICHE_RAILWAY_STATEFUL_MODE": "production",
               "RAILWAY_PROJECT_ID": os.environ["RAILWAY_PROJECT_ID"],
               "RAILWAY_ENVIRONMENT_ID": os.environ["RAILWAY_ENVIRONMENT_ID"],
               "RAILWAY_SERVICE_ID": os.environ["RAILWAY_SERVICE_ID"],
