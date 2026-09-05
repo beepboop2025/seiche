@@ -45,6 +45,48 @@ def _write(path: Path, body: bytes) -> Path:
     return path
 
 
+def test_launcher_repeated_imports_preserve_sealed_runtime_inventory(
+    tmp_path: Path,
+) -> None:
+    launcher_path = (
+        Path(__file__).resolve().parents[2]
+        / "ops/deploy/seiche-palimpsest-china-activate.py"
+    )
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "audit_target.py").write_text("answer = 42\n")
+    # A writable directory reproduces root's ability to create __pycache__.
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", """
+import importlib.util
+from pathlib import Path
+import sys
+
+spec = importlib.util.spec_from_file_location("launcher", sys.argv[1])
+launcher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(launcher)
+runtime = Path(sys.argv[2])
+
+def import_audit(arguments):
+    spec = importlib.util.spec_from_file_location("audit_target", runtime / "audit_target.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.answer == 42
+    return 0
+
+launcher.run = import_audit
+for _ in range(2):
+    sys.dont_write_bytecode = False
+    assert launcher.main() == 0
+    assert {p.name for p in runtime.iterdir()} == {"audit_target.py"}
+""", str(launcher_path), str(runtime)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def _launcher_restore_status(
     *, activation_id: str, tree_sha256: str, snapshot: str
 ) -> dict[str, str]:
