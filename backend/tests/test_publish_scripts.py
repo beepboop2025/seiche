@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import textwrap
 
 import pytest
 
@@ -139,7 +142,7 @@ def test_static_publish_reuses_its_exported_board_for_the_book():
 
 
 def test_static_publish_reuses_only_an_exact_sha_gate():
-    """Cron speedups must not let one revision bless another revision."""
+    """A green gate binds both the tested source and its workflow controller."""
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text()
 
     restored = workflow.index("name: Restore exact-code publish gate")
@@ -149,11 +152,76 @@ def test_static_publish_reuses_only_an_exact_sha_gate():
     restore_block = workflow[restored:verified]
 
     assert restored < verified < tested < exported
-    assert "seiche-publish-gate-v1-${{ runner.os }}-py312-${{ github.sha }}" in workflow
+    identity_path = "${{ env.PUBLICATION_SOURCE_SHA }}-${{ env.PUBLICATION_CONTROLLER_SHA }}"
+    assert f"path: .cache/publish-gates/{identity_path}" in restore_block
+    assert f"seiche-publish-gate-v2-${{{{ runner.os }}}}-py312-{identity_path}" in restore_block
     assert "restore-keys:" not in restore_block
     assert "[ \"$CACHE_HIT\" = \"true\" ]" in workflow
-    assert "= \"$GITHUB_SHA\"" in workflow
+    assert f"MARKER: .cache/publish-gates/{identity_path}/validated-sha" in workflow[verified:tested]
+    assert '= "$PUBLICATION_SOURCE_SHA:$PUBLICATION_CONTROLLER_SHA"' in workflow[verified:tested]
     assert "if: steps.publish-gate.outputs.run-full-suite == 'true'" in workflow
-    assert 'printf \'%s\\n\' "$GITHUB_SHA"' in workflow[tested:exported]
+    assert 'printf \'%s:%s\\n\' "$PUBLICATION_SOURCE_SHA" "$PUBLICATION_CONTROLLER_SHA"' in workflow[tested:exported]
+    assert '".cache/publish-gates/$PUBLICATION_SOURCE_SHA-$PUBLICATION_CONTROLLER_SHA/validated-sha"' in workflow[tested:exported]
     assert "-o faulthandler_timeout=300" in workflow[tested:exported]
     assert "--pystack-threshold" not in workflow[tested:exported]
+    assert workflow.count('if [ "$current_main" != "$PUBLICATION_SOURCE_SHA" ]; then') == 2
+    assert 'test "$(git rev-parse \'refs/remotes/origin/main^{commit}\')" = "$PUBLICATION_SOURCE_SHA"' in workflow
+
+
+@pytest.mark.parametrize(
+    ("cache_hit", "marker_identity", "run_full_suite"),
+    [
+        ("true", "a" * 40 + ":" + "b" * 40, "false"),
+        ("false", "a" * 40 + ":" + "b" * 40, "true"),
+        ("true", "c" * 40 + ":" + "b" * 40, "true"),
+        ("true", "a" * 40 + ":" + "c" * 40, "true"),
+        ("true", "a" * 40, "true"),
+        ("true", None, "true"),
+    ],
+)
+def test_publish_gate_marker_requires_both_exact_identities(
+    tmp_path, cache_hit, marker_identity, run_full_suite
+):
+    workflow = (ROOT / ".github/workflows/publish.yml").read_text()
+    verification = workflow.split("      - name: Verify exact-code publish gate\n", 1)[1]
+    verification = verification.split("\n      - name:", 1)[0]
+    program = textwrap.dedent(verification.split("        run: |\n", 1)[1])
+    marker = tmp_path / "validated-sha"
+    if marker_identity is not None:
+        marker.write_text(marker_identity + "\n")
+    output = tmp_path / "github-output"
+    subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", program],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "CACHE_HIT": cache_hit,
+            "MARKER": str(marker),
+            "PUBLICATION_SOURCE_SHA": "a" * 40,
+            "PUBLICATION_CONTROLLER_SHA": "b" * 40,
+            "GITHUB_OUTPUT": str(output),
+        },
+    )
+    assert output.read_text().splitlines() == [f"run-full-suite={run_full_suite}"]
+
+
+def test_signed_controller_test_support_is_restored_before_export():
+    workflow = (ROOT / ".github/workflows/publish.yml").read_text()
+    tested = workflow.index("name: Engine tests (publish gates on green)")
+    exported = workflow.index("name: Run engines, export snapshot")
+    block = workflow[tested:exported]
+    assert 'trap restore_test_support EXIT' in block
+    verified = block.index('verify-commit "$PUBLICATION_CONTROLLER_SHA"')
+    restricted = block.index('if not changed or not changed <= allowed:')
+    overlaid = block.index('git restore --source="$PUBLICATION_CONTROLLER_SHA" -- "${test_support[@]}"')
+    suite = block.index('python -m pytest backend/tests -q --memray -o faulthandler_timeout=300')
+    restored = block.index('\n          restore_test_support\n', suite)
+    pristine = block.index('test -z "$(git status --porcelain --untracked-files=no)"', restored)
+    marker = block.index('printf \'%s:%s\\n\'', pristine)
+    assert verified < restricted < overlaid < suite < restored < pristine < marker
+    assert 'git restore --source="$PUBLICATION_SOURCE_SHA" -- "${test_support[@]}"' in block
+    assert 'git merge-base --is-ancestor "$PUBLICATION_SOURCE_SHA" "$PUBLICATION_CONTROLLER_SHA"' in block
+    assert 'if mode != "100644":' in block
+    assert '-k ' not in block and '--ignore' not in block and '--deselect' not in block

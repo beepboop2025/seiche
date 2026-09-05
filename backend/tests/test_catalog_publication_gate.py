@@ -1056,13 +1056,25 @@ def test_full_publish_binds_checkout_cache_and_verifier_to_selected_source():
     assert "ref: ${{ env.PUBLICATION_SOURCE_SHA }}" in workflow
     assert "persist-credentials: false" in workflow
     cache = _full_publish_step("Restore exact-code publish gate")
-    assert "path: .cache/publish-gates/${{ env.PUBLICATION_SOURCE_SHA }}" in cache
     assert (
-        "key: seiche-publish-gate-v1-${{ runner.os }}-py312-${{ env.PUBLICATION_SOURCE_SHA }}"
+        "path: .cache/publish-gates/${{ env.PUBLICATION_SOURCE_SHA }}-${{ env.PUBLICATION_CONTROLLER_SHA }}"
         in cache
     )
+    assert (
+        "key: seiche-publish-gate-v2-${{ runner.os }}-py312-${{ env.PUBLICATION_SOURCE_SHA }}-${{ env.PUBLICATION_CONTROLLER_SHA }}"
+        in cache
+    )
+    assert "restore-keys:" not in cache
     marker = _full_publish_step("Verify exact-code publish gate")
-    assert '$(cat "$MARKER" 2>/dev/null || true)" = "$PUBLICATION_SOURCE_SHA"' in marker
+    assert (
+        '$(cat "$MARKER" 2>/dev/null || true)" = "$PUBLICATION_SOURCE_SHA:$PUBLICATION_CONTROLLER_SHA"'
+        in marker
+    )
+    tested = _full_publish_step("Engine tests (publish gates on green)")
+    assert 'printf \'%s:%s\\n\' "$PUBLICATION_SOURCE_SHA" "$PUBLICATION_CONTROLLER_SHA"' in tested
+    assert tested.index('test -z "$(git status --porcelain --untracked-files=no)"') < tested.index(
+        'printf \'%s:%s\\n\''
+    )
     install = _full_publish_step("Install backend")
     assert 'pip install -e "./backend[dev,collectors,postgres]"' in install
     assert install.index('if [ "$RUN_FULL_SUITE" = "true" ]; then') < install.index(
