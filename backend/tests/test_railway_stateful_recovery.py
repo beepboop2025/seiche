@@ -1193,7 +1193,10 @@ def test_recovery_download_step_binds_received_bytes_without_local_activation(
 @pytest.mark.skipif(
     sys.platform != "linux", reason="helper targets GitHub's Linux runner"
 )
-def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version_id", ("version-1", "-ekYm2QaFTb-Td07omhWyPy6dyQPYHP"))
+def test_object_lock_client_pins_versions_and_hides_the_sse_key(
+    tmp_path: Path, version_id: str
+) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     state = tmp_path / "fake-s3"
@@ -1235,7 +1238,11 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
                 case "$previous" in
                     body) body=$argument ;;
                     metadata) metadata=$argument ;;
-                    version) version=$argument ;;
+                    version)
+                        # AWS CLI rejects an option-like value in a separate argv.
+                        [[ "$argument" != -* ]] || exit 92
+                        version=$argument
+                        ;;
                     key) key_file=${argument#fileb://} ;;
                 esac
                 previous=
@@ -1244,6 +1251,7 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
                     --body) previous=body ;;
                     --metadata) previous=metadata ;;
                     --version-id) previous=version ;;
+                    --version-id=*) version=${argument#--version-id=} ;;
                     --sse-customer-key) previous=key ;;
                     --*) ;;
                     *) output=$argument ;;
@@ -1261,19 +1269,19 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
                 head-object)
                     [ -f "$state/object" ] || exit 1
                     if [ -n "$version" ]; then
-                        [ "$version" = version-1 ]
-                        echo 'head:pinned:version-1' >>"$log"
+                        [ "$version" = "$FAKE_VERSION_ID" ]
+                        printf 'head:pinned:%s\n' "$version" >>"$log"
                     else
                         echo 'head:current' >>"$log"
                     fi
                     size=$(stat -c %s "$state/object")
                     sha=$(sed 's/^sha256=//' "$state/metadata")
                     key_md5=$(openssl dgst -md5 -binary "$key_file" | base64 -w0)
-                    printf '{"ContentLength":%s,"Metadata":{"sha256":"%s"},"SSECustomerAlgorithm":"AES256","SSECustomerKeyMD5":"%s","ObjectLockMode":"COMPLIANCE","ObjectLockRetainUntilDate":"2099-01-01T00:00:00Z","VersionId":"version-1"}\n' "$size" "$sha" "$key_md5"
+                    printf '{"ContentLength":%s,"Metadata":{"sha256":"%s"},"SSECustomerAlgorithm":"AES256","SSECustomerKeyMD5":"%s","ObjectLockMode":"COMPLIANCE","ObjectLockRetainUntilDate":"2099-01-01T00:00:00Z","VersionId":"%s"}\n' "$size" "$sha" "$key_md5" "$FAKE_VERSION_ID"
                     ;;
                 get-object)
-                    [ "$version" = version-1 ]
-                    echo 'get:pinned:version-1' >>"$log"
+                    [ "$version" = "$FAKE_VERSION_ID" ]
+                    printf 'get:pinned:%s\n' "$version" >>"$log"
                     [ "${FAKE_FAIL_GET:-0}" != 1 ] || exit 42
                     cp -- "$state/object" "$output"
                     echo '{}'
@@ -1294,6 +1302,7 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "FAKE_AWS_STATE": str(state),
         "FAKE_RAW_KEY": encoded_key,
+        "FAKE_VERSION_ID": version_id,
         "AWS_ACCESS_KEY_ID": "test-access",
         "AWS_SECRET_ACCESS_KEY": "test-secret",
         "AWS_DEFAULT_REGION": "eu-central",
@@ -1317,10 +1326,17 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
     )
     expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
     proof = json.loads(head_proof.read_text(encoding="utf-8"))
-    assert proof["VersionId"] == "version-1"
+    assert proof["VersionId"] == version_id
     assert proof["DownloadedSHA256"] == expected_sha
     assert proof["SSECustomerKeyVerified"] is True
     assert "SSECustomerKeyMD5" not in proof
+    reused_proof = tmp_path / "reused.json"
+    subprocess.run(
+        [OBJECT_LOCK_CLIENT, "put-verify", source, key, reused_proof],
+        check=True,
+        env=environment,
+    )
+    assert json.loads(reused_proof.read_text(encoding="utf-8")) == proof
     restore_root = tmp_path / "restore"
     restore_root.mkdir(mode=0o700)
     restored = restore_root / "restored.bin"
@@ -1329,7 +1345,7 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
             OBJECT_LOCK_CLIENT,
             "get-verify",
             key,
-            "version-1",
+            version_id,
             expected_sha,
             restored,
         ],
@@ -1338,8 +1354,9 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
     )
     assert restored.read_bytes() == source.read_bytes()
     calls = (state / "calls.log").read_text(encoding="utf-8")
-    assert "head:pinned:version-1" in calls
-    assert calls.count("get:pinned:version-1") == 2
+    assert calls.count(f"head:pinned:{version_id}") == 3
+    assert calls.count(f"get:pinned:{version_id}") == 3
+    assert calls.splitlines().count("put") == 1
     assert encoded_key not in calls
     failed = subprocess.run(
         [OBJECT_LOCK_CLIENT, "put-verify", source, key, tmp_path / "failed.json"],
@@ -1348,6 +1365,8 @@ def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) 
         timeout=5,
     )
     assert failed.returncode != 0
+    assert not (tmp_path / "failed.json").exists()
+    assert (state / "calls.log").read_text().splitlines().count("put") == 1
 
 
 def test_reverse_restore_heredoc_executes_cleanup_and_passes_password_by_env(

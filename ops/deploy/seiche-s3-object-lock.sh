@@ -123,7 +123,7 @@ head_object() {
     local key="$1" output="$2" version_id="${3:-}"
     local version_args=()
     if [ -n "$version_id" ]; then
-        version_args=(--version-id "$version_id")
+        version_args=("--version-id=$version_id")
     fi
     aws "${AWS_ARGS[@]}" s3api head-object --bucket "$S3_BUCKET" --key "$key" \
         "${version_args[@]}" "${SSE_ARGS[@]}" >"$output" 2>/dev/null
@@ -206,7 +206,7 @@ PY
     sha256sum <"$fifo" >"$download_hash" &
     HASHER_PID=$!
     if ! aws "${AWS_ARGS[@]}" s3api get-object \
-            --bucket "$S3_BUCKET" --key "$key" --version-id "$version_id" \
+            --bucket "$S3_BUCKET" --key "$key" "--version-id=$version_id" \
             "${SSE_ARGS[@]}" "$fifo" >/dev/null; then
         kill "$HASHER_PID" 2>/dev/null || true
         wait "$HASHER_PID" 2>/dev/null || true
@@ -265,7 +265,7 @@ PY
     RESTORE_TEMP=$(mktemp "$destination_parent/.seiche-s3-restore.XXXXXX")
     chmod 0600 "$RESTORE_TEMP"
     aws "${AWS_ARGS[@]}" s3api get-object \
-        --bucket "$S3_BUCKET" --key "$key" --version-id "$version_id" \
+        --bucket "$S3_BUCKET" --key "$key" "--version-id=$version_id" \
         "${SSE_ARGS[@]}" "$RESTORE_TEMP" >/dev/null
     restored_sha=$(sha256sum "$RESTORE_TEMP" | awk '{print $1}')
     [ "$restored_sha" = "$expected_sha" ] \
