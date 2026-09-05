@@ -66,6 +66,54 @@ jobs:
           echo "$tool_dir" >>"$GITHUB_PATH"
           "$tool_dir/railway" --version
 
+      - name: Install the bounded PostgreSQL health probe transport
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_POSTGRES_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_SERVICE_ID }}
+          PROBE_SSH_KEY: ${{ secrets.RAILWAY_RECOVERY_PROBE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -I -S - <<'PYPROBE'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          key = os.environ.pop("PROBE_SSH_KEY")
+          if not key.startswith("-----BEGIN OPENSSH PRIVATE KEY-----"):
+              raise SystemExit("protected PostgreSQL probe key is missing")
+          query = "query Probe($e:String!,$s:String!){environment(id:$e){id projectId} serviceInstance(environmentId:$e,serviceId:$s){id environmentId serviceId}}"
+          variables = {"e": os.environ["RAILWAY_ENVIRONMENT_ID"], "s": os.environ["RAILWAY_POSTGRES_SERVICE_ID"]}
+          data = json.loads(subprocess.check_output(["railway", "api", query, "--variables", json.dumps(variables), "--compact"], text=True))["data"]
+          assert data["environment"] == {"id": variables["e"], "projectId": os.environ["RAILWAY_PROJECT_ID"]}
+          instance = data["serviceInstance"]
+          assert instance["environmentId"] == variables["e"] and instance["serviceId"] == variables["s"]
+          assert re.fullmatch(r"[0-9a-f-]{36}", instance["id"])
+          root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
+          root.mkdir(mode=0o700)
+          private = root / "identity"
+          private.write_text(key)
+          private.chmod(0o600)
+          known = root / "known_hosts"
+          known.write_text("ssh.railway.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8X3z81/tuP7CvmK3ZqWgwEvHUR6b04oi2lQJGld2C1\n")
+          known.chmod(0o600)
+          target = instance["id"] + "@ssh.railway.com"
+          wrapper = root / "ssh"
+          wrapper.write_text("#!/usr/bin/python3\n" + "import hashlib,subprocess,sys\n" +
+              "target=" + repr(target) + "\n" +
+              "allowed={'208c3a043c6c94a9cd681a2b92e8adac4842eed3ff4829246a05e270f18d36bf','892748af1a179ecb4b085bdaab1bfb65c2f94666eb883578502d4708d1dd1ddb'}\n" +
+              "body=sys.stdin.buffer.read(16385)\n" +
+              "if sys.argv[1:] != ['-o','StrictHostKeyChecking=accept-new',target,'sh','-s'] or len(body)>16384 or hashlib.sha256(body.strip()).hexdigest() not in allowed: raise SystemExit('PostgreSQL probe command or target refused')\n" +
+              "args=" + repr(["/usr/bin/ssh", "-F", "/dev/null", "-i", str(private), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known), target, "sh", "-s"]) + "\n" +
+              "raise SystemExit(subprocess.run(args,input=body).returncode)\n")
+          wrapper.chmod(0o700)
+          with Path(os.environ["GITHUB_PATH"]).open("a") as stream:
+              stream.write(str(root) + "\n")
+          PYPROBE
+
       - name: Configure and lock the native volume and PostgreSQL canaries
         env:
           RECOVERY_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
@@ -403,6 +451,18 @@ jobs:
             echo "- Portable export remains a separate protected operation."
           } >>"$GITHUB_STEP_SUMMARY"
 
+      - name: Remove the private PostgreSQL probe transport
+        if: always()
+        run: |
+          python3 -I -S - <<'PYCLEAN'
+          import os
+          import shutil
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
+          if root.exists():
+              shutil.rmtree(root)
+          PYCLEAN
+
       - name: Retain the private native-backup evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -680,6 +740,54 @@ jobs:
           tar -xzf "$archive" -C "$tool_dir" railway
           chmod 0755 "$tool_dir/railway"
           echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Install the bounded PostgreSQL health probe transport
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_POSTGRES_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_SERVICE_ID }}
+          PROBE_SSH_KEY: ${{ secrets.RAILWAY_RECOVERY_PROBE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -I -S - <<'PYPROBE'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          key = os.environ.pop("PROBE_SSH_KEY")
+          if not key.startswith("-----BEGIN OPENSSH PRIVATE KEY-----"):
+              raise SystemExit("protected PostgreSQL probe key is missing")
+          query = "query Probe($e:String!,$s:String!){environment(id:$e){id projectId} serviceInstance(environmentId:$e,serviceId:$s){id environmentId serviceId}}"
+          variables = {"e": os.environ["RAILWAY_ENVIRONMENT_ID"], "s": os.environ["RAILWAY_POSTGRES_SERVICE_ID"]}
+          data = json.loads(subprocess.check_output(["railway", "api", query, "--variables", json.dumps(variables), "--compact"], text=True))["data"]
+          assert data["environment"] == {"id": variables["e"], "projectId": os.environ["RAILWAY_PROJECT_ID"]}
+          instance = data["serviceInstance"]
+          assert instance["environmentId"] == variables["e"] and instance["serviceId"] == variables["s"]
+          assert re.fullmatch(r"[0-9a-f-]{36}", instance["id"])
+          root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
+          root.mkdir(mode=0o700)
+          private = root / "identity"
+          private.write_text(key)
+          private.chmod(0o600)
+          known = root / "known_hosts"
+          known.write_text("ssh.railway.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8X3z81/tuP7CvmK3ZqWgwEvHUR6b04oi2lQJGld2C1\n")
+          known.chmod(0o600)
+          target = instance["id"] + "@ssh.railway.com"
+          wrapper = root / "ssh"
+          wrapper.write_text("#!/usr/bin/python3\n" + "import hashlib,subprocess,sys\n" +
+              "target=" + repr(target) + "\n" +
+              "allowed={'208c3a043c6c94a9cd681a2b92e8adac4842eed3ff4829246a05e270f18d36bf','892748af1a179ecb4b085bdaab1bfb65c2f94666eb883578502d4708d1dd1ddb'}\n" +
+              "body=sys.stdin.buffer.read(16385)\n" +
+              "if sys.argv[1:] != ['-o','StrictHostKeyChecking=accept-new',target,'sh','-s'] or len(body)>16384 or hashlib.sha256(body.strip()).hexdigest() not in allowed: raise SystemExit('PostgreSQL probe command or target refused')\n" +
+              "args=" + repr(["/usr/bin/ssh", "-F", "/dev/null", "-i", str(private), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known), target, "sh", "-s"]) + "\n" +
+              "raise SystemExit(subprocess.run(args,input=body).returncode)\n")
+          wrapper.chmod(0o700)
+          with Path(os.environ["GITHUB_PATH"]).open("a") as stream:
+              stream.write(str(root) + "\n")
+          PYPROBE
 
       - name: Prove native backups, PITR coverage, volume headroom, and both edges
         id: proof
@@ -988,6 +1096,18 @@ jobs:
             echo "- State volume and PostgreSQL native backups are fresh and scheduled."
             echo "- Origin and public edge agree on Railway production authority."
           } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the private PostgreSQL probe transport
+        if: always()
+        run: |
+          python3 -I -S - <<'PYCLEAN'
+          import os
+          import shutil
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
+          if root.exists():
+              shutil.rmtree(root)
+          PYCLEAN
 
   export-recovery:
     needs: monitor

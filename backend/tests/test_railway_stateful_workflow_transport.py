@@ -1,9 +1,18 @@
-"""Static authority boundaries for the no-SSH Railway stateful workflows."""
+"""Authority boundaries for HTTPS control and bounded PostgreSQL health probes."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import io
+import json
 import re
+import runpy
+import subprocess
+import sys
+import textwrap
+from types import SimpleNamespace
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +31,7 @@ def _workflow(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_phase_five_and_six_have_no_native_file_or_shell_transport() -> None:
+def test_runtime_control_has_no_arbitrary_native_file_or_shell_transport() -> None:
     for path in (CUTOVER, RECOVERY):
         text = _workflow(path)
         assert re.search(r"\brailway\s+ssh\b", text, re.IGNORECASE) is None
@@ -35,6 +44,96 @@ def test_phase_five_and_six_have_no_native_file_or_shell_transport() -> None:
             is None
         )
         assert re.search(r"\bsftp\b|\bscp\b", text, re.IGNORECASE) is None
+
+
+def test_postgres_probe_refuses_other_commands_and_instances(tmp_path, monkeypatch):
+    workflow = _workflow(RECOVERY)
+    scripts = re.findall(r"<<'PYPROBE'\n(.*?)\n          PYPROBE", workflow, re.S)
+    assert len(scripts) == 2 and scripts[0] == scripts[1]
+    setup = textwrap.dedent(scripts[0])
+    instance = "00000000-0000-4000-8000-000000000001"
+    for key, value in {
+        "PROBE_SSH_KEY": "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n",
+        "RAILWAY_PROJECT_ID": "project",
+        "RAILWAY_ENVIRONMENT_ID": "environment",
+        "RAILWAY_POSTGRES_SERVICE_ID": "postgres",
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_PATH": str(tmp_path / "job-path"),
+    }.items():
+        monkeypatch.setenv(key, value)
+    response = {
+        "data": {
+            "environment": {"id": "environment", "projectId": "project"},
+            "serviceInstance": {
+                "id": instance,
+                "environmentId": "environment",
+                "serviceId": "postgres",
+            },
+        }
+    }
+    monkeypatch.setattr(
+        subprocess, "check_output", lambda *a, **kw: json.dumps(response)
+    )
+    exec(compile(setup, "probe-setup", "exec"), {})
+    root = tmp_path / "postgres-health-probe"
+    assert (root / "identity").stat().st_mode & 0o777 == 0o600
+    calls = []
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda args, **kw: calls.append((args, kw)) or SimpleNamespace(returncode=0),
+    )
+    command = (
+        "PGHOST=localhost PGPORT=5432 PGSSLMODE=disable psql -t -A -F',' -q -c \""
+        "SELECT archived_count, coalesce(last_archived_time::text, ''), failed_count, "
+        "coalesce(last_failed_time::text, ''), coalesce(((pg_last_committed_xact()).timestamp)::text, '') "
+        'FROM pg_stat_archiver"'
+    ).encode()
+    target = instance + "@ssh.railway.com"
+    args = ["ssh", "-o", "StrictHostKeyChecking=accept-new", target, "sh", "-s"]
+    for argv, body, allowed in (
+        (args, command, True),
+        (args, b"printenv", False),
+        (args, b"x" * 16385, False),
+        (args[:3] + ["other@ssh.railway.com"] + args[4:], command, False),
+        (args + ["extra"], command, False),
+    ):
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(body)))
+        before = len(calls)
+        with pytest.raises(SystemExit) as result:
+            runpy.run_path(str(root / "ssh"), run_name="__main__")
+        assert (result.value.code == 0) is allowed
+        assert len(calls) - before == int(allowed)
+    assert calls[0][0][-3:] == [target, "sh", "-s"]
+    assert "StrictHostKeyChecking=yes" in calls[0][0]
+    assert calls[0][1]["input"] == command
+
+
+def test_postgres_probe_refuses_wrong_project_before_writing_key(tmp_path, monkeypatch):
+    setup = textwrap.dedent(
+        re.findall(r"<<'PYPROBE'\n(.*?)\n          PYPROBE", _workflow(RECOVERY), re.S)[
+            0
+        ]
+    )
+    for key, value in {
+        "PROBE_SSH_KEY": "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture",
+        "RAILWAY_PROJECT_ID": "expected",
+        "RAILWAY_ENVIRONMENT_ID": "env",
+        "RAILWAY_POSTGRES_SERVICE_ID": "pg",
+        "RUNNER_TEMP": str(tmp_path),
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        subprocess,
+        "check_output",
+        lambda *a, **kw: json.dumps(
+            {"data": {"environment": {"id": "env", "projectId": "wrong"}}}
+        ),
+    )
+    with pytest.raises(AssertionError):
+        exec(compile(setup, "probe-setup", "exec"), {})
+    assert not (tmp_path / "postgres-health-probe").exists()
 
 
 def test_detached_checkout_bundles_advertise_the_exact_head() -> None:
