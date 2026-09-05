@@ -1081,6 +1081,80 @@ def test_recovery_ci_uses_signed_https_and_fixed_members_not_ssh_or_volume_files
     assert len(members) == 14
 
 
+@pytest.mark.parametrize("bootstrap", (True, False))
+@pytest.mark.parametrize(
+    "changed_member",
+    (None, "activation-receipt.json", "request.json", "recovery-receipt.json"),
+)
+def test_recovery_download_step_binds_received_bytes_without_local_activation(
+    tmp_path: Path, bootstrap: bool, changed_member: str | None
+) -> None:
+    workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    start = workflow.index("          cp request.json proof/submitted-request.json")
+    end = workflow.index("          touch proof/stop-continuity", start)
+    script = textwrap.dedent(workflow[start:end])
+    proof = tmp_path / "proof"
+    proof.mkdir()
+    (tmp_path / "bundle").mkdir()
+    activation = b'{"identity":"accepted-activation"}\n'
+    request = b'{"identity":"submitted-request"}\n'
+    receipt = b'{"identity":"observed-recovery"}\n'
+    (tmp_path / "request.json").write_bytes(request)
+    (tmp_path / "recovery-receipt.json").write_bytes(receipt)
+    (proof / "activation.sha256").write_text(
+        hashlib.sha256(activation).hexdigest() + "\n"
+    )
+    if bootstrap:
+        (proof / "bootstrap-activation-receipt.json").write_bytes(activation)
+    else:
+        (proof / "previous-paired-recovery.json").write_text("{}\n")
+    assert not (tmp_path / "activation-receipt.json").exists()
+    downloads = {
+        "activation-receipt.json": activation.decode(),
+        "request.json": request.decode(),
+        "recovery-receipt.json": receipt.decode(),
+    }
+    if changed_member:
+        downloads[changed_member] = '{"identity":"substituted"}\n'
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    curl = fake_bin / "curl"
+    curl.write_text(
+        f"#!{sys.executable}\n"
+        "import pathlib,sys\n"
+        f"downloads={downloads!r}\n"
+        "args=sys.argv[1:]\n"
+        "destination=pathlib.Path(args[args.index('--output')+1])\n"
+        "destination.write_text(downloads.get(destination.name,'bundle member'))\n"
+        "print('200',end='')\n"
+    )
+    curl.chmod(0o700)
+    bearer = tmp_path / "test-bearer"
+    bearer.write_text("test-only-download-capability")
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{Path(sys.executable).parent}:{os.environ['PATH']}",
+            "bearer_path": str(bearer),
+            "request_id": "test-request",
+            "RAILWAY_EDGE_TOKEN": "test-only-edge",
+            "RAILWAY_ORIGIN": "https://example.up.railway.app",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if changed_member:
+        assert result.returncode != 0
+    else:
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "activation-receipt.json").read_bytes() == activation
+        assert (tmp_path / "request.json").read_bytes() == request
+        assert (tmp_path / "recovery-receipt.json").read_bytes() == receipt
+
+
 @pytest.mark.skipif(
     sys.platform != "linux", reason="helper targets GitHub's Linux runner"
 )

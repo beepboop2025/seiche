@@ -1602,7 +1602,7 @@ jobs:
             sleep 10
           done
           test "$ready" = 1
-          cp activation-receipt.json proof/activation-receipt-from-log.json
+          cp request.json proof/submitted-request.json
           cp recovery-receipt.json proof/recovery-receipt-from-log.json
           download_bearer=$(cat "$bearer_path")
           echo "::add-mask::$download_bearer"
@@ -1628,8 +1628,19 @@ jobs:
             test -s "$destination"
           done
           unset download_bearer
-          cmp proof/activation-receipt-from-log.json activation-receipt.json
+          cmp proof/submitted-request.json request.json
           cmp proof/recovery-receipt-from-log.json recovery-receipt.json
+          python -I -S - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          # Both bootstrap and recurring exports pin this digest before submission.
+          # The activation body itself arrives through the bounded download route.
+          expected = Path("proof/activation.sha256").read_text().strip()
+          actual = hashlib.sha256(Path("activation-receipt.json").read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit("downloaded activation differs from the pinned log identity")
+          PY
           touch proof/stop-continuity
           wait "$continuity_pid"
           rm -f -- "$bearer_path"
@@ -2202,3 +2213,22 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.offsite.outputs.receipt_path }}
+
+      - name: Retain bounded recovery failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-recovery-failure-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/railway-recovery-export/request.json
+            ${{ runner.temp }}/railway-recovery-export/recovery-receipt.json
+            ${{ runner.temp }}/railway-recovery-export/proof/activation.sha256
+            ${{ runner.temp }}/railway-recovery-export/proof/bootstrap-activation-receipt.json
+            ${{ runner.temp }}/railway-recovery-export/proof/previous-paired-recovery.json
+            ${{ runner.temp }}/railway-recovery-export/proof/submitted-request.json
+            ${{ runner.temp }}/railway-recovery-export/proof/recovery-receipt-from-log.json
+            ${{ runner.temp }}/railway-recovery-export/proof/api-continuity.tsv
+            ${{ runner.temp }}/railway-recovery-export/proof/runtime.json
+            ${{ runner.temp }}/railway-recovery-export/proof/recovery-runtime-current.json
+          if-no-files-found: ignore
+          retention-days: 30
