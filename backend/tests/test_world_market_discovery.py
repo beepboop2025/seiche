@@ -420,9 +420,9 @@ def test_cloudflare_workflows_deploy_only_reviewed_state_and_fail_closed():
     assert "persist-credentials: false" in catalog
     assert "test \"$(git rev-parse HEAD)\" = \"${SITE_SHA}\"" in catalog
     assert (
-        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in catalog
+        "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" in catalog
     )
-    assert 'node-version: "22"' in catalog
+    assert 'node-version: "24"' in catalog
     assert "cache-dependency-path: liquilens-site/package-lock.json" in catalog
     assert "npm ci --ignore-scripts" in catalog
     # Wrangler 3.90 cannot bundle the site's standards-compliant JSON import
