@@ -109,6 +109,7 @@ jobs:
           backend/tests/test_railway_stateful_migration.py
           backend/tests/test_railway_stateful_cutover.py
           backend/tests/test_stateful_container_entrypoint.py
+          backend/tests/test_stateful_application.py
           backend/tests/test_cutover_source_identity.py
           backend/tests/test_railway_source_bundle_workflows.py
           backend/tests/test_railway_stateful_workflow_transport.py

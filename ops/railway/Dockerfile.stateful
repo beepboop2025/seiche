@@ -18,7 +18,7 @@ RUN printf '%s\n' \
     && find /etc/apt/sources.list.d -mindepth 1 -maxdepth 1 -type f -delete \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-      ca-certificates git postgresql-client tini \
+      ca-certificates git openssh-client postgresql-client tini \
     && apt-get clean \
     && find /var/lib/apt/lists -mindepth 1 -delete \
     && groupadd --system --gid 10001 seiche \

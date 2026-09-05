@@ -20,6 +20,37 @@ trap cleanup EXIT
 mkdir "$scratch/context" "$scratch/proof"
 docker build --target stateful-tools -t "$image" \
   -f "$root/ops/railway/Dockerfile.stateful" "$scratch/context"
+docker run --rm --interactive --network none \
+  --volume "$root/backend/seiche:/source/seiche:ro" \
+  "$image" python -I -B - <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, "/source")
+from seiche import stateful_application as application
+
+with tempfile.TemporaryDirectory() as directory:
+    key = Path(directory) / "ephemeral"
+    subprocess.run([application.SSH_KEYGEN, "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+    application.OWNER_PUBLIC_KEY = key.with_suffix(".pub").read_text().strip()
+    unsigned = {"schema": application.SIGNED_SCHEMA, "purpose": "activate", "payload": {"fixture": True}}
+    signed = subprocess.run(
+        [application.SSH_KEYGEN, "-Y", "sign", "-f", str(key), "-n", application.SIGNATURE_NAMESPACE],
+        input=application.canonical(unsigned), capture_output=True, check=True,
+    )
+    envelope = {**unsigned, "signature": signed.stdout.decode()}
+    assert application.validate_approval(envelope, "activate") == {"fixture": True}
+    envelope["payload"] = {"fixture": False}
+    try:
+        application.validate_approval(envelope, "activate")
+    except application.ApplicationContractError:
+        pass
+    else:
+        raise AssertionError("runtime accepted a tampered signed approval")
+print("Linux runtime SSH approval verification and tamper rejection passed")
+PY
 docker network create --internal "$network" >/dev/null
 docker run --detach --name "$server" --network "$network" \
   --env POSTGRES_HOST_AUTH_METHOD=trust "$postgres_image" >/dev/null

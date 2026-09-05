@@ -1098,6 +1098,10 @@ def _validate_bound_candidate_runtime_receipt(
 
 
 def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]:
+    if environment.get("SEICHE_RAILWAY_APPLICATION_REQUEST_ID"):
+        from seiche import stateful_application
+
+        return stateful_application.validate_runtime(environment, production=False)
     if environment.get("SEICHE_RAILWAY_STATEFUL_MODE") != "cutover_candidate":
         raise CutoverContractError("Railway candidate mode is invalid")
     value, _receipt_sha256 = _validate_bound_candidate_runtime_receipt(environment)
@@ -1492,6 +1496,10 @@ def production_environment(
 
 
 def validate_activation_runtime(environment: Mapping[str, str]) -> dict[str, Any]:
+    if environment.get("SEICHE_RAILWAY_APPLICATION_REQUEST_ID"):
+        from seiche import stateful_application
+
+        return stateful_application.validate_runtime(environment, production=True)
     if environment.get("SEICHE_RAILWAY_STATEFUL_MODE") != "production":
         raise CutoverContractError("Railway production mode is invalid")
     path = Path(environment.get("SEICHE_RAILWAY_ACTIVATION_RECEIPT_PATH", ""))
@@ -1653,6 +1661,10 @@ def _start_writer_children(
     *,
     poll_seconds: int,
 ) -> list[subprocess.Popen[bytes]]:
+    if production.get("SEICHE_RAILWAY_APPLICATION_REQUEST_ID") and production.get(
+        "SEICHE_RAILWAY_ACTIVATION_RECEIPT_PATH"
+    ):
+        validate_activation_runtime(production)
     children: list[subprocess.Popen[bytes]] = []
     try:
         children.extend(
@@ -1763,6 +1775,8 @@ def _serve_production(
             runtime_started_at=runtime_started_at,
         )
         while not stopping:
+            if production.get("SEICHE_RAILWAY_APPLICATION_REQUEST_ID"):
+                validate_activation_runtime(production)
             exited = next(
                 (child for child in children() if child.poll() is not None), None
             )

@@ -275,6 +275,20 @@ def validate_candidate_chain(
 ) -> dict[str, Any]:
     """Validate the activation-bound v3 candidate identity used by recovery."""
 
+    from seiche import stateful_application
+
+    if activation_receipt.get("schema") == stateful_application.ACTIVATION_SCHEMA:
+        try:
+            successor = stateful_application.validate_activation(dict(activation_receipt))
+        except cutover.CutoverContractError as exc:
+            raise RecoveryContractError(str(exc)) from exc
+        # The data's migration candidate retains its original identity. The
+        # signed application activation independently binds the current code.
+        return validate_candidate_chain(
+            value,
+            activation_receipt=successor["application"]["migration_activation"],
+        )
+
     expected_keys = {
         "schema",
         "request",

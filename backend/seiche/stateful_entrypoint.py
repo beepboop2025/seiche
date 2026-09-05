@@ -26,6 +26,12 @@ def run(request_path: Path = REQUEST_PATH) -> int:
         return stateful_migration.run_shadow()
     if schema == stateful_cutover.REQUEST_SCHEMA:
         return stateful_cutover.run()
+    from seiche import stateful_application
+
+    if schema == stateful_application.REQUEST_SCHEMA:
+        from seiche import stateful_application_runtime
+
+        return stateful_application_runtime.run()
     raise stateful_cutover.CutoverContractError(
         "stateful entrypoint request schema is unsupported"
     )
