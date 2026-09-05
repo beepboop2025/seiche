@@ -88,7 +88,9 @@ def test_dump_and_counts_share_snapshot_despite_concurrent_commits(
                 )
             assert len(snapshots) == 1
             # Success and failure must both close the exporting transaction.
-            with pytest.raises(psycopg.Error, match="invalid snapshot"):
+            with pytest.raises(
+                psycopg.Error, match=r"invalid snapshot|snapshot .* does not exist"
+            ):
                 with psycopg.connect(dsn) as reader:
                     reader.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                     reader.execute(
