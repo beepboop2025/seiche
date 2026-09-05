@@ -26,6 +26,7 @@ on:
       - "backend/tests/test_ai_discovery.py"
       - "backend/tests/test_ard_coverage.py"
       - "backend/tests/test_distribution_artifacts.py"
+      - "backend/tests/test_openbb_upload_inventory.py"
       - "backend/tests/test_distribution_receipt_auditor.py"
       - "backend/tests/test_distribution_listings.py"
       - "backend/tests/test_public_money_market_discovery.py"
@@ -75,6 +76,7 @@ on:
       - "backend/tests/test_ai_discovery.py"
       - "backend/tests/test_ard_coverage.py"
       - "backend/tests/test_distribution_artifacts.py"
+      - "backend/tests/test_openbb_upload_inventory.py"
       - "backend/tests/test_distribution_receipt_auditor.py"
       - "backend/tests/test_distribution_listings.py"
       - "backend/tests/test_public_money_market_discovery.py"
@@ -138,6 +140,7 @@ jobs:
             backend/tests/test_ai_discovery.py \
             backend/tests/test_ard_coverage.py \
             backend/tests/test_distribution_artifacts.py \
+            backend/tests/test_openbb_upload_inventory.py \
             backend/tests/test_distribution_receipt_auditor.py \
             backend/tests/test_distribution_listings.py \
             backend/tests/test_public_money_market_discovery.py \
