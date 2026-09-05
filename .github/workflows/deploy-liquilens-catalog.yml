@@ -40,6 +40,17 @@ jobs:
           SITE_SHA: ${{ inputs.site_sha }}
         run: test "$(git rev-parse HEAD)" = "${SITE_SHA}"
 
+      - name: Set up the catalog worker Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: liquilens-site/package-lock.json
+
+      - name: Install the exact catalog worker dependencies
+        working-directory: liquilens-site
+        run: npm ci --ignore-scripts
+
       - name: Verify the catalog worker contract
         working-directory: liquilens-site
         run: node --test tests/test_catalog_worker.mjs
