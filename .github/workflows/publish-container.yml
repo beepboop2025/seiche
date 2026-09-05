@@ -1029,10 +1029,12 @@ jobs:
           if actual != expected:
               raise SystemExit(f"anonymous OCI children differ: {actual!r} != {expected!r}")
           PY
+          # A classic Docker store cannot bind both platforms to one index ref.
+          # The index check above binds these distinct child digests to the release.
           DOCKER_CONFIG="$anonymous_docker_config" \
-            docker pull --platform linux/amd64 "$IMAGE_NAME@$ROOT_DIGEST"
+            docker pull --platform linux/amd64 "$IMAGE_NAME@$AMD_DIGEST"
           DOCKER_CONFIG="$anonymous_docker_config" \
-            docker pull --platform linux/arm64 "$IMAGE_NAME@$ROOT_DIGEST"
+            docker pull --platform linux/arm64 "$IMAGE_NAME@$ARM_DIGEST"
 
           verify_common=(
             --bundle-from-oci
