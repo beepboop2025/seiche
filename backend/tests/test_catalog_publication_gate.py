@@ -6,8 +6,10 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -981,7 +983,10 @@ def test_both_static_publishers_gate_before_their_first_public_write():
     assert fast.index(marker) < fast.index("Push static files to the live site repo")
     assert full.index("Fetch the exact declared release tag") < full.index(marker)
     assert full.index(marker) < full.index("Publish to GitHub Pages (seiche-site)")
-    for workflow in (fast, full):
+    for workflow, source_var in (
+        (fast, "GITHUB_SHA"),
+        (full, "PUBLICATION_SOURCE_SHA"),
+    ):
         assert "fetch-depth: 0" in workflow
         assert (
             "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" in workflow
@@ -996,13 +1001,13 @@ def test_both_static_publishers_gate_before_their_first_public_write():
         )
         assert "ops/release/verify_catalog_publication.py" in workflow
         assert (
-            'git show "${GITHUB_SHA}:ops/release/verify_catalog_publication.py"'
+            f'git show "${{{source_var}}}:ops/release/verify_catalog_publication.py"'
             in workflow
         )
         assert 'git hash-object "$verifier"' in workflow
         assert 'python -I -S "$verifier"' in workflow
         assert "python -I -S ops/release/verify_catalog_publication.py" not in workflow
-        assert '--expected-sha "$GITHUB_SHA"' in workflow
+        assert f'--expected-sha "${source_var}"' in workflow
         assert '--signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"' in workflow
     assert "--published-catalog frontend/dist/.well-known/ai-catalog.json" in full
     assert "--published-catalog" not in fast
@@ -1018,16 +1023,95 @@ def test_full_publish_refuses_stale_mirror_and_canonical_writes():
     mirror_write = "Publish to GitHub Pages (seiche-site)"
     canonical_guard = "Re-prove current main before canonical deploy"
     canonical_write = "Deploy to canonical Cloudflare Pages"
+    initial_guard = "Require the selected source to be exact current main"
 
-    assert workflow.count(fetch) == 2
+    assert workflow.count(fetch) == 3
     current_main = (
         "current_main=\"$(git rev-parse 'refs/remotes/origin/main^{commit}')\""
     )
     assert workflow.count(current_main) == 2
-    assert workflow.count('if [ "$current_main" != "$GITHUB_SHA" ]; then') == 2
+    comparison = 'if [ "$current_main" != "$PUBLICATION_SOURCE_SHA" ]; then'
+    assert workflow.count(comparison) == 2
+    assert workflow.index(initial_guard) < workflow.index("Install backend")
     assert workflow.index(mirror_guard) < workflow.index(mirror_write)
     assert workflow.index(mirror_write) < workflow.index(canonical_guard)
     assert workflow.index(canonical_guard) < workflow.index(canonical_write)
+    for guard in (mirror_guard, canonical_guard):
+        step = _full_publish_step(guard)
+        assert fetch in step
+        assert current_main in step
+        assert comparison in step
+        assert "exit 1" in step
+
+
+def _full_publish_step(name):
+    workflow = (ROOT / ".github/workflows/publish.yml").read_text()
+    return workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - ", 1)[0]
+
+
+def test_full_publish_binds_checkout_cache_and_verifier_to_selected_source():
+    workflow = (ROOT / ".github/workflows/publish.yml").read_text()
+    assert "PUBLICATION_SOURCE_SHA: ${{ inputs.release_sha || github.sha }}" in workflow
+    assert "PUBLICATION_CONTROLLER_SHA: ${{ github.sha }}" in workflow
+    assert "ref: ${{ env.PUBLICATION_SOURCE_SHA }}" in workflow
+    assert "persist-credentials: false" in workflow
+    cache = _full_publish_step("Restore exact-code publish gate")
+    assert "path: .cache/publish-gates/${{ env.PUBLICATION_SOURCE_SHA }}" in cache
+    assert (
+        "key: seiche-publish-gate-v1-${{ runner.os }}-py312-${{ env.PUBLICATION_SOURCE_SHA }}"
+        in cache
+    )
+    marker = _full_publish_step("Verify exact-code publish gate")
+    assert '$(cat "$MARKER" 2>/dev/null || true)" = "$PUBLICATION_SOURCE_SHA"' in marker
+    install = _full_publish_step("Install backend")
+    assert 'pip install -e "./backend[dev,collectors,postgres]"' in install
+    assert install.index('if [ "$RUN_FULL_SUITE" = "true" ]; then') < install.index(
+        'pip install -e "./backend[dev,collectors,postgres]"'
+    )
+
+
+@pytest.mark.parametrize(
+    "guard",
+    (
+        "Require the selected source to be exact current main",
+        "Refuse a stale full-site publish",
+        "Re-prove current main before canonical deploy",
+    ),
+)
+@pytest.mark.parametrize(
+    "scenario", ("current_source", "main_advanced", "fetch_failed")
+)
+def test_full_publish_guards_compare_application_source_not_controller(
+    content_repo, guard, scenario
+):
+    root = content_repo
+    source = _content_git(root, "rev-parse", "HEAD")
+    controller = _content_commit(root, {}, subject="separate controller fixture")
+    _content_git(root, "branch", "-M", "main")
+    remote = root.parent / "publisher-origin.git"
+    _content_git(root, "clone", "--bare", "-q", str(root), str(remote))
+    _content_git(root, "remote", "add", "origin", str(remote))
+    _content_git(root, "checkout", "-q", "--detach", source)
+    _content_git(remote, "update-ref", "refs/heads/main", source)
+    if scenario == "main_advanced":
+        _content_git(remote, "update-ref", "refs/heads/main", controller)
+    elif scenario == "fetch_failed":
+        _content_git(root, "remote", "set-url", "origin", str(root.parent / "missing"))
+    script = textwrap.dedent(_full_publish_step(guard).split("        run: |\n", 1)[1])
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=root,
+        env={
+            **os.environ,
+            "PUBLICATION_SOURCE_SHA": source,
+            "PUBLICATION_CONTROLLER_SHA": controller,
+            "GITHUB_SHA": controller,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) == (scenario == "current_source"), result.stderr
 
 
 def test_signed_release_gate_rejects_malformed_external_pins_before_git_use():
