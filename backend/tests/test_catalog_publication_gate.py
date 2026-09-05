@@ -312,7 +312,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
         "bisBulkFlat": 27,
         "bisApiOnly": 1,
         "bisRegistryOnly": 1,
-        "bisAggregateRows": 76_342_888,
+        "bisAggregateRows": 76_344_667,
         "engineDatasets": 1122,
         "engineVerifiedObjects": 1110,
         "engineAttempts": 1118,
@@ -482,7 +482,7 @@ def test_market_corpus_receipts_bind_deep_health_catalog_and_tools():
     receipt = _verify_market(*_market_receipts())
 
     assert receipt["releaseId"] == "corpus-7cb1695c6affa707"
-    assert receipt["bisRows"] == 76_342_888
+    assert receipt["bisRows"] == 76_344_667
     assert receipt["tools"] == list(gate.MARKET_CORPUS_TOOLS)
 
 
