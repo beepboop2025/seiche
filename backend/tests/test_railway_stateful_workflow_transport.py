@@ -269,7 +269,11 @@ def test_recovery_uses_masked_bounded_capability_and_closed_member_set() -> None
     assert "control.RECOVERY_EXPORT_OPERATION" in text
     assert "control.OFFSITE_ACKNOWLEDGMENT_OPERATION" in text
     assert "extract_latest_recovery_pair" in text
-    assert text.count("current_replica()") == 2
+    export_job, resume_job = text.split("  export-recovery:\n", 1)[1].split(
+        "  resume-offsite:\n", 1
+    )
+    assert export_job.count("current_replica()") == 2
+    assert resume_job.count("current_replica()") == 1
     assert "SUBMISSION_REPLICA_ID" in text
     assert "item.logged_at_unix_ns" in text
     assert "activation_candidates" in text
