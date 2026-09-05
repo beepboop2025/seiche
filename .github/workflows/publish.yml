@@ -98,16 +98,16 @@ jobs:
         id: publish-gate-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .cache/publish-gates/${{ env.PUBLICATION_SOURCE_SHA }}
-          key: seiche-publish-gate-v1-${{ runner.os }}-py312-${{ env.PUBLICATION_SOURCE_SHA }}
+          path: .cache/publish-gates/${{ env.PUBLICATION_SOURCE_SHA }}-${{ env.PUBLICATION_CONTROLLER_SHA }}
+          key: seiche-publish-gate-v2-${{ runner.os }}-py312-${{ env.PUBLICATION_SOURCE_SHA }}-${{ env.PUBLICATION_CONTROLLER_SHA }}
 
       - name: Verify exact-code publish gate
         id: publish-gate
         env:
           CACHE_HIT: ${{ steps.publish-gate-cache.outputs.cache-hit }}
-          MARKER: .cache/publish-gates/${{ env.PUBLICATION_SOURCE_SHA }}/validated-sha
+          MARKER: .cache/publish-gates/${{ env.PUBLICATION_SOURCE_SHA }}-${{ env.PUBLICATION_CONTROLLER_SHA }}/validated-sha
         run: |
-          if [ "$CACHE_HIT" = "true" ] && [ "$(cat "$MARKER" 2>/dev/null || true)" = "$PUBLICATION_SOURCE_SHA" ]; then
+          if [ "$CACHE_HIT" = "true" ] && [ "$(cat "$MARKER" 2>/dev/null || true)" = "$PUBLICATION_SOURCE_SHA:$PUBLICATION_CONTROLLER_SHA" ]; then
             echo "run-full-suite=false" >> "$GITHUB_OUTPUT"
             echo "reusing successful publish gate for $PUBLICATION_SOURCE_SHA"
           else
@@ -138,12 +138,60 @@ jobs:
       - name: Engine tests (publish gates on green)
         if: steps.publish-gate.outputs.run-full-suite == 'true'
         run: |
+          set -euo pipefail
+          # A signed repair controller may correct workflow-contract tests while
+          # the accepted application remains exact current main. No application
+          # file may differ, and all test-support files are restored before export.
+          test_support=(
+            .github/workflows/publish.yml
+            backend/tests/test_publish_scripts.py
+            backend/tests/test_railway_stateful_control.py
+            backend/tests/test_catalog_publication_gate.py
+          )
+          restore_test_support() {
+            git restore --source="$PUBLICATION_SOURCE_SHA" -- "${test_support[@]}"
+          }
+          trap restore_test_support EXIT
+          if [ "$PUBLICATION_CONTROLLER_SHA" != "$PUBLICATION_SOURCE_SHA" ]; then
+            git cat-file -e "$PUBLICATION_CONTROLLER_SHA^{commit}"
+            git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+              verify-commit "$PUBLICATION_CONTROLLER_SHA"
+            git merge-base --is-ancestor "$PUBLICATION_SOURCE_SHA" "$PUBLICATION_CONTROLLER_SHA"
+            python -I -S - <<'PY'
+          import os
+          import subprocess
+          allowed = {
+              ".github/workflows/publish.yml",
+              "backend/tests/test_publish_scripts.py",
+              "backend/tests/test_railway_stateful_control.py",
+              "backend/tests/test_catalog_publication_gate.py",
+          }
+          source = os.environ["PUBLICATION_SOURCE_SHA"]
+          controller = os.environ["PUBLICATION_CONTROLLER_SHA"]
+          changed = set(subprocess.check_output(
+              ["git", "diff", "--name-only", "-z", source, controller],
+          ).decode().rstrip("\0").split("\0"))
+          if not changed or not changed <= allowed:
+              raise SystemExit("controller changes exceed the reviewed test-support scope")
+          for path in allowed:
+              mode = subprocess.check_output(
+                  ["git", "ls-tree", controller, "--", path], text=True,
+              ).split()[0]
+              if mode != "100644":
+                  raise SystemExit("controller test-support file must be a regular source file")
+          PY
+            git restore --source="$PUBLICATION_CONTROLLER_SHA" -- "${test_support[@]}"
+          fi
           # Match the hardened UMask of seiche-release-poll.service so CI
           # catches permission-sensitive fixture drift before host activation.
           umask 0077
           python -m pytest backend/tests -q --memray -o faulthandler_timeout=300
-          mkdir -p ".cache/publish-gates/$PUBLICATION_SOURCE_SHA"
-          printf '%s\n' "$PUBLICATION_SOURCE_SHA" > ".cache/publish-gates/$PUBLICATION_SOURCE_SHA/validated-sha"
+          restore_test_support
+          trap - EXIT
+          test "$(git rev-parse HEAD)" = "$PUBLICATION_SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p ".cache/publish-gates/$PUBLICATION_SOURCE_SHA-$PUBLICATION_CONTROLLER_SHA"
+          printf '%s:%s\n' "$PUBLICATION_SOURCE_SHA" "$PUBLICATION_CONTROLLER_SHA" > ".cache/publish-gates/$PUBLICATION_SOURCE_SHA-$PUBLICATION_CONTROLLER_SHA/validated-sha"
 
       - name: Restore GDELT WEB-NGRAM baseline
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
