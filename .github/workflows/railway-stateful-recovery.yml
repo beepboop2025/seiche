@@ -1915,6 +1915,7 @@ jobs:
           done <proof/offsite-members.txt
           retain_until=$(python -I -S - <<'PY'
           import json
+          from datetime import UTC, datetime
           from pathlib import Path
 
           values = [
@@ -1923,7 +1924,11 @@ jobs:
           ]
           if not values:
               raise SystemExit("off-site retention evidence is empty")
-          print(min(values))
+          instants = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in values]
+          if any(instant.tzinfo is None or instant.utcoffset() is None for instant in instants):
+              raise SystemExit("off-site retention evidence lacks a timezone")
+          earliest = min(instant.astimezone(UTC) for instant in instants)
+          print(earliest.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
           PY
           )
           S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
@@ -2222,6 +2227,7 @@ jobs:
           path: |
             ${{ runner.temp }}/railway-recovery-export/request.json
             ${{ runner.temp }}/railway-recovery-export/recovery-receipt.json
+            ${{ runner.temp }}/railway-recovery-export/offsite-receipt.json
             ${{ runner.temp }}/railway-recovery-export/proof/activation.sha256
             ${{ runner.temp }}/railway-recovery-export/proof/bootstrap-activation-receipt.json
             ${{ runner.temp }}/railway-recovery-export/proof/previous-paired-recovery.json
@@ -2230,5 +2236,9 @@ jobs:
             ${{ runner.temp }}/railway-recovery-export/proof/api-continuity.tsv
             ${{ runner.temp }}/railway-recovery-export/proof/runtime.json
             ${{ runner.temp }}/railway-recovery-export/proof/recovery-runtime-current.json
+            ${{ runner.temp }}/railway-recovery-export/proof/reverse-restore.json
+            ${{ runner.temp }}/railway-recovery-export/proof/offsite-members.txt
+            ${{ runner.temp }}/railway-recovery-export/proof/offsite-heads/*.json
+            ${{ runner.temp }}/railway-recovery-export/proof/offsite-receipt.head.json
           if-no-files-found: ignore
           retention-days: 30

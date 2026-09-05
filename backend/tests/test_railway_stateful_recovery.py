@@ -1399,6 +1399,56 @@ def test_reverse_restore_heredoc_executes_cleanup_and_passes_password_by_env(
     assert "postgresql://postgres:phase6-restore-only" not in step
 
 
+@pytest.mark.parametrize(
+    ("dates", "expected"),
+    [
+        (
+            ["2026-10-05T12:01:00+00:00", "2026-10-05T12:00:00+00:00"],
+            "2026-10-05T12:00:00Z",
+        ),
+        (
+            ["2026-10-05T11:00:00Z", "2026-10-05T12:00:00+02:00"],
+            "2026-10-05T10:00:00Z",
+        ),
+        (["2026-10-05T12:00:00.999+00:00"], "2026-10-05T12:00:00Z"),
+        (["2026-10-05T12:00:00"], None),
+        ([], None),
+    ],
+)
+def test_offsite_retention_heredoc_preserves_earliest_instant_in_canonical_utc(
+    tmp_path: Path, dates: list[str], expected: str | None,
+) -> None:
+    workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    marker = "retain_until=$(python -I -S - <<'PY'\n"
+    start = workflow.index(marker) + len(marker)
+    end = workflow.index("\n          PY", start)
+    program = textwrap.dedent(workflow[start:end])
+    heads = tmp_path / "proof" / "offsite-heads"
+    heads.mkdir(parents=True)
+    for index, value in enumerate(dates):
+        (heads / f"{index}.json").write_text(json.dumps({"ObjectLockRetainUntilDate": value}))
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-"],
+        cwd=tmp_path,
+        input=program,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if expected is None:
+        assert result.returncode != 0
+        assert "off-site retention evidence" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == expected
+        # Use the same strict clock parser as the receipt consumer.
+        recovered = recovery._utc(result.stdout.strip(), label="off-site retain_until")
+        assert all(
+            recovered <= datetime.fromisoformat(value.replace("Z", "+00:00"))
+            for value in dates
+        )
+
+
 def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> None:
     workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     runbook = RECOVERY_RUNBOOK.read_text(encoding="utf-8")
