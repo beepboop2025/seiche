@@ -91,11 +91,11 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    ```bash
    release_sha="$(git rev-parse HEAD)"
    test "$release_sha" = "$(git rev-parse origin/main)"
-   receipt_tag=market-corpus-receipt-corpus-7cb1695c6affa707-r3
+   receipt_tag=market-corpus-receipt-corpus-7cb1695c6affa707-r4
    test "$(jq -r '.entries[] | select(.identifier == "urn:air:seiche.info:mcp:market-corpus") | .metadata.publicationReceipt | fromjson | .tag' frontend/public/.well-known/ai-catalog.json)" = "$receipt_tag"
    ! git rev-parse --verify --quiet "refs/tags/$receipt_tag"
    ! git ls-remote --exit-code --tags origin "refs/tags/$receipt_tag"
-   git tag -s -m "Seiche exact-SHA market corpus receipt r3" \
+   git tag -s -m "Seiche exact-SHA market corpus receipt r4" \
      "$receipt_tag" "$release_sha"
    git -c gpg.format=ssh \
      -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
