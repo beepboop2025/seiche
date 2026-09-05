@@ -15,6 +15,10 @@ on:
           - preflight-offsite
           - monitor
           - export-recovery
+      source_sha:
+        description: "Optional exact current main SHA for reviewed native-backup or monitor repairs"
+        required: false
+        type: string
       confirmation:
         description: "Exact operation-specific confirmation"
         required: false
@@ -40,7 +44,7 @@ jobs:
       - name: Check out the exact main identity
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -64,6 +68,8 @@ jobs:
 
       - name: Configure and lock the native volume and PostgreSQL canaries
         env:
+          RECOVERY_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
@@ -74,9 +80,14 @@ jobs:
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-admin
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RECOVERY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RECOVERY_SOURCE_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$RECOVERY_SOURCE_SHA"
+          if test "$GITHUB_REF" != refs/heads/main; then
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test -n "$REQUESTED_SOURCE_SHA"
+          fi
           test "$CONFIRMATION" = ENABLE_NATIVE_BACKUPS_AND_LOCK_CANARIES
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --short --untracked-files=no)"
           for value in \
             "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" \
@@ -89,15 +100,18 @@ jobs:
           cd "$EVIDENCE_ROOT"
 
           cat >volume-instances.graphql <<'GRAPHQL'
-          query RecoveryVolume($volumeId: String!) {
-            adminVolumeInstancesForVolume(volumeId: $volumeId) {
-              id volumeId environmentId serviceId mountPath region
-              sizeMB currentSizeMB deletedAt isPendingDeletion
+          query RecoveryVolume($environmentId: String!) {
+            environment(id: $environmentId) {
+              id projectId
+              volumeInstances { edges { node {
+                id volumeId environmentId serviceId mountPath region
+                sizeMB currentSizeMB deletedAt isPendingDeletion
+              } } }
             }
           }
           GRAPHQL
           railway api --file volume-instances.graphql \
-            --raw-var "volumeId=$RAILWAY_VOLUME_ID" --compact \
+            --raw-var "environmentId=$RAILWAY_ENVIRONMENT_ID" --compact \
             >volume-instances.json
           VOLUME_ID="$RAILWAY_VOLUME_ID" \
             ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
@@ -109,7 +123,11 @@ jobs:
           from pathlib import Path
 
           payload = json.loads(Path(os.environ["INPUT"]).read_text())
-          rows = payload.get("data", {}).get("adminVolumeInstancesForVolume")
+          environment = payload.get("data", {}).get("environment", {})
+          if (environment.get("id") != os.environ["ENVIRONMENT_ID"]
+              or environment.get("projectId") != os.environ["RAILWAY_PROJECT_ID"]):
+              raise SystemExit("volume environment or project identity changed")
+          rows = [edge.get("node") for edge in environment.get("volumeInstances", {}).get("edges", [])]
           matches = [
               row for row in rows if isinstance(row, dict)
               and row.get("volumeId") == os.environ["VOLUME_ID"]
@@ -149,7 +167,7 @@ jobs:
               raise SystemExit("state volume backup schedules were not committed")
           PY
 
-          canary_name="seiche-phase6-bootstrap-${GITHUB_SHA:0:8}-${GITHUB_RUN_ID}"
+          canary_name="seiche-phase6-bootstrap-${RECOVERY_SOURCE_SHA:0:8}-${GITHUB_RUN_ID}"
           cat >volume-backup-create.graphql <<'GRAPHQL'
           mutation RecoveryBackup($volumeInstanceId: String!, $name: String) {
             volumeInstanceBackupCreate(
@@ -642,7 +660,7 @@ jobs:
       - name: Check out the exact default-branch identity
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -666,6 +684,8 @@ jobs:
       - name: Prove native backups, PITR coverage, volume headroom, and both edges
         id: proof
         env:
+          RECOVERY_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
@@ -678,7 +698,13 @@ jobs:
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-monitor
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RECOVERY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RECOVERY_SOURCE_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$RECOVERY_SOURCE_SHA"
+          if test "$GITHUB_REF" != refs/heads/main; then
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test -n "$REQUESTED_SOURCE_SHA"
+          fi
           for value in \
             "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" \
             "$RAILWAY_ENVIRONMENT_ID" "$RAILWAY_SERVICE_ID" \
@@ -692,10 +718,13 @@ jobs:
           cd "$EVIDENCE_ROOT"
 
           cat >native-proof.graphql <<'GRAPHQL'
-          query RecoveryNativeProof($volumeId: String!, $volumeInstanceId: String!) {
-            adminVolumeInstancesForVolume(volumeId: $volumeId) {
-              id volumeId environmentId serviceId mountPath region
-              sizeMB currentSizeMB deletedAt isPendingDeletion
+          query RecoveryNativeProof($environmentId: String!, $volumeInstanceId: String!) {
+            environment(id: $environmentId) {
+              id projectId
+              volumeInstances { edges { node {
+                id volumeId environmentId serviceId mountPath region
+                sizeMB currentSizeMB deletedAt isPendingDeletion
+              } } }
             }
             volumeInstanceBackupScheduleList(volumeInstanceId: $volumeInstanceId) {
               id kind cron name retentionSeconds createdAt
@@ -707,15 +736,18 @@ jobs:
           }
           GRAPHQL
           cat >volume-instances.graphql <<'GRAPHQL'
-          query RecoveryVolume($volumeId: String!) {
-            adminVolumeInstancesForVolume(volumeId: $volumeId) {
-              id volumeId environmentId serviceId mountPath region
-              sizeMB currentSizeMB deletedAt isPendingDeletion
+          query RecoveryVolume($environmentId: String!) {
+            environment(id: $environmentId) {
+              id projectId
+              volumeInstances { edges { node {
+                id volumeId environmentId serviceId mountPath region
+                sizeMB currentSizeMB deletedAt isPendingDeletion
+              } } }
             }
           }
           GRAPHQL
           railway api --file volume-instances.graphql \
-            --raw-var "volumeId=$RAILWAY_VOLUME_ID" --compact \
+            --raw-var "environmentId=$RAILWAY_ENVIRONMENT_ID" --compact \
             >volume-instances.json
           volume_instance_id=$(VOLUME_ID="$RAILWAY_VOLUME_ID" \
             ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
@@ -724,9 +756,11 @@ jobs:
           import os
           from pathlib import Path
 
-          rows = json.loads(Path("volume-instances.json").read_text()).get(
-              "data", {}
-          ).get("adminVolumeInstancesForVolume", [])
+          environment = json.loads(Path("volume-instances.json").read_text()).get("data", {}).get("environment", {})
+          if (environment.get("id") != os.environ["ENVIRONMENT_ID"]
+              or environment.get("projectId") != os.environ["RAILWAY_PROJECT_ID"]):
+              raise SystemExit("volume environment or project identity changed")
+          rows = [edge.get("node") for edge in environment.get("volumeInstances", {}).get("edges", [])]
           matches = [
               row for row in rows
               if row.get("volumeId") == os.environ["VOLUME_ID"]
@@ -742,7 +776,7 @@ jobs:
           PY
           )
           railway api --file native-proof.graphql \
-            --raw-var "volumeId=$RAILWAY_VOLUME_ID" \
+            --raw-var "environmentId=$RAILWAY_ENVIRONMENT_ID" \
             --raw-var "volumeInstanceId=$volume_instance_id" --compact \
             >native-proof.json
           railway postgres pitr status \
@@ -808,7 +842,11 @@ jobs:
 
           now = datetime.now(UTC)
           native = load("native-proof.json").get("data", {})
-          instances = native.get("adminVolumeInstancesForVolume")
+          environment = native.get("environment", {})
+          if (environment.get("id") != os.environ["EXPECTED_ENVIRONMENT_ID"]
+              or environment.get("projectId") != os.environ["RAILWAY_PROJECT_ID"]):
+              raise SystemExit("native backup environment or project identity changed")
+          instances = [edge.get("node") for edge in environment.get("volumeInstances", {}).get("edges", [])]
           matches = [
               row for row in instances if isinstance(row, dict)
               and row.get("volumeId") == os.environ["EXPECTED_VOLUME_ID"]
