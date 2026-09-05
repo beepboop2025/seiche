@@ -1547,7 +1547,11 @@ jobs:
           submission_replica_id=$(cat proof/submission-replica-id.txt)
           replica_id="$submission_replica_id"
           ready=0
-          for _attempt in $(seq 1 90); do
+          # A real 1.5 GB export plus semantic restore inspection exceeded the
+          # former fixed-attempt window. Reserve 45 minutes for the receipt;
+          # download/restore/off-site checks remain inside the 90-minute job.
+          recovery_ready_deadline=$((SECONDS + 2700))
+          while (( SECONDS < recovery_ready_deadline )); do
             railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \

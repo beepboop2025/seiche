@@ -38,6 +38,10 @@ For one valid `recovery_export` command it:
 5. publishes a content-bound immutable recovery receipt.
 
 An export failure restarts the writers but cannot publish a success receipt.
+The hosted export waits up to 45 minutes for the exact receipt, within its
+90-minute job limit. Large backups include semantic restore inspection before
+the receipt is emitted. A hosted timeout does not cancel that root operation;
+reconcile the request and completed receipt before starting another export.
 An interrupted run revalidates the already committed bundle and can seal the
 same receipt after restart. Receipt names are sortable
 `SNAPSHOT_ID-REQUEST_ID.json` values; no mutable `latest` pointer is trusted.
