@@ -39,7 +39,7 @@
         "name": "Money-market research workflow with public evidence",
         "description": "A reproducible workflow for researching money-market funding with public observations, native clocks, product handoffs and explicit evidence gaps.",
         "datePublished": "2026-08-24",
-        "dateModified": "2026-08-24",
+        "dateModified": "2026-09-05",
         "isAccessibleForFree": true,
         "about": ["money markets","repo","overnight rates","bank reserves","Treasury cash","funding liquidity"],
         "mainEntity": {"@id":"https://seiche.info/use-cases/money-market-research/#faq"}
@@ -118,6 +118,17 @@
           <div class="api"><strong>Public MCP context</strong><span>Ask for a chartless section and retain source and freshness fields in the answer.</span><code>money_market_context(section="all")</code></div>
           <div class="api"><strong>Fleet skill</strong><span>Install the public router, then fetch a bounded packet that preserves each product response and every error separately.</span><code>npx skills add beepboop2025/financial-evidence-skills --skill financial-evidence</code></div>
         </div>
+      </section>
+
+      <section aria-labelledby="diagnostics-title">
+        <div class="section-head"><div><span class="label">Deeper USD research</span><h2 id="diagnostics-title">Separate one unusual print from persistent pressure</h2></div><p>Use the existing money-market desk's diagnostics alongside the policy corridor, repo distributions and liquidity-buffer sections.</p></div>
+        <div class="api-grid">
+          <div class="api"><strong>Funding persistence</strong><span>Count SOFR prints above IORB over 5, 20 and 60 observations. Keep sample sizes, missing calendar weekdays and the streak's calendar span in the brief. Sparse histories remain partial.</span><code>money_market_context(section="diagnostics")</code></div>
+          <div class="api"><strong>Secured and unsecured transmission</strong><span>Compare SOFR and EFFR with IORB only on their latest common date. Each comparison carries its own age; a fresher secured print cannot update a stale unsecured leg.</span><code>money_market_context(section="policy_corridor")</code></div>
+          <div class="api"><strong>Calendar context</strong><span>Compare the last three calendar dates of quarter ends, other month ends and other dates over at most three years. Cohorts need 20 observations before a median is published. Differences describe association, not a calendar trade.</span><code>money_market_deep_dive</code></div>
+          <div class="api"><strong>A reproducible brief</strong><span>Save the response and retrieval time. State the dates, counts and missing legs; report both the strongest observation and the evidence against the interpretation. These diagnostics do not change Seiche's regime score.</span><code>money_market_context(section="sources")</code></div>
+        </div>
+        <p>Reference definitions: <a href="https://www.newyorkfed.org/markets/reference-rates/sofr">New York Fed SOFR methodology</a> and <a href="https://www.federalreserve.gov/monetarypolicy/reserve-balances.htm">Federal Reserve IORB</a>. IORB eligibility and the benchmarks' different counterparty sets prevent a spread from being treated as a universally executable arbitrage.</p>
       </section>
 
       <section aria-labelledby="clocks-title">

@@ -103,6 +103,7 @@ MONEY_MARKET_SECTION_IDS = (
 )
 MONEY_MARKET_SELECTORS = (
     "summary",
+    "diagnostics",
     *MONEY_MARKET_SECTION_IDS,
     "sources",
     "methodology",
@@ -1183,6 +1184,13 @@ def _money_market_unavailable(
         out["formulas"] = desk.get("formulas") or []
         if selector == "all":
             out["sections"] = []
+    if selector in {"diagnostics", "all"}:
+        out["diagnostics"] = {
+            "status": "unavailable",
+            "reason": reason,
+            "context_only": True,
+            "used_in_regime": False,
+        }
     if selector in {"sources", "all"}:
         source_metadata = desk.get("source_metadata") or desk.get("sources") or []
         out["source_metadata"] = source_metadata
@@ -1256,6 +1264,26 @@ def tool_money_market(args: dict, _public: bool) -> Any:
             projected = _money_market_project_section(selected)
             out["selection_status"] = projected["status"]
             out["sections"] = [projected]
+    elif selector == "diagnostics":
+        out["diagnostics"] = engine.get("diagnostics") or {
+            "status": "unavailable",
+            "reason": "diagnostics are absent from this completed snapshot",
+            "context_only": True,
+            "used_in_regime": False,
+        }
+        out["legal_notices"] = engine.get("legal_notices") or []
+        out["source_metadata"] = [
+            row
+            for row in engine.get("source_metadata") or []
+            if isinstance(row, dict)
+            and row.get("id")
+            in {
+                "fred_sofr",
+                "fred_iorb",
+                "fred_effr",
+                "nyfed_sofr_rate",
+            }
+        ]
     elif selector == "sources":
         source_metadata = engine.get("source_metadata") or engine.get("sources") or []
         out["source_metadata"] = source_metadata
@@ -1265,6 +1293,12 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         out["methodology"] = engine.get("methodology") or {}
         out["formulas"] = engine.get("formulas") or []
     elif selector == "all":
+        out["diagnostics"] = engine.get("diagnostics") or {
+            "status": "unavailable",
+            "reason": "diagnostics are absent from this completed snapshot",
+            "context_only": True,
+            "used_in_regime": False,
+        }
         out["sections"] = [
             _money_market_project_section(sections[section_id])
             for section_id in MONEY_MARKET_SECTION_IDS
@@ -1672,7 +1706,9 @@ TOOLS: dict[str, tuple] = {
         "and tails; repo-segment rates and volumes; CP-Treasury spreads; bills and "
         "cash curve; liquidity buffers and Fed facilities; and MMF repo plumbing. "
         "Use optional `section` to request a compact summary, one named desk section, "
-        "sources, methodology, or all context. Returns exact-date alignment, native-"
+        "diagnostics, sources, methodology, or all context. Diagnostics count funding "
+        "persistence, compare secured/unsecured benchmarks and show calendar cohorts "
+        "with sample limits, without changing any score. Returns exact-date alignment, native-"
         "cadence changes, empirical own-history statistics, freshness, coverage, "
         "formulas, sources, and caveats as applicable. Chart history is always "
         "omitted. Reads only an already completed cached or persisted snapshot; it "
@@ -2345,6 +2381,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "legal_notices": {"type": "array"},
             "methodology": {"type": "object"},
             "formulas": {"type": "array"},
+            "diagnostics": {"type": "object"},
         },
         (
             (
@@ -2979,7 +3016,10 @@ PROMPTS: dict[str, tuple] = {
             "freshness. Next request only the relevant named section(s): "
             "policy_corridor, secured_distributions, repo_segments, "
             "unsecured_funding, bills_cash_curve, liquidity_buffers, or "
-            "mmf_plumbing. Request section='sources' for provenance and "
+            "mmf_plumbing. Request section='diagnostics' to distinguish persistent "
+            "SOFR-IORB prints from isolated moves and compare dated calendar cohorts. "
+            "State sample counts, missing weekdays and the absence of causal authority. "
+            "Request section='sources' for provenance and "
             "section='methodology' for formulas and caveats when those claims "
             "matter. Explain each number simply, respect exact-date and native-"
             "cadence metadata, and do not turn descriptive ranks into a causal, "

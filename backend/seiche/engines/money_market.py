@@ -267,9 +267,7 @@ def _composition_safe_component_sum(
                     if name in frame
                     else pd.Series(False, index=frame.index, dtype=bool)
                 )
-                same_composition &= (
-                    present if name in comparison_set else ~present
-                )
+                same_composition &= present if name in comparison_set else ~present
             result = _clean(
                 frame.loc[same_composition, comparison_components].sum(
                     axis=1,
@@ -285,7 +283,9 @@ def _composition_safe_component_sum(
     observed_masks: dict[str, int] = {}
     if not frame.empty:
         for _, row in frame.iterrows():
-            mask = "+".join(name for name in inputs if name in frame and pd.notna(row[name]))
+            mask = "+".join(
+                name for name in inputs if name in frame and pd.notna(row[name])
+            )
             if mask:
                 observed_masks[mask] = observed_masks.get(mask, 0) + 1
     return result, {
@@ -351,9 +351,7 @@ def _familywise_adjust_indicators(indicators: list[dict]) -> list[dict]:
             else None
         )
         adjusted_tail = (
-            _number(1.0 - float(headline) / 100.0, 6)
-            if headline is not None
-            else None
+            _number(1.0 - float(headline) / 100.0, 6) if headline is not None else None
         )
         row.update(
             {
@@ -668,6 +666,189 @@ def _json_safe(value: Any) -> Any:
 # ---------------------------------------------------------------------------
 # Public contract
 # ---------------------------------------------------------------------------
+
+
+def _funding_diagnostics(
+    sofr: pd.Series,
+    iorb: pd.Series,
+    effr: pd.Series,
+    *,
+    evaluated_at: pd.Timestamp,
+    sofr_source_id: str = "fred_sofr",
+) -> dict:
+    """Observed funding persistence and calendar context, never a new score."""
+    spread, alignment = _exact(
+        {"SOFR": sofr, "IORB": iorb},
+        lambda frame: ((frame["SOFR"] - frame["IORB"]) * 100.0).round(6),
+        "100 x (SOFR - IORB), in basis points",
+    )
+    out: dict[str, Any] = {
+        "schema": "seiche.money-market-diagnostics.v1",
+        "status": "unavailable",
+        "context_only": True,
+        "used_in_regime": False,
+        "asof": _asof(spread),
+        "alignment": alignment,
+        "source_ids": [sofr_source_id, "fred_iorb", "fred_effr"],
+        "caveats": [
+            "IORB is an administered rate available to eligible institutions; a spread is not a universally executable arbitrage.",
+            "Persistence counts observed prints. Calendar weekdays without prints are disclosed, not filled or automatically called collection failures.",
+            "Calendar cohorts describe association, not a causal month-end effect or a policy-regime adjustment.",
+            "These diagnostics do not alter the desk regime, composite score or trading authority.",
+        ],
+    }
+    if spread.empty:
+        out["reason"] = "SOFR and IORB have no exact common date"
+        _refresh_diagnostic_clocks(out, evaluated_at)
+        return out
+
+    latest = spread.index[-1]
+    history = spread[spread.index >= latest - pd.DateOffset(years=3)]
+    windows = []
+    for size in (5, 20, 60):
+        window = history.tail(size)
+        count = len(window)
+        weekdays = pd.bdate_range(window.index[0], window.index[-1])
+        windows.append(
+            {
+                "requested_observations": size,
+                "observed_n": count,
+                "status": "available" if count == size else "partial",
+                "from": window.index[0].date().isoformat(),
+                "to": window.index[-1].date().isoformat(),
+                "above_iorb_n": int((window > 0).sum()),
+                "above_iorb_share_pct": _number(100.0 * (window > 0).mean(), 1),
+                "median_bp": _number(window.median()),
+                "p95_bp": _number(window.quantile(0.95)) if count >= 20 else None,
+                "p95_min_observations": 20,
+                "maximum_bp": _number(window.max()),
+                "unobserved_calendar_weekdays": int(
+                    len(weekdays.difference(window.index))
+                ),
+            }
+        )
+    run = 0
+    for value in reversed(history.tolist()):
+        if value <= 0:
+            break
+        run += 1
+    persistence = {
+        "status": "available",
+        "asof": latest.date().isoformat(),
+        "lookback": "at most three calendar years of exact-date observations",
+        "windows": windows,
+        "current_above_iorb_run": {
+            "observed_prints": run,
+            "first_date": history.index[-run].date().isoformat() if run else None,
+            "last_date": latest.date().isoformat() if run else None,
+            "calendar_span_days": int((latest - history.index[-run]).days) + 1
+            if run
+            else 0,
+            "left_censored": bool(run and run == len(history)),
+        },
+    }
+
+    common = pd.concat({"SOFR": sofr, "IORB": iorb, "EFFR": effr}, axis=1).dropna()
+    transmission: dict[str, Any] = {
+        "status": "unavailable",
+        "asof": None,
+        "reason": "SOFR, IORB and EFFR require one exact common date",
+    }
+    if not common.empty:
+        observation = common.iloc[-1]
+        secured = round(100.0 * float(observation["SOFR"] - observation["IORB"]), 6)
+        unsecured = round(100.0 * float(observation["EFFR"] - observation["IORB"]), 6)
+        patterns = {
+            (True, True): "both_benchmarks_above_iorb",
+            (True, False): "secured_benchmark_above_iorb_only",
+            (False, True): "unsecured_benchmark_above_iorb_only",
+            (False, False): "neither_benchmark_above_iorb",
+        }
+        transmission = {
+            "status": "available",
+            "asof": common.index[-1].date().isoformat(),
+            "pattern": patterns[(secured > 0, unsecured > 0)],
+            "sofr_minus_iorb_bp": _number(secured),
+            "effr_minus_iorb_bp": _number(unsecured),
+            "sofr_minus_effr_bp": _number(secured - unsecured),
+            "common_observation_n": len(common),
+            "interpretation": "Different counterparty sets and collateral explain why these benchmarks need not coincide; the pattern alone does not identify a cause.",
+        }
+
+    month_end = (history.index.days_in_month - history.index.day) < 3
+    quarter_end = month_end & (history.index.month % 3 == 0)
+    cohorts = []
+    for name, mask in (
+        ("quarter_end", quarter_end),
+        ("other_month_end", month_end & ~quarter_end),
+        ("other_dates", ~month_end),
+    ):
+        values = history[mask]
+        enough = len(values) >= 20
+        cohorts.append(
+            {
+                "cohort": name,
+                "observed_n": len(values),
+                "status": "available" if enough else "insufficient_history",
+                "median_bp": _number(values.median()) if enough else None,
+                "minimum_observations": 20,
+            }
+        )
+    medians = {row["cohort"]: row["median_bp"] for row in cohorts}
+    baseline = medians["other_dates"]
+    calendar = {
+        "status": "available"
+        if all(row["status"] == "available" for row in cohorts)
+        else "partial",
+        "asof": latest.date().isoformat(),
+        "from": history.index[0].date().isoformat(),
+        "cohort_definition": "last three calendar dates of a month; quarter ends are March, June, September and December",
+        "cohorts": cohorts,
+        "quarter_end_minus_other_dates_median_bp": (
+            _number(medians["quarter_end"] - baseline)
+            if medians["quarter_end"] is not None and baseline is not None
+            else None
+        ),
+        "inference": "descriptive cohort medians; not a forecast or causal estimate",
+    }
+    out.update(
+        status="available",
+        persistence=persistence,
+        overnight_transmission=transmission,
+        calendar_context=calendar,
+    )
+    _refresh_diagnostic_clocks(out, evaluated_at)
+    return out
+
+
+def _refresh_diagnostic_clocks(diagnostics: dict, evaluated_at: pd.Timestamp) -> None:
+    """Retain observed facts but age every diagnostic at response time."""
+    parts = [diagnostics] + [
+        value
+        for key in ("persistence", "overnight_transmission", "calendar_context")
+        if isinstance(value := diagnostics.get(key), dict)
+    ]
+    for part in parts:
+        observed = part.get("asof")
+        try:
+            clock = pd.Timestamp(observed) if isinstance(observed, str) else pd.NaT
+            age = int((evaluated_at - clock).days) if not pd.isna(clock) else None
+        except (TypeError, ValueError, OverflowError):
+            age = None
+        part["evaluation_asof"] = evaluated_at.date().isoformat()
+        part["age_days"] = age if age is not None and age >= 0 else None
+        part["freshness"] = (
+            _freshness_status(age, "daily")
+            if age is not None and age >= 0
+            else "unavailable"
+        )
+        part["use"] = (
+            "historical_context"
+            if part["freshness"] == "stale"
+            else "descriptive_context"
+            if part["freshness"] in {"fresh", "aging"}
+            else "no_inference"
+        )
 
 
 def analyze(
@@ -2140,9 +2321,7 @@ def analyze(
     )
     worst = ranked[0] if ranked else None
     score = float(worst["stress_percentile"]) if worst is not None else None
-    raw_score = (
-        float(worst["raw_stress_percentile"]) if worst is not None else None
-    )
+    raw_score = float(worst["raw_stress_percentile"]) if worst is not None else None
     state = _regime_state(score)
     regime = {
         "state": state,
@@ -2474,6 +2653,13 @@ def analyze(
             # Existing Seiche engines conventionally expose this shorter key.
             "sources": source_metadata,
             "legal_notices": LEGAL_NOTICES,
+            "diagnostics": _funding_diagnostics(
+                core_sofr,
+                raw["iorb"],
+                raw["effr"],
+                evaluated_at=evaluated_at,
+                sofr_source_id=sofr_source_spec[0],
+            ),
         }
     )
 
@@ -2503,6 +2689,10 @@ def refresh_for_evaluation(
         evaluation_asof,
         desk_asof=pd.Timestamp(desk_asof_raw),
     )
+
+    diagnostics = out.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        _refresh_diagnostic_clocks(diagnostics, evaluated_at)
 
     def age_days(asof: Any) -> int | None:
         if not isinstance(asof, str) or not asof:
@@ -2671,9 +2861,7 @@ def refresh_for_evaluation(
     )
     worst = ranked[0] if ranked else None
     score = float(worst["stress_percentile"]) if worst is not None else None
-    raw_score = (
-        float(worst["raw_stress_percentile"]) if worst is not None else None
-    )
+    raw_score = float(worst["raw_stress_percentile"]) if worst is not None else None
     state = _regime_state(score)
     regime["state"] = state
     regime["raw_worst_stress_percentile"] = _number(raw_score, 1)

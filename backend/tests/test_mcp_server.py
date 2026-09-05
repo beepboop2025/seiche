@@ -777,6 +777,38 @@ def test_money_market_sources_and_methodology_are_explicit_projections(
     assert "charts" not in methodology
 
 
+def test_money_market_diagnostics_handles_legacy_snapshot(
+    monkeypatch, stubbed, fake_snap
+):
+    snap = _snapshot_with_money_market(fake_snap)
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snap)
+    payload = _payload(_public_call("money_market_context", {"section": "diagnostics"}))
+    assert payload["diagnostics"]["status"] == "unavailable"
+    assert payload["diagnostics"]["used_in_regime"] is False
+    assert payload["chart_history_included"] is False
+    assert "charts" not in payload
+
+
+def test_money_market_diagnostics_serves_and_ages_completed_facts(
+    monkeypatch, stubbed, fake_snap
+):
+    desk = _money_market_engine()
+    desk["diagnostics"] = {
+        "status": "available",
+        "asof": "2020-01-02",
+        "context_only": True,
+        "used_in_regime": False,
+        "persistence": {"asof": "2020-01-02", "windows": [{"observed_n": 5}]},
+    }
+    snap = _snapshot_with_money_market(fake_snap, desk)
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snap)
+    payload = _payload(_public_call("money_market_context", {"section": "diagnostics"}))
+    assert payload["diagnostics"]["freshness"] == "stale"
+    assert payload["diagnostics"]["persistence"]["windows"] == [{"observed_n": 5}]
+    assert "freshness" not in desk["diagnostics"]
+    assert payload["source_metadata"][0]["id"] == "fred_sofr"
+
+
 def test_money_market_all_is_complete_but_still_chartless(
     monkeypatch, stubbed, fake_snap
 ):
