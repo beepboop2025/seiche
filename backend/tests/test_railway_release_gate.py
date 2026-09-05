@@ -8,10 +8,13 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 
+from packaging.requirements import Requirement
 import pytest
 
 
@@ -454,6 +457,72 @@ def test_host_wraps_only_exact_remote_result(runner, verifier, monkeypatch, tmp_
     assert local["remote"]["railway_deployment_id"] == remote["railway_deployment_id"]
 
 
+def test_gate_install_contract_includes_postgres_and_matches_every_boundary(
+    runner, verifier
+):
+    workflow_value = next(
+        line.partition(": ")[2]
+        for line in WORKFLOW.read_text().splitlines()
+        if line.startswith("  INSTALL_COMMAND: ")
+    )
+    docker_run = next(
+        line.removeprefix("RUN ")
+        for line in RAILWAY_DOCKERFILE.read_text().replace("\\\n", " ").splitlines()
+        if line.startswith("RUN python -m pip install")
+    )
+    remote_constant = next(
+        line.partition("=")[2]
+        for line in POLLER.read_text().splitlines()
+        if line.startswith("REMOTE_GATE_INSTALL_COMMAND=")
+    )
+    commands = {
+        "runner": runner.INSTALL_COMMAND,
+        "verifier": verifier.INSTALL_COMMAND,
+        "workflow": json.loads(workflow_value),
+        "docker": docker_run,
+        "retired_poller_remote_contract": shlex.split(remote_constant)[0],
+    }
+    expected = shlex.split(runner.INSTALL_COMMAND)
+    assert "./backend[dev,collectors,postgres]" in expected
+    for boundary, command in commands.items():
+        assert shlex.split(command) == expected, boundary
+    # The selected extra must actually supply the driver used by the stateful
+    # runtime's offline conninfo parser, even without a PostgreSQL test service.
+    project = tomllib.loads((ROOT / "backend" / "pyproject.toml").read_text())
+    postgres = project["project"]["optional-dependencies"]["postgres"]
+    assert any(
+        (requirement := Requirement(value)).name == "psycopg"
+        and "binary" in requirement.extras
+        for value in postgres
+    )
+
+
+def test_gate_rejects_requests_and_receipts_without_postgres_dependency(
+    runner, verifier, monkeypatch, tmp_path
+):
+    archive = tmp_path / "source.tar"
+    archive.write_bytes(b"exact source fixture\n")
+    request = _request(runner, archive)
+    legacy_install = runner.INSTALL_COMMAND.replace(
+        "[dev,collectors,postgres]", "[dev,collectors]"
+    )
+    request["install_command"] = legacy_install
+    request_path = tmp_path / "request.json"
+    request_path.write_bytes(runner.canonical_json(request))
+    with pytest.raises(SystemExit):
+        runner.load_request(request_path, archive)
+
+    remote = _remote_result(runner, monkeypatch, tmp_path)
+    remote["install_command"] = legacy_install
+    with pytest.raises(SystemExit):
+        verifier.validate_remote_receipt(
+            remote,
+            target="a" * 40,
+            tree="b" * 40,
+            source_archive_sha256=str(remote["source_archive_sha256"]),
+        )
+
+
 @pytest.mark.parametrize("tamper", ("commit", "tree", "source", "extra"))
 def test_host_fails_closed_on_remote_receipt_tampering(
     runner, verifier, monkeypatch, tmp_path, tamper
@@ -666,7 +735,7 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert "marker_count=$(grep -c '^SEICHE_RAILWAY_GATE_RESULT_V1='" in workflow
     assert "caddy_${CADDY_VERSION}_linux_amd64.tar.gz" in dockerfile
     assert 'test "$(uname -m)" = x86_64' in dockerfile
-    assert 'python -m pip install -q "./backend[dev,collectors]"' in dockerfile
+    assert 'python -m pip install -q "./backend[dev,collectors,postgres]"' in dockerfile
     assert "chmod -R a-w /workspace" in dockerfile
     assert "pip install -q -e" not in dockerfile
     assert config["deploy"] == {

@@ -639,3 +639,83 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         item["record_id"]
         for item in repository.load_forward_records(product="postgres-integration")
     }
+
+
+def test_postgres_atlas_batch_matches_individual_histories(monkeypatch) -> None:
+    """Exercise actual PostgreSQL parameter binding, window ranking and rows."""
+
+    repository = PostgresMarketRepository(os.environ["SEICHE_TEST_POSTGRES_URL"])
+    token = uuid4().hex
+    event = datetime(2026, 8, 8, tzinfo=UTC)
+    cutoff = event + timedelta(days=2)
+    floor = event - timedelta(days=1)
+    shared_id = f"TEST.BATCH.{token}.SHARED"
+    euro_id = f"TEST.BATCH.{token}.EURO"
+    original = Observation(
+        market_id="US-USD",
+        monetary_area_id="US",
+        jurisdiction_codes=("US",),
+        currency="USD",
+        instrument_id=shared_id,
+        semantic_role=SemanticRole.SECURED_OVERNIGHT,
+        value="531",
+        canonical_unit=CanonicalUnit.BASIS_POINTS,
+        rate_compounding=RateCompounding.SIMPLE,
+        day_count=DayCountConvention.ACT_360,
+        event_time=event,
+        source_publication_time=event,
+        knowledge_time=event,
+        revision_id="v1",
+        source="postgres-batch-test",
+        evidence_hash=evidence_sha256(f"synthetic postgres batch {token}"),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=RedistributionStatus.ALLOWED,
+        quality=QualityState.VERIFIED,
+        staleness=StalenessState.FRESH,
+    )
+    revised = replace(
+        original, value="532", knowledge_time=event + timedelta(hours=1),
+        source_publication_time=event + timedelta(hours=1), revision_id="v2",
+        redistribution_status=RedistributionStatus.PROHIBITED,
+    )
+    euro = replace(
+        original, market_id="EA-EUR", monetary_area_id="EA", currency="EUR",
+        jurisdiction_codes=("DE",), instrument_id=euro_id, value="301",
+    )
+    earlier = replace(original, event_time=floor)
+    later = replace(original, event_time=cutoff)
+    repository.save_observations([
+        original, revised, euro, earlier, later,
+        replace(revised, source_publication_time=event, revision_id="z9"),
+        replace(revised, revision_id="v1", value="533"),
+        replace(revised, knowledge_time=cutoff + timedelta(seconds=1), revision_id="v3"),
+        replace(original, event_time=floor - timedelta(seconds=1)),
+        replace(original, event_time=cutoff + timedelta(seconds=1)),
+        replace(euro, instrument_id=shared_id),
+        replace(original, instrument_id=euro_id),
+    ])
+    opened = []
+    connect = repository._connect
+
+    def counted_connect():
+        opened.append(True)
+        return connect()
+
+    monkeypatch.setattr(repository, "_connect", counted_connect)
+    selections = {"us-usd": (shared_id,), "EA-EUR": (euro_id,), "UK-GBP": ()}
+    batch = repository.load_observations_batch_as_of(
+        selections, cutoff.isoformat(), event_time=cutoff, event_time_from=floor,
+    )
+    assert len(opened) == 1
+    assert batch == {"US-USD": [earlier, revised, later], "EA-EUR": [euro], "UK-GBP": []}
+    assert batch == {
+        market.upper(): repository.load_observations_as_of(
+            market, cutoff, event_time=cutoff, event_time_from=floor, instrument_ids=instruments,
+        )
+        for market, instruments in selections.items()
+    }
+    before_empty = len(opened)
+    assert repository.load_observations_batch_as_of(
+        {"US-USD": ()}, cutoff, event_time=cutoff, event_time_from=floor,
+    ) == {"US-USD": []}
+    assert len(opened) == before_empty

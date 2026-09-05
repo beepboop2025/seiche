@@ -27,7 +27,7 @@ REPOSITORY = "beepboop2025/seiche"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
 SOURCE_REF = "refs/heads/main"
 INSTALL_COMMAND = (
-    "python -m pip install -q ./backend[dev,collectors] && "
+    "python -m pip install -q ./backend[dev,collectors,postgres] && "
     "python -m pip install --disable-pip-version-check --only-binary=:all: "
     "--require-hashes -r ops/requirements-social-cards.txt"
 )

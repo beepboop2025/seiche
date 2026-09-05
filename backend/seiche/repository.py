@@ -12,7 +12,7 @@ import hmac
 import json
 import os
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any, Protocol
@@ -615,6 +615,78 @@ class PostgresMarketRepository:
             if isinstance(record["jurisdiction_codes"], str):
                 record["jurisdiction_codes"] = json.loads(record["jurisdiction_codes"])
             observations.append(Observation.from_record(record))
+        return observations
+
+    def load_observations_batch_as_of(
+        self,
+        instruments_by_market: Mapping[str, Iterable[str]],
+        knowledge_time: str | datetime,
+        *,
+        event_time: str | datetime,
+        event_time_from: str | datetime,
+    ) -> dict[str, list[Observation]]:
+        """Read explicitly selected market histories in one bounded query.
+
+        This optional repository capability preserves the single-market
+        method's vintage ranking and chronological order. Instrument selection
+        stays paired with its market; an empty selection never means all
+        instruments. Both event bounds are required, and row-level rights are
+        still evaluated by the caller *after* choosing the latest vintage.
+        """
+
+        selections: dict[str, tuple[str, ...]] = {}
+        for market_id, instrument_ids in instruments_by_market.items():
+            normalized = market_id.upper()
+            if normalized in selections:
+                raise ValueError("duplicate normalized market selection")
+            selections[normalized] = tuple(dict.fromkeys(instrument_ids))
+        observations: dict[str, list[Observation]] = {
+            market_id: [] for market_id in selections
+        }
+        knowledge_cutoff = _utc(knowledge_time)
+        event_cutoff = _utc(event_time)
+        event_floor = _utc(event_time_from)
+        if event_floor > event_cutoff:
+            raise ValueError("event_time_from must not exceed event_time")
+        params: list[Any] = [knowledge_cutoff, event_cutoff, event_floor]
+        market_predicates = []
+        for market_id, instrument_ids in selections.items():
+            if not instrument_ids:
+                continue
+            market_predicates.append(
+                "(market_id=%s AND instrument_id IN "
+                f"({','.join(['%s'] * len(instrument_ids))}))"
+            )
+            params.extend((market_id, *instrument_ids))
+        if not market_predicates:
+            return observations
+
+        self._ensure_schema()
+        selected = ",".join(_OBSERVATION_COLUMNS)
+        query = f"""
+            WITH ranked AS (
+              SELECT {selected},
+                     ROW_NUMBER() OVER (
+                       PARTITION BY market_id, instrument_id, event_time
+                       ORDER BY knowledge_time DESC, source_publication_time DESC,
+                                revision_id DESC
+                     ) AS vintage_rank
+                FROM canonical_observations
+               WHERE knowledge_time<=%s AND event_time<=%s AND event_time>=%s
+                 AND ({' OR '.join(market_predicates)})
+            )
+            SELECT {selected} FROM ranked
+             WHERE vintage_rank=1
+             ORDER BY market_id, event_time, instrument_id
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        for row in rows:
+            record = dict(zip(_OBSERVATION_COLUMNS, row, strict=True))
+            if isinstance(record["jurisdiction_codes"], str):
+                record["jurisdiction_codes"] = json.loads(record["jurisdiction_codes"])
+            observation = Observation.from_record(record)
+            observations[observation.market_id].append(observation)
         return observations
 
     def load_observation_revisions(

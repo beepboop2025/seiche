@@ -23,7 +23,7 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
 
-def _receipts(version: str = "0.12.3"):
+def _receipts(version: str = "0.12.4"):
     wheel_url = f"https://files.pythonhosted.org/packages/seiche-{version}.whl"
     sdist_url = f"https://files.pythonhosted.org/packages/seiche-{version}.tar.gz"
     bodies = {wheel_url: b"canonical wheel", sdist_url: b"canonical sdist"}
@@ -77,7 +77,7 @@ def _verify(pypi, health, discovery, bodies):
         return bodies[url]
 
     return gate.verify_public_receipts(
-        "0.12.3", fetch_json=fetch_json, fetch_bytes=fetch_bytes
+        "0.12.4", fetch_json=fetch_json, fetch_bytes=fetch_bytes
     )
 
 
@@ -195,7 +195,7 @@ def _verify_market(health, catalog, discovery, tools, *, entry=None):
 def test_local_catalog_release_identity_is_internally_exact():
     version, entry = gate.verify_local_identity(ROOT)
 
-    assert version == "0.12.3"
+    assert version == "0.12.4"
     assert len(entry["capabilities"]) == 12
     assert "trade_safety_risk_context" in entry["capabilities"]
     assert entry["prompts"] == [
@@ -299,7 +299,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
 
     assert receipt == {
         "schemaVersion": "1.0.0",
-        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r6",
+        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r7",
         "releaseId": "corpus-7cb1695c6affa707",
         "indexSha256": (
             "29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36"
@@ -379,7 +379,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         expected_sha=expected_sha,
         signer_fingerprint="SHA256:" + "A" * 43,
     )
-    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r6"
+    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r7"
     assert gate._market_corpus_publication_receipt(entry)["releaseId"] == (
         "corpus-7cb1695c6affa707"
     )
@@ -390,7 +390,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
 
     monkeypatch.setattr(gate, "_verify_annotated_signed_tag", stale_receipt_tag)
     monkeypatch.setattr(
-        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.12.3"
+        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.12.4"
     )
     monkeypatch.setattr(
         gate,
@@ -467,7 +467,7 @@ def _sign_content_release(root, *, receipt=True):
     _content_git(root, "config", "user.signingkey", str(key))
     _content_git(root, "add", ".")
     _content_git(root, "commit", "-q", "--amend", "--no-edit", "-S")
-    tags = ["v0.12.3", "market-corpus-v1.0.0"]
+    tags = ["v0.12.4", "market-corpus-v1.0.0"]
     if receipt:
         tags.append(gate._market_corpus_publication_receipt(_market_entry())["tag"])
     for tag in tags:
@@ -527,9 +527,9 @@ def test_fresh_exact_head_corpus_receipt_keeps_existing_independent_release_path
     _content_git(root, "tag", "-s", "-m", "fresh exact-head receipt", tag)
     assert (
         gate.verify_signed_release(
-            root, version="0.12.3", expected_sha=head, signer_fingerprint=fingerprint
+            root, version="0.12.4", expected_sha=head, signer_fingerprint=fingerprint
         )
-        == "v0.12.3"
+        == "v0.12.4"
     )
     assert (
         gate.verify_market_corpus_release(
@@ -564,7 +564,7 @@ def test_generated_content_rejects_even_reverted_release_or_code_drift(
     head = _content_commit(root, {}, subject="week ahead: reverted drift")
     # The old endpoint-only release identity comparison still passes.
     gate.verify_signed_release(
-        root, version="0.12.3", expected_sha=head, signer_fingerprint=fingerprint
+        root, version="0.12.4", expected_sha=head, signer_fingerprint=fingerprint
     )
     with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
         gate.verify_market_corpus_release(
@@ -727,17 +727,17 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
         assert (
             gate.verify_signed_release(
                 root,
-                version="0.12.3",
+                version="0.12.4",
                 expected_sha=head,
                 signer_fingerprint=fingerprint,
             )
-            == "v0.12.3"
+            == "v0.12.4"
         )
         receipt, _ = gate.verify_market_corpus_release(
             root, expected_sha=head, signer_fingerprint=fingerprint
         )
         assert _content_git(root, "rev-parse", f"{receipt}^{{commit}}") == release
-        assert _content_git(root, "rev-parse", "v0.12.3^{commit}") == release
+        assert _content_git(root, "rev-parse", "v0.12.4^{commit}") == release
         _content_git(root, "checkout", "-q", "--detach", current)
     # Exercise the real CLI identity output; public network receipt collection
     # is a separate concern and is intentionally stubbed in this offline test.
@@ -760,7 +760,7 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
     assert report["revision"] == head
     assert report["releaseRevision"] == release
     assert report["releaseRevision"] != report["revision"]
-    assert report["releaseTag"] == "v0.12.3"
+    assert report["releaseTag"] == "v0.12.4"
 
 
 @pytest.mark.parametrize("failure", ["unsigned", "wrong-key", "missing-pin"])
@@ -1215,10 +1215,10 @@ def test_local_identity_rejects_an_unsafe_package_readme(tmp_path, unsafe_readme
 def test_public_receipts_require_both_exact_pypi_bodies_and_live_runtime():
     receipt = _verify(*_receipts())
 
-    assert receipt["version"] == "0.12.3"
+    assert receipt["version"] == "0.12.4"
     assert [item["filename"] for item in receipt["artifacts"]] == [
-        "seiche-0.12.3-py3-none-any.whl",
-        "seiche-0.12.3.tar.gz",
+        "seiche-0.12.4-py3-none-any.whl",
+        "seiche-0.12.4.tar.gz",
     ]
 
 
@@ -1397,14 +1397,14 @@ def test_signed_release_gate_rejects_malformed_external_pins_before_git_use():
     with pytest.raises(gate.PublicationGateError, match="SHA is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.12.3",
+            version="0.12.4",
             expected_sha="main",
             signer_fingerprint="SHA256:" + "A" * 43,
         )
     with pytest.raises(gate.PublicationGateError, match="fingerprint is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.12.3",
+            version="0.12.4",
             expected_sha="a" * 40,
             signer_fingerprint="untrusted",
         )

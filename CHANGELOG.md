@@ -11,6 +11,25 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-09-05
+
+### Fixed
+
+- Batch the global money-market atlas's selected PostgreSQL histories into one
+  query instead of opening a connection for each market. Keep the same knowledge
+  and event cutoffs, latest-vintage selection, native histories and rights gates.
+- Fall back to individual market reads when a batch fails, preserving healthy
+  markets and the existing sanitized per-market fault contract. No source
+  collection, response schema change or cache-policy change is introduced.
+- Synchronize the Railway test gate's PostgreSQL dependency contract across its
+  workflow, gate image and remote verifier.
+
+### Changed
+
+- Align software discovery and scientific metadata with version `0.12.4`, and
+  use corpus publication receipt `r7`. Corpus version `1.0.0` and the audited
+  direct-OFR dataset `0.1.0-draft` retain their existing identities and contents.
+
 ## [0.12.3] - 2026-09-05
 
 ### Added
@@ -242,7 +261,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.3...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.4...HEAD
+[0.12.4]: https://github.com/beepboop2025/seiche/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/beepboop2025/seiche/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/beepboop2025/seiche/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/beepboop2025/seiche/compare/v0.12.0...v0.12.1

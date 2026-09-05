@@ -62,7 +62,13 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository identity 0.12.3; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.12.4; immutable availability is authoritative only on the linked PyPI project |
+
+Version **0.12.4 estuary** batches PostgreSQL history reads
+for the eleven-market money-market atlas. It preserves source and knowledge
+cutoffs, vintage selection, rights filters and per-market fault reporting.
+Verify deployment and package availability from the release receipts and
+linked registries.
 
 Twelve evidence tools remain anonymous and free. Five compute-heavy tools are
 account-gated; client and catalog copy must preserve that boundary. See the

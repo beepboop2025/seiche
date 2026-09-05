@@ -27,7 +27,7 @@ ARTIFACT_TYPE = "application/vnd.seiche.railway-gate-result.v1"
 RECEIPT_MEDIA_TYPE = "application/vnd.seiche.railway-gate-result.v1+json"
 PUBLIC_OCI_GH_TOKEN = "public-oci-bundle-verification-no-api"
 INSTALL_COMMAND = (
-    "python -m pip install -q ./backend[dev,collectors] && "
+    "python -m pip install -q ./backend[dev,collectors,postgres] && "
     "python -m pip install --disable-pip-version-check --only-binary=:all: "
     "--require-hashes -r ops/requirements-social-cards.txt"
 )

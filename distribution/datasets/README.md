@@ -12,9 +12,11 @@ the mismatched primary-dealer row, licensed/restricted series, and all
 Seiche-derived outputs are excluded.
 
 The metadata publication and source-data revision are deliberately separate:
-catalog citations resolve to the versioned `v0.12.3/distribution/datasets`
-tree, while every observation URL and hash stays pinned to the audited
-`93e83bbc.../integrations/datacommons` source tree.
+catalog citations target the `v0.12.4/distribution/datasets` tree. Verify that
+version's availability from its release and publication receipts.
+Every observation URL and hash stays pinned to the audited
+`93e83bbc.../integrations/datacommons` source tree. The dataset remains
+`0.1.0-draft`; the software version change does not revise its observations.
 
 ## Validate
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -24,7 +26,11 @@ from seiche.markets.us_usd.materialize import (
     seal_legacy_snapshot,
     verify_release_receipt,
 )
-from seiche.repository import SQLiteMarketRepository
+from seiche.repository import (
+    PostgresMarketRepository,
+    SQLiteMarketRepository,
+    _OBSERVATION_COLUMNS,
+)
 
 
 def _request(ip: str = "127.0.0.1") -> Request:
@@ -844,3 +850,356 @@ def test_unmarked_snapshot_is_not_exposed_as_public_projection(
     assert isinstance(response, JSONResponse)
     assert response.status_code == 503
     assert "tenant-secret-source" not in response.body.decode()
+
+
+@pytest.fixture
+def postgres_reader(monkeypatch):
+    """Execute the actual portable SELECT on isolated SQLite, never a server.
+
+    Only DB-API parameter spelling and timestamp binding differ here. Rows use
+    PostgreSQL's JSON jurisdiction representation so production hydration also
+    runs. This is a SQL semantics test, not a PostgreSQL planner benchmark.
+    """
+
+    database = sqlite3.connect(":memory:")
+    database.execute(
+        "CREATE TABLE canonical_observations ("
+        + ",".join(f"{column} TEXT" for column in _OBSERVATION_COLUMNS)
+        + ")"
+    )
+    opened = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, query, params):
+            return database.execute(
+                query.replace("%s", "?"),
+                [
+                    value.isoformat() if isinstance(value, datetime) else value
+                    for value in params
+                ],
+            )
+
+    def connect():
+        opened.append(True)
+        return Connection()
+
+    repository = PostgresMarketRepository("postgresql://unused.invalid/test")
+    repository._initialized = True
+    monkeypatch.setattr(repository, "_connect", connect)
+    yield repository, database, opened
+    database.close()
+
+
+def _observation(**changes):
+    event = datetime(2026, 8, 8, tzinfo=UTC)
+    row = Observation(
+        market_id="US-USD",
+        monetary_area_id="US",
+        jurisdiction_codes=("US",),
+        currency="USD",
+        instrument_id="US.NYFED.SOFR",
+        semantic_role=SemanticRole.SECURED_OVERNIGHT,
+        value="531",
+        canonical_unit=CanonicalUnit.BASIS_POINTS,
+        rate_compounding=RateCompounding.SIMPLE,
+        day_count=DayCountConvention.ACT_360,
+        event_time=event,
+        source_publication_time=event,
+        knowledge_time=event,
+        revision_id="v1",
+        source="nyfed_rates",
+        evidence_hash=evidence_sha256("synthetic batch test"),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=RedistributionStatus.ALLOWED,
+        quality=QualityState.VERIFIED,
+        staleness=StalenessState.FRESH,
+    )
+    return replace(row, **changes)
+
+
+def _seed(database, observations):
+    records = []
+    for observation in observations:
+        record = observation.to_record()
+        record["jurisdiction_codes"] = json.dumps(record["jurisdiction_codes"])
+        records.append(tuple(record[column] for column in _OBSERVATION_COLUMNS))
+    database.executemany(
+        "INSERT INTO canonical_observations VALUES ("
+        + ",".join("?" for _ in _OBSERVATION_COLUMNS)
+        + ")",
+        records,
+    )
+
+
+def test_batch_preserves_vintages_cutoffs_market_instrument_pairs_and_order(
+    postgres_reader,
+):
+    repository, database, opened = postgres_reader
+    base = _observation(instrument_id="SHARED")
+    cutoff = base.event_time + timedelta(days=2)
+    floor = base.event_time - timedelta(days=1)
+    revision_time = base.event_time + timedelta(hours=1)
+    revised = replace(
+        base,
+        knowledge_time=revision_time,
+        source_publication_time=revision_time,
+        revision_id="v2",
+        value="532",
+        redistribution_status=RedistributionStatus.PROHIBITED,
+    )
+    euro = replace(
+        base,
+        market_id="EA-EUR",
+        monetary_area_id="EA",
+        jurisdiction_codes=("DE",),
+        currency="EUR",
+        instrument_id="EU.ONLY",
+        value="301",
+    )
+    earlier = replace(base, event_time=floor)
+    later = replace(base, event_time=cutoff)
+    _seed(
+        database,
+        [
+            base,
+            revised,
+            earlier,
+            later,
+            euro,
+            replace(revised, source_publication_time=base.event_time, revision_id="z9"),
+            replace(revised, revision_id="v1", value="533"),
+            # A future vintage cannot replace the known prohibited revision.
+            replace(
+                revised, knowledge_time=cutoff + timedelta(seconds=1), revision_id="v3"
+            ),
+            replace(base, event_time=floor - timedelta(seconds=1)),
+            replace(base, event_time=cutoff + timedelta(seconds=1)),
+            # A cross-product of market and instrument filters would leak these.
+            replace(euro, instrument_id="SHARED"),
+            replace(base, instrument_id="EU.ONLY"),
+            replace(base, market_id="UK-GBP", monetary_area_id="UK", currency="GBP"),
+        ],
+    )
+    selections = {"us-usd": ("SHARED", "SHARED"), "EA-EUR": ("EU.ONLY",), "UK-GBP": ()}
+    batch = repository.load_observations_batch_as_of(
+        selections,
+        cutoff,
+        event_time=cutoff,
+        event_time_from=floor,
+    )
+    assert len(opened) == 1
+    assert batch == {
+        "US-USD": [earlier, revised, later],
+        "EA-EUR": [euro],
+        "UK-GBP": [],
+    }
+    assert batch == {
+        market.upper(): repository.load_observations_as_of(
+            market,
+            cutoff,
+            event_time=cutoff,
+            event_time_from=floor,
+            instrument_ids=instruments,
+        )
+        for market, instruments in selections.items()
+    }
+
+
+@pytest.mark.parametrize("selections", [{}, {"US-USD": ()}])
+def test_empty_batch_never_opens_an_unbounded_read(postgres_reader, selections):
+    repository, _, opened = postgres_reader
+    cutoff = datetime(2026, 8, 10, tzinfo=UTC)
+    assert repository.load_observations_batch_as_of(
+        selections,
+        cutoff,
+        event_time=cutoff,
+        event_time_from=cutoff - timedelta(days=1),
+    ) == {market: [] for market in selections}
+    assert opened == []
+
+
+def test_batch_rejects_ambiguous_market_keys_and_reversed_bounds(postgres_reader):
+    repository, _, opened = postgres_reader
+    cutoff = datetime(2026, 8, 10, tzinfo=UTC)
+    with pytest.raises(ValueError, match="duplicate normalized market"):
+        repository.load_observations_batch_as_of(
+            {"US-USD": (), "us-usd": ()},
+            cutoff,
+            event_time=cutoff,
+            event_time_from=cutoff,
+        )
+    with pytest.raises(ValueError, match="event_time_from"):
+        repository.load_observations_batch_as_of(
+            {"US-USD": ("SOFR",)},
+            cutoff,
+            event_time=cutoff,
+            event_time_from=cutoff + timedelta(seconds=1),
+        )
+    assert opened == []
+
+
+def _freeze_api(monkeypatch, repository):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 8, 10, 12, tzinfo=UTC)
+
+    def forbidden_build(*_args, **_kwargs):
+        raise AssertionError("atlas must not restore or rebuild a board")
+
+    monkeypatch.setattr(api, "datetime", Clock)
+    monkeypatch.setattr(api, "get_repository", lambda: repository)
+    monkeypatch.setattr(assemble, "snapshot", forbidden_build)
+    monkeypatch.setattr(assemble, "restore_cached_snapshot", forbidden_build)
+
+
+def test_atlas_batch_is_exactly_equal_to_legacy_projection_with_rights_gates(
+    postgres_reader,
+    monkeypatch,
+):
+    repository, database, opened = postgres_reader
+    base = _observation()
+    protected = _observation(
+        instrument_id="US.FED.IORB",
+        source="fred_daily",
+        value="540",
+        semantic_role=SemanticRole.POLICY_TARGET,
+    )
+    _seed(
+        database,
+        [
+            base,
+            protected,
+            replace(
+                protected,
+                revision_id="v2",
+                knowledge_time=protected.knowledge_time + timedelta(hours=1),
+                redistribution_status=RedistributionStatus.PROHIBITED,
+            ),
+            # Adapter/pack policy must still exclude an otherwise allowed row.
+            replace(
+                base,
+                market_id="CN-CNY",
+                monetary_area_id="CN",
+                currency="CNY",
+                instrument_id="CN.CFETS.SHIBOR.ON",
+                source="chinamoney",
+            ),
+            *[
+                replace(
+                    base,
+                    market_id="UK-GBP",
+                    monetary_area_id="UK",
+                    currency="GBP",
+                    instrument_id="GB.BOE.SONIA",
+                    source="boe_sonia",
+                    value=str(400 + index),
+                    event_time=base.event_time - timedelta(days=index),
+                    redistribution_status=RedistributionStatus.DERIVED_ONLY,
+                )
+                for index in range(30)
+            ],
+        ],
+    )
+    monkeypatch.setattr(repository, "latest_collector_runs", lambda: [])
+    _freeze_api(monkeypatch, repository)
+    response = Response()
+    batched = api.global_money_markets_v2(response)
+    assert len(opened) == 1
+    monkeypatch.setattr(repository, "load_observations_batch_as_of", None)
+    legacy_response = Response()
+    legacy = api.global_money_markets_v2(legacy_response)
+    assert batched == legacy
+    assert response.headers == legacy_response.headers
+    assert batched["coverage"]["declared_markets"] == 11
+    assert batched["read_faults"] == []
+    us = next(
+        market for market in batched["markets"] if market["market_id"] == "US-USD"
+    )
+    assert us["benchmark"]["value"] == 5.31
+    iorb = next(
+        metric for metric in us["metrics"] if metric["id"] == protected.instrument_id
+    )
+    assert iorb["value"] is None  # Do not fall back to its older allowed vintage.
+    uk = next(
+        market for market in batched["markets"] if market["market_id"] == "UK-GBP"
+    )
+    assert uk["derived_benchmark"]["value"] is None
+    assert uk["derived_benchmark"]["history"] == []
+    assert "CN.CFETS.SHIBOR.ON" not in json.dumps(batched)
+
+
+def test_batch_failure_preserves_individual_faults_cutoff_and_sanitization(
+    monkeypatch, caplog
+):
+    secret = "postgresql://private.invalid/credential-do-not-log"
+    calls = []
+    bounds = []
+
+    class Repository:
+        def load_observations_batch_as_of(self, selections, cutoff, **kwargs):
+            assert len(selections) == 11
+            bounds.append((cutoff, kwargs["event_time"], kwargs["event_time_from"]))
+            raise ValueError(secret)
+
+        def load_observations_as_of(self, market_id, cutoff, **kwargs):
+            calls.append(market_id)
+            assert (cutoff, kwargs["event_time"], kwargs["event_time_from"]) == bounds[
+                0
+            ]
+            if market_id == "EA-EUR":
+                raise ValueError(secret)
+            return [_observation()] if market_id == "US-USD" else []
+
+        def latest_collector_runs(self):
+            return []
+
+    repository = Repository()
+    _freeze_api(monkeypatch, repository)
+    result = api.global_money_markets_v2(Response())
+    assert len(calls) == len(set(calls)) == 11
+    assert len(result["read_faults"]) == 1
+    assert result["read_faults"][0]["market_id"] == "EA-EUR"
+    assert result["read_faults"][0]["source"] == "canonical_repository"
+    assert result["status"] == "PARTIAL"
+    us = next(market for market in result["markets"] if market["market_id"] == "US-USD")
+    assert us["benchmark"]["value"] == 5.31
+    assert secret not in json.dumps(result)
+    assert secret not in caplog.text
+    monkeypatch.setattr(repository, "load_observations_batch_as_of", None)
+    assert result == api.global_money_markets_v2(Response())
+
+
+def test_bad_row_in_one_market_does_not_erase_other_batch_markets(
+    postgres_reader, monkeypatch
+):
+    repository, database, opened = postgres_reader
+    _seed(
+        database,
+        [
+            _observation(),
+            _observation(
+                market_id="EA-EUR",
+                monetary_area_id="EA",
+                currency="EUR",
+                instrument_id="EA.ECB.ESTR",
+                source="ecb_benchmark",
+            ),
+        ],
+    )
+    database.execute(
+        "UPDATE canonical_observations SET quality='CORRUPT' WHERE market_id='EA-EUR'"
+    )
+    monkeypatch.setattr(repository, "latest_collector_runs", lambda: [])
+    _freeze_api(monkeypatch, repository)
+    result = api.global_money_markets_v2(Response())
+    assert len(opened) > 1  # Failed hydration recovers through isolated reads.
+    assert [fault["market_id"] for fault in result["read_faults"]] == ["EA-EUR"]
+    us = next(market for market in result["markets"] if market["market_id"] == "US-USD")
+    assert us["benchmark"]["value"] == 5.31

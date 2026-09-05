@@ -2254,8 +2254,8 @@ def global_money_markets_v2(response: Response):
     observations_by_market: dict[str, list] = {}
     read_faults: list[dict[str, str]] = []
     packs = default_registry().list()
-    for pack in packs:
-        derivable_instruments = [
+    instruments_by_market = {
+        pack.market_id: [
             instrument.instrument_id
             for instrument in pack.instruments
             if pack.adapter_map[instrument.source_adapter_id].redistribution_status
@@ -2264,13 +2264,37 @@ def global_money_markets_v2(response: Response):
                 RedistributionStatus.DERIVED_ONLY,
             }
         ]
+        for pack in packs
+    }
+    # PostgreSQL can read these selected histories in one connection/query.
+    # Keep compatibility with repositories exposing only the single-market
+    # method, and retain per-market fault isolation if a batch read fails.
+    batch_loader = getattr(repository, "load_observations_batch_as_of", None)
+    batched_rows = None
+    if callable(batch_loader):
         try:
-            rows = repository.load_observations_as_of(
-                pack.market_id,
+            batched_rows = batch_loader(
+                instruments_by_market,
                 cutoff,
                 event_time=cutoff,
                 event_time_from=event_floor,
-                instrument_ids=derivable_instruments,
+            )
+        except Exception:
+            logging.getLogger("seiche.api").warning(
+                "canonical atlas batch read failed; retrying individual markets"
+            )
+    for pack in packs:
+        try:
+            rows = (
+                batched_rows[pack.market_id]
+                if batched_rows is not None
+                else repository.load_observations_as_of(
+                    pack.market_id,
+                    cutoff,
+                    event_time=cutoff,
+                    event_time_from=event_floor,
+                    instrument_ids=instruments_by_market[pack.market_id],
+                )
             )
         except Exception:  # one market cannot erase the atlas
             logging.getLogger("seiche.api").error(
