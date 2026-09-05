@@ -153,6 +153,14 @@ design.
 
 ## Immediate post-activation seal
 
+During portable export, collector children are paused but the public API can
+still materialize market evidence. Counts and `pg_dump --snapshot` therefore
+share one exported PostgreSQL `REPEATABLE READ READ ONLY` snapshot. Later API
+commits remain available in production and are excluded consistently from both
+the backup counts and dump. The snapshot transaction closes on success or
+failure. A failed request retains its evidence and is skipped for the rest of
+that supervisor lifetime so later signed requests are not starved.
+
 After the Phase 5 writer grant succeeds, do not acknowledge activation on
 Hetzner or enable schedules yet.
 

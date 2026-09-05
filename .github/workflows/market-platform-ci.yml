@@ -80,6 +80,7 @@ jobs:
           backend/tests/test_canonical_store.py
           backend/tests/test_repository_v2.py
           backend/tests/test_postgres_market_repository.py
+          backend/tests/test_recovery_postgres_snapshot.py
           backend/tests/test_collectors_v2.py
           backend/tests/test_universal_kernel.py
           backend/tests/test_market_materialize.py

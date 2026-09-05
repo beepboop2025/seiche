@@ -336,6 +336,40 @@ def test_recovery_request_is_activation_bound_and_published_once(
         )
 
 
+def test_failed_request_does_not_starve_later_exports(tmp_path, monkeypatch):
+    platform, environment, activation = _activation_context(tmp_path, monkeypatch)
+    now = datetime.now(UTC).replace(microsecond=0)
+    failed = _request(activation, now=now)
+    later = dict(failed, request_id="d" * 64)
+    for request in (failed, later):
+        recovery.publish_request(
+            migration.canonical_document(request),
+            environment,
+            platform_root=platform,
+            now=now,
+            runtime_gid=os.getgid(),
+        )
+    kwargs = dict(platform_root=platform, now=now, runtime_gid=os.getgid())
+    assert recovery.next_pending_request(environment, **kwargs) == failed
+    assert (
+        recovery.next_pending_request(
+            environment,
+            excluded_request_ids=frozenset({failed["request_id"]}),
+            **kwargs,
+        )
+        == later
+    )
+    assert (
+        platform / "recovery-requests" / f"{failed['request_id']}.json"
+    ).read_bytes() == migration.canonical_document(failed)
+    with pytest.raises(recovery.RecoveryContractError, match="identity"):
+        recovery.next_pending_request(
+            environment,
+            excluded_request_ids=frozenset({"invalid"}),
+            **kwargs,
+        )
+
+
 def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -351,10 +385,11 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     )
     monkeypatch.setattr(migration, "_audit_nbs", lambda _root: "verified_head")
 
-    def dump(destination: Path, _dsn: str) -> None:
+    def dump(destination: Path, _dsn: str) -> tuple[int, int, int, int]:
         destination.write_bytes(b"PGDMP" + b"x" * 2048)
+        return (10, 20, 30, 40)
 
-    monkeypatch.setattr(recovery, "_dump_postgres", dump)
+    monkeypatch.setattr(recovery, "_snapshot_postgres", dump)
     exported = recovery.export_snapshot(
         environment,
         request,
@@ -1469,8 +1504,13 @@ def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> N
 def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path):
     path = tmp_path / "live.sqlite"
     with sqlite3.connect(path) as connection:
-        connection.execute("CREATE TABLE evidence (id INTEGER PRIMARY KEY, payload BLOB)")
-        connection.executemany("INSERT INTO evidence VALUES (?, zeroblob(4096))", [(n,) for n in range(600)])
+        connection.execute(
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, payload BLOB)"
+        )
+        connection.executemany(
+            "INSERT INTO evidence VALUES (?, zeroblob(4096))",
+            [(n,) for n in range(600)],
+        )
     wrote_during_copy = False
 
     def write_between_pages(_seconds):
@@ -1485,7 +1525,9 @@ def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path
             recovery._copy_sqlite_online(live, snapshot, pause=write_between_pages)
             assert wrote_during_copy
             assert snapshot.execute("PRAGMA quick_check").fetchone() == ("ok",)
-            assert snapshot.execute("SELECT COUNT(*) FROM evidence").fetchone() == (601,)
+            assert snapshot.execute("SELECT COUNT(*) FROM evidence").fetchone() == (
+                601,
+            )
 
 
 def test_online_copy_cannot_hold_the_export_open_indefinitely(tmp_path: Path):

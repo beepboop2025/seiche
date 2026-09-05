@@ -279,7 +279,9 @@ def validate_candidate_chain(
 
     if activation_receipt.get("schema") == stateful_application.ACTIVATION_SCHEMA:
         try:
-            successor = stateful_application.validate_activation(dict(activation_receipt))
+            successor = stateful_application.validate_activation(
+                dict(activation_receipt)
+            )
         except cutover.CutoverContractError as exc:
             raise RecoveryContractError(str(exc)) from exc
         # The data's migration candidate retains its original identity. The
@@ -592,9 +594,7 @@ def publish_offsite_receipt(
         platform_root=root,
     )
     receipt_path = (
-        root
-        / "recovery-receipts"
-        / f"{request['snapshot_id']}-{request_id}.json"
+        root / "recovery-receipts" / f"{request['snapshot_id']}-{request_id}.json"
     )
     receipt_body, receipt_value = _load_canonical(
         receipt_path,
@@ -628,7 +628,9 @@ def publish_offsite_receipt(
     )
     name = f"{request['snapshot_id']}-{request_id}.json"
     destination = destination_root / name
-    lifecycle = "reused" if destination.exists() or destination.is_symlink() else "created"
+    lifecycle = (
+        "reused" if destination.exists() or destination.is_symlink() else "created"
+    )
     cutover._publish_immutable_authority_file(
         destination_root,
         name,
@@ -833,8 +835,7 @@ def reemit_latest_recovery_results(
             require_fresh=False,
         )
         receipt_path = (
-            receipts_root
-            / f"{request['snapshot_id']}-{request['request_id']}.json"
+            receipts_root / f"{request['snapshot_id']}-{request['request_id']}.json"
         )
         if receipt_path.is_file() and not receipt_path.is_symlink():
             candidates.append(
@@ -915,6 +916,7 @@ def next_pending_request(
     platform_root: Path | None = None,
     now: datetime | None = None,
     claimed_request_ids: frozenset[str] = frozenset(),
+    excluded_request_ids: frozenset[str] = frozenset(),
     runtime_gid: int = migration.RUNTIME_GID,
 ) -> dict[str, Any] | None:
     root = platform_root or migration.PLATFORM_ROOT
@@ -923,12 +925,17 @@ def next_pending_request(
     cutover._prepare_authority_directory(requests, runtime_gid=runtime_gid)
     cutover._prepare_authority_directory(receipts, runtime_gid=runtime_gid)
     _activation_body, activation = activation_context(environment)
-    if any(_SHA64_RE.fullmatch(item) is None for item in claimed_request_ids):
+    if any(
+        _SHA64_RE.fullmatch(item) is None
+        for item in claimed_request_ids | excluded_request_ids
+    ):
         raise RecoveryContractError("claimed recovery request identity is invalid")
     for path in sorted(requests.iterdir(), key=lambda item: item.name):
         if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) is None:
             raise RecoveryContractError("recovery request directory is not closed")
         request_id = path.stem
+        if request_id in excluded_request_ids:
+            continue
         _body, value = _load_canonical(
             path,
             label="recovery request",
@@ -1132,7 +1139,9 @@ def _snapshot_api(
     return migration.audit_agent_room_state(destination)
 
 
-def _dump_postgres(destination: Path, database_dsn: str) -> None:
+def _dump_postgres(destination: Path, database_dsn: str, *, snapshot_id: str) -> None:
+    if re.fullmatch(r"[0-9A-F]{8}-[0-9A-F]{8}-[0-9]+", snapshot_id) is None:
+        raise RecoveryContractError("PostgreSQL recovery snapshot is invalid")
     pg_dump = shutil.which("pg_dump")
     pg_restore = shutil.which("pg_restore")
     if not pg_dump or not pg_restore or not database_dsn:
@@ -1144,6 +1153,7 @@ def _dump_postgres(destination: Path, database_dsn: str) -> None:
             "--compress=9",
             "--no-owner",
             "--no-privileges",
+            f"--snapshot={snapshot_id}",
             f"--file={destination}",
             f"--dbname={database_dsn}",
         ],
@@ -1168,6 +1178,32 @@ def _dump_postgres(destination: Path, database_dsn: str) -> None:
     )
     if listed.returncode != 0:
         raise RecoveryContractError("PostgreSQL recovery dump cannot be listed")
+
+
+def _snapshot_postgres(
+    destination: Path, database_dsn: str
+) -> tuple[int, int, int, int]:
+    """Bind counts and the archive to one MVCC view, including API writes."""
+    import psycopg
+
+    try:
+        with psycopg.connect(database_dsn, connect_timeout=15) as connection:
+            connection.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+            )
+            counts = str(connection.execute(migration._COUNTS_SQL).fetchone()[0])
+            if re.fullmatch(r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+", counts) is None:
+                raise RecoveryContractError("PostgreSQL recovery counts are malformed")
+            snapshot_id = str(
+                connection.execute("SELECT pg_export_snapshot()").fetchone()[0]
+            )
+            # Keep this transaction open until pg_dump imports and finishes the
+            # same snapshot. Independent transactions can still commit normally.
+            _dump_postgres(destination, database_dsn, snapshot_id=snapshot_id)
+            result = tuple(int(item) for item in counts.split("|"))
+            return result  # type: ignore[return-value]
+    except psycopg.Error as exc:
+        raise RecoveryContractError("PostgreSQL recovery snapshot failed") from exc
 
 
 def _bundle_identity(
@@ -1430,19 +1466,9 @@ def export_snapshot(
             raise RecoveryContractError(
                 "live Palimpsest China state differs from cutover candidate"
             )
-        counts_before = migration.inspect_postgres_counts(
-            environment.get("SEICHE_DATABASE_URL", "")
-        )
-        _dump_postgres(
+        counts_before = _snapshot_postgres(
             stage / "seiche.dump", environment.get("SEICHE_DATABASE_URL", "")
         )
-        counts_after = migration.inspect_postgres_counts(
-            environment.get("SEICHE_DATABASE_URL", "")
-        )
-        if counts_after != counts_before:
-            raise RecoveryContractError(
-                "critical PostgreSQL counts changed while writers paused"
-            )
         _archive_roots(
             stage / "var-lib-seiche.tgz",
             {"seiche": market, "seiche-nbs": nbs},

@@ -374,6 +374,11 @@ def _runtime_fixture(transition, monkeypatch):
     return platform, environment, activation
 
 
+def _fake_postgres_snapshot(path, _dsn):
+    path.write_bytes(b"PGDMP" + b"x" * 2048)
+    return (12, 22, 32, 42)
+
+
 def test_successor_exports_and_validates_new_revision_with_original_data_receipts(
     transition, monkeypatch
 ):
@@ -387,8 +392,8 @@ def test_successor_exports_and_validates_new_revision_with_original_data_receipt
     monkeypatch.setattr(migration, "_audit_nbs", lambda _: "verified_head")
     monkeypatch.setattr(
         recovery,
-        "_dump_postgres",
-        lambda path, dsn: path.write_bytes(b"PGDMP" + b"x" * 2048),
+        "_snapshot_postgres",
+        _fake_postgres_snapshot,
     )
     export_request = recovery_request(activation, now=datetime.now(UTC))
     exported = recovery.export_snapshot(
@@ -499,8 +504,8 @@ def test_old_recovery_queue_is_preserved_without_poisoning_successor_loop(
     monkeypatch.setattr(migration, "_audit_nbs", lambda _: "verified_head")
     monkeypatch.setattr(
         recovery,
-        "_dump_postgres",
-        lambda path, dsn: path.write_bytes(b"PGDMP" + b"x" * 2048),
+        "_snapshot_postgres",
+        _fake_postgres_snapshot,
     )
     exported = recovery.export_snapshot(
         old_environment,

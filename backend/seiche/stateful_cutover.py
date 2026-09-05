@@ -1789,8 +1789,9 @@ def _serve_production(
             request = recovery.next_pending_request(
                 production,
                 claimed_request_ids=frozenset(claimed_exports),
+                excluded_request_ids=frozenset(failed_requests),
             )
-            if request is None or request["request_id"] in failed_requests:
+            if request is None:
                 time.sleep(poll_seconds)
                 continue
             _terminate_children(writers)

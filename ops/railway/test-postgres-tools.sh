@@ -93,15 +93,26 @@ CREATE DATABASE restored_fixture;
 CREATE TABLE evidence (id integer PRIMARY KEY, amount numeric(18,4), payload jsonb);
 INSERT INTO evidence VALUES (1, 12345.6789, '{"verified": true}'), (2, NULL, '{"missing": true}');
 SQL
+# The dump must retain the exported view even when another writer commits.
+coproc snapshot_session { docker exec -i "$server" psql -X -qAt -U postgres -d source_fixture -v ON_ERROR_STOP=1; }
+snapshot_pid=$!
+printf '%s\n' 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;' 'SELECT pg_export_snapshot();' >&"${snapshot_session[1]}"
+IFS= read -r snapshot_id <&"${snapshot_session[0]}"
+[[ "$snapshot_id" =~ ^[0-9A-F]{8}-[0-9A-F]{8}-[0-9]+$ ]]
+docker exec "$server" psql -X -q -U postgres -d source_fixture -v ON_ERROR_STOP=1 \
+  -c "INSERT INTO evidence VALUES (3, 999, '{\"later_commit\":true}');"
 docker run --rm --network "$network" --volume "$scratch/proof:/proof" \
   "$image" pg_dump --host "$server" --username postgres \
-    --dbname source_fixture --format custom --file /proof/evidence.dump
+    --dbname source_fixture --snapshot "$snapshot_id" --format custom --file /proof/evidence.dump
+printf '%s\n' 'ROLLBACK;' '\q' >&"${snapshot_session[1]}"
+wait "$snapshot_pid"
 docker run --rm --network "$network" --volume "$scratch/proof:/proof:ro" \
   "$image" pg_restore --exit-on-error --no-owner --no-privileges \
     --host "$server" --username postgres --dbname restored_fixture /proof/evidence.dump
 query="SELECT json_agg(t ORDER BY id)::text FROM (SELECT id, amount::text, payload FROM evidence) t;"
-source_rows=$(docker exec "$server" psql -X -qAt -U postgres -d source_fixture -c "$query")
+source_rows=$(docker exec "$server" psql -X -qAt -U postgres -d source_fixture -c "SELECT json_agg(t ORDER BY id)::text FROM (SELECT id, amount::text, payload FROM evidence WHERE id <= 2) t;")
 restored_rows=$(docker exec "$server" psql -X -qAt -U postgres -d restored_fixture -c "$query")
 test -n "$source_rows"
 test "$source_rows" = "$restored_rows"
-printf '%s\n' 'PostgreSQL 18 runtime dump/restore round-trip passed'
+test "$(docker exec "$server" psql -X -qAt -U postgres -d source_fixture -c 'SELECT count(*) FROM evidence;')" = 3
+printf '%s\n' 'PostgreSQL 18 runtime snapshot dump/restore excludes later committed writes'
