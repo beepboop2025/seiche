@@ -11,6 +11,26 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-09-05
+
+### Added
+
+- Deepened the existing USD money-market desk with observed-print funding
+  persistence, SOFR/IORB/EFFR transmission spreads, and qualified month/quarter-end
+  comparisons. Independent source clocks, missing dates and minimum sample sizes
+  remain explicit in REST and the existing `money_market_context` MCP tool.
+- Added signed application updates on Railway that preserve current data, bind
+  the replacement deployment, and retain immutable migration and recovery history.
+
+### Fixed
+
+- Aligned portable recovery tools with PostgreSQL 18 and added Linux signature
+  verification, including rejection of tampered approvals, to the real image test.
+- Waited for documented startup readiness and completed recovery inspection while
+  retaining exact identity, freshness and receipt checks.
+- Copied SQLite backups in bounded batches so API metering can write between
+  batches; archived completed predecessor requests before accepting new authority.
+
 ## [0.12.2] - 2026-09-05
 
 ### Fixed
@@ -222,7 +242,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.3...HEAD
+[0.12.3]: https://github.com/beepboop2025/seiche/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/beepboop2025/seiche/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/beepboop2025/seiche/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/beepboop2025/seiche/compare/v0.11.1...v0.12.0

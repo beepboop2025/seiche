@@ -97,7 +97,7 @@ def test_hugging_face_card_is_native_schema_safe_and_publication_ready():
     assert link_targets
     assert all(target.startswith(("https://", "#")) for target in link_targets)
     assert (
-        "https://github.com/beepboop2025/seiche/blob/v0.12.2/"
+        "https://github.com/beepboop2025/seiche/blob/v0.12.3/"
         "integrations/datacommons/RIGHTS_AND_SOURCES.md"
     ) in link_targets
 

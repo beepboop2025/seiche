@@ -63,7 +63,7 @@
       "relationType": "IsDerivedFrom"
     },
     {
-      "relatedIdentifier": "https://github.com/beepboop2025/seiche/tree/v0.12.2/distribution/datasets",
+      "relatedIdentifier": "https://github.com/beepboop2025/seiche/tree/v0.12.3/distribution/datasets",
       "relatedIdentifierType": "URL",
       "relationType": "IsSupplementTo"
     }
