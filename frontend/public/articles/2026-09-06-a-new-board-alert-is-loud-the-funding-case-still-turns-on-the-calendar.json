@@ -1,0 +1,106 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-09-06-a-new-board-alert-is-loud-the-funding-case-still-turns-on-the-calendar",
+  "product": "seiche",
+  "slug": "2026-09-06-a-new-board-alert-is-loud-the-funding-case-still-turns-on-the-calendar",
+  "date": "2026-09-06",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "A new board alert is loud; the funding case still turns on the calendar",
+  "dek": "Seiche’s EROSION reading is led by a dated reserve path into Treasury settlements. But SOFR remains below IORB and Standing Repo Facility use is nil: the cash-price evidence has not confirmed a shortage.",
+  "canonical_url": "https://seiche.info/articles/2026-09-06-a-new-board-alert-is-loud-the-funding-case-still-turns-on-the-calendar/",
+  "published_at": "2026-09-06T14:03:55Z",
+  "evidence_as_of": "2026-09-04",
+  "related_dispatch": "https://seiche.info/dispatches/2026-09-06-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1135,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:42b4637f9649562665e3730a6500a9e0a0d066ace953ff5e682a1b7809a2eda3",
+    "memory_fingerprint": "sha256:55e9a7f0c09a40e29914277dc426e40ff618a660a09791963554cf43581e8aef",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 3,
+    "dossier_sha256": "d9ae5de73677b242e3bd395093905262c615cc07ca37a4765177646cef147bbe",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Removed unsupported implication that the board alert itself was funding evidence.",
+      "Recast the thesis as a conditional calendar-and-distribution mechanism.",
+      "Strengthened the counter-case and made settlement confirmation or failure observable.",
+      "Preserved model, source-timing, product, and context-only boundaries.",
+      "Replaced the rejected unsupported precision with the dossier-supported rounded reserve-kink distance of $809B.",
+      "Preserved the conditional calendar-and-distribution mechanism and the direct market-price counter-case.",
+      "Retained observable settlement-date confirmation and failure conditions, source links, and research boundary."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:42b4637f9649562665e3730a6500a9e0a0d066ace953ff5e682a1b7809a2eda3",
+      "memory_fingerprint": "sha256:55e9a7f0c09a40e29914277dc426e40ff618a660a09791963554cf43581e8aef",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}
