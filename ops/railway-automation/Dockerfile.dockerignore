@@ -1,0 +1,13 @@
+**
+!server.json
+!backend/
+!backend/pyproject.toml
+!backend/scripts/
+!backend/scripts/ard_coverage.py
+!ops/
+!ops/security/
+!ops/security/check_headers.sh
+!ops/release/
+!ops/release/audit_distribution_receipts.py
+!ops/railway-automation/
+!ops/railway-automation/**
