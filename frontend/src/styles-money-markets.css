@@ -2234,6 +2234,57 @@
 }
 .mm-open-button:hover { border-color: var(--accent); background: rgba(156, 143, 232, .08); }
 
+/* Optional local research preferences; all evidence still comes from the atlas. */
+.mm-watchlist {
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  padding: clamp(18px, 3vw, 28px);
+  min-width: 0;
+}
+.mm-watchlist__heading, .mm-watchlist__controls, .mm-watchlist__scope,
+.mm-watchlist__actions, .mm-watchlist__markets li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.mm-watchlist__heading, .mm-watchlist__markets li { justify-content: space-between; }
+.mm-watchlist__heading span { color: var(--faint); font: 10px var(--mono); letter-spacing: .08em; }
+.mm-watchlist h2 { margin: 5px 0 0; color: var(--text); font-size: clamp(18px, 3vw, 23px); }
+.mm-watchlist p, .mm-watchlist label { font-size: 12px; line-height: 1.65; color: var(--dim); }
+.mm-watchlist__controls { align-items: flex-end; margin: 16px 0 10px; }
+.mm-watchlist__controls > label:first-child { display: grid; gap: 5px; max-width: 100%; }
+.mm-watchlist button, .mm-watchlist select {
+  min-height: 36px;
+  max-width: 100%;
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  color: var(--dim);
+  background: var(--panel);
+  padding: 7px 11px;
+  font-size: 11px;
+}
+.mm-watchlist button[aria-pressed="true"], .mm-watchlist button:hover {
+  color: var(--accent-bright);
+  border-color: var(--accent-deep);
+}
+.mm-watchlist button:disabled, .mm-watchlist select:disabled { opacity: .5; cursor: default; }
+.mm-watchlist :focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
+.mm-watchlist__remember { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.mm-watchlist__remember input { accent-color: var(--accent-bright); }
+.mm-watchlist__notice { margin: 8px 0; }
+.mm-watchlist__markets { list-style: none; margin: 16px 0 0; padding: 0; }
+.mm-watchlist__markets li { padding: 12px 0; border-top: 1px solid var(--panel-edge); }
+.mm-watchlist__markets li > div:first-child { min-width: 0; flex: 1 1 230px; }
+.mm-watchlist__markets strong { color: var(--text); font-size: 13px; overflow-wrap: anywhere; }
+.mm-watchlist__markets p { margin: 7px 0 0; display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.mm-watchlist__empty { grid-column: 1 / -1; color: var(--dim); font-size: 12px; }
+@media (max-width: 560px) {
+  .mm-watchlist__controls > label:first-child, .mm-watchlist select { width: 100%; }
+  .mm-watchlist__actions { width: 100%; }
+}
+
 .mm-lab-charts {
   overflow: hidden;
   border: 1px solid var(--panel-edge);

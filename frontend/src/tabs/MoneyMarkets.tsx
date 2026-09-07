@@ -4,6 +4,8 @@ import { authHeaders } from "../auth";
 import Chart from "../Chart";
 import { P } from "../palette";
 import { moneyMarketSharePath } from "../shareRoutes";
+import { MAX_WATCHED_MARKETS, filterWatchedMarkets, missingWatchedMarkets } from "../moneyMarketWatchlist";
+import { useMoneyMarketWatchlist } from "../useMoneyMarketWatchlist";
 import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
@@ -1414,6 +1416,8 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
 }
 
 export default function MoneyMarkets({ snap }: Props) {
+  const watch = useMoneyMarketWatchlist();
+  const [watchedOnly, setWatchedOnly] = useState(() => watch.ids.length > 0);
   const usdEngine = useMemo(() => parseUsdEngine(snap.engines?.money_market), [snap.engines?.money_market]);
   const harborsEngine = useMemo(() => parseHarbors(snap.engines?.harbors), [snap.engines?.harbors]);
   const usdFallback = useMemo(
@@ -1425,7 +1429,7 @@ export default function MoneyMarkets({ snap }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
-  const [view, setView] = useState<DeskView>("briefing");
+  const [view, setView] = useState<DeskView>(() => watch.ids.length ? "world" : "briefing");
   const [region, setRegion] = useState("ALL");
   const [marketId, setMarketId] = useState("");
   const [expansionQuery, setExpansionQuery] = useState("");
@@ -1503,18 +1507,26 @@ export default function MoneyMarkets({ snap }: Props) {
     [atlas],
   );
   const visibleMarkets = useMemo(
-    () => atlas ? atlas.markets.filter((market) => region === "ALL" || market.region === region) : [],
-    [atlas, region],
+    () => filterWatchedMarkets(atlas?.markets || [], watch.ids, watchedOnly, region),
+    [atlas, region, watch.ids, watchedOnly],
   );
+  const absentWatchIds = missingWatchedMarkets(atlas?.markets || [], watch.ids);
   const selected = atlas?.markets.find((market) => market.market_id === marketId)
     || visibleMarkets[0]
     || atlas?.markets[0]
     || null;
 
+  useEffect(() => {
+    if (!watchedOnly || !atlas || (view !== "world" && view !== "lab")) return;
+    if (visibleMarkets.length && !visibleMarkets.some(market => market.market_id === marketId)) {
+      setMarketId(visibleMarkets[0].market_id);
+    } else if (!visibleMarkets.length && view === "lab") setView("world");
+  }, [atlas, marketId, view, visibleMarkets, watchedOnly]);
+
   const selectRegion = (next: string) => {
     setRegion(next);
     if (!atlas || next === "ALL") return;
-    const first = atlas.markets.find((market) => market.region === next);
+    const first = filterWatchedMarkets(atlas.markets, watch.ids, watchedOnly, next)[0];
     if (first && selected?.region !== next) setMarketId(first.market_id);
   };
 
@@ -1610,6 +1622,54 @@ export default function MoneyMarkets({ snap }: Props) {
         ))}
       </nav>
 
+      <section className="mm-watchlist" aria-labelledby="mm-watch-title">
+        <div className="mm-watchlist__heading">
+          <div><span>YOUR RESEARCH MARKETS</span><h2 id="mm-watch-title">Pick up where you left off.</h2></div>
+          <span>{watch.ids.length}/{MAX_WATCHED_MARKETS} watched</span>
+        </div>
+        <p>Keep a smaller set in view. Watching a market preserves its source status and publication clocks; it does not make missing or stale evidence current.</p>
+        <div className="mm-watchlist__controls">
+          <label><span>Watch a market</span><select aria-label="Watch a market" value="" disabled={loading || !atlas}
+            onChange={event => { if (event.target.value) watch.change(event.target.value, true); }}>
+            <option value="">Choose a market…</option>
+            {(atlas?.markets || []).filter(market => !watch.ids.includes(market.market_id)).map(market =>
+              <option key={market.market_id} value={market.market_id}>{market.currency} · {market.display_name}</option>)}
+          </select></label>
+          <div role="group" aria-label="Research market scope" className="mm-watchlist__scope">
+            <button type="button" aria-pressed={!watchedOnly} onClick={() => { setWatchedOnly(false); setView("world"); }}>All markets</button>
+            <button type="button" aria-pressed={watchedOnly} onClick={() => { setWatchedOnly(true); setRegion("ALL"); setView("world"); }}>Watched markets</button>
+          </div>
+          <label className="mm-watchlist__remember"><input type="checkbox" checked={watch.remembered}
+            onChange={event => watch.remember(event.target.checked)} /> Remember market choices on this device</label>
+          <button type="button" onClick={watch.clear} disabled={!watch.ids.length && !watch.remembered}>Clear watchlist</button>
+        </div>
+        <p className="mm-watchlist__notice" role="status" aria-live="polite">{watch.notice}</p>
+        {watch.ids.length > 0 && <ul className="mm-watchlist__markets" aria-label="Watched market evidence states">
+          {watch.ids.map(id => {
+            const market = atlas?.markets.find(item => item.market_id === id);
+            const benchmark = market ? comparisonBenchmark(market) : null;
+            const benchmarkMetadata = benchmark?.redistribution_status?.toLowerCase() !== "prohibited";
+            const missing = absentWatchIds.includes(id);
+            return <li key={id} data-watched-market={id}>
+              <div><strong>{market ? `${market.currency} · ${market.display_name}` : id}</strong>
+                {loading ? <p>Updating the atlas. Current presence and evidence status are not yet assessed.</p>
+                  : missing ? <p>{mode === "live" ? "Not returned in the latest atlas. No previous reading is carried forward."
+                    : mode === "usd-fallback" ? "Not present in the USD fallback. Global availability is not assessed."
+                      : "Atlas unavailable. This market's current evidence cannot be assessed."}</p>
+                    : <p><StatusPill value={market?.status || "not supplied"} /> <StatusPill value={benchmarkMetadata ? benchmark?.freshness || benchmark?.status || "benchmark unavailable" : "metadata withheld"} />
+                      <span>Benchmark observation: {benchmarkMetadata ? shortDate(benchmark?.asof) : "withheld"}</span>
+                      {benchmarkMetadata && isDerivedContext(benchmark) && <span>Derived-only context; raw benchmark values remain withheld.</span>}</p>}
+              </div>
+              <div className="mm-watchlist__actions">
+                {market && !loading && <button type="button" onClick={() => openMarket(id)} aria-label={`Open ${id} market lab`}>Open market lab</button>}
+                <button type="button" onClick={() => watch.change(id, false)} aria-label={`Unwatch ${id}`}>Unwatch</button>
+              </div>
+            </li>;
+          })}
+        </ul>}
+        {watchedOnly && !watch.ids.length && <p>No markets watched yet. Choose a market above or select All markets.</p>}
+      </section>
+
       {mode === "usd-fallback" && (
         <div className="mm-mode-note" role="status">
           <div><b>Global atlas unavailable.</b> Showing the last overview’s USD desk without inventing global calm.</div>
@@ -1674,12 +1734,14 @@ export default function MoneyMarkets({ snap }: Props) {
             </div>
             <label className="mm-market-select">
               <span>Market</span>
-              <select value={selected.market_id} onChange={(event) => setMarketId(event.target.value)}>
+              <select value={visibleMarkets.some(market => market.market_id === selected.market_id) ? selected.market_id : ""} disabled={!visibleMarkets.length} onChange={(event) => setMarketId(event.target.value)}>
+                {!visibleMarkets.some(market => market.market_id === selected.market_id) && <option value="">Choose a visible market</option>}
                 {visibleMarkets.map((market) => (
                   <option value={market.market_id} key={market.market_id}>{market.currency} · {market.display_name}</option>
                 ))}
               </select>
             </label>
+            {!visibleMarkets.length && <p className="mm-watchlist__empty">No returned markets match this selection. Watched markets absent from the atlas remain listed above.</p>}
             <div className="mm-market-grid">
               {visibleMarkets.map((market) => (
                 <MarketTile
@@ -1692,7 +1754,7 @@ export default function MoneyMarkets({ snap }: Props) {
             </div>
           </section>}
 
-          {view === "world" && (
+          {view === "world" && visibleMarkets.length > 0 && (
             <div className="mm-view-stage" role="region" aria-label="Global money-market map">
               <PressureSonar markets={visibleMarkets} selectedId={selected.market_id} onOpen={openMarket} />
               <CoverageLanes markets={visibleMarkets} />
