@@ -91,7 +91,7 @@ PRODUCTS = (
         openapi_identifier="urn:air:liquilens.in:openapi:failure-radar",
         openapi_url="https://api.liquilens.in/api/openapi.json",
         first_tool="latest_article",
-        public_tool_count=18,
+        public_tool_count=21,
         intent_query="Which Indian banks or NBFCs are showing failure risk?",
     ),
     Product(
@@ -122,7 +122,7 @@ PRODUCTS = (
             "urn:air:liquilens-undertow.com:openapi:x402-market-liquidity"),
         openapi_url="https://api.seiche.info/undertow/x402/openapi.json",
         first_tool="latest_article",
-        public_tool_count=9,
+        public_tool_count=10,
         intent_query="What would it cost to sell $100,000 of BTC across venues?",
     ),
 )
