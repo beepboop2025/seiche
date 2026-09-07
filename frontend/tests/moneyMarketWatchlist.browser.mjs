@@ -16,6 +16,11 @@ function atlas() {
     { market_id: "CN-CNY", region: "Asia", currency: "CNY", display_name: "China synthetic fixture", status: "DERIVED_CONTEXT",
       benchmark: null, derived_benchmark: { id: "CN.RATE", label: "Derived fixture", value: null, availability: "DERIVED_CONTEXT", redistribution_status: "derived_only", status: "FRESH", asof: "2026-09-07" } },
   ];
+  if (phase === "mixed-availability") {
+    rows[0].benchmark.availability = "RESTRICTED"; rows[0].benchmark.freshness = "FRESH";
+    rows[1].benchmark.availability = "UNAVAILABLE"; rows[1].benchmark.freshness = "FRESH";
+    rows[2].derived_benchmark.freshness = "FRESH";
+  }
   return { schema: "seiche.global-money-markets.v1", ok: true, generated_at: "2026-09-08T06:00:00Z", status: "PARTIAL",
     coverage: { declared_markets: 3, live_benchmarks: 1 }, markets: rows.filter(row => phase !== "absent" || row.market_id !== "US-USD")
       .map(row => ({ ...row, metrics: [], coverage: { declared_instruments: 1, public_available: row.benchmark ? 1 : 0, coverage_pct: row.benchmark ? 100 : 0 } })) };
@@ -71,6 +76,32 @@ try {
     await page.getByLabel("Watch a market", { exact: true }).selectOption("CN-CNY");
     assert.match(await watched("CN-CNY").innerText(), /Derived-only context/);
     await page.getByRole("button", { name: "Unwatch CN-CNY", exact: true }).click();
+  });
+  await check("explicit_sonar_and_china_links_leave_watched_only_scope", async () => {
+    await page.getByRole("button", { name: "Watched markets", exact: true }).click();
+    await page.locator(".mm-view-nav button").filter({ hasText: "Briefing" }).click();
+    // Synthetic unranked points can overlap; activate the real accessible button by keyboard.
+    await page.locator(".mm-sonar__point").filter({ hasText: "GBP" }).focus();
+    await page.keyboard.press("Enter");
+    assert.match(await page.locator("#mm-local-title").innerText(), /GBP/);
+    assert.equal(await page.getByRole("button", { name: "All markets", exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByRole("button", { name: "Watched markets", exact: true }).click();
+    await page.locator(".mm-view-nav button").filter({ hasText: "China desk" }).click();
+    await page.getByRole("button", { name: "Open the CNY market lab →", exact: true }).click();
+    assert.match(await page.locator("#mm-local-title").innerText(), /CNY/);
+    assert.equal(await page.getByRole("button", { name: "All markets", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.deepEqual(JSON.parse(await stored()).ids, ["US-USD"], "Opening a market does not change watched IDs");
+  });
+  await check("freshness_never_masks_restricted_unavailable_or_derived_evidence", async () => {
+    phase = "mixed-availability"; await load();
+    await page.getByLabel("Watch a market", { exact: true }).selectOption("GB-GBP");
+    await page.getByLabel("Watch a market", { exact: true }).selectOption("CN-CNY");
+    assert.equal((await watched("US-USD").locator(".mm-state").nth(1).innerText()).toLowerCase(), "restricted");
+    assert.equal((await watched("GB-GBP").locator(".mm-state").nth(1).innerText()).toLowerCase(), "unavailable");
+    assert.equal((await watched("CN-CNY").locator(".mm-state").nth(1).innerText()).toLowerCase(), "derived context");
+    await page.getByRole("button", { name: "Unwatch GB-GBP", exact: true }).click();
+    await page.getByRole("button", { name: "Unwatch CN-CNY", exact: true }).click();
+    phase = "initial";
   });
   await check("absent_markets_stay_visible_across_repeated_checks", async () => {
     phase = "absent";

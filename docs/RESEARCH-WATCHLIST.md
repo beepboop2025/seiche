@@ -35,9 +35,29 @@ running on port 8198, run `node tests/moneyMarketWatchlist.browser.mjs` from
 `PLAYWRIGHT_CHANNEL=chrome` uses a fresh headless Chrome context. The default
 artifact directory is `artifacts/research-watchlist-browser` at repository root.
 
-Production serves `frontend/dist` through the existing application. Follow
-`ops/deploy/RAILWAY-APPLICATION-UPDATES.md` for the signed exact-source application
-update, current parent/recovery proof, provider deployment identity, writer
-grants, public feature checks and new recovery evidence. Local frontend tests
-and a commit are not a deployment receipt. This feature changes no release
-controller, collector, backend, database or API contract.
+The frontend-only publication route is `.github/workflows/publish-static.yml`.
+After review and exact-main integration, its ordinary trigger is
+`gh workflow run publish-static.yml -R beepboop2025/seiche --ref main`. It tests
+and builds the UI, checks signed catalog/runtime/PyPI receipts, overlays the
+current sealed `seiche-site` mirror while preserving generated evidence, checks
+source/mirror identity, deploys `/tmp/cloudflare-site` to Cloudflare Pages project
+`seiche`, then verifies public dataset bytes. It needs no backend rollout.
+
+The existing catalog gate currently blocks this path. A read-only check on
+2026-09-08 reproduced `PublicationGateError: generated-content commit is not a
+single-parent daily/weekly desk commit`. Under
+`ops/release/verify_catalog_publication.py:verify_market_corpus_release`, a corpus
+receipt that targets the signed Seiche release permits only the narrow generated
+desk/controller descendant classes. Main already contains `31eaf81` (Railway
+public monitoring) and `d5b17ba` (discovery probes) outside those classes, before
+this feature; arbitrary frontend changes are outside them too.
+
+Normal resolution requires the release owner to prepare fresh signed publication
+evidence through the repository's reviewed release/receipt process and reconcile
+the exact source/catalog identity before the static workflow can pass. Existing
+tags, receipts and package versions must not be retargeted or relabeled, and the
+gate must not be weakened or skipped by a direct Pages upload. A backend change,
+if independently needed, follows `ops/deploy/RAILWAY-APPLICATION-UPDATES.md` and
+its current-state recovery and writer-grant requirements. Local tests and a commit
+are not deployment proof. This feature changes no release controller, collector,
+backend, database or API contract.

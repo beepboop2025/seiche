@@ -1563,6 +1563,7 @@ export default function MoneyMarkets({ snap }: Props) {
   const rateHistory = selected ? joinedRateHistory(selected) : { rows: [], metrics: [] };
   const chinaMarket = atlas?.markets.find((market) => market.market_id === "CN-CNY") || null;
   const openMarket = (nextMarketId: string) => {
+    setWatchedOnly(false);
     setRegion("ALL");
     setMarketId(nextMarketId);
     setView("lab");
@@ -1656,7 +1657,7 @@ export default function MoneyMarkets({ snap }: Props) {
                   : missing ? <p>{mode === "live" ? "Not returned in the latest atlas. No previous reading is carried forward."
                     : mode === "usd-fallback" ? "Not present in the USD fallback. Global availability is not assessed."
                       : "Atlas unavailable. This market's current evidence cannot be assessed."}</p>
-                    : <p><StatusPill value={market?.status || "not supplied"} /> <StatusPill value={benchmarkMetadata ? benchmark?.freshness || benchmark?.status || "benchmark unavailable" : "metadata withheld"} />
+                    : <p><StatusPill value={market?.status || "not supplied"} /> <StatusPill value={benchmarkMetadata ? statusLabel(benchmark) : "metadata withheld"} />
                       <span>Benchmark observation: {benchmarkMetadata ? shortDate(benchmark?.asof) : "withheld"}</span>
                       {benchmarkMetadata && isDerivedContext(benchmark) && <span>Derived-only context; raw benchmark values remain withheld.</span>}</p>}
               </div>
