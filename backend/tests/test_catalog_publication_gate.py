@@ -1566,6 +1566,9 @@ def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
         "backend/scripts/another-monitor.py",
         "ops/railway-automation/other.sh",
         "ops/railway-automation/publisher/unreviewed.py",
+        "ops/railway-automation/market-contracts/unreviewed.sh",
+        "ops/railway-automation/full-publisher/unreviewed.py",
+        ".github/workflows/recovery-monitor-handoff-extra.yml",
         "frontend/package.json",
         "frontend/package-lock.json",
         "frontend/tsconfig.json",
@@ -1586,6 +1589,38 @@ def test_frontend_contract_rejects_runtime_build_catalog_data_and_unlisted_opera
     source = _frontend_change(root, {relative: "synthetic forbidden mutation\n"})
     with pytest.raises(front.Error, match="forbidden"):
         front.compatibility_changes(root, release, source)
+
+
+@pytest.mark.parametrize("relative", [
+    "ops/railway-automation/market-contracts/Dockerfile",
+    "ops/railway-automation/market-contracts/Dockerfile.dockerignore",
+    "ops/railway-automation/market-contracts/run.sh",
+    "ops/railway-automation/market-contracts/README.md",
+    "ops/railway-automation/full-publisher/Dockerfile",
+    "ops/railway-automation/full-publisher/publish.py",
+    "ops/railway-automation/full-publisher/test_publish.py",
+    "ops/railway-automation/full-publisher/README.md",
+])
+def test_frontend_receipt_accepts_only_reviewed_native_controller_paths(frontend_repo, relative):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    source = _frontend_change(root, {relative: "# reviewed isolated executor\n"})
+    changes = front.compatibility_changes(root, release, source)
+    assert any(change["path"] == relative and change["kind"] == "excluded_monitor" for change in changes)
+
+
+def test_frontend_receipt_requires_one_time_handoff_to_be_removed(frontend_repo):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    relative = ".github/workflows/recovery-monitor-handoff.yml"
+    source = _frontend_change(root, {relative: "# reviewed one-time handoff\n"})
+    with pytest.raises(front.Error, match="forbidden one-time"):
+        front.compatibility_changes(root, release, source)
+    _content_git(root, "rm", relative)
+    _content_git(root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Remove completed one-time handoff")
+    source = _content_git(root, "rev-parse", "HEAD")
+    changes = front.compatibility_changes(root, release, source)
+    assert sum(change["path"] == relative and change["kind"] == "retired_handoff" for change in changes) == 2
 
 
 def test_frontend_contract_rejects_reverted_runtime_edit(frontend_repo):

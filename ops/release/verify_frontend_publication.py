@@ -57,8 +57,17 @@ EXCLUDED_MONITOR_PATHS = frozenset(
         "ops/railway-automation/publisher/github-known-hosts",
         "ops/railway-automation/publisher/publish.py",
         "ops/railway-automation/publisher/test_publish.py",
+        "ops/railway-automation/market-contracts/Dockerfile",
+        "ops/railway-automation/market-contracts/Dockerfile.dockerignore",
+        "ops/railway-automation/market-contracts/run.sh",
+        "ops/railway-automation/market-contracts/README.md",
+        "ops/railway-automation/full-publisher/Dockerfile",
+        "ops/railway-automation/full-publisher/publish.py",
+        "ops/railway-automation/full-publisher/test_publish.py",
+        "ops/railway-automation/full-publisher/README.md",
     }
 )
+RETIRED_HANDOFF_PATH = ".github/workflows/recovery-monitor-handoff.yml"
 CONTROLLER_PATHS = frozenset(
     {
         "ops/release/verify_frontend_publication.py",
@@ -199,6 +208,12 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                     kind = "review_only"
                 elif path in CONTROLLER_PATHS:
                     kind = "publication_controller"
+                elif path == RETIRED_HANDOFF_PATH:
+                    # The owner reviews its signed add/remove history in this receipt;
+                    # the one-time workflow must no longer exist in the published source.
+                    if gate._run_git(root, "cat-file", "-e", f"{source}:{path}", check=False).returncode == 0:
+                        raise Error("frontend history retains a forbidden one-time handoff workflow")
+                    kind = "retired_handoff"
                 elif path in EXCLUDED_MONITOR_PATHS:
                     kind = "excluded_monitor"
                 elif DESK_PATH.fullmatch(path):
