@@ -196,7 +196,7 @@ def test_local_catalog_release_identity_is_internally_exact():
     version, entry = gate.verify_local_identity(ROOT)
 
     assert version == "0.12.4"
-    assert len(entry["capabilities"]) == 12
+    assert len(entry["capabilities"]) == 13
     assert "trade_safety_risk_context" in entry["capabilities"]
     assert entry["prompts"] == [
         "is_now_dangerous",
