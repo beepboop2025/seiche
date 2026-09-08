@@ -115,6 +115,16 @@ def main():
     if expected != source_sha:
         raise RuntimeError("Requested source is no longer current main")
     apply = os.environ.get("PUBLISH_APPLY") == "1"
+    evidence = Path("/evidence")
+    if os.path.ismount(evidence):
+        evidence.chmod(0o700)
+        state_path = evidence / "current.json"
+        if apply and state_path.is_file():
+            state = json.loads(state_path.read_text())
+            mirror_head = git(["ls-remote", "--exit-code", MIRROR, "refs/heads/main"], CONTROLLER).split()[0]
+            if state.get("source") == source_sha and state.get("site") == mirror_head:
+                print(f"RAILWAY_STATIC_UNCHANGED source={source_sha} site={mirror_head}", flush=True)
+                return
     signer = os.environ["RELEASE_SIGNING_KEY_FINGERPRINT"]
     workflow_path = CONTROLLER / "publish-static.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
@@ -202,10 +212,9 @@ def main():
         print(f"RAILWAY_STATIC_PREPARE_PASS source={source_sha} previous_site={previous_sha} receipt={receipt or 'application'}", flush=True)
         if not apply:
             return
-        evidence = Path("/evidence")
         if not os.path.ismount(evidence):
             raise RuntimeError("Durable recovery volume is required before publication")
-        recovery = evidence / (source_sha + "-" + os.environ.get("RAILWAY_DEPLOYMENT_ID", root.name))
+        recovery = evidence / (source_sha + "-" + root.name)
         recovery.mkdir(parents=True, exist_ok=False)
         if git(["ls-remote", "origin", "refs/heads/main"], mirror).split()[0] != previous_sha:
             raise RuntimeError("Site mirror advanced during preparation")
@@ -252,6 +261,12 @@ def main():
                 command = command.replace("python ops/", "python -I -S ops/", 1)
             run(["bash", "-euo", "pipefail", "-c", command], trusted,
                 clean_env({**env, "RUNNER_TEMP": str(build_temp)}))
+        state = evidence / "current.json.tmp"
+        state.write_text(json.dumps({"source": source_sha, "site": site_sha,
+                                     "recovery": recovery.name, "verified_at": time.time()}))
+        with state.open("rb") as stream:
+            os.fsync(stream.fileno())
+        state.replace(evidence / "current.json")
         print(f"RAILWAY_STATIC_PUBLISH_PASS source={source_sha} site={site_sha}", flush=True)
 
 
