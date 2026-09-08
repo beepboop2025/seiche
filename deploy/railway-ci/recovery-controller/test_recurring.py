@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 import types
@@ -18,6 +19,46 @@ import verify
 
 class ExportReached(Exception):
     """Fixture sentinel stops before the first real production stage can run."""
+
+
+class SourceRegistryTests(unittest.TestCase):
+    def test_current_source_requires_the_same_control_registry(self):
+        registry = "governance/railway-control-signers.json"
+        contents = {"backend/seiche/example.py": b"pass\n", registry: b"reviewed signers\n"}
+        policy = {"trusted_source_sha256": {name: verify.digest(body) for name, body in contents.items()}}
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            repository = root / "repository"
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            for path, body in contents.items():
+                target = repository / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(body)
+
+            def commit():
+                subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+                subprocess.run(["git", "-C", str(repository), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], check=True)
+
+            original_run = subprocess.run
+
+            def local_fetch(arguments, **kwargs):
+                if "fetch" in arguments:
+                    arguments = [str(repository) if arg.startswith("https://github.com/") else "HEAD" if arg == "refs/heads/main" else arg
+                                 for arg in arguments]
+                return original_run(arguments, **kwargs)
+
+            commit()
+            with mock.patch.object(recurring.subprocess, "run", side_effect=local_fetch):
+                self.assertRegex(recurring.source_identity(policy, root), r"^[0-9a-f]{40}$")
+                (repository / registry).write_bytes(b"unreviewed signers\n")
+                commit()
+                with self.assertRaisesRegex(ValueError, "reviewed recovery source changed"):
+                    recurring.source_identity(policy, root)
+                (repository / registry).unlink()
+                commit()
+                with self.assertRaisesRegex(ValueError, "input path set changed"):
+                    recurring.source_identity(policy, root)
 
 
 class NativeAdmissionTests(unittest.TestCase):

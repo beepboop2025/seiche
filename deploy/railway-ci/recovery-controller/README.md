@@ -53,7 +53,9 @@ Only execution-variable names and private authentication-header transport differ
 GitHub's mask directive is replaced by a private bearer header file, so native
 logs and child arguments never carry the download bearer. Current
 main is read as data: the complete executable backend/helper input set and all
-pinned bytes must match; backend tests and the existing dispatch content directory
+pinned bytes must match, including `governance/railway-control-signers.json` at
+the repository root. The image tests load that registry through the production
+command validator's default path. Backend tests and the existing dispatch content directory
 are excluded from runtime admission. The original strict 26-hour monitor still
 runs first with its three existing isolated inputs.
 
