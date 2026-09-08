@@ -1,5 +1,5 @@
 {
-  "date": "2026-09-07",
+  "date": "2026-09-08",
   "reported_prev": {
     "SRF accepted": "2026-09-04",
     "Newly censor-targeted terms": "2026-09-06",
@@ -9,8 +9,8 @@
     "WTI crude oil spot, Cushing": "2026-09-01"
   },
   "reported": {
-    "SRF accepted": "2026-09-04",
-    "Newly censor-targeted terms": "2026-09-06",
+    "SRF accepted": "2026-09-08",
+    "Newly censor-targeted terms": "2026-09-08",
     "Brent crude oil spot, Europe": "2026-09-01",
     "2y Treasury constant maturity yield": "2026-09-03",
     "4-week T-bill secondary market rate": "2026-09-03",
@@ -41,7 +41,7 @@
   },
   "letter": {
     "regime": "EROSION",
-    "value": 44.9,
+    "value": 44.7,
     "decomp": {
       "weather": 11.0,
       "kink": 7.2,
@@ -51,7 +51,7 @@
       "confession": 2.9,
       "undertow": 2.8,
       "warehouse": 2.5,
-      "tails": 2.2,
+      "tails": 2.0,
       "auctions": 1.2,
       "hydrophone": 0.1
     },
@@ -60,6 +60,6 @@
       "worst_case_b": 2874.8,
       "settlement_b": 246.0
     },
-    "tell": 46.7
+    "tell": 40.8
   }
 }
