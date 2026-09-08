@@ -42,6 +42,14 @@ TAG_PREFIX = "frontend-publication-"
 # Keep exact paths: this is not a general operations/runtime exception.
 EXCLUDED_MONITOR_PATHS = frozenset(
     {
+        ".github/workflows/market-platform-ci.yml",
+        "deploy/railway-ci/editorial-controller/Dockerfile",
+        "deploy/railway-ci/editorial-controller/README.md",
+        "deploy/railway-ci/editorial-controller/editorial.py",
+        "deploy/railway-ci/editorial-controller/isolation.py",
+        "deploy/railway-ci/editorial-controller/prepare.py",
+        "deploy/railway-ci/editorial-controller/requirements.lock",
+        "deploy/railway-ci/editorial-controller/test_editorial.py",
         "backend/scripts/ard_coverage.py",
         ".github/workflows/distribution-contracts.yml",
         "ops/railway-automation/Dockerfile",

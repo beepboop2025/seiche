@@ -1571,6 +1571,9 @@ def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
         ".github/workflows/recovery-monitor-handoff-extra.yml",
         "ops/railway/fetch_recovery_logs_extra.py",
         "deploy/railway-ci/recovery-monitor/unreviewed.py",
+        "deploy/railway-ci/editorial-controller/unreviewed.py",
+        "deploy/railway-ci/editorial-controller/requirements-extra.lock",
+        ".github/workflows/market-platform-ci-extra.yml",
         "deploy/railway-ci/recovery-monitor/requirements-extra.lock",
         "ops/railway/test_fetch_recovery_logs_extra.py",
         ".github/workflows/railway-stateful-recovery-extra.yml",
@@ -1625,6 +1628,34 @@ def test_frontend_receipt_accepts_only_reviewed_native_controller_paths(
     root, release, _ = frontend_repo
     _frontend_change(root)
     source = _frontend_change(root, {relative: "# reviewed isolated executor\n"})
+    changes = front.compatibility_changes(root, release, source)
+    assert any(
+        change["path"] == relative and change["kind"] == "excluded_monitor"
+        for change in changes
+    )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".github/workflows/market-platform-ci.yml",
+        "deploy/railway-ci/editorial-controller/Dockerfile",
+        "deploy/railway-ci/editorial-controller/README.md",
+        "deploy/railway-ci/editorial-controller/editorial.py",
+        "deploy/railway-ci/editorial-controller/isolation.py",
+        "deploy/railway-ci/editorial-controller/prepare.py",
+        "deploy/railway-ci/editorial-controller/requirements.lock",
+        "deploy/railway-ci/editorial-controller/test_editorial.py",
+    ],
+)
+def test_frontend_receipt_accepts_reviewed_editorial_and_market_ci_paths(
+    frontend_repo, relative
+):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    source = _frontend_change(
+        root, {relative: "# isolated controller; no frontend execution\n"}
+    )
     changes = front.compatibility_changes(root, release, source)
     assert any(
         change["path"] == relative and change["kind"] == "excluded_monitor"

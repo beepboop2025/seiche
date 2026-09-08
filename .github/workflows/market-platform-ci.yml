@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   contracts:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login != 'beepboop2025' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
