@@ -1027,8 +1027,7 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "postgres pitr enable" in text
     assert "postgres pitr schedule set --daily --weekly --monthly" in text
     assert "postgres pitr backup lock" in text
-    # One extra mapping belongs to the reviewed, temporary S3-only handoff.
-    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 4
+    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 3
     assert text.count('seiche-s3-object-lock.sh" put-verify') == 4
     assert (
         text.count("d2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c")
