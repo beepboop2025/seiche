@@ -428,7 +428,8 @@ def main():
             raise RuntimeError("Source main advanced before canonical publication")
         run(
             [
-                "wrangler",
+                "/opt/node22/bin/node",
+                "/opt/publisher/node_modules/wrangler/bin/wrangler.js",
                 "pages",
                 "deploy",
                 str(candidate),
