@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("output", type=Path)
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=False)
-for name in ("Dockerfile", "publish.py", "github-known-hosts"):
+for name in ("Dockerfile", "publish.py", "test_publish.py", "github-known-hosts"):
     shutil.copyfile(Path(__file__).with_name(name), args.output / name)
 shutil.copyfile(ROOT / ".github/workflows/publish-static.yml", args.output / "publish-static.yml")
 shutil.copyfile(ROOT / "ops/requirements-social-cards.txt", args.output / "requirements-social-cards.txt")

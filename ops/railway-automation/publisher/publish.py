@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
+import time
 import subprocess
 import tarfile
 import tempfile
@@ -34,6 +36,19 @@ def clean_env(extra=None):
     return env
 
 
+def quiesce_builder():
+    """Terminate every builder process, including children that detached via setsid."""
+    for _ in range(100):
+        subprocess.run(["pkill", "-KILL", "-u", "10001"], check=False, capture_output=True)
+        found = subprocess.run(["pgrep", "-u", "10001"], check=False, capture_output=True)
+        if found.returncode == 1:
+            return
+        if found.returncode != 0:
+            raise RuntimeError("Unable to inspect the builder UID")
+        time.sleep(0.05)
+    raise RuntimeError("Builder UID did not quiesce before publication")
+
+
 def run(args, cwd, env, unprivileged=False, capture=False):
     if unprivileged:
         args = ["setpriv", "--reuid=10001", "--regid=10001", "--init-groups",
@@ -51,6 +66,8 @@ def run(args, cwd, env, unprivileged=False, capture=False):
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        if unprivileged:
+            quiesce_builder()
 
 
 def git(args, cwd, env=None):
@@ -81,13 +98,19 @@ def copy_public_tree(source, target):
         if path.is_symlink() or not (path.is_file() or path.is_dir()):
             raise RuntimeError("Unsafe publication entry: " + str(relative))
         if path.is_file():
-            total += path.stat().st_size
-            count += 1
-            if total > 500 * 1024 * 1024 or count > 20000:
-                raise RuntimeError("Publication exceeds the reviewed size bound")
-            destination = target / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, destination, follow_symlinks=False)
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise RuntimeError("Publication entry is not a single-link regular file")
+                total += info.st_size
+                count += 1
+                if total > 500 * 1024 * 1024 or count > 20000:
+                    raise RuntimeError("Publication exceeds the reviewed size bound")
+                destination = target / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open("xb") as output:
+                    shutil.copyfileobj(stream, output)
     if not (target / "index.html").is_file():
         raise RuntimeError("Publication has no entry point")
 
@@ -161,15 +184,16 @@ def main():
         start = prepare.index("mkdir -p ~/.ssh")
         end = prepare.index('if [ -n "$FRONTEND_RECEIPT_TAG" ]; then')
         prepared = build_temp / "site"
-        prepare = prepare[:start] + f"git clone --depth 1 {MIRROR} {prepared}\n" + prepare[end:]
+        git(["clone", "--quiet", "--no-hardlinks", str(mirror), str(prepared)], root)
+        shutil.chown(prepared, user=10001, group=10001)
+        for path in prepared.rglob("*"):
+            if not path.is_symlink():
+                shutil.chown(path, user=10001, group=10001)
+        prepare = prepare[:start] + prepare[end:]
         prepare = prepare.replace("/tmp/site", str(prepared))
         print("RAILWAY_STATIC_STEP prepare sealed mirror", flush=True)
         run(["bash", "-euo", "pipefail", "-c", prepare], build, build_env, unprivileged=True)
-        prepared_previous_sha = git(["rev-parse", "HEAD"], prepared,
-                           clean_env({"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_1": "safe.directory",
-                                      "GIT_CONFIG_VALUE_1": str(prepared)}))
-        if prepared_previous_sha != previous_sha:
-            raise RuntimeError("Builder used a different mirror revision")
+        quiesce_builder()
         candidate = root / "candidate"
         candidate.mkdir()
         copy_public_tree(prepared, candidate)
@@ -230,6 +254,8 @@ def main():
             if step.get("if") and not receipt:
                 continue
             command = step["run"].replace("/tmp/cloudflare-site", str(candidate)).replace("/tmp/site", str(candidate))
+            if command.startswith("python ops/"):
+                command = command.replace("python ops/", "python -I -S ops/", 1)
             run(["bash", "-euo", "pipefail", "-c", command], trusted,
                 clean_env({**env, "RUNNER_TEMP": str(build_temp)}))
         print(f"RAILWAY_STATIC_PUBLISH_PASS source={source_sha} site={site_sha}", flush=True)
