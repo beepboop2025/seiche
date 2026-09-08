@@ -26,7 +26,8 @@ class RecoveryTests(unittest.TestCase):
         receipt, size = verify.validate_case(self.policy, self.env, self.recovery, self.storage)
         self.assertEqual(receipt["request_id"], self.policy["request_id"])
         self.assertEqual(len(receipt["objects"]), 15)
-        self.assertEqual(size, 1609404901)
+        # Includes the six receipt/proof members in addition to the bundle.
+        self.assertEqual(size, 1609428065)
 
     def test_wrong_source_deployment_or_bucket_is_rejected(self):
         for key in ("application_source", "application_deployment", "request_id"):
