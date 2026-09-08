@@ -36,14 +36,27 @@ TAG_PREFIX = "frontend-publication-"
 
 # These files cannot be imported by the frontend build, or by postprocessing:
 # the latter runs from the immutable backend release archive, never this tree.
+# Isolated CI and controller files are not copied into the frontend-only archive
+# or the immutable backend postprocessor archive. Controllers are deployed from
+# separately reviewed signed images; this receipt does not activate them.
 # Keep exact paths: this is not a general operations/runtime exception.
 EXCLUDED_MONITOR_PATHS = frozenset(
     {
         "backend/scripts/ard_coverage.py",
+        ".github/workflows/distribution-contracts.yml",
         "ops/railway-automation/Dockerfile",
         "ops/railway-automation/Dockerfile.dockerignore",
         "ops/railway-automation/README.md",
         "ops/railway-automation/run.sh",
+        "ops/railway-automation/Dockerfile.distribution",
+        "ops/railway-automation/Dockerfile.distribution.dockerignore",
+        "ops/railway-automation/distribution.py",
+        "ops/railway-automation/publisher/Dockerfile",
+        "ops/railway-automation/publisher/README.md",
+        "ops/railway-automation/publisher/assemble.py",
+        "ops/railway-automation/publisher/github-known-hosts",
+        "ops/railway-automation/publisher/publish.py",
+        "ops/railway-automation/publisher/test_publish.py",
     }
 )
 CONTROLLER_PATHS = frozenset(

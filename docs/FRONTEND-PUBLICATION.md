@@ -28,7 +28,7 @@ branches, merges and reverted edits. This bounded contract permits:
 - the exact frontend publication controller/test files named by the verifier;
 - existing narrowly defined desk content, only with the existing desk identity
   and daily/weekly subject rules; repository content is excluded from this build;
-- five exact monitoring paths listed in `EXCLUDED_MONITOR_PATHS`, reported as
+- exact monitoring, isolated CI and separately deployed controller paths listed in `EXCLUDED_MONITOR_PATHS`, reported as
   excluded and never used as renderer or runtime build input.
 
 Backend runtime/package code, frontend dependencies and build configuration,
@@ -141,3 +141,11 @@ newer publication exists, the reviewed prior site can be restored through the
 normal mirror/Cloudflare route. If newer evidence has arrived, rebuild the prior
 UI over that current sealed evidence instead of restoring an old data cut. This
 contract neither rolls back backend state nor enables a retired writer.
+
+The Railway distribution runner and static publisher are enumerated by exact
+filename in that exclusion set. They are absent from the fresh frontend-only
+archive and the immutable backend release archive used for postprocessing, and
+are not imported by either runtime. The frontend receipt records their changes
+but does not deploy a controller. A controller is uploaded separately from its
+reviewed signed source; verifier/workflow updates require a matching pinned
+controller rebuild. Unlisted neighboring operation files still fail the gate.
