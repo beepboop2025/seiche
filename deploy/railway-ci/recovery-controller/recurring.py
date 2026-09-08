@@ -45,6 +45,14 @@ def source_identity(policy, private):
     return source
 
 
+def restore_workspace(public):
+    """Create the root-owned traverse path despite the controller's private umask."""
+    base = public / "recovery-verification"
+    base.mkdir(mode=0o755)
+    base.chmod(0o755)
+    return base / "export"
+
+
 def seal_restore_inputs(work):
     """Root-owned immutable inputs and one sticky output directory isolate restore code."""
     total = 0
@@ -250,9 +258,7 @@ def run_locked():
             verify.event("RAILWAY_NATIVE_RECOVERY_ALREADY_VERIFIED", date=payload["date"], deployment=native["RAILWAY_DEPLOYMENT_ID"],
                          snapshot=payload["snapshot_id"], production_export_requested=False, index_version=reference["version_id"])
             return
-        restore_base = public / "recovery-verification"
-        restore_base.mkdir(mode=0o755)
-        work = restore_base / "export"
+        work = restore_workspace(public)
         stage_env = {**production, **target, "RAILWAY_SERVICE_ID": target["RAILWAY_STATEFUL_SERVICE_ID"],
                      "RAILWAY_VOLUME_ID": target["RAILWAY_STATEFUL_VOLUME_ID"], "RAILWAY_ORIGIN": target["RAILWAY_STATEFUL_ORIGIN"],
                      "RAILWAY_REAL_BIN": "/usr/local/bin/railway-real", "SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM": control_key,
