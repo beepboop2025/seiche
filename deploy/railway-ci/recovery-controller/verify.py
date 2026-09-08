@@ -1,6 +1,8 @@
 """Read locked S3 versions and repeat the existing isolated recovery restore."""
 
 import ctypes
+import base64
+import re
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
@@ -164,7 +166,186 @@ def start_postgres(root):
     return uid, env
 
 
+
+INDEX_SCHEMA = "seiche.railway-recovery-execution.v1"
+INDEX_DOMAIN = b"seiche.railway-recovery-execution.v1\0"
+CONTROL_KEY_IDS = frozenset({
+    "2be24b7ea07b1596f9e6bf95c22ee1425532b28e04b3d3cf4eb263fce7142987",
+    "cf08c9956205cd0151ca4d71edbf65af6e82ef802a8afbfaef27b6f3be43e4f3",
+})
+INDEX_FIELDS = frozenset({
+    "schema", "execution_platform", "date", "observed_at", "repository", "governance_workflow",
+    "controller_source", "controller_manifest_sha256", "controller_image_digest", "controller_deployment_id", "controller_replica_id",
+    "controller_project_id", "controller_environment_id", "controller_service_id", "monitor_proof_sha256",
+    "application_project_id", "application_environment_id", "application_service_id", "application_deployment_id",
+    "application_source", "application_replica_id", "request_id", "snapshot_id", "objects_verified",
+    "recovery_receipt", "offsite_receipt", "reverse_restore_proof", "postgres_counts", "postgres_count_floor",
+    "authority_changed", "research_only", "can_publish", "can_execute",
+    "storage_endpoint", "storage_bucket", "storage_prefix",
+})
+INDEX_OBJECTS = {
+    "recovery_receipt": "recovery-receipt.json",
+    "offsite_receipt": "offsite-receipt.json",
+    "reverse_restore_proof": "proof/reverse-restore.json",
+}
+
+
+def canonical(value):
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def index_signing_bytes(payload):
+    if not isinstance(payload, dict) or set(payload) != INDEX_FIELDS:
+        raise ValueError("native execution metadata fields differ from the closed contract")
+    return INDEX_DOMAIN + canonical(payload)
+
+
+def evidence_signer(pem, public_hex):
+    """Validate the independent evidence key before any governed export begins."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key = serialization.load_pem_private_key(pem.encode(), password=None)
+    if not isinstance(key, Ed25519PrivateKey):
+        raise ValueError("native evidence key must be Ed25519")
+    public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    if public.hex() != public_hex:
+        raise ValueError("native evidence signer differs from the independently pinned key")
+    # No production signer may be reused for this evidence-only purpose.
+    if digest(public) in CONTROL_KEY_IDS:
+        raise ValueError("production control key cannot sign native execution evidence")
+    return key, public
+
+
+def sign_execution_index(payload, pem, public_hex):
+    """This evidence key never signs production control commands or acknowledgments."""
+    key, public = evidence_signer(pem, public_hex)
+    signature = key.sign(index_signing_bytes(payload))
+    return {"payload": payload, "key_id": digest(public), "signature": base64.b64encode(signature).decode()}
+
+
+def validate_execution_index(envelope, *, policy, current_runtime, now):
+    """Verify a fresh exact-target native claim before any GitHub attestation."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    if not isinstance(envelope, dict) or set(envelope) != {"payload", "key_id", "signature"}:
+        raise ValueError("native execution envelope differs")
+    public = bytes.fromhex(policy["execution_public_key"])
+    if len(public) != 32 or envelope["key_id"] != digest(public) or digest(public) in CONTROL_KEY_IDS:
+        raise ValueError("native evidence key identity differs")
+    signature = base64.b64decode(envelope["signature"], validate=True)
+    if len(signature) != 64:
+        raise ValueError("native evidence signature length differs")
+    payload = envelope["payload"]
+    Ed25519PublicKey.from_public_bytes(public).verify(signature, index_signing_bytes(payload))
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("native proof verifier needs an aware clock")
+    now = now.astimezone(timezone.utc)
+    checked = datetime.fromisoformat(current_runtime["observed_at"].replace("Z", "+00:00"))
+    if (current_runtime["status"] != "RUNNING" or checked.tzinfo is None or
+            checked.utcoffset() is None or not -120 <= (now - checked).total_seconds() <= 300):
+        raise ValueError("current production runtime proof is missing, stopped or stale")
+    observed = datetime.fromisoformat(payload["observed_at"].replace("Z", "+00:00"))
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        raise ValueError("native evidence observation has no timezone")
+    observed = observed.astimezone(timezone.utc)
+    age = (now - observed).total_seconds()
+    if (payload["date"] != now.date().isoformat() or observed.date().isoformat() != payload["date"] or
+            age < -120 or age > 26 * 3600):
+        raise ValueError("native execution day or freshness differs; no stale fallback is allowed")
+    fixed = {"schema": INDEX_SCHEMA, "execution_platform": "railway", "repository": "beepboop2025/seiche",
+             "governance_workflow": "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml",
+             "objects_verified": 15, "authority_changed": False, "research_only": True,
+             "can_publish": False, "can_execute": False,
+             **{name: policy[name] for name in ("controller_source", "controller_manifest_sha256", "controller_image_digest",
+                 "storage_endpoint", "storage_bucket", "storage_prefix", "controller_project_id", "controller_environment_id", "controller_service_id",
+                 "application_project_id", "application_environment_id", "application_service_id")}}
+    if any(type(payload[name]) is not type(value) or payload[name] != value for name, value in fixed.items()):
+        raise ValueError("native execution source, target or safety state differs")
+    for name in ("controller_deployment_id", "controller_replica_id", "application_deployment_id", "application_replica_id"):
+        if not isinstance(payload[name], str) or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", payload[name]) is None:
+            raise ValueError("native execution identity is not a fixed UUID")
+    for field, runtime_field in (("application_deployment_id", "deployment_id"), ("application_source", "source"), ("application_replica_id", "replica_id")):
+        if payload[field] != current_runtime[runtime_field]:
+            raise ValueError("native execution differs from the current running production identity")
+    for name, length in (("application_source", 40), ("request_id", 64), ("monitor_proof_sha256", 64)):
+        if not isinstance(payload[name], str) or re.fullmatch("[0-9a-f]{" + str(length) + "}", payload[name]) is None:
+            raise ValueError("native evidence digest or source differs")
+    if not isinstance(payload["snapshot_id"], str) or re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", payload["snapshot_id"]) is None:
+        raise ValueError("native snapshot identity differs")
+    snapshot_time = datetime.strptime(payload["snapshot_id"], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    if snapshot_time.date() != observed.date() or snapshot_time > observed:
+        raise ValueError("native snapshot is not from the verified UTC execution day")
+    prefix = policy["storage_prefix"] + "/" + payload["snapshot_id"] + "/" + payload["request_id"]
+    for label, name in INDEX_OBJECTS.items():
+        item = payload[label]
+        if not isinstance(item, dict) or set(item) != {"key", "version_id", "sha256", "size"}:
+            raise ValueError("native receipt reference fields differ")
+        if (item["key"] != prefix + "/" + name or not isinstance(item["version_id"], str) or
+                item["version_id"] == "null" or re.fullmatch(r"[A-Za-z0-9._~+/=-]{1,1024}", item["version_id"]) is None or
+                not isinstance(item["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is None or
+                type(item["size"]) is not int or not 0 < item["size"] <= 512 * 1024):
+            raise ValueError("native receipt reference is not a bounded exact immutable version")
+    counts, floor = payload["postgres_counts"], payload["postgres_count_floor"]
+    if (not isinstance(counts, list) or not isinstance(floor, list) or len(counts) != 4 or len(floor) != 4 or
+            any(type(value) is not int or value < 0 for value in (*counts, *floor)) or
+            any(actual < minimum for actual, minimum in zip(counts, floor))):
+        raise ValueError("native restore counts do not satisfy the original floors")
+    return payload
+
+
+def validate_index_receipts(payload, *, bodies, heads, recovery, policy, now):
+    """Bind the signed claim to exact downloaded original receipt bytes and S3 HEADs."""
+    if set(bodies) != set(INDEX_OBJECTS) or set(heads) != set(INDEX_OBJECTS):
+        raise ValueError("native index needs all three original immutable receipts")
+    documents = {}
+    for name in INDEX_OBJECTS:
+        body, reference, head = bodies[name], payload[name], heads[name]
+        if (not isinstance(body, bytes) or len(body) != reference["size"] or
+                digest(body) != reference["sha256"] or head.get("VersionId") != reference["version_id"] or
+                head.get("ContentLength") != reference["size"] or
+                head.get("Metadata", {}).get("sha256") != reference["sha256"] or
+                head.get("ObjectLockMode") != "COMPLIANCE" or head.get("SSECustomerAlgorithm") != "AES256"):
+            raise ValueError("native receipt bytes or immutable locked version differs")
+        retain = datetime.fromisoformat(head["ObjectLockRetainUntilDate"].replace("Z", "+00:00"))
+        if retain.tzinfo is None or (retain - now).total_seconds() < 29 * 86400:
+            raise ValueError("native receipt retention is below the original bound")
+        documents[name] = json.loads(body)
+    original, offsite, proof = (documents[name] for name in INDEX_OBJECTS)
+    recovery.validate_offsite_receipt(offsite, recovery_receipt=original, now=now)
+    if (offsite["bucket"] != policy["storage_bucket"] or offsite["prefix"] != policy["storage_prefix"] or
+            len(offsite["objects"]) != 15 or original["snapshot"]["id"] != payload["snapshot_id"] or
+            original["request_id"] != payload["request_id"] or original["commit"] != payload["application_source"]):
+        raise ValueError("native execution differs from the original recovery identity")
+    for field in ("project", "environment", "service", "deployment"):
+        if original["railway"][field + "_id"] != payload["application_" + field + "_id"]:
+            raise ValueError("native execution differs from the original application target")
+    for label in ("recovery_receipt", "reverse_restore_proof"):
+        if offsite["objects"][INDEX_OBJECTS[label]] != payload[label]:
+            raise ValueError("native execution reference differs from the closed offsite manifest")
+    proof_fixed = {"schema": "seiche.railway-reverse-restore-proof.v1",
+                   "repository": payload["repository"], "workflow": payload["governance_workflow"],
+                   "commit": payload["application_source"], "request_id": payload["request_id"],
+                   "authority_changed": False, "research_only": True, "can_publish": False, "can_execute": False}
+    if any(type(proof.get(name)) is not type(value) or proof.get(name) != value for name, value in proof_fixed.items()):
+        raise ValueError("original reverse restore identity or authority differs")
+    if (proof["filesystem_tree_sha256"] != original["filesystem"]["tree_sha256"] or
+            proof["nbs_full_store_audit_result"] != original["filesystem"]["nbs_full_store_audit_result"] or
+            proof["palimpsest_china_state"] != original["palimpsest_china_state"]):
+        raise ValueError("original reverse restore filesystem audits differ")
+    if (offsite["recovery_receipt_sha256"] != payload["recovery_receipt"]["sha256"] or
+            offsite["reverse_restore_proof_sha256"] != payload["reverse_restore_proof"]["sha256"] or
+            proof["recovery_receipt_sha256"] != payload["recovery_receipt"]["sha256"] or
+            proof["postgres_counts"] != payload["postgres_counts"] or
+            proof["postgres_count_floor"] != payload["postgres_count_floor"] or
+            original["snapshot"]["critical_table_count_floor"] != payload["postgres_count_floor"]):
+        raise ValueError("native restore claim differs from the original proof or count floors")
+    return documents
+
+
 def main():
+    if os.environ.get("RECOVERY_OPERATION") == "export-recurring":
+        import recurring
+        recurring.main()
+        return
     if os.geteuid() != 0:
         raise RuntimeError("trusted storage controller must own its private credentials")
     if os.environ.get("RECOVERY_OPERATION", "verify-existing") != "verify-existing":
