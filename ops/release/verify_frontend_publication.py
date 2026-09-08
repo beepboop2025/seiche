@@ -75,6 +75,8 @@ EXCLUDED_MONITOR_PATHS = frozenset(
         "ops/railway-automation/full-publisher/README.md",
         "ops/railway/fetch_recovery_logs.py",
         "ops/railway/test_fetch_recovery_logs.py",
+        "backend/tests/test_railway_stateful_recovery.py",
+        "backend/tests/test_tide_session_alignment.py",
         "deploy/railway-ci/recovery-monitor/Dockerfile",
         "deploy/railway-ci/recovery-monitor/README.md",
         "deploy/railway-ci/recovery-monitor/monitor.py",
