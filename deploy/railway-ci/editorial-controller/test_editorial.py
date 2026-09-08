@@ -31,6 +31,10 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("RAILWAY_TOKEN", result)
         self.assertNotIn("TELEGRAM_BOT_TOKEN", result)
 
+    def test_invalid_stage_source_is_rejected_before_process_start(self):
+        with self.assertRaisesRegex(ValueError, "canonical source SHA"):
+            editorial.run_stage(None, [], None, None, source="main")
+
     def test_symlink_and_hardlink_outputs_rejected(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -85,6 +89,22 @@ class PolicyTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0, "native root/UID boundary requires Linux container")
 class NativeTests(unittest.TestCase):
+    def test_stage_receives_exact_source_without_ambient_credentials(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            root.chmod(0o755)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            os.chown(runtime, 65532, 65532)
+            script = """import os
+assert os.getuid() == 65532
+assert os.environ['SEICHE_RELEASE_SHA'] == 'a' * 40
+assert 'GITHUB_TOKEN' not in os.environ
+assert 'RAILWAY_TOKEN' not in os.environ
+"""
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "dummy", "RAILWAY_TOKEN": "dummy", "SEICHE_RELEASE_SHA": "b" * 40}):
+                editorial.run_stage(root, ["-c", script], root / "scratch", runtime, source="a" * 40)
+
     def test_runtime_cache_can_exceed_sealed_output_limit(self):
         with tempfile.TemporaryDirectory() as name:
             runtime = Path(name)

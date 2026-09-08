@@ -172,13 +172,16 @@ def preserve_forecasts(old, current, date):
         raise ValueError("new forecast has an unapproved date")
 
 
-def run_stage(work, args, scratch, runtime, *, writer=None, deadline=2400):
+def run_stage(work, args, scratch, runtime, *, source, writer=None, deadline=2400):
+    if re.fullmatch(r"[0-9a-f]{40}", source) is None:
+        raise ValueError("editorial stage requires a canonical source SHA")
     scratch.mkdir(mode=0o700)
     os.chown(scratch, WRITER_UID, WRITER_UID)
     env = clean_env(scratch)
     env.update({"TMPDIR": str(scratch), "XDG_CACHE_HOME": str(scratch / "cache"),
                 "PYTHONPATH": str(work / "backend"), "PYTHONUNBUFFERED": "1",
-                "SEICHE_RUNTIME_DATA_DIR": str(runtime), "OPENBLAS_NUM_THREADS": "2",
+                "SEICHE_RUNTIME_DATA_DIR": str(runtime), "SEICHE_RELEASE_SHA": source,
+                "OPENBLAS_NUM_THREADS": "2",
                 "OMP_NUM_THREADS": "2"})
     if writer:
         env.update(writer)
@@ -276,7 +279,7 @@ def main():
         board.mkdir(mode=0o700)
         os.chown(board, WRITER_UID, WRITER_UID)
         event("editorial_start", source=source, lane=lane, writer_configured=bool(writer), controller=policy["controller_source"])
-        run_stage(work, ["backend/scripts/export_public.py", str(board / "public.json"), str(board / "overview.json")], public_root / "scratch-board", runtime)
+        run_stage(work, ["backend/scripts/export_public.py", str(board / "public.json"), str(board / "overview.json")], public_root / "scratch-board", runtime, source=source)
         seal_outputs(work, baseline, lane, date, allow_content=False)
         overview = read_regular(board / "overview.json")
         snapshot = json.loads(overview)
@@ -293,9 +296,9 @@ def main():
         board.chmod(0o755)
         allow_outputs(work, baseline, lane, date)
         module = "seiche.dispatch_daily" if lane == "daily" else "seiche.dispatch_weekly"
-        run_stage(work, ["-m", module, "--snapshot", str(board / "overview.json")], public_root / "scratch-dispatch", runtime, deadline=600)
+        run_stage(work, ["-m", module, "--snapshot", str(board / "overview.json")], public_root / "scratch-dispatch", runtime, source=source, deadline=600)
         if lane == "daily":
-            run_stage(work, ["-m", "seiche.article_daily", "--snapshot", str(board / "overview.json")], public_root / "scratch-article", runtime, writer=writer, deadline=900)
+            run_stage(work, ["-m", "seiche.article_daily", "--snapshot", str(board / "overview.json")], public_root / "scratch-article", runtime, source=source, writer=writer, deadline=900)
         changed = seal_outputs(work, baseline, lane, date, allow_content=True)
         preserve_archive(work, mirror, env, source, lane, date)
         if read_regular(board / "overview.json") != overview:
