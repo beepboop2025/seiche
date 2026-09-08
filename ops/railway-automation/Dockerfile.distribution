@@ -23,5 +23,12 @@ RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     && git fetch origin "$RAILWAY_GIT_COMMIT_SHA" \
     && git reset --mixed FETCH_HEAD \
     && git diff --exit-code HEAD
+# A failed portable check must fail Railway's native PR deployment status.
+RUN timeout --signal=TERM --kill-after=30 3600 /opt/controller/bin/python \
+      ops/railway-automation/distribution.py > /ci-proof.log 2>&1 \
+    || { tail -n 100 /ci-proof.log; exit 1; }
+RUN grep '^RAILWAY_DISTRIBUTION_JOB_PASS' /ci-proof.log \
+    && grep -F "RAILWAY_DISTRIBUTION_PORTABLE_PASS source=$RAILWAY_GIT_COMMIT_SHA" /ci-proof.log \
+    && printf '%s' "$RAILWAY_GIT_COMMIT_SHA" > /ci-source
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["timeout", "--signal=TERM", "--kill-after=30", "3600", "/opt/controller/bin/python", "ops/railway-automation/distribution.py"]
+CMD ["sh", "-eu", "-c", "test \"$(cat /ci-source)\" = \"$RAILWAY_GIT_COMMIT_SHA\"; grep '^RAILWAY_DISTRIBUTION_JOB_PASS' /ci-proof.log; printf 'RAILWAY_DISTRIBUTION_PORTABLE_PASS source=%s deployment=%s\\n' \"$RAILWAY_GIT_COMMIT_SHA\" \"$RAILWAY_DEPLOYMENT_ID\""]

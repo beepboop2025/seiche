@@ -43,6 +43,7 @@ TAG_PREFIX = "frontend-publication-"
 EXCLUDED_MONITOR_PATHS = frozenset(
     {
         "backend/scripts/ard_coverage.py",
+        ".github/workflows/distribution-contracts.yml",
         "ops/railway-automation/Dockerfile",
         "ops/railway-automation/Dockerfile.dockerignore",
         "ops/railway-automation/README.md",

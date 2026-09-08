@@ -36,3 +36,9 @@ a Docker executor. `RAILWAY_DISTRIBUTION_PORTABLE_PASS` explicitly describes
 portable coverage and does not claim those jobs or publisher attestations.
 Only exact committed public sources are fetched; no publishing credentials or
 public endpoint belong on this service. Maximum runtime is one hour.
+
+The portable distribution gate runs during the image build. Runtime verifies
+the recorded build source and emits deployment-bound proof; it does not repeat
+the full suite. Native Railway PR environments run these jobs for the owner;
+non-owner PRs retain their GitHub fallback. The hardened Docker contract job
+continues independently until its permanent native executor is proven.

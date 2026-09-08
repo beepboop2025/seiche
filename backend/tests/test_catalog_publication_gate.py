@@ -1513,8 +1513,19 @@ def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
     )
     _frontend_change(root, {"backend/scripts/ard_coverage.py": "# ignored monitor\n"})
     _frontend_change(root, {"ops/railway-automation/run.sh": "# ignored monitor\n"})
-    _frontend_change(root, {"ops/railway-automation/Dockerfile.distribution": "# isolated CI\n"})
-    _frontend_change(root, {"ops/railway-automation/publisher/publish.py": "# separately reviewed controller\n"})
+    _frontend_change(
+        root, {"ops/railway-automation/Dockerfile.distribution": "# isolated CI\n"}
+    )
+    _frontend_change(
+        root,
+        {".github/workflows/distribution-contracts.yml": "# isolated CI fallback\n"},
+    )
+    _frontend_change(
+        root,
+        {
+            "ops/railway-automation/publisher/publish.py": "# separately reviewed controller\n"
+        },
+    )
     base_branch = _content_git(root, "branch", "--show-current")
     _content_git(root, "checkout", "-q", "-b", "synthetic-ui")
     _frontend_change(root)
