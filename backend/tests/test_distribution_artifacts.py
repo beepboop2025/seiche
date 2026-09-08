@@ -270,8 +270,8 @@ class PublicCatalogContracts(unittest.TestCase):
         positions = [publishing.index(marker) for marker in ordered_markers]
         self.assertEqual(positions, sorted(positions))
         for workflow, release in (
-            ("publish-pypi.yml", "v0.12.4"),
-            ("publish-mcp.yml", "v0.12.4"),
+            ("publish-pypi.yml", "v0.12.5"),
+            ("publish-mcp.yml", "v0.12.5"),
             ("publish-openbb.yml", "v0.12.1"),
         ):
             command = publishing.split(f"gh workflow run {workflow}", maxsplit=1)[1]

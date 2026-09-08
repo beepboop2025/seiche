@@ -11,6 +11,17 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-09-08
+
+### Added
+
+- Add the connected research API, `research_network` MCP tool, `seiche research`
+  CLI and RESEARCH workspace. All Palimpsest catalog entries retain their source
+  rights, access states and clocks, alongside separately dated Seiche funding
+  context and explicit routes into LiquiLens, Undertow and NarcoScope.
+- Keep the connection contextual: no common score, inferred causation, training
+  permission or execution authority is created.
+
 ## [0.12.4] - 2026-09-05
 
 ### Fixed
@@ -261,7 +272,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.4...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.5...HEAD
+[0.12.5]: https://github.com/beepboop2025/seiche/compare/v0.12.4...v0.12.5
 [0.12.4]: https://github.com/beepboop2025/seiche/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/beepboop2025/seiche/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/beepboop2025/seiche/compare/v0.12.1...v0.12.2
