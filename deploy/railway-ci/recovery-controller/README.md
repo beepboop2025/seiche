@@ -6,6 +6,12 @@ versions of the recovery successfully exported and attested by GitHub run
 18 restore checks on Railway. It requests no new production export, writes no
 S3 object, and makes no production authority change.
 
+The image normalizes its immutable code to root-owned files that the isolated
+restore UID can read, with traversable directories and no unprivileged writes.
+An actual-image test reads and hashes every manifest member as that UID, imports
+the original recovery modules, and checks the packaged restore script. Runtime
+credentials remain in a separate private directory and are never in the image.
+
 `prepare.py` verifies the owner-signed controller commit and both original
 GitHub receipt attestations. Controller files and the original backend/helpers
 are copied from immutable Git objects. The resulting image carries their hash
