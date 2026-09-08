@@ -44,8 +44,12 @@ and an explicit Tini start command. Count only `RAILWAY_RECOVERY_MONITOR_PASS` a
 success. The proof identifies Railway's actual deployment and source; it does
 not claim a GitHub run ID or an OIDC attestation.
 
-After real strict proof, move the standalone `17 */6 * * *` monitor schedule to
-Railway. The existing `31 2 * * *` GitHub monitor prerequisite must remain while
+The standalone `17 */6 * * *` monitor schedule runs on Railway after strict
+live proof on September 8, 2026, using deployment
+`ba098059-3b2e-4838-bd14-36bf04e95348` with bootstrap disabled. The governed
+recovery export, isolated reverse restore, external Object Lock and both
+GitHub attestations passed in run `34241275921` before this cutover.
+The existing `31 2 * * *` GitHub monitor prerequisite remains while
 the protected export job consumes its GitHub artifact and identity. Preserve
 manual monitor/export/resume operations and the complete attestation chain.
 Rollback is to remove the new Railway schedule and restore the previous GitHub
