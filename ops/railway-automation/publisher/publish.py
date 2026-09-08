@@ -266,7 +266,7 @@ def main():
             raise RuntimeError("Site mirror compare-and-swap lost")
         if current_main() != source_sha:
             raise RuntimeError("Source main advanced before canonical publication")
-        run(["wrangler", "pages", "deploy", str(candidate), "--project-name=seiche", "--branch=main", "--commit-hash", source_sha],
+        run(["/opt/node22/bin/node", "/opt/publisher/node_modules/wrangler/bin/wrangler.js", "pages", "deploy", str(candidate), "--project-name=seiche", "--branch=main", "--commit-hash", source_sha],
             CONTROLLER, clean_env({"CLOUDFLARE_API_TOKEN": os.environ["CLOUDFLARE_API_TOKEN"],
                                    "CLOUDFLARE_ACCOUNT_ID": os.environ["CLOUDFLARE_ACCOUNT_ID"]}))
         verify_publication(steps, trusted, candidate,
