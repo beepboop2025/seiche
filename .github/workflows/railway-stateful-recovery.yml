@@ -1376,11 +1376,13 @@ jobs:
           PY
           }
           replica_id=$(current_replica proof/runtime.json)
-          railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
-            --service "$RAILWAY_SERVICE_ID" --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --deployment --json --since 26h \
-            --filter 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' \
-            >proof/stateful-results.ndjson
+          bootstrap_args=()
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            bootstrap_args+=(--bootstrap)
+          fi
+          python -B "$GITHUB_WORKSPACE/ops/railway/fetch_recovery_logs.py" \
+            --deployment "$DEPLOYMENT_ID" --release "$RELEASE_SHA" \
+            --output proof/stateful-results.ndjson "${bootstrap_args[@]}"
           PYTHONPATH="$GITHUB_WORKSPACE/backend" \
             LOG_PATH=proof/stateful-results.ndjson DEPLOYMENT_ID="$DEPLOYMENT_ID" \
             RELEASE_SHA="$RELEASE_SHA" REPLICA_ID="$replica_id" python -B - <<'PY'
