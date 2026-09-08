@@ -20,3 +20,19 @@ metadata. It does not widen the production Docker build. The probes do not
 publish packages, approve a release, change catalog claims or deploy a site.
 Native Docker, operating-system and OIDC-dependent release proofs remain
 separate from these public monitoring jobs.
+
+## Portable distribution verification
+
+`Dockerfile.distribution` runs the six portable jobs directly from the committed
+`distribution-contracts.yml`: offline metadata and frontend contracts, the R
+client, native dataset metadata, reproducible Seiche packages, OpenBB Python
+3.10–3.14 compatibility, and reproducible OpenBB provider builds. Each job gets
+an isolated Python environment; original commands and pinned dependencies are
+used without copying them into a second hand-maintained script. Unknown actions,
+expressions, conditionals and workflow output formats fail closed.
+
+The Docker image contract job and PostgreSQL18 Docker tools proof still require
+a Docker executor. `RAILWAY_DISTRIBUTION_PORTABLE_PASS` explicitly describes
+portable coverage and does not claim those jobs or publisher attestations.
+Only exact committed public sources are fetched; no publishing credentials or
+public endpoint belong on this service. Maximum runtime is one hour.
