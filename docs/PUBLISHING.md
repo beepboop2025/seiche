@@ -62,6 +62,12 @@ license review, evidence class, event/knowledge clocks, `restricted`,
 
 ## Release prerequisites
 
+For a compatible frontend-only change, use the separately signed
+[frontend publication contract](FRONTEND-PUBLICATION.md). Its receipt identifies
+the exact UI source while the existing backend/corpus receipts keep their actual
+subjects and all live validation requirements. The application release procedure
+below remains required for runtime, package, catalog or data-contract changes.
+
 1. **Pin the release signer outside the release commit.** Configure the
    repository variable `RELEASE_SIGNING_KEY_FINGERPRINT` to the sole reviewed
    key fingerprint before running any publisher:

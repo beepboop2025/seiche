@@ -9,6 +9,11 @@ name: publish-static
 
 on:
   workflow_dispatch:
+    inputs:
+      frontend_receipt_tag:
+        description: "Reviewed immutable frontend-publication-<exact main SHA> tag; empty uses the application release gate"
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -40,11 +45,16 @@ on:
       - "!frontend/public/ampleness.html"
       - "!frontend/public/referee.html"
       - "ops/release/verify_catalog_publication.py"
+      - "ops/release/verify_frontend_publication.py"
+      - "ops/release/frontend_site_proof.py"
       - "ops/release/verify_public_dataset.py"
       - "ops/requirements-social-cards.txt"
 
 permissions:
   contents: read
+
+env:
+  FRONTEND_RECEIPT_TAG: ${{ inputs.frontend_receipt_tag || '' }}
 
 concurrency:
   group: publish-static
@@ -83,7 +93,21 @@ jobs:
           set -euo pipefail
           npm ci
           npm test
-          npm run build
+          if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
+            # Build only the signed frontend subtree in a fresh context. Tests
+            # cannot leave build mutations there, and ignored monitor/runtime
+            # files are absent rather than merely omitted from the final copy.
+            mkdir "$RUNNER_TEMP/frontend-source"
+            git -C "$GITHUB_WORKSPACE" archive "$GITHUB_SHA" frontend \
+              | tar -x -C "$RUNNER_TEMP/frontend-source"
+            cd "$RUNNER_TEMP/frontend-source/frontend"
+            npm ci
+            npm run build
+            mkdir -p "$GITHUB_WORKSPACE/frontend/dist"
+            rsync -a --delete dist/ "$GITHUB_WORKSPACE/frontend/dist/"
+          else
+            npm run build
+          fi
 
       - name: Fetch the exact declared release tag
         run: |
@@ -131,6 +155,12 @@ jobs:
             "+refs/tags/v${version}:refs/tags/v${version}" \
             "+refs/tags/market-corpus-v${corpus_version}:refs/tags/market-corpus-v${corpus_version}" \
             "+refs/tags/${corpus_receipt_tag}:refs/tags/${corpus_receipt_tag}"
+          if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
+            test "$FRONTEND_RECEIPT_TAG" = "frontend-publication-$GITHUB_SHA"
+            # The frontend receipt is immutable: do not force-update its ref.
+            git fetch --no-tags origin \
+              "refs/tags/${FRONTEND_RECEIPT_TAG}:refs/tags/${FRONTEND_RECEIPT_TAG}"
+          fi
 
       - name: Gate catalog on the signed release, runtime, and PyPI receipts
         env:
@@ -140,13 +170,24 @@ jobs:
           verifier="${RUNNER_TEMP}/verify_catalog_publication.py"
           git show "${GITHUB_SHA}:ops/release/verify_catalog_publication.py" >"$verifier"
           test "$(git hash-object "$verifier")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/verify_catalog_publication.py")"
-          python -I -S "$verifier" \
-            --root . \
-            --expected-sha "$GITHUB_SHA" \
-            --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
+          if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
+            mkdir "$RUNNER_TEMP/frontend-publication-proof"
+            frontend_verifier="$RUNNER_TEMP/verify_frontend_publication.py"
+            git show "${GITHUB_SHA}:ops/release/verify_frontend_publication.py" >"$frontend_verifier"
+            test "$(git hash-object "$frontend_verifier")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/verify_frontend_publication.py")"
+            python -I -S "$frontend_verifier" \
+              --root . --expected-sha "$GITHUB_SHA" \
+              --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT" \
+              --receipt-tag "$FRONTEND_RECEIPT_TAG" \
+              > "$RUNNER_TEMP/frontend-publication-proof/source-and-runtime.json"
+          else
+            python -I -S "$verifier" \
+              --root . \
+              --expected-sha "$GITHUB_SHA" \
+              --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
+          fi
 
-      - name: Push static files to the live site repo
-        id: publish-site
+      - name: Prepare static files from the recoverable site mirror
         env:
           DEPLOY_KEY: ${{ secrets.SEICHE_SITE_DEPLOY_KEY }}
         run: |
@@ -156,6 +197,12 @@ jobs:
           chmod 600 ~/.ssh/site_key
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
           git clone --depth 1 git@github.com:beepboop2025/seiche-site.git /tmp/site
+          if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
+            python -I -S ops/release/frontend_site_proof.py snapshot \
+              --site-root /tmp/site \
+              --archive "$RUNNER_TEMP/frontend-publication-proof/previous-site.tar" \
+              > "$RUNNER_TEMP/frontend-publication-proof/previous-site.json"
+          fi
           python -I -S - frontend/public frontend/dist /tmp/site <<'PY'
           import sys
           from pathlib import Path
@@ -170,7 +217,8 @@ jobs:
                   if path.is_symlink() or not (path.is_file() or path.is_dir()):
                       raise SystemExit(f"unsafe publication entry: {path}")
           PY
-          rsync -a \
+          if [ -z "$FRONTEND_RECEIPT_TAG" ]; then
+            rsync -a \
             --exclude /index.html \
             --exclude /assets/ \
             --exclude /data/ \
@@ -191,6 +239,7 @@ jobs:
             --exclude /ampleness.html \
             --exclude /referee.html \
             frontend/public/ /tmp/site/
+          fi
           # Rebuild only the Vite-owned shell/assets, then reapply the exact-head
           # no-JS and root-card postprocessors over the mirror's sealed evidence.
           test -f frontend/dist/index.html
@@ -206,7 +255,15 @@ jobs:
           install -m 0644 frontend/dist/index.html /tmp/site/index.html
           mkdir -p /tmp/site/assets
           rsync -a --safe-links frontend/dist/assets/ /tmp/site/assets/
-          python -I -S - "$GITHUB_WORKSPACE/backend" /tmp/site <<'PY'
+          renderer_backend="$GITHUB_WORKSPACE/backend"
+          if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
+            backend_release_sha="$(python -I -S -c 'import json,sys; print(json.load(open(sys.argv[1]))["frontendPublication"]["backendReleaseSha"])' "$RUNNER_TEMP/frontend-publication-proof/source-and-runtime.json")"
+            [[ "$backend_release_sha" =~ ^[0-9a-f]{40}$ ]]
+            mkdir "$RUNNER_TEMP/frontend-backend-subject"
+            git archive "$backend_release_sha" backend | tar -x -C "$RUNNER_TEMP/frontend-backend-subject"
+            renderer_backend="$RUNNER_TEMP/frontend-backend-subject/backend"
+          fi
+          python -I -S - "$renderer_backend" /tmp/site <<'PY'
           import sys
           from pathlib import Path
 
@@ -218,7 +275,7 @@ jobs:
               raise SystemExit(f"prerendered no-JS body is unexpectedly small: {body_length}")
           print(f"prerendered no-JS body characters={body_length}")
           PY
-          python -I - "$GITHUB_WORKSPACE/backend" /tmp/site <<'PY'
+          python -I - "$renderer_backend" /tmp/site <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -228,6 +285,31 @@ jobs:
 
           print(json.dumps(social_cards.refresh_root(Path(sys.argv[2])), sort_keys=True))
           PY
+          if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
+            python -I -S ops/release/frontend_site_proof.py seal \
+              --site-root /tmp/site --source-sha "$GITHUB_SHA" \
+              --manifest "$RUNNER_TEMP/frontend-publication-proof/previous-site.json" \
+              > "$RUNNER_TEMP/frontend-publication-proof/prepared-site.json"
+          fi
+
+      - name: Retain verified frontend recovery before any public write
+        if: env.FRONTEND_RECEIPT_TAG != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-recovery-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/frontend-publication-proof/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Push static files to the live site repo
+        id: publish-site
+        run: |
+          set -euo pipefail
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
+          # Check main even when the prepared mirror would be a no-op.
+          git fetch --quiet --force --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git rev-parse --verify refs/remotes/origin/main)" = "$GITHUB_SHA"
           cd /tmp/site
           git config user.name "seiche-publish"
           git config user.email "noreply@seiche"
@@ -293,4 +375,12 @@ jobs:
         run: >-
           python ops/release/verify_public_dataset.py
           --expected-root /tmp/cloudflare-site
+          --cache-key "$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
+
+      - name: Prove exact frontend shell, assets, catalog and sealed data bytes
+        if: env.FRONTEND_RECEIPT_TAG != ''
+        run: >-
+          python -I -S ops/release/frontend_site_proof.py public
+          --site-root /tmp/cloudflare-site
+          --manifest "$RUNNER_TEMP/frontend-publication-proof/prepared-site.json"
           --cache-key "$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
