@@ -1521,7 +1521,8 @@ def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> N
     )
     assert workflow.count("environment: railway-stateful-recovery-admin") == 1
     assert workflow.count("environment: railway-stateful-recovery-monitor") == 1
-    assert workflow.count("environment: railway-stateful-recovery-export") == 3
+    # Includes the temporary main-only S3 handoff, removed after native proof.
+    assert workflow.count("environment: railway-stateful-recovery-export") == 4
 
 
 def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path):
