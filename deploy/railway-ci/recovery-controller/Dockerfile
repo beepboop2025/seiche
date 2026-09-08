@@ -19,7 +19,7 @@ COPY . /controller
 RUN mkdir /controller/native-bin && cp /controller/native_docker.py /controller/native-bin/docker \
     && chmod 0755 /controller/native-bin/docker /controller/trusted/ops/deploy/seiche-s3-object-lock.sh \
     && if test -f /controller/trusted/ops/railway/retry_read.py; then cp /controller/trusted/ops/railway/retry_read.py /usr/local/bin/railway; chmod 0755 /usr/local/bin/railway; fi \
-    && chmod -R go-w /controller \
+    && chmod -R u=rwX,go=rX /controller \
     && cd /controller && python -c 'import verify; verify.modules()' \
     && /usr/bin/tini -s -- python -m unittest -v test_verify test_attest test_recurring
 WORKDIR /controller

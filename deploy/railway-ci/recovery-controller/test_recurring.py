@@ -220,6 +220,35 @@ class NativeAdmissionTests(unittest.TestCase):
 
 
 class RestoreWrapperTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0 and Path("/controller/restore-native.sh").exists(),
+                         "requires the assembled native recovery image")
+    def test_actual_image_inputs_are_readable_but_not_writable_by_restore_uid(self):
+        # Exercise COPY's actual modes, not a separately chmod'ed fixture tree.
+        script = """
+import hashlib,json,os,stat,sys
+from pathlib import Path
+root=Path('/controller')
+assert os.geteuid()==65532
+manifest=json.loads((root/'manifest.json').read_bytes())
+for name,expected in manifest.items():
+    path=root/name
+    assert hashlib.sha256(path.read_bytes()).hexdigest()==expected, name
+    assert path.stat().st_uid==0 and not os.access(path,os.W_OK), name
+    assert all(not os.access(parent,os.W_OK) for parent in path.parents), name
+sys.path.insert(0,str(root/'trusted/backend'))
+from seiche import stateful_migration,stateful_recovery
+assert os.access(root/'native-bin/docker',os.X_OK)
+try:
+    (root/'restore-native.sh').open('ab')
+except PermissionError:
+    pass
+else:
+    raise AssertionError('restore UID can modify its packaged script')
+"""
+        environment = verify.environment(Path("/tmp"))
+        verify.run([sys.executable, "-I", "-B", "-c", script], env=environment, uid=verify.RESTORE_UID)
+        verify.run(["bash", "-n", "/controller/restore-native.sh"], env=environment, uid=verify.RESTORE_UID)
+
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0 and Path("/usr/lib/postgresql/18/bin/initdb").exists(),
                          "requires isolated Linux root and PostgreSQL18 CI image")
     def test_real_pg18_child_is_unprivileged_private_inputs_stay_sealed_and_server_stops(self):
