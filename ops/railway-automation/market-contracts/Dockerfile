@@ -1,6 +1,7 @@
 FROM postgres:17-bookworm AS postgres
 FROM python:3.12-slim-bookworm
 COPY --from=postgres /usr/lib/postgresql/17 /usr/lib/postgresql/17
+COPY --from=postgres /usr/share/postgresql/17 /usr/share/postgresql/17
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git build-essential libffi-dev libssl-dev libpq5 libllvm14 libicu72 \
     libldap-2.5-0 libxml2 libxslt1.1 libpam0g libedit2 liblz4-1 libzstd1 \
