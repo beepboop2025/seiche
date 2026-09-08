@@ -158,6 +158,33 @@ def _assert_clean(root: Path, expected_sha: str) -> None:
         raise Error("frontend checkout contains untracked build or verification inputs")
 
 
+def _desk_tree(root: Path, revision: str) -> tuple[bytes, ...]:
+    """Identity of the complete generated desk snapshot, including file modes."""
+    entries = gate._run_git_bytes(
+        root,
+        "ls-tree",
+        "-r",
+        "-z",
+        "--full-tree",
+        revision,
+        "--",
+        "frontend/public/dispatches",
+        "frontend/public/articles",
+        "backend/seiche/dispatches",
+    ).stdout.split(b"\0")
+    selected = []
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            relative = entry.split(b"\t", 1)[1].decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise Error("frontend history contains an unsupported path") from exc
+        if DESK_PATH.fullmatch(relative):
+            selected.append(entry)
+    return tuple(selected)
+
+
 def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
     """Check every commit, including reverted edits and both sides of merges."""
     if any(gate.COMMIT_RE.fullmatch(value) is None for value in (release, source)):
@@ -167,6 +194,7 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
     ).returncode:
         raise Error("frontend source is not a descendant of its backend release")
     changes = []
+    desk_origins: dict[str, frozenset[str]] = {release: frozenset()}
     for commit in _git(
         root, "rev-list", "--reverse", "--topo-order", f"{release}..{source}"
     ).splitlines():
@@ -188,7 +216,25 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
             raise Error("frontend history merges an unrelated release ancestry")
         # Every side-branch commit is also visited by rev-list. Comparing each
         # parent additionally checks merge conflict resolutions and tree modes.
+        origins = frozenset().union(*(desk_origins[parent] for parent in parent_list))
+        # A merge may inherit one complete, already validated desk snapshot.
+        # The chosen parent must contain every desk-origin commit from all
+        # parents: choosing an older snapshot or combining divergent histories
+        # is not a frontend publication authorization.
+        inherited_desk = None
+        if len(parent_list) > 1:
+            snapshot = _desk_tree(root, commit)
+            inherited_desk = next(
+                (
+                    parent
+                    for parent in parent_list
+                    if desk_origins[parent] == origins
+                    and _desk_tree(root, parent) == snapshot
+                ),
+                None,
+            )
         commit_changes = 0
+        has_desk_change = False
         for parent in parent_list:
             raw = gate._run_git_bytes(
                 root,
@@ -229,21 +275,32 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                 elif path == RETIRED_HANDOFF_PATH:
                     # The owner reviews its signed add/remove history in this receipt;
                     # the one-time workflow must no longer exist in the published source.
-                    if gate._run_git(root, "cat-file", "-e", f"{source}:{path}", check=False).returncode == 0:
-                        raise Error("frontend history retains a forbidden one-time handoff workflow")
+                    if (
+                        gate._run_git(
+                            root, "cat-file", "-e", f"{source}:{path}", check=False
+                        ).returncode
+                        == 0
+                    ):
+                        raise Error(
+                            "frontend history retains a forbidden one-time handoff workflow"
+                        )
                     kind = "retired_handoff"
                 elif path in EXCLUDED_MONITOR_PATHS:
                     kind = "excluded_monitor"
                 elif DESK_PATH.fullmatch(path):
-                    if (
-                        len(parent_list) != 1
-                        or author != "desk@seiche.info"
-                        or not subject.startswith(("dispatch: ", "week ahead: "))
-                    ):
+                    if len(parent_list) == 1:
+                        authorized = (
+                            author == "desk@seiche.info"
+                            and subject.startswith(("dispatch: ", "week ahead: "))
+                        )
+                    else:
+                        authorized = inherited_desk is not None
+                    if not authorized:
                         raise Error(
                             "frontend history contains unauthorized generated evidence"
                         )
                     kind = "excluded_desk_content"
+                    has_desk_change = True
                 else:
                     raise Error(
                         f"frontend history changes a forbidden runtime, build, catalog or data path: {path}"
@@ -260,6 +317,9 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                 commit_changes += 1
         if not commit_changes:
             raise Error("frontend history contains an empty release commit")
+        desk_origins[commit] = origins | (
+            {commit} if len(parent_list) == 1 and has_desk_change else set()
+        )
     if not any(change["kind"] == "frontend" for change in changes):
         raise Error("frontend publication contains no frontend changes")
     return changes
