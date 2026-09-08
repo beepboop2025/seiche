@@ -5,7 +5,7 @@ COPY --from=postgres /usr/share/postgresql /usr/share/postgresql
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git build-essential libffi-dev libssl-dev libpq5 libllvm14 libicu72 \
     libldap-2.5-0 libxml2 libxslt1.1 libpam0g libedit2 liblz4-1 libzstd1 \
-    tini sudo util-linux procps passwd openssh-client systemd shellcheck \
+    tini sudo util-linux procps passwd openssh-client systemd shellcheck python3 \
     && rm -rf /var/lib/apt/lists/* && useradd --system --create-home postgres \
     && useradd --uid 10001 --create-home runner \
     && echo "runner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/runner \
