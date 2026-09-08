@@ -86,6 +86,7 @@ def run(args, cwd, env, unprivileged=False, capture=False):
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        process.wait(timeout=5)
         if unprivileged:
             quiesce_builder()
 
@@ -178,6 +179,7 @@ def main():
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
     if expected != source_sha:
         raise RuntimeError("Requested source is no longer current main")
+    print(f"RAILWAY_FULL_START source={source_sha} deployment={os.environ.get('RAILWAY_DEPLOYMENT_ID', 'local')}", flush=True)
     apply = os.environ.get("PUBLISH_APPLY") == "1"
     evidence = Path("/evidence")
     prior_state = None
