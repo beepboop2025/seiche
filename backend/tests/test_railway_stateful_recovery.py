@@ -1006,12 +1006,13 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     dockerfile = STATEFUL_DOCKERFILE.read_text(encoding="utf-8")
     object_lock_client = OBJECT_LOCK_CLIENT.read_text(encoding="utf-8")
 
-    # The proven Railway monitor owns this cadence; keep daily export and the
-    # protected manual/OIDC paths until their own replacements are verified.
+    # Railway performs scheduled monitor/export/restore. GitHub keeps the genuine
+    # OIDC tail and explicit protected manual recovery fallback.
     assert 'cron: "17 */6 * * *"' not in text
-    assert 'cron: "31 2 * * *"' in text
+    assert 'cron: "31 2 * * *"' not in text
+    assert 'cron: "46 4 * * *"' in text
     assert "workflow_dispatch:" in text
-    assert "vars.RAILWAY_STATEFUL_PHASE6_ENABLED == 'true'" in text
+    assert "NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}" in text
     for environment in (
         "railway-stateful-recovery-admin",
         "railway-stateful-recovery-monitor",
@@ -1524,8 +1525,8 @@ def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> N
     )
     assert workflow.count("environment: railway-stateful-recovery-admin") == 1
     assert workflow.count("environment: railway-stateful-recovery-monitor") == 1
-    # Temporary encrypted handoff and manual native attestation proof; both retire after proof.
-    assert workflow.count("environment: railway-stateful-recovery-export") == 5
+    # Daily OIDC consumer plus unchanged protected preflight/export/resume fallback.
+    assert workflow.count("environment: railway-stateful-recovery-export") == 4
 
 
 def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path):
@@ -1567,7 +1568,7 @@ def test_online_copy_cannot_hold_the_export_open_indefinitely(tmp_path: Path):
                 recovery._copy_sqlite_online(live, snapshot, clock=lambda: next(ticks))
 
 
-def test_manual_native_attestation_proof_cannot_start_a_production_export() -> None:
+def test_native_attestation_cannot_start_a_production_export() -> None:
     workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     job = workflow.split("  attest-native-recovery:\n", 1)[1].split(
         "  configure-native-backups:\n", 1
@@ -1578,6 +1579,8 @@ def test_manual_native_attestation_proof_cannot_start_a_production_export() -> N
         "github.event_name == 'workflow_dispatch'",
         "inputs.operation == 'attest-native-recovery'",
         "inputs.confirmation == 'ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY'",
+        "github.event_name == 'schedule'",
+        "github.event.schedule == '46 4 * * *'",
         "environment: railway-stateful-recovery-export",
         "NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}",
         "secrets.RECOVERY_NATIVE_ATTEST_POLICY_ZLIB_BASE64",
@@ -1585,7 +1588,6 @@ def test_manual_native_attestation_proof_cannot_start_a_production_export() -> N
     ):
         assert required in job
     for forbidden in (
-        "github.event_name == 'schedule'",
         "needs:",
         "SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM",
         "RECOVERY_CONTROL_SIGNING_KEY_PEM",
@@ -1595,7 +1597,7 @@ def test_manual_native_attestation_proof_cannot_start_a_production_export() -> N
         "control.RECOVERY_EXPORT_OPERATION",
     ):
         assert forbidden not in job
-    assert job.index("Require the protected manual proof switch") < job.index(
+    assert job.index("Require the protected native attestation switch") < job.index(
         "Check out the independently reviewed tail"
     )
     assert (
@@ -1606,3 +1608,27 @@ def test_manual_native_attestation_proof_cannot_start_a_production_export() -> N
     )
     assert "native-attestation-subjects/recovery-receipt.json" in job
     assert "native-attestation-subjects/offsite-receipt.json" in job
+
+
+def test_daily_native_attestation_keeps_original_recovery_manual_and_removes_handoff() -> (
+    None
+):
+    workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    assert "migration-native-handoff" not in workflow
+    assert workflow.count('cron: "46 4 * * *"') == 1
+    for name, following in (
+        ("monitor", "export-recovery"),
+        ("export-recovery", "resume-offsite"),
+    ):
+        job = workflow.split(f"\n  {name}:\n", 1)[1].split(f"\n  {following}:\n", 1)[0]
+        condition = job.split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+        assert "github.event_name == 'workflow_dispatch'" in condition
+        assert "github.event_name == 'schedule'" not in condition
+    export = workflow.split("\n  export-recovery:\n", 1)[1].split(
+        "\n  resume-offsite:\n", 1
+    )[0]
+    assert "inputs.operation == 'export-recovery'" in export
+    assert "needs.monitor.result == 'success'" in export
+    assert "EXPORT_WITHOUT_AUTHORITY_CHANGE" in export
+    assert "control.RECOVERY_EXPORT_OPERATION" in export
+    assert "control.OFFSITE_ACKNOWLEDGMENT_OPERATION" in export

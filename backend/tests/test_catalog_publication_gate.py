@@ -1681,6 +1681,8 @@ def test_frontend_merge_still_rejects_reverted_unauthorized_desk_history(fronten
         "backend/seiche/api.py",
         "backend/seiche/assemble.py",
         "backend/scripts/another-monitor.py",
+        "ops/deploy/RAILWAY-STATEFUL-RECOVERY-extra.md",
+        "ops/deploy/RAILWAY-STATEFUL-RECOVERY.py",
         "ops/railway-automation/other.sh",
         "ops/railway-automation/publisher/unreviewed.py",
         "ops/railway-automation/market-contracts/unreviewed.sh",
@@ -1732,6 +1734,7 @@ def test_frontend_contract_rejects_runtime_build_catalog_data_and_unlisted_opera
 @pytest.mark.parametrize(
     "relative",
     [
+        "ops/deploy/RAILWAY-STATEFUL-RECOVERY.md",
         "ops/railway-automation/market-contracts/Dockerfile",
         "ops/railway-automation/market-contracts/Dockerfile.dockerignore",
         "ops/railway-automation/market-contracts/run.sh",
