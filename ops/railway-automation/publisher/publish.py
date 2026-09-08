@@ -107,6 +107,66 @@ def current_main():
     return sha
 
 
+def select_publication_source(trusted, current_sha, explicit_receipt):
+    """Choose an exact receipt subject and separately check current desk ancestry."""
+    current_tag = "frontend-publication-" + current_sha
+    if explicit_receipt:
+        if explicit_receipt != current_tag:
+            raise RuntimeError(
+                "Explicit frontend receipt must name current main exactly"
+            )
+        return current_sha, explicit_receipt, None
+    if git(["tag", "--list", current_tag], trusted) == current_tag:
+        return current_sha, current_tag, None
+    ancestor = json.loads((CONTROLLER / "controller-source.json").read_text())["sha"]
+    if not re.fullmatch(r"[0-9a-f]{40}", ancestor):
+        raise RuntimeError("Invalid immutable controller source identity")
+    if ancestor == current_sha:
+        return current_sha, "", None  # Preserve the original full-release gate.
+    ancestor_tag = "frontend-publication-" + ancestor
+    if git(["tag", "--list", ancestor_tag], trusted) != ancestor_tag:
+        raise RuntimeError("Current main has no receipt or pinned frontend ancestor")
+    # This verifier was checked against the controller manifest before selection.
+    code = (
+        "import importlib.util,json,pathlib,sys; "
+        "root=pathlib.Path(sys.argv[1]); "
+        "spec=importlib.util.spec_from_file_location('frontend_gate',root/'ops/release/verify_frontend_publication.py'); "
+        "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+        "print(json.dumps(module.verify_desk_only_descendant(root,receipt_source_sha=sys.argv[2],current_source_sha=sys.argv[3])))"
+    )
+    admission = json.loads(
+        run(
+            ["python", "-I", "-S", "-c", code, str(trusted), ancestor, current_sha],
+            trusted,
+            clean_env(),
+            capture=True,
+        )
+    )
+    expected = {
+        "schema": "seiche.frontend-desk-descendant.v1",
+        "receiptSourceSha": ancestor,
+        "currentSourceSha": current_sha,
+        "purpose": "unchanged_frontend_only_no_desk_publication",
+    }
+    if admission != expected:
+        raise RuntimeError(
+            "Desk admission does not bind the exact current and receipt sources"
+        )
+    git(["checkout", "--quiet", "--detach", ancestor], trusted)
+    # The unchanged workflow now verifies the exact ancestor tag and all original
+    # live release gates. The descriptor above alone is not receipt authority.
+    return ancestor, ancestor_tag, admission
+
+
+def retain_source_admission(evidence, admission):
+    if admission is not None and os.path.ismount(evidence):
+        pending = evidence / "last-source-admission.json.tmp"
+        pending.write_text(json.dumps(admission, sort_keys=True) + "\n")
+        with pending.open("rb") as stream:
+            os.fsync(stream.fileno())
+        pending.replace(evidence / "last-source-admission.json")
+
+
 def assert_plain_path(path, trusted_root):
     """Inspect each directory without following builder-controlled symlinks."""
     path, trusted_root = Path(path), Path(trusted_root)
@@ -167,9 +227,10 @@ def verify_publication(steps, trusted, candidate, env, receipt):
 
 
 def main():
-    source_sha = current_main()
-    expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
-    if expected != source_sha:
+    current_source_sha = current_main()
+    source_sha = current_source_sha
+    expected = os.environ.get("PUBLICATION_SOURCE_SHA", current_source_sha)
+    if expected != current_source_sha:
         raise RuntimeError("Requested source is no longer current main")
     apply = os.environ.get("PUBLISH_APPLY") == "1"
     evidence = Path("/evidence")
@@ -207,11 +268,9 @@ def main():
                 raise RuntimeError(
                     "Publication verifier changed; update the reviewed controller"
                 )
-        receipt = os.environ.get("FRONTEND_RECEIPT_TAG", "")
-        if not receipt:
-            candidate = "frontend-publication-" + source_sha
-            if git(["tag", "--list", candidate], trusted) == candidate:
-                receipt = candidate
+        source_sha, receipt, source_admission = select_publication_source(
+            trusted, current_source_sha, os.environ.get("FRONTEND_RECEIPT_TAG", "")
+        )
         temp = root / "temp"
         temp.mkdir()
         env = clean_env(
@@ -230,6 +289,14 @@ def main():
         ):
             print("RAILWAY_STATIC_STEP " + name, flush=True)
             run(["bash", "-euo", "pipefail", "-c", steps[name]["run"]], trusted, env)
+        if source_admission is not None:
+            print(
+                "RAILWAY_STATIC_DESK_DESCENDANT_VERIFIED "
+                + json.dumps(source_admission, sort_keys=True),
+                flush=True,
+            )
+        if current_main() != current_source_sha:
+            raise RuntimeError("Current main advanced during source admission")
         mirror = root / "mirror"
         git(["clone", "--quiet", MIRROR, str(mirror)], root)
         previous_sha = git(["rev-parse", "HEAD"], mirror)
@@ -250,8 +317,13 @@ def main():
                 clean_env({**env, "RUNNER_TEMP": str(evidence / recovery_name)}),
                 receipt,
             )
+            if current_main() != current_source_sha:
+                raise RuntimeError(
+                    "Current main advanced during unchanged public proof"
+                )
+            retain_source_admission(evidence, source_admission)
             print(
-                f"RAILWAY_STATIC_UNCHANGED_VERIFIED source={source_sha} site={previous_sha}",
+                f"RAILWAY_STATIC_UNCHANGED_VERIFIED source={source_sha} current_main={current_source_sha} site={previous_sha}",
                 flush=True,
             )
             return
@@ -360,10 +432,10 @@ def main():
             proof_directory = temp / "frontend-publication-proof"
             assert_plain_path(proof_directory, root)
             (proof_directory / "prepared-site.json").write_text(proof)
-        if current_main() != source_sha:
+        if current_main() != current_source_sha:
             raise RuntimeError("Source main advanced during preparation")
         print(
-            f"RAILWAY_STATIC_PREPARE_PASS source={source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
+            f"RAILWAY_STATIC_PREPARE_PASS source={source_sha} current_main={current_source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
             flush=True,
         )
         if not apply:
@@ -390,7 +462,14 @@ def main():
                 recovery / "frontend-publication-proof",
             )
         (recovery / "identity.json").write_text(
-            json.dumps({"source": source_sha, "previous_site": previous_sha})
+            json.dumps(
+                {
+                    "source": source_sha,
+                    "current_main": current_source_sha,
+                    "source_admission": source_admission,
+                    "previous_site": previous_sha,
+                }
+            )
         )
         for path in recovery.rglob("*"):
             if path.is_file():
@@ -430,7 +509,7 @@ def main():
                 ["commit", "-m", "Verified Railway static publication " + source_sha],
                 mirror,
             )
-            if current_main() != source_sha:
+            if current_main() != current_source_sha:
                 raise RuntimeError("Source main advanced before mirror publication")
             git(["push", "origin", "HEAD:main"], mirror, publish_env)
         site_sha = git(["rev-parse", "HEAD"], mirror)
@@ -441,7 +520,7 @@ def main():
             != site_sha
         ):
             raise RuntimeError("Site mirror compare-and-swap lost")
-        if current_main() != source_sha:
+        if current_main() != current_source_sha:
             raise RuntimeError("Source main advanced before canonical publication")
         run(
             [
@@ -475,6 +554,8 @@ def main():
             json.dumps(
                 {
                     "source": source_sha,
+                    "current_main": current_source_sha,
+                    "source_admission": source_admission,
                     "site": site_sha,
                     "recovery": recovery.name,
                     "verified_at": time.time(),
@@ -484,8 +565,9 @@ def main():
         with state.open("rb") as stream:
             os.fsync(stream.fileno())
         state.replace(evidence / "current.json")
+        retain_source_admission(evidence, source_admission)
         print(
-            f"RAILWAY_STATIC_PUBLISH_PASS source={source_sha} site={site_sha}",
+            f"RAILWAY_STATIC_PUBLISH_PASS source={source_sha} current_main={current_source_sha} site={site_sha}",
             flush=True,
         )
 

@@ -42,6 +42,14 @@ TAG_PREFIX = "frontend-publication-"
 # Keep exact paths: this is not a general operations/runtime exception.
 EXCLUDED_MONITOR_PATHS = frozenset(
     {
+        ".github/workflows/market-platform-ci.yml",
+        "deploy/railway-ci/editorial-controller/Dockerfile",
+        "deploy/railway-ci/editorial-controller/README.md",
+        "deploy/railway-ci/editorial-controller/editorial.py",
+        "deploy/railway-ci/editorial-controller/isolation.py",
+        "deploy/railway-ci/editorial-controller/prepare.py",
+        "deploy/railway-ci/editorial-controller/requirements.lock",
+        "deploy/railway-ci/editorial-controller/test_editorial.py",
         "backend/scripts/ard_coverage.py",
         ".github/workflows/distribution-contracts.yml",
         "ops/railway-automation/Dockerfile",
@@ -67,6 +75,8 @@ EXCLUDED_MONITOR_PATHS = frozenset(
         "ops/railway-automation/full-publisher/README.md",
         "ops/railway/fetch_recovery_logs.py",
         "ops/railway/test_fetch_recovery_logs.py",
+        "backend/tests/test_railway_stateful_recovery.py",
+        "backend/tests/test_tide_session_alignment.py",
         "deploy/railway-ci/recovery-monitor/Dockerfile",
         "deploy/railway-ci/recovery-monitor/README.md",
         "deploy/railway-ci/recovery-monitor/monitor.py",
@@ -150,6 +160,33 @@ def _assert_clean(root: Path, expected_sha: str) -> None:
         raise Error("frontend checkout contains untracked build or verification inputs")
 
 
+def _desk_tree(root: Path, revision: str) -> tuple[bytes, ...]:
+    """Identity of the complete generated desk snapshot, including file modes."""
+    entries = gate._run_git_bytes(
+        root,
+        "ls-tree",
+        "-r",
+        "-z",
+        "--full-tree",
+        revision,
+        "--",
+        "frontend/public/dispatches",
+        "frontend/public/articles",
+        "backend/seiche/dispatches",
+    ).stdout.split(b"\0")
+    selected = []
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            relative = entry.split(b"\t", 1)[1].decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise Error("frontend history contains an unsupported path") from exc
+        if DESK_PATH.fullmatch(relative):
+            selected.append(entry)
+    return tuple(selected)
+
+
 def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
     """Check every commit, including reverted edits and both sides of merges."""
     if any(gate.COMMIT_RE.fullmatch(value) is None for value in (release, source)):
@@ -159,6 +196,7 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
     ).returncode:
         raise Error("frontend source is not a descendant of its backend release")
     changes = []
+    desk_origins: dict[str, frozenset[str]] = {release: frozenset()}
     for commit in _git(
         root, "rev-list", "--reverse", "--topo-order", f"{release}..{source}"
     ).splitlines():
@@ -180,7 +218,25 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
             raise Error("frontend history merges an unrelated release ancestry")
         # Every side-branch commit is also visited by rev-list. Comparing each
         # parent additionally checks merge conflict resolutions and tree modes.
+        origins = frozenset().union(*(desk_origins[parent] for parent in parent_list))
+        # A merge may inherit one complete, already validated desk snapshot.
+        # The chosen parent must contain every desk-origin commit from all
+        # parents: choosing an older snapshot or combining divergent histories
+        # is not a frontend publication authorization.
+        inherited_desk = None
+        if len(parent_list) > 1:
+            snapshot = _desk_tree(root, commit)
+            inherited_desk = next(
+                (
+                    parent
+                    for parent in parent_list
+                    if desk_origins[parent] == origins
+                    and _desk_tree(root, parent) == snapshot
+                ),
+                None,
+            )
         commit_changes = 0
+        has_desk_change = False
         for parent in parent_list:
             raw = gate._run_git_bytes(
                 root,
@@ -221,21 +277,32 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                 elif path == RETIRED_HANDOFF_PATH:
                     # The owner reviews its signed add/remove history in this receipt;
                     # the one-time workflow must no longer exist in the published source.
-                    if gate._run_git(root, "cat-file", "-e", f"{source}:{path}", check=False).returncode == 0:
-                        raise Error("frontend history retains a forbidden one-time handoff workflow")
+                    if (
+                        gate._run_git(
+                            root, "cat-file", "-e", f"{source}:{path}", check=False
+                        ).returncode
+                        == 0
+                    ):
+                        raise Error(
+                            "frontend history retains a forbidden one-time handoff workflow"
+                        )
                     kind = "retired_handoff"
                 elif path in EXCLUDED_MONITOR_PATHS:
                     kind = "excluded_monitor"
                 elif DESK_PATH.fullmatch(path):
-                    if (
-                        len(parent_list) != 1
-                        or author != "desk@seiche.info"
-                        or not subject.startswith(("dispatch: ", "week ahead: "))
-                    ):
+                    if len(parent_list) == 1:
+                        authorized = (
+                            author == "desk@seiche.info"
+                            and subject.startswith(("dispatch: ", "week ahead: "))
+                        )
+                    else:
+                        authorized = inherited_desk is not None
+                    if not authorized:
                         raise Error(
                             "frontend history contains unauthorized generated evidence"
                         )
                     kind = "excluded_desk_content"
+                    has_desk_change = True
                 else:
                     raise Error(
                         f"frontend history changes a forbidden runtime, build, catalog or data path: {path}"
@@ -252,6 +319,9 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                 commit_changes += 1
         if not commit_changes:
             raise Error("frontend history contains an empty release commit")
+        desk_origins[commit] = origins | (
+            {commit} if len(parent_list) == 1 and has_desk_change else set()
+        )
     if not any(change["kind"] == "frontend" for change in changes):
         raise Error("frontend publication contains no frontend changes")
     return changes
@@ -365,6 +435,31 @@ def verify_frontend_receipt(
     ):
         raise Error("frontend receipt signature differs from the pinned signer")
     return payload
+
+
+def verify_desk_only_descendant(
+    root: Path, *, receipt_source_sha: str, current_source_sha: str
+) -> dict:
+    """Check desk ancestry; the exact ancestor receipt must be authenticated separately.
+
+    This does not reinterpret a signed receipt or authorize current desk bytes
+    for publication. It proves that publishing the unchanged signed frontend
+    remains compatible with the separately identified current main.
+    """
+    _assert_clean(root, current_source_sha)
+    if receipt_source_sha == current_source_sha:
+        raise Error("desk descendant admission requires a distinct receipt ancestor")
+    # Omitting the optional signer deliberately rejects even signed controller
+    # repairs. Only the existing single-parent daily/weekly desk lane is allowed.
+    gate._verify_generated_content_descendants(
+        root, release=receipt_source_sha, head=current_source_sha
+    )
+    return {
+        "schema": "seiche.frontend-desk-descendant.v1",
+        "receiptSourceSha": receipt_source_sha,
+        "currentSourceSha": current_source_sha,
+        "purpose": "unchanged_frontend_only_no_desk_publication",
+    }
 
 
 def require_unused_tag(root: Path, tag: str) -> None:
