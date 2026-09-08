@@ -13,7 +13,7 @@
       "data": {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche",
-        "title": "Seiche — world-markets evidence terminal",
+        "title": "Seiche \u2014 world-markets evidence terminal",
         "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits.",
         "version": "0.12.4",
         "repository": {
@@ -45,7 +45,7 @@
           }
         ]
       },
-      "description": "Twelve anonymous, read-only tools for editorial, US dollar funding, Trade Safety risk context, analogs, data health, positioning, crypto and cross-market context, granular money markets, bounded world markets, and a historical diagnostic with misses.",
+      "description": "Thirteen anonymous, read-only tools for connected Palimpsest research, editorial, US dollar funding, Trade Safety risk context, analogs, data health, positioning, crypto and cross-market context, granular money markets, bounded world markets, and a historical diagnostic with misses.",
       "tags": [
         "US dollar funding",
         "repo",
@@ -72,7 +72,8 @@
         "oil_funding_context",
         "fx_materials_passage",
         "money_market_context",
-        "world_markets_context"
+        "world_markets_context",
+        "research_network"
       ],
       "prompts": [
         "is_now_dangerous",
@@ -85,7 +86,7 @@
         "What is the current US dollar funding stress regime?",
         "What historical episodes most resemble today?",
         "How are hedge funds positioned in the Treasury basis trade?",
-        "Are oil, FX or material cash demands—including current Cushing stocks and Brent−WTI basis—reaching dollar funding markets, and which structure figures are dated references?",
+        "Are oil, FX or material cash demands\u2014including current Cushing stocks and Brent\u2212WTI basis\u2014reaching dollar funding markets, and which structure figures are dated references?",
         "Give me a bounded money, FX and capital-markets briefing with source clocks, evidence statuses and canonical citations."
       ],
       "version": "0.12.4",
@@ -122,7 +123,7 @@
       "data": {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche-market-corpus",
-        "title": "Seiche Market Atlas — structured evidence corpus",
+        "title": "Seiche Market Atlas \u2014 structured evidence corpus",
         "description": "Rights-aware attested evidence objects, structural inspection, bounded full-fidelity BIS records, revisions and canonical Seiche market discovery with explicit evidence clocks.",
         "version": "1.0.0",
         "websiteUrl": "https://seiche.info/#corpus",

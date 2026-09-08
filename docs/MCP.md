@@ -90,21 +90,21 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → twelve tools, named so you can check this against the
+- **Anonymous** (no token) → thirteen tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
   `institutional_flows`, plus `money_market_context`, `oil_funding_context` and
   `fx_materials_passage`, `world_markets_context`, `trade_safety_risk_context`,
-  plus `latest_article`. The editorial, conclusion, precedent, track record with its
+  plus `latest_article` and `research_network`. The editorial, conclusion, precedent, track record with its
   misses, freshness, crypto transmission record, positioning read, granular USD
   money-market evidence, unified money/FX/capital context, and cross-market oil/FX/material context. Capped per IP
   per day. Zero setup, and it stays free.
-- **Subscriber** (bearer token) → the same twelve plus five analysis tools that
+- **Subscriber** (bearer token) → the same thirteen plus five analysis tools that
   read derived engines: `funding_stress_forecast`, `replay_asof`,
   `positioning_book`, `desk_brief`, `ask_desk`; and five private Agent Room
   preview tools: `agent_room_register_key`, `agent_room_create`,
   `agent_room_append_event`, `agent_room_list_events`, `agent_room_verify`.
-  The authenticated hosted catalog is 22 tools. Agent Room identity always
+  The authenticated hosted catalog is 23 tools. Agent Room identity always
   comes from the bearer and every room/event is non-executable.
 
 `tools/list` returns exactly what the caller can run, so an anonymous agent
@@ -306,7 +306,7 @@ caveats in every successful projection.
 
 ## Machine-native support (x402) — dormant by design
 
-Seiche's twelve evidence tools are a permanent free public good. Five
+Seiche's thirteen evidence tools are a permanent free public good. Five
 compute-heavy tools are separately account-gated to cover operator cost. The
 codebase also carries a dormant
 [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
@@ -375,7 +375,7 @@ contract and mandatory activation checklist are documented in
 ## Public vs. authenticated surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same twelve the hosted endpoint gives an anonymous caller, so a local run and a
+the same thirteen the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash

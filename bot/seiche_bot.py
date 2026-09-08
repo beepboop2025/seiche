@@ -166,6 +166,77 @@ FOOT = ("\n<i>Free public good: no paywall, no sign-in. Every number is on "
 
 
 # ---------------------------------------------------------------- plumbing --
+
+# BEGIN SHARED RESEARCH CLIENT (backend/research_network.py in LiquiLens)
+
+import json
+import urllib.request
+from urllib.parse import urlencode
+
+RESEARCH_SCHEMA = "seiche.research-network.v1"
+RESEARCH_URL = "https://api.seiche.info/api/v2/research-network"
+RESEARCH_TOPICS = ("all", "china", "regions", "information_controls", "model_evaluations", "funding", "institutions", "liquidity", "global_data")
+RESEARCH_INPUT_SCHEMA = {"type": "object", "properties": {
+    "topic": {"type": "string", "enum": list(RESEARCH_TOPICS), "default": "all"},
+    "offset": {"type": "integer", "minimum": 0, "maximum": 1000, "default": 0},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 12},
+}, "additionalProperties": False}
+RESEARCH_MAX_BYTES = 2 * 1024 * 1024
+
+
+class ResearchNoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def read_research_network(arguments: dict) -> dict:
+    if not isinstance(arguments, dict) or set(arguments) - set(RESEARCH_INPUT_SCHEMA["properties"]):
+        raise ValueError("only topic, offset and limit are accepted")
+    query = {"topic": arguments.get("topic", "all"), "offset": arguments.get("offset", 0), "limit": arguments.get("limit", 12)}
+    if (not isinstance(query["topic"], str) or query["topic"] not in RESEARCH_TOPICS
+            or type(query["offset"]) is not int or not 0 <= query["offset"] <= 1000
+            or type(query["limit"]) is not int or not 1 <= query["limit"] <= 25):
+        raise ValueError("invalid research topic or pagination")
+    try:
+        request = urllib.request.Request(RESEARCH_URL + "?" + urlencode(query), headers={"Accept": "application/json", "User-Agent": "liquidity-lab-research-client/1"})
+        with urllib.request.build_opener(ResearchNoRedirect).open(request, timeout=12) as response:
+            raw = response.read(RESEARCH_MAX_BYTES + 1)
+        if len(raw) > RESEARCH_MAX_BYTES:
+            raise ValueError("research response exceeds byte budget")
+        result = json.loads(raw)
+        if (not isinstance(result, dict) or result.get("schema") != RESEARCH_SCHEMA
+                or result.get("context_only") is not True or result.get("selection") != query
+                or result.get("status") not in {"available", "stale", "unavailable"}
+                or result.get("eligibility") != {"blend_into_score": False, "training": False, "execution": False}
+                or not isinstance(result.get("datasets"), list) or len(result["datasets"]) > query["limit"]
+                or any(not isinstance(row, dict) or row.get("values_included") is not False for row in result["datasets"])):
+            raise ValueError("research contract mismatch")
+        return result
+    except (OSError, ValueError, TypeError, RecursionError):
+        return {"schema": RESEARCH_SCHEMA, "status": "unavailable", "context_only": True,
+                "selection": query, "datasets": [], "source": {"url": RESEARCH_URL},
+                "reason": "The connected research service is unavailable or returned an incompatible contract.",
+                "links": {"site": "https://seiche.info/#RESEARCH"},
+                "eligibility": {"blend_into_score": False, "training": False, "execution": False}}
+# END SHARED RESEARCH CLIENT
+
+def fmt_research_network(payload: dict | None) -> str:
+    if not isinstance(payload, dict) or payload.get("schema") != RESEARCH_SCHEMA or payload.get("status") == "unavailable":
+        return 'Connected research is unavailable. <a href="https://seiche.info/#RESEARCH">Open the research desk</a> or inspect <a href="https://palimpsest.info/data.html">Palimpsest sources</a>.'
+    lines = ["<b>Connected research</b>", "Palimpsest evidence → Seiche funding → institution and liquidity research", ""]
+    for row in payload.get("datasets", [])[:5]:
+        lines.append("• " + esc(str(row.get("title") or row.get("id") or "Dataset")[:180]) + " — " + esc(str(row.get("evidence_state") or "unknown")))
+        lines.append("  Source observation: " + esc(str(row.get("observed_at") or "Unavailable")[:64]))
+    topic = payload.get("selection", {}).get("topic", "all")
+    if topic not in RESEARCH_TOPICS:
+        topic = "all"
+    lines.extend(["", "Catalog: " + esc(str(payload.get("status"))) + "; published " + esc(str(payload.get("source", {}).get("generated_at") or "Unavailable")[:64]),
+        f'<a href="https://seiche.info/#RESEARCH/{topic}/0">Explore all matching evidence and next research steps</a>',
+        "Source rights and missingness remain attached. Funding, institution risk and exit liquidity are separate readings."])
+    return "\n".join(lines)
+
+
+
 def _read_json_response(stream):
     """Parse one bounded response so a remote peer cannot exhaust memory."""
     raw = stream.read(MAX_JSON_RESPONSE_BYTES + 1)
@@ -1729,6 +1800,7 @@ ATLAS_CARD = (
 
 
 HELP = (
+    "/research [topic] — connected source, funding and market research\n"
     "🌊 <b>Seiche</b> — public US dollar-funding desk, from free public data.\n\n"
     "/now — the gauge: regime, composite, the Tell\n"
     "/snap — the forwardable card\n"
@@ -2292,6 +2364,12 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         send(chat_id,
              fmt_welcome(board_get(f"{SITE}/dispatches/index.json")),
              keyboard_for("/start"))
+    elif cmd == "/research":
+        topic = arg.strip().lower() or "all"
+        if topic not in RESEARCH_TOPICS:
+            send(chat_id, "Use /research followed by: " + ", ".join(RESEARCH_TOPICS))
+        else:
+            send(chat_id, fmt_research_network(read_research_network({"topic": topic, "limit": 5})))
     elif cmd == "/stop":
         subs = load_state("subscribers.json", {})
         subs.pop(str(chat_id), None)
@@ -2639,6 +2717,7 @@ BOT_DESCRIPTION = (
     "seiche.info"
 )
 BOT_COMMANDS = [
+    {"command": "research", "description": "Connected sources, funding, institutions and liquidity"},
     {"command": "now", "description": "The gauge: regime, composite, the Tell"},
     {"command": "snap", "description": "The forwardable gauge card"},
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},

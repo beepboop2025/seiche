@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seiche.info/protocol/research-network-v1.schema.json",
+  "title": "Seiche connected research reference",
+  "description": "Metadata discovery with separately completed funding context. This is not an evidence carrier, attestation, value-redistribution grant or order authorization.",
+  "type": "object",
+  "required": ["schema", "status", "context_only", "selection", "datasets", "eligibility"],
+  "properties": {
+    "schema": {"const": "seiche.research-network.v1"},
+    "status": {"enum": ["available", "stale", "unavailable"]},
+    "context_only": {"const": true},
+    "selection": {
+      "type": "object", "additionalProperties": false, "required": ["topic", "offset", "limit"],
+      "properties": {
+        "topic": {"enum": ["all", "china", "regions", "information_controls", "model_evaluations", "funding", "institutions", "liquidity", "global_data"]},
+        "offset": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 25}
+      }
+    },
+    "datasets": {
+      "type": "array", "maxItems": 25,
+      "items": {"type": "object", "required": ["id", "values_included"],
+        "properties": {"id": {"type": "string"}, "values_included": {"const": false}},
+        "additionalProperties": true}
+    },
+    "eligibility": {
+      "type": "object", "additionalProperties": false, "required": ["blend_into_score", "training", "execution"],
+      "properties": {"blend_into_score": {"const": false}, "training": {"const": false}, "execution": {"const": false}}
+    },
+    "funding_context": {"type": "object"},
+    "source": {"type": "object"},
+    "next_offset": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000}
+  },
+  "additionalProperties": true
+}

@@ -1180,6 +1180,7 @@ def api_index() -> dict[str, Any]:
             "oil_funding": "/api/oil-funding",
             "fx_materials": "/api/estuary",
             "health": "/api/health",
+            "research_network": "/api/v2/research-network",
             "series_catalog": "/api/series/index.json",
             "realtime_venue": "/undertow/live/quotes.json",
         },
@@ -1709,7 +1710,15 @@ def _public_openapi_document() -> dict[str, Any]:
             "description": "MCP and API quickstart",
             "url": "https://seiche.info/developers",
         },
-        "paths": paths,
+        "paths": {
+            **paths,
+            "/api/v2/research-network": {"get": {
+                "summary": "Explore Palimpsest evidence and connected product research",
+                "parameters": [{"name": key, "in": "query", "schema": value}
+                               for key, value in mcp_server.research_network.INPUT_SCHEMA["properties"].items()],
+                "responses": {"200": object_response, "422": {"description": "Invalid topic or pagination"}},
+            }},
+        },
     }
 
 
@@ -2356,6 +2365,19 @@ def _completed_world_markets_snapshot() -> dict[str, Any] | None:
         return None
     restored = assemble.cached_snapshot()
     return restored if isinstance(restored, dict) else None
+
+
+@app.get("/api/v2/research-network")
+def research_network_v2(request: Request, response: Response, topic: str = "all", offset: int = 0, limit: int = 12):
+    """One public contract shared with the research_network MCP tool."""
+    if set(request.query_params) - {"topic", "offset", "limit"} or any(len(request.query_params.getlist(key)) != 1 for key in request.query_params):
+        raise HTTPException(status_code=422, detail="only one topic, offset and limit are accepted")
+    try:
+        result = mcp_server.tool_research_network({"topic": topic, "offset": offset, "limit": limit}, True)
+    except mcp_server.ToolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @app.get("/api/v2/world-markets")

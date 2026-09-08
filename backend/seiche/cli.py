@@ -1206,10 +1206,25 @@ def cmd_market_validate(args) -> int:
     return overall
 
 
+def cmd_research(args) -> int:
+    from seiche.mcp_server import tool_research_network
+
+    result = tool_research_network({"topic": args.topic, "offset": args.offset, "limit": args.limit}, True)
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+    return 0 if result["status"] == "available" else 1
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="seiche", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    from seiche.research_network import TOPICS
+    p = sub.add_parser("research", help="read connected public evidence and funding context")
+    p.add_argument("--topic", choices=TOPICS, default="all")
+    p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--limit", type=int, choices=range(1, 26), default=12)
+    p.set_defaults(fn=cmd_research)
 
     sub.add_parser("pull", help="force-refresh, print index line").set_defaults(fn=cmd_pull)
 

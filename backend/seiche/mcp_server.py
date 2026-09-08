@@ -23,7 +23,7 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the twelve tools flagged ``is_public`` in
+Surface: the *public* surface is the thirteen tools flagged ``is_public`` in
 ``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
@@ -69,6 +69,7 @@ from typing import Any
 
 from seiche import agent_room
 from seiche.config import DATA_DIR
+from seiche import research_network
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
 from seiche.engines import money_market as money_market_engine
 from seiche.markets.world import (
@@ -1313,6 +1314,16 @@ def tool_money_market(args: dict, _public: bool) -> Any:
     return out
 
 
+def tool_research_network(args: dict, _public: bool) -> Any:
+    """Read the published source catalog and attach completed funding context."""
+    try:
+        result = research_network.read(args)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    result["funding_context"] = tool_world_markets({"section": "summary"}, True)
+    return result
+
+
 def tool_world_markets(args: dict, _public: bool) -> Any:
     """Serve a selector-bounded world-markets view from completed state only."""
 
@@ -1551,6 +1562,16 @@ _AGENT_ROOM_EVENT_INPUT_SCHEMA = {
 
 # name -> (title, description, input JSON Schema, handler, is_public)
 TOOLS: dict[str, tuple] = {
+    "research_network": (
+        "Connected evidence across Palimpsest, Seiche and the product family",
+        "Explore every Palimpsest dataset by topic, with source clocks, rights, "
+        "freshness and pagination. Includes Seiche's separately completed funding "
+        "context and explicit research steps into institution filings, exit "
+        "liquidity and NarcoScope's granular global data. Source metadata and "
+        "funding interpretations stay distinct. No source collection, score "
+        "changes, causal joins or trading authority.",
+        research_network.INPUT_SCHEMA, tool_research_network, True,
+    ),
     "latest_article": (
         "Latest evidence-led article",
         "The exact full-text Seiche editorial published today: current funding "
@@ -2944,6 +2965,18 @@ OUTPUT_SCHEMAS.update(
     }
 )
 
+OUTPUT_SCHEMAS["research_network"] = _output_schema(
+    "Paginated source catalog and separate completed funding context.",
+    {
+        "schema": {"type": "string"}, "status": {"type": "string"},
+        "context_only": {"type": "boolean"}, "selection": {"type": "object"},
+        "datasets": {"type": "array", "items": {"type": "object"}},
+        "source": {"type": "object"}, "next_steps": {"type": "array", "items": {"type": "object"}},
+        "funding_context": {"type": "object"},
+    },
+    (("schema", "status", "context_only", "selection", "datasets", "source", "next_steps", "funding_context"),
+     {"schema": research_network.SCHEMA, "context_only": True}),
+)
 STRUCTURED_OUTPUT_TOOLS = frozenset(OUTPUT_SCHEMAS)
 
 # Prompts: reusable playbooks MCP clients surface as slash commands. Each
@@ -3184,6 +3217,11 @@ SERVER_INSTRUCTIONS = (
     "the complete chartless desk. Preserve each metric's date, cadence, source, "
     "alignment and caveat. Its worst-of empirical regime is descriptive context "
     "only, never a causal, predictive, probability or trading signal.\n\n"
+    "For Palimpsest, China economic histories, regional/BRI evidence, information "
+    "controls or model evaluations, call research_network with an explicit topic. "
+    "Page the complete editorial index and keep source availability separate from "
+    "funding context. Follow its named LiquiLens and Undertow tools only when the "
+    "research question calls for that domain; do not blend scores.\n\n"
     "For oil prices, Cushing stocks, WTI/Brent benchmark structure, cargo "
     "finance, commodity margin calls, INR/RBI liquidity or petrodollar "
     "recycling, call oil_funding_context. For currencies, "

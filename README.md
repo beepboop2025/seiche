@@ -324,7 +324,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Twelve tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Thirteen tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -365,7 +365,7 @@ tools: `agent_room_register_key`, `agent_room_create`,
 They record client-signed, server-co-signed agent discussion in a tamper-evident
 room; every record is non-executable and grants no acceptance, order, execution,
 payment, settlement, or custody authority. The full bearer-authenticated hosted
-catalog is therefore 22 tools (12 public evidence + five gated analysis + five
+catalog is therefore 23 tools (13 public evidence + five gated analysis + five
 Agent Room). See [the exact security and signing contract](docs/AGENT-ROOM.md).
 
 Nothing fails at call time over this: `tools/list` returns exactly the tools the
@@ -462,7 +462,7 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-The twelve-tool public evidence surface needs no account and does not depend on
+The thirteen-tool public evidence surface needs no account and does not depend on
 paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
 Five compute-heavy forecast, replay, positioning, prose and LLM tools are
 account-gated. Seiche does not claim intraday-tick coverage: daily cadence plus
@@ -474,3 +474,16 @@ vintage manifest. From v2 onward Seiche accrues a true as-published point-in-tim
 record (`/api/pit`) and stores immutable observation captures for forward vintage
 reconstruction. Those forward captures cannot repair vintages that were never
 retained. Not investment advice.
+
+## Connected research
+
+The Seiche `research_network` tool and `/api/v2/research-network` endpoint
+connect Palimpsest's complete source catalog with separately completed funding
+context and explicit research steps into LiquiLens, Undertow and NarcoScope.
+Use `topic`, `offset` and `limit`; follow `next_offset` for remaining datasets.
+The human desk is <https://seiche.info/#RESEARCH>. Telegram readers can use
+`/research china`, `/research regions` or `/research liquidity`.
+
+Catalog rows are references, not permission to redistribute source values or
+change a score. Source clocks, rights and missingness remain attached. The
+retrieved catalog hash is a byte identity, not a producer attestation.
