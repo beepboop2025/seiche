@@ -11,6 +11,7 @@ import pwd
 import resource
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -128,6 +129,28 @@ def validate_case(policy, env, recovery, storage):
     return offsite, total
 
 
+def validate_proof_tree(root, object_names):
+    expected = {"reverse-restore.json", "railway-reverse-restore.json"}
+    expected.update("resume-offsite-heads/" + name.replace("/", "_") + ".json"
+                    for name in (*object_names, "offsite-receipt.json"))
+    found = set()
+    total = 0
+    for path in root.rglob("*"):
+        metadata = path.lstat()
+        name = str(path.relative_to(root))
+        if stat.S_ISDIR(metadata.st_mode):
+            if name != "resume-offsite-heads":
+                raise ValueError("unexpected recovery proof directory")
+            continue
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or
+                name not in expected or not 0 < metadata.st_size <= 512 * 1024):
+            raise ValueError("recovery proof is not a bounded expected regular file")
+        found.add(name)
+        total += metadata.st_size
+    if found != expected or total > 8 * 1024 * 1024:
+        raise ValueError("recovery proof tree is incomplete or exceeds its byte bound")
+
+
 def start_postgres(root):
     uid = pwd.getpwnam("postgres").pw_uid
     if uid == 0 or uid == RESTORE_UID:
@@ -226,6 +249,7 @@ def main():
                 any(actual < floor for actual, floor in zip(restored["postgres_counts"], restored["postgres_count_floor"]))):
             raise ValueError("isolated restore result differs from immutable recovery")
         # Original locked proof is kept untouched; this proof explicitly names Railway execution.
+        validate_proof_tree(work / "proof", offsite["objects"])
         shutil.copytree(work / "proof", evidence / "proof")
         for name in ("recovery-receipt.json", "offsite-receipt.json"):
             shutil.copyfile(work / name, evidence / name)

@@ -84,6 +84,30 @@ class RecoveryTests(unittest.TestCase):
         for key in (*verify.INPUT_NAMES, *verify.INPUT_NAMES.values(), "GITHUB_TOKEN", "DATABASE_URL", "RAILWAY_TOKEN"):
             self.assertNotIn(key, env)
 
+    def test_proof_tree_rejects_symlinks_hardlinks_unexpected_or_oversized_output(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "resume-offsite-heads").mkdir()
+            for path in ("reverse-restore.json", "railway-reverse-restore.json", "resume-offsite-heads/offsite-receipt.json.json"):
+                (root / path).write_text("{}")
+            verify.validate_proof_tree(root, ())
+            output = root / "railway-reverse-restore.json"
+            for form in ("symlink", "hardlink", "oversize"):
+                output.unlink()
+                if form == "symlink":
+                    output.symlink_to(root / "reverse-restore.json")
+                elif form == "hardlink":
+                    os.link(root / "reverse-restore.json", output)
+                else:
+                    output.write_bytes(b"x" * (512 * 1024 + 1))
+                with self.assertRaises(ValueError):
+                    verify.validate_proof_tree(root, ())
+            output.unlink()
+            output.write_text("{}")
+            (root / "unexpected").write_text("{}")
+            with self.assertRaises(ValueError):
+                verify.validate_proof_tree(root, ())
+
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0, "requires actual root Linux container")
     def test_candidate_cannot_read_keys_fds_proc_or_replace_controller_receipts(self):
         with tempfile.TemporaryDirectory() as name:
