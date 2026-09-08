@@ -194,9 +194,9 @@ def main():
         base = public_root / "recovery-verification"
         base.mkdir(mode=0o755)
         work = base / "existing"
-        work.mkdir(mode=0o755)
+        work.mkdir(mode=0o700)
         for name in ("bundle", "proof", "proof/resume-offsite-heads"):
-            (work / name).mkdir(mode=0o755)
+            (work / name).mkdir(mode=0o700)
         env = {**environment(private_root), **credentials, "RUNNER_TEMP": str(private_root),
                "GITHUB_WORKSPACE": str(TRUSTED)}
         event("recovery_verification_start", request=offsite["request_id"], object_count=len(offsite["objects"]), bytes=total,
@@ -215,6 +215,9 @@ def main():
                 if path.is_symlink() or path.stat().st_nlink != 1:
                     raise ValueError("downloaded recovery member is not a private regular file")
                 path.chmod(0o444)
+            elif path.is_dir() and not path.is_symlink():
+                path.chmod(0o755)
+        work.chmod(0o755)
         # A sticky root-owned proof directory admits only new restore output.
         (work / "proof").chmod(0o1777)
         uid = pwd.getpwnam("postgres").pw_uid

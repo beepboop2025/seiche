@@ -1,8 +1,10 @@
 """Meaningful identity, locked-object and Linux privilege-boundary checks."""
 
 import copy
+import base64
 from datetime import datetime, timedelta, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -65,6 +67,40 @@ class RecoveryTests(unittest.TestCase):
             path.write_bytes(b"modified")
             with self.assertRaises(ValueError):
                 self.storage.verify_download(path, sha256=verify.digest(b"original"), size=8)
+
+    @unittest.skipUnless(sys.platform == "linux", "uses original Linux storage helper")
+    def test_original_storage_helper_downloads_only_into_private_parent(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            work, binary = root / "work", root / "bin"
+            work.mkdir(mode=0o700)
+            binary.mkdir(mode=0o700)
+            (work / "proof/resume-offsite-heads").mkdir(parents=True, mode=0o700)
+            payload = b'{"fixture":true}\n'
+            key = b'F' * 32
+            head = {"VersionId": "fixture-v1", "ContentLength": len(payload), "Metadata": {"sha256": verify.digest(payload)},
+                    "ObjectLockMode": "COMPLIANCE", "SSECustomerAlgorithm": "AES256",
+                    "SSECustomerKeyMD5": base64.b64encode(hashlib.md5(key, usedforsecurity=False).digest()).decode(),
+                    "ObjectLockRetainUntilDate": (datetime.now(timezone.utc) + timedelta(days=90)).isoformat()}
+            shim = binary / "aws"
+            shim.write_text("#!/usr/local/bin/python\nimport sys,json\nfrom pathlib import Path\n"
+                            "args=sys.argv[1:]\n"
+                            "if args == ['--version']: print('aws-cli/2.36.35 fixture')\n"
+                            "elif 'head-object' in args: print(" + repr(json.dumps(head)) + ")\n"
+                            "elif 'get-object' in args: Path(args[-1]).write_bytes(" + repr(payload) + ")\n"
+                            "else: raise SystemExit('unexpected fake-provider operation')\n")
+            shim.chmod(0o700)
+            env = {**verify.environment(root), "PATH": str(binary) + ":" + verify.environment(root)["PATH"],
+                   "AWS_ACCESS_KEY_ID": "fixture", "AWS_SECRET_ACCESS_KEY": "fixture", "AWS_DEFAULT_REGION": "fixture",
+                   "S3_ENDPOINT": "https://storage.invalid", "S3_BUCKET": "fixture-bucket", "S3_PREFIX": "fixture",
+                   "S3_SSE_C_KEY_B64": base64.b64encode(key).decode(), "RUNNER_TEMP": str(root), "GITHUB_WORKSPACE": str(verify.TRUSTED)}
+            item = {"key": "fixture/offsite-receipt.json", "version_id": "fixture-v1", "size": len(payload), "sha256": verify.digest(payload)}
+            self.storage.download_object(work, "offsite-receipt.json", item, env)
+            self.assertEqual((work / "offsite-receipt.json").read_bytes(), payload)
+            (work / "offsite-receipt.json").unlink()
+            work.chmod(0o755)
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.storage.download_object(work, "offsite-receipt.json", item, env)
 
     def test_native_adapter_denies_any_other_target_or_operation(self):
         prefix = ["run", "--rm", "--network", "host", "--env", "PGPASSWORD", native_docker.IMAGE]
