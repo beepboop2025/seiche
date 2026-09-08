@@ -46,8 +46,8 @@ An interrupted run revalidates the already committed bundle and can seal the
 same receipt after restart. Receipt names are sortable
 `SNAPSHOT_ID-REQUEST_ID.json` values; no mutable `latest` pointer is trusted.
 
-`.github/workflows/railway-stateful-recovery.yml` has four jobs across three
-separate protected environments:
+`.github/workflows/railway-stateful-recovery.yml` retains three separate protected
+environments for the thin scheduled attestation and explicit manual recovery:
 
 - `railway-stateful-recovery-admin` may configure native backup schedules and
   create/lock the two bootstrap canaries;
@@ -57,19 +57,21 @@ separate protected environments:
 - `railway-stateful-recovery-export` may request a portable export and write
   uniquely named, locked external objects. It cannot change edge or authority.
 
-Scheduled jobs are inert until repository variable
-`RAILWAY_STATEFUL_PHASE6_ENABLED` is exactly `true`.
+The scheduled attestation requires protected environment variable
+`RECOVERY_NATIVE_TAIL_ENABLED=1` in its first step, before checkout or secret
+inputs. The retired `RAILWAY_STATEFUL_PHASE6_ENABLED` scheduling flag no longer
+starts a GitHub monitor or export.
 
 ## Protected environments and secrets
 
 Require human reviewers on `railway-stateful-recovery-admin`: it changes native
-backup schedules and creates/locks the bootstrap canaries. Keep the scheduled
+backup schedules and creates/locks the bootstrap canaries. Keep
 `railway-stateful-recovery-monitor` and `railway-stateful-recovery-export`
 environments restricted to `main`, but do **not** configure per-run required
-reviewers on either one. Their six-hour monitor and daily append-only export
-must start unattended so the workflow's 26-hour freshness bound remains
-enforceable; a queued environment review is not recovery evidence. The export
-lane can request a no-authority-change snapshot and append immutable evidence,
+reviewers on either one. The scheduled OIDC tail must start unattended; Railway
+owns the recurring monitor and daily append-only export. The original
+26-hour freshness bound remains enforceable; a queued environment review is not
+recovery evidence. The export lane can request a no-authority-change snapshot and append immutable evidence,
 but it cannot cut over traffic, grant writers, restore production, delete an
 object, or weaken retention.
 
@@ -197,10 +199,22 @@ activation-receipt digest from the newest fresh `recovery_offsite_paired`
 result. This prevents scheduled recovery from depending on an old activation
 line remaining inside the provider's log-retention window.
 
-The monitor runs at minute 17 every six hours. A portable export runs daily at
-02:31 UTC after the same monitor gate. Both schedules fail closed when a native
-backup, portable receipt, off-site receipt, PITR probe, volume threshold, or
-production identity is stale or invalid.
+The Railway monitor runs at minute 17 every six hours. Its recurring recovery
+controller performs the daily 02:31 UTC monitor/export/isolated-restore/Object-Lock
+sequence with the same gates and original governed acknowledgment. The sole
+GitHub cron is 04:46 UTC: it verifies today's signed native index, the exact locked
+receipt versions, reviewed installation and fresh production runtime before the
+two original OIDC attestation actions run. The 15-minute margin follows the native limits of
+30 minutes for the monitor and 90 minutes for export. No GitHub export or monitor job runs on this
+cron. Both platforms fail closed on stale or invalid evidence.
+
+Explicit GitHub `monitor`, `export-recovery`, `resume-offsite`,
+`preflight-offsite` and `configure-native-backups` operations remain protected
+manual fallback and administrative paths. Their original confirmations, strict
+gates and authority limitations are unchanged. A failed native run never starts
+a GitHub export automatically. Dispatch `attest-native-recovery` with confirmation
+`ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY` to repeat only the thin receipt attestation.
+The completed one-time encrypted input handoff is removed.
 
 The portable receipts have independent, strict current contracts:
 

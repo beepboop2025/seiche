@@ -34,15 +34,17 @@ Deploy only the reviewed assembled context, disconnected from repository
 autodeployment, into the dedicated validation service. Keep one replica, restart
 policy NEVER, no public endpoint and no shared or PR-environment variables.
 `/evidence` retains bounded JSON verification receipts; downloaded backups and
-restored databases are temporary. This first stage has no cron. Daily export,
-Object Lock publication, governed acknowledgment and the genuine GitHub OIDC
-tail remain on the original workflow until their complete replacements pass.
+restored databases are temporary. The historical `verify-existing` operation has
+no cron. The recurring operation described below now performs daily export,
+restore, Object Lock publication and governed acknowledgment on Railway; the
+original GitHub workflow supplies only the scheduled OIDC tail. Its explicit
+manual recovery operations remain available as a protected fallback.
 
 Rollback requires no production action: stop this independent verifier. Existing
 production recovery policy, objects, keys and original workflow remain available.
 
 
-## Prepared recurring execution and genuine attestation tail
+## Recurring execution and genuine attestation tail
 
 `prepare.py --recurring-source <full SHA> --production-target <private JSON>
 --execution-public-key <public hex file>` adds the original governed export,
@@ -68,10 +70,17 @@ must quiesce before the original trusted Object Lock stage resumes.
 Use a 7,200-second outer deadline: the original monitor has at most 1,800 seconds,
 and export, restore and sealing together retain the original 5,400-second job
 budget. Per-stage limits cannot extend that aggregate. One volume-backed lock and
-one replica prevent overlapping native jobs. The daily native schedule is intended
-for `31 2 * * *`; its thin GitHub tail starts at `46 4 * * *`. Keep the original
-GitHub daily exporter active until real native execution and the genuine OIDC tail
-have both passed. Manual production controls retain their protected boundaries.
+one replica prevent overlapping native jobs. The daily native schedule is
+`31 2 * * *`; its thin GitHub tail starts at `46 4 * * *`, after the two-hour
+monitor/export window plus 15 minutes. GitHub no longer schedules the original
+monitor/export jobs. Explicit `monitor`, `export-recovery`, `resume-offsite`,
+`preflight-offsite` and `configure-native-backups` remain unchanged manual fallbacks
+with their original protected credentials, confirmations and production gates.
+The tail can also be dispatched as `attest-native-recovery` with confirmation
+`ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY`. Its first step requires the protected
+`RECOVERY_NATIVE_TAIL_ENABLED=1` before checkout or secret inputs. The completed
+encrypted migration handoff is removed. No manual fallback runs automatically
+when the native controller or attestation fails.
 
 A separate signed daily index links the unchanged original 15 locked members and
 three exact receipt/proof versions. The index itself is an additional locked
