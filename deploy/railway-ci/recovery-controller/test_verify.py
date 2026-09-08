@@ -204,5 +204,147 @@ assert 'NoNewPrivs:\\t1' in Path('/proc/self/status').read_text()
                     verify.stop_uid(uid)
 
 
+
+class ExecutionIndexTests(unittest.TestCase):
+    def setUp(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        key = Ed25519PrivateKey.generate()  # Ephemeral fixture, never provisioned.
+        self.pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+        public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
+        self.now = datetime(2026, 9, 8, 16, 0, tzinfo=timezone.utc)
+        uuid = "11111111-1111-4111-8111-111111111111"
+        self.policy = {"execution_public_key": public, "controller_source": "c" * 40,
+                       "controller_manifest_sha256": "d" * 64, "controller_image_digest": "sha256:" + "e" * 64,
+                       "storage_prefix": "seiche/recovery/v1", "storage_bucket": "fixture-bucket",
+                       "storage_endpoint": "https://fixture.invalid"}
+        self.policy.update({role + "_" + field + "_id": uuid for role in ("controller", "application") for field in ("project", "environment", "service")})
+        self.runtime = {"deployment_id": uuid, "source": "a" * 40, "replica_id": uuid, "status": "RUNNING", "observed_at": self.now.isoformat()}
+        prefix = "seiche/recovery/v1/20260908T150000Z/" + "b" * 64
+        self.payload = {"schema": verify.INDEX_SCHEMA, "execution_platform": "railway", "date": "2026-09-08",
+                        "observed_at": self.now.isoformat(), "repository": "beepboop2025/seiche",
+                        "governance_workflow": "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml",
+                        "controller_source": "c" * 40, "controller_manifest_sha256": "d" * 64,
+                        "controller_deployment_id": uuid, "controller_replica_id": uuid,
+                        "monitor_proof_sha256": "e" * 64, "application_deployment_id": uuid,
+                        "application_source": "a" * 40, "application_replica_id": uuid,
+                        "request_id": "b" * 64, "snapshot_id": "20260908T150000Z", "objects_verified": 15,
+                        "postgres_counts": [11, 22, 33, 44], "postgres_count_floor": [10, 20, 30, 40],
+                        "authority_changed": False, "research_only": True, "can_publish": False, "can_execute": False}
+        self.payload.update({name: value for name, value in self.policy.items() if name.endswith("_id") or name.startswith("storage_") or name == "controller_image_digest"})
+        self.payload.update({label: {"key": prefix + "/" + name, "version_id": "fixture-v1", "sha256": "f" * 64, "size": 123}
+                             for label, name in verify.INDEX_OBJECTS.items()})
+
+    def signed(self, payload=None):
+        return verify.sign_execution_index(payload or self.payload, self.pem, self.policy["execution_public_key"])
+
+    def validate(self, envelope, **changes):
+        return verify.validate_execution_index(envelope, policy=changes.get("policy", self.policy),
+                                              current_runtime=changes.get("runtime", self.runtime), now=changes.get("now", self.now))
+
+    def test_valid_native_index_preserves_original_15_member_contract(self):
+        self.assertEqual(self.validate(self.signed())["objects_verified"], 15)
+        self.assertTrue(verify.index_signing_bytes(self.payload).startswith(verify.INDEX_DOMAIN))
+
+    def test_tampered_index_or_wrong_evidence_key_fails(self):
+        from cryptography.exceptions import InvalidSignature
+        signed = self.signed()
+        signed["payload"] = {**signed["payload"], "controller_source": "f" * 40}
+        with self.assertRaises(InvalidSignature):
+            self.validate(signed)
+        with self.assertRaises(ValueError):
+            self.validate(self.signed(), policy={**self.policy, "execution_public_key": "f" * 64})
+
+    def test_even_validly_signed_wrong_day_source_target_or_safety_state_fails(self):
+        cases = (("date", "2026-09-07"), ("controller_source", "f" * 40),
+                 ("controller_manifest_sha256", "f" * 64), ("controller_service_id", "other-service"),
+                 ("application_deployment_id", "22222222-2222-4222-8222-222222222222"),
+                 ("application_replica_id", "22222222-2222-4222-8222-222222222222"),
+                 ("objects_verified", 16), ("authority_changed", True), ("can_publish", True))
+        for name, value in cases:
+            with self.subTest(field=name), self.assertRaises(ValueError):
+                self.validate(self.signed({**self.payload, name: value}))
+
+    def test_stale_future_or_stopped_runtime_cannot_attest(self):
+        for change in ({"status": "STOPPED"}, {"observed_at": (self.now - timedelta(minutes=6)).isoformat()}):
+            with self.assertRaises(ValueError):
+                self.validate(self.signed(), runtime={**self.runtime, **change})
+        for observed in (self.now - timedelta(hours=27), self.now + timedelta(minutes=3)):
+            with self.assertRaises(ValueError):
+                self.validate(self.signed({**self.payload, "observed_at": observed.isoformat()}))
+
+    def test_sender_offset_cannot_relabel_a_prior_utc_day(self):
+        with self.assertRaises(ValueError):
+            self.validate(self.signed({**self.payload, "observed_at": "2026-09-08T04:01:00+14:00"}))
+        for snapshot in ("20260931T150000Z", "20260908T250000Z", "20260907T150000Z"):
+            with self.subTest(snapshot=snapshot), self.assertRaises(ValueError):
+                self.validate(self.signed({**self.payload, "snapshot_id": snapshot}))
+
+    def test_receipt_references_and_restore_floors_fail_closed(self):
+        for name, value in (("version_id", "null"), ("key", "unrelated/receipt.json"), ("sha256", "invalid"), ("size", 524289)):
+            payload = copy.deepcopy(self.payload)
+            payload["offsite_receipt"][name] = value
+            with self.subTest(field=name), self.assertRaises(ValueError):
+                self.validate(self.signed(payload))
+        with self.assertRaises(ValueError):
+            self.validate(self.signed({**self.payload, "postgres_counts": [1, 2, 3, 4]}))
+
+    def test_original_receipt_cross_binding_rejects_forged_counts_versions_and_bodies(self):
+        import types
+        # A minimal receipt fixture isolates cross-binding from the separately pinned original validator.
+        original = {"snapshot": {"id": self.payload["snapshot_id"], "critical_table_count_floor": self.payload["postgres_count_floor"]},
+                    "railway": {field + "_id": self.payload["application_" + field + "_id"] for field in ("project", "environment", "service", "deployment")},
+                    "request_id": self.payload["request_id"], "commit": self.payload["application_source"],
+                    "filesystem": {"tree_sha256": {"api": "f" * 64}, "nbs_full_store_audit_result": "not_onboarded"},
+                    "palimpsest_china_state": {"fixture": True}}
+        proof = {"schema": "seiche.railway-reverse-restore-proof.v1", "repository": self.payload["repository"],
+                 "workflow": self.payload["governance_workflow"], "commit": self.payload["application_source"],
+                 "request_id": self.payload["request_id"], "authority_changed": False, "research_only": True,
+                 "can_publish": False, "can_execute": False, "postgres_counts": self.payload["postgres_counts"],
+                 "postgres_count_floor": self.payload["postgres_count_floor"], "filesystem_tree_sha256": original["filesystem"]["tree_sha256"],
+                 "nbs_full_store_audit_result": "not_onboarded", "palimpsest_china_state": original["palimpsest_china_state"],
+                 "recovery_receipt_sha256": verify.digest(verify.canonical(original))}
+        bodies = {"recovery_receipt": verify.canonical(original), "reverse_restore_proof": verify.canonical(proof)}
+        payload = copy.deepcopy(self.payload)
+        for name, body in bodies.items():
+            payload[name].update(sha256=verify.digest(body), size=len(body))
+        offsite = {"bucket": self.policy["storage_bucket"], "prefix": self.policy["storage_prefix"],
+                   "objects": {**{str(i): {} for i in range(13)},
+                               **{verify.INDEX_OBJECTS[name]: payload[name] for name in bodies}},
+                   "recovery_receipt_sha256": payload["recovery_receipt"]["sha256"],
+                   "reverse_restore_proof_sha256": payload["reverse_restore_proof"]["sha256"]}
+        bodies["offsite_receipt"] = verify.canonical(offsite)
+        payload["offsite_receipt"].update(sha256=verify.digest(bodies["offsite_receipt"]), size=len(bodies["offsite_receipt"]))
+        heads = {name: {"VersionId": payload[name]["version_id"], "ContentLength": len(body),
+                        "Metadata": {"sha256": verify.digest(body)}, "ObjectLockMode": "COMPLIANCE",
+                        "SSECustomerAlgorithm": "AES256", "ObjectLockRetainUntilDate": (self.now + timedelta(days=90)).isoformat()}
+                 for name, body in bodies.items()}
+        calls = []
+        original_validator = types.SimpleNamespace(validate_offsite_receipt=lambda *a, **kw: calls.append((a, kw)))
+        def check(candidate, **kw):
+            return verify.validate_index_receipts(candidate, bodies=kw.get("bodies", bodies), heads=kw.get("heads", heads),
+                                                  recovery=original_validator, policy=self.policy, now=self.now)
+        check(payload)
+        self.assertEqual(len(calls), 1)
+        with self.assertRaises(ValueError):
+            check({**payload, "postgres_counts": [0] * 4, "postgres_count_floor": [0] * 4})
+        bad = copy.deepcopy(payload)
+        bad["recovery_receipt"]["version_id"] = "different-version"
+        with self.assertRaises(ValueError):
+            check(bad)
+        with self.assertRaises(ValueError):
+            check(payload, bodies={**bodies, "reverse_restore_proof": b"{}"})
+        bad_heads = copy.deepcopy(heads)
+        bad_heads["offsite_receipt"]["ObjectLockMode"] = "GOVERNANCE"
+        with self.assertRaises(ValueError):
+            check(payload, heads=bad_heads)
+
+    def test_production_control_public_key_is_never_an_evidence_key(self):
+        public = "9acdfc2b5c1852fb47608912183b5d28d943da126e3c448b66bbd46c7c31a844"
+        signed = self.signed()
+        signed["key_id"] = verify.digest(bytes.fromhex(public))
+        with self.assertRaises(ValueError):
+            self.validate(signed, policy={**self.policy, "execution_public_key": public})
+
 if __name__ == "__main__":
     unittest.main()
