@@ -62,6 +62,7 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
     assert calls[1][1]["commands"] is bot.BOT_COMMANDS
     names = [command["command"] for command in calls[1][1]["commands"]]
     assert names == [
+        "research",
         "now",
         "snap",
         "ask",
