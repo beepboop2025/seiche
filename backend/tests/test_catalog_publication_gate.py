@@ -1408,3 +1408,493 @@ def test_signed_release_gate_rejects_malformed_external_pins_before_git_use():
             expected_sha="a" * 40,
             signer_fingerprint="untrusted",
         )
+
+
+# Real temporary SSH keys below are synthetic fixtures. No production signer,
+# receipt or remote publication is used by these frontend contract regressions.
+_FRONT_SPEC = importlib.util.spec_from_file_location(
+    "frontend_publication", ROOT / "ops/release/verify_frontend_publication.py"
+)
+assert _FRONT_SPEC and _FRONT_SPEC.loader
+front = importlib.util.module_from_spec(_FRONT_SPEC)
+_FRONT_SPEC.loader.exec_module(front)
+_SITE_SPEC = importlib.util.spec_from_file_location(
+    "frontend_site_proof", ROOT / "ops/release/frontend_site_proof.py"
+)
+assert _SITE_SPEC and _SITE_SPEC.loader
+site_proof = importlib.util.module_from_spec(_SITE_SPEC)
+_SITE_SPEC.loader.exec_module(site_proof)
+
+
+@pytest.fixture
+def frontend_repo(content_repo):
+    root = content_repo
+    for relative in (
+        "ops/release/verify_catalog_publication.py",
+        "ops/release/verify_frontend_publication.py",
+        "ops/release/frontend_site_proof.py",
+        "frontend/package.json",
+        "frontend/package-lock.json",
+        "frontend/tsconfig.json",
+        "frontend/vite.config.ts",
+    ):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+    (root / "frontend/src").mkdir()
+    (root / "frontend/src/App.tsx").write_text("// synthetic original UI\n")
+    release, fingerprint = _sign_content_release(root)
+    return root, release, fingerprint
+
+
+def _frontend_change(root, changes=None):
+    return _content_commit(
+        root,
+        changes or {"frontend/src/App.tsx": "// synthetic watchlist\n"},
+        author="reviewer@example.invalid",
+        subject="feat: synthetic frontend change",
+    )
+
+
+def _frontend_tag(root, fingerprint, *, payload_change=None, key=None):
+    source = _content_git(root, "rev-parse", "HEAD")
+    payload, _ = front.prepare_receipt(
+        root, expected_sha=source, signer_fingerprint=fingerprint
+    )
+    if payload_change:
+        payload.update(payload_change)
+    receipt = root.parent / "synthetic-frontend-receipt.json"
+    receipt.write_bytes(front._canonical(payload))
+    tag = front.TAG_PREFIX + source
+    config = ["-c", f"user.signingkey={key}"] if key else []
+    _content_git(
+        root,
+        *config,
+        "tag",
+        "-s",
+        "--cleanup=verbatim",
+        "-F",
+        str(receipt),
+        tag,
+        source,
+    )
+    return tag
+
+
+def test_frontend_tag_authenticates_unsigned_source_without_rebinding_backend(
+    frontend_repo,
+):
+    root, release, fingerprint = frontend_repo
+    source = _frontend_change(root)
+    tag = _frontend_tag(root, fingerprint)
+    proof = front.verify_frontend_receipt(
+        root, expected_sha=source, signer_fingerprint=fingerprint, receipt_tag=tag
+    )
+    assert proof["sourceSha"] == source != release
+    assert proof["backendReleaseSha"] == proof["corpusReceiptSha"] == release
+    assert proof["purpose"] == "frontend_only_no_runtime_activation"
+    assert (
+        _content_git(root, "rev-parse", proof["corpusReceiptTag"] + "^{commit}")
+        == release
+    )
+    # The existing full-application fallback remains closed for this UI commit.
+    with pytest.raises(gate.PublicationGateError, match="generated-content"):
+        gate.verify_market_corpus_release(
+            root, expected_sha=source, signer_fingerprint=fingerprint
+        )
+
+
+def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
+    frontend_repo,
+):
+    root, release, fingerprint = frontend_repo
+    _content_commit(
+        root, {"frontend/public/dispatches/2026-09-08.md": "synthetic evidence"}
+    )
+    _frontend_change(root, {"backend/scripts/ard_coverage.py": "# ignored monitor\n"})
+    _frontend_change(root, {"ops/railway-automation/run.sh": "# ignored monitor\n"})
+    base_branch = _content_git(root, "branch", "--show-current")
+    _content_git(root, "checkout", "-q", "-b", "synthetic-ui")
+    _frontend_change(root)
+    _content_git(root, "checkout", "-q", base_branch)
+    _content_git(
+        root,
+        "merge",
+        "--no-ff",
+        "--no-gpg-sign",
+        "-m",
+        "reviewed synthetic merge",
+        "synthetic-ui",
+    )
+    source = _content_git(root, "rev-parse", "HEAD")
+    payload, changes = front.prepare_receipt(
+        root, expected_sha=source, signer_fingerprint=fingerprint
+    )
+    assert {"frontend", "excluded_monitor", "excluded_desk_content"} <= {
+        change["kind"] for change in changes
+    }
+    assert payload["backendReleaseSha"] == release
+    assert (
+        front.verify_frontend_receipt(
+            root,
+            expected_sha=source,
+            signer_fingerprint=fingerprint,
+            receipt_tag=_frontend_tag(root, fingerprint),
+        )
+        == payload
+    )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "backend/seiche/api.py",
+        "backend/seiche/assemble.py",
+        "backend/scripts/another-monitor.py",
+        "ops/railway-automation/other.sh",
+        "frontend/package.json",
+        "frontend/package-lock.json",
+        "frontend/tsconfig.json",
+        "frontend/vite.config.ts",
+        "frontend/public/data/overview.json",
+        "frontend/public/.well-known/ai-catalog.json",
+        "frontend/public/_redirects",
+        "ops/release/verify_catalog_publication.py",
+        "ops/deploy/release-allowed-signers",
+        ".github/workflows/publish.yml",
+    ],
+)
+def test_frontend_contract_rejects_runtime_build_catalog_data_and_unlisted_operations(
+    frontend_repo, relative
+):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    source = _frontend_change(root, {relative: "synthetic forbidden mutation\n"})
+    with pytest.raises(front.Error, match="forbidden"):
+        front.compatibility_changes(root, release, source)
+
+
+def test_frontend_contract_rejects_reverted_runtime_edit(frontend_repo):
+    root, release, _ = frontend_repo
+    relative = "backend/seiche/assemble.py"
+    original = (root / relative).read_text()
+    _frontend_change(root, {relative: "# temporary unsafe runtime\n"})
+    _frontend_change(root, {relative: original})
+    source = _frontend_change(root)
+    with pytest.raises(front.Error, match="forbidden"):
+        front.compatibility_changes(root, release, source)
+
+
+@pytest.mark.parametrize("mode", ["symlink", "executable", "gitlink"])
+def test_frontend_contract_rejects_nonregular_ui_entries(frontend_repo, mode):
+    root, release, _ = frontend_repo
+    target = root / "frontend/src/unsafe.ts"
+    if mode == "symlink":
+        target.symlink_to("../../../outside")
+    elif mode == "executable":
+        target.write_text("// executable fixture")
+        target.chmod(0o755)
+    source = _frontend_change(root)
+    if mode == "gitlink":
+        _content_git(
+            root,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            release,
+            "frontend/src/nested.ts",
+        )
+        _content_git(root, "commit", "-q", "-m", "synthetic gitlink")
+        source = _content_git(root, "rev-parse", "HEAD")
+    with pytest.raises(front.Error, match="nonregular"):
+        front.compatibility_changes(root, release, source)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ["frontend/public/dispatches/forged.json", "backend/seiche/dispatches/state.json"],
+)
+def test_frontend_contract_cannot_launder_generated_evidence(frontend_repo, relative):
+    root, release, _ = frontend_repo
+    source = _frontend_change(
+        root, {"frontend/src/App.tsx": "// synthetic UI", relative: "forged evidence"}
+    )
+    with pytest.raises(front.Error, match="unauthorized generated"):
+        front.compatibility_changes(root, release, source)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong-baseline",
+        "wrong-purpose",
+        "wrong-source",
+        "wrong-key",
+        "unsigned",
+        "lightweight",
+        "wrong-tag-name",
+    ],
+)
+def test_frontend_receipt_rejects_unbound_subjects_and_signatures(
+    frontend_repo, mutation
+):
+    root, _, fingerprint = frontend_repo
+    source = _frontend_change(root)
+    payload_change = {
+        "wrong-baseline": {"backendReleaseSha": "a" * 40},
+        "wrong-purpose": {"purpose": "runtime_activated"},
+        "wrong-source": {"sourceSha": "a" * 40},
+    }.get(mutation)
+    key = None
+    if mutation == "wrong-key":
+        key = root.parent / "untrusted-frontend-key"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
+        )
+    tag = front.TAG_PREFIX + source
+    if mutation == "lightweight":
+        _content_git(root, "tag", tag)
+    elif mutation == "unsigned":
+        _content_git(root, "tag", "-a", "-m", "unsigned fixture", tag)
+    else:
+        tag = _frontend_tag(root, fingerprint, payload_change=payload_change, key=key)
+    if mutation == "wrong-tag-name":
+        tag = "frontend-publication-../../untrusted"
+    with pytest.raises(front.Error):
+        front.verify_frontend_receipt(
+            root, expected_sha=source, signer_fingerprint=fingerprint, receipt_tag=tag
+        )
+
+
+def test_frontend_receipt_refuses_reuse_and_unverifiable_remote_absence(frontend_repo):
+    root, _, fingerprint = frontend_repo
+    source = _frontend_change(root)
+    tag = front.TAG_PREFIX + source
+    remote = root.parent / "synthetic-remote.git"
+    _content_git(root.parent, "init", "--bare", "-q", str(remote))
+    _content_git(root, "remote", "add", "origin", str(remote))
+    front.require_unused_tag(root, tag)
+    _frontend_tag(root, fingerprint)
+    with pytest.raises(front.Error, match="already exists locally"):
+        front.require_unused_tag(root, tag)
+    _content_git(root, "push", "-q", "origin", f"refs/tags/{tag}")
+    _content_git(root, "tag", "-d", tag)
+    with pytest.raises(front.Error, match="already exists remotely"):
+        front.require_unused_tag(root, tag)
+    _content_git(root, "remote", "set-url", "origin", str(root.parent / "absent"))
+    with pytest.raises(front.Error, match="absence could not"):
+        front.require_unused_tag(root, tag)
+
+
+def test_frontend_receipt_requires_clean_source_and_verifier_bytes(frontend_repo):
+    root, _, fingerprint = frontend_repo
+    source = _frontend_change(root)
+    target = root / "frontend/src/App.tsx"
+    target.write_text("// dirty UI")
+    with pytest.raises(front.Error, match="dirty"):
+        front.prepare_receipt(root, expected_sha=source, signer_fingerprint=fingerprint)
+    _content_git(root, "checkout", "--", "frontend/src/App.tsx")
+    verifier = "ops/release/verify_catalog_publication.py"
+    _content_git(root, "update-index", "--assume-unchanged", verifier)
+    (root / verifier).write_text("# hidden dirty gate")
+    with pytest.raises(front.Error, match="input differs"):
+        front.prepare_receipt(root, expected_sha=source, signer_fingerprint=fingerprint)
+
+
+@pytest.mark.parametrize("failure", ["hidden-ui", "untracked-build-input"])
+def test_frontend_receipt_refuses_uncommitted_build_inputs(frontend_repo, failure):
+    root, _, fingerprint = frontend_repo
+    source = _frontend_change(root)
+    if failure == "hidden-ui":
+        _content_git(root, "update-index", "--assume-unchanged", "frontend/src/App.tsx")
+        (root / "frontend/src/App.tsx").write_text("// hidden UI drift")
+    else:
+        (root / "frontend/src/untracked.ts").write_text("// uncommitted build input")
+    with pytest.raises(front.Error, match="index flags|untracked build"):
+        front.prepare_receipt(root, expected_sha=source, signer_fingerprint=fingerprint)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "same-version-different-source",
+        "candidate",
+        "missing-deployment",
+        "invalid-deployment",
+        "changed-deployment",
+        "duplicate-source",
+        "duplicate-authority",
+        "duplicate-deployment",
+    ],
+)
+def test_frontend_runtime_subject_remains_the_actual_backend_receipt(mutation):
+    headers = {
+        "X-Seiche-Release-SHA": "b" * 40,
+        "X-Seiche-Railway-Authority": "production",
+        "X-Seiche-Railway-Deployment": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    }
+    observed = front.RuntimeReceipts(
+        "b" * 40, request=lambda _request: (b'{"ok":true}', headers)
+    )
+    assert observed.fetch_json(
+        "https://api.seiche.info/api/health", expected_host="api.seiche.info"
+    ) == {"ok": True}
+    if mutation == "same-version-different-source":
+        headers["X-Seiche-Release-SHA"] = "a" * 40
+    elif mutation == "candidate":
+        headers["X-Seiche-Railway-Authority"] = "candidate"
+    elif mutation == "missing-deployment":
+        headers.pop("X-Seiche-Railway-Deployment")
+    elif mutation == "invalid-deployment":
+        headers["X-Seiche-Railway-Deployment"] = "not-a-provider-identity"
+    elif mutation == "changed-deployment":
+        headers["X-Seiche-Railway-Deployment"] = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    elif mutation and mutation.startswith("duplicate-"):
+        from email.message import Message
+
+        duplicate = Message()
+        for name, value in headers.items():
+            duplicate[name] = value
+        name = {
+            "duplicate-source": "X-Seiche-Release-SHA",
+            "duplicate-authority": "X-Seiche-Railway-Authority",
+            "duplicate-deployment": "X-Seiche-Railway-Deployment",
+        }[mutation]
+        duplicate[name] = headers[name]
+        headers = duplicate
+    if mutation:
+        with pytest.raises(
+            front.Error, match="backend production subject|identity changed"
+        ):
+            observed.post_json(
+                "https://api.seiche.info/api/v2/corpus/mcp",
+                {"method": "tools/list"},
+                expected_host="api.seiche.info",
+            )
+    else:
+        observed.post_json(
+            "https://api.seiche.info/api/v2/corpus/mcp",
+            {"method": "tools/list"},
+            expected_host="api.seiche.info",
+        )
+        assert observed.subject["releaseSha"] == "b" * 40
+        assert len(observed.endpoints) == 2
+
+
+@pytest.fixture
+def frontend_site(tmp_path):
+    root = tmp_path / "synthetic-site"
+    root.mkdir()
+    _content_git(root, "init", "-q")
+    _content_git(root, "config", "user.name", "synthetic")
+    _content_git(root, "config", "user.email", "fixture@example.invalid")
+    _content_git(root, "config", "commit.gpgsign", "false")
+    _content_commit(
+        root,
+        {
+            "index.html": '<script type="module" src="./assets/old.js"></script>',
+            "assets/old.js": "synthetic old UI",
+            "data/overview.json": '{"as_of":"2000-01-01","status":"restricted"}',
+            ".well-known/ai-catalog.json": '{"synthetic":true}',
+            "dispatches/kept.md": "synthetic sealed evidence",
+        },
+    )
+    before = site_proof.snapshot(root, tmp_path / "synthetic-rollback.tar")
+    (root / "assets/new.js").write_text("synthetic new watchlist UI")
+    (root / "index.html").write_text(
+        '<script type="module" src="./assets/new.js"></script>'
+    )
+    return root, before
+
+
+def test_frontend_site_retains_recovery_and_proves_exact_public_bytes(frontend_site):
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    assert manifest["changed"] == ["assets/new.js", "index.html"]
+    assert manifest["recoveryArchiveSha256"] == before["archiveSha256"]
+
+    def fetch(url):
+        from urllib.parse import urlsplit
+
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        return (root / relative).read_bytes()
+
+    proof = site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+    assert proof["status"] == "verified"
+    with pytest.raises(site_proof.ProofError, match="public bytes differ"):
+        site_proof.verify_public(
+            root, manifest, cache_key="synthetic", fetch=lambda _url: b"old CDN content"
+        )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "data/overview.json",
+        ".well-known/ai-catalog.json",
+        "dispatches/kept.md",
+        "assets/old.js",
+        "extra-page.html",
+    ],
+)
+def test_frontend_site_rejects_sealed_data_catalog_and_existing_asset_mutations(
+    frontend_site, relative
+):
+    root, before = frontend_site
+    (root / relative).write_text("synthetic unauthorized replacement")
+    with pytest.raises(site_proof.ProofError, match="sealed file|unauthorized file"):
+        site_proof.seal(root, before, source_sha="a" * 40)
+
+
+def test_frontend_site_rejects_symlinks_missing_assets_and_path_escape(frontend_site):
+    root, before = frontend_site
+    (root / "assets/escape.js").symlink_to("../../outside")
+    with pytest.raises(site_proof.ProofError, match="unsafe site path"):
+        site_proof.seal(root, before, source_sha="a" * 40)
+    (root / "assets/escape.js").unlink()
+    (root / "assets/new.js").unlink()
+    with pytest.raises(site_proof.ProofError, match="missing local asset"):
+        site_proof.seal(root, before, source_sha="a" * 40)
+    manifest = {"schema": site_proof.SCHEMA, "publicFiles": {"../outside": "a" * 64}}
+    with pytest.raises(site_proof.ProofError, match="unsafe path"):
+        site_proof.verify_public(
+            root, manifest, cache_key="synthetic", fetch=lambda _url: b""
+        )
+
+
+def test_frontend_workflow_retains_subject_archive_recovery_and_compare_and_swap():
+    workflow = (ROOT / ".github/workflows/publish-static.yml").read_text()
+    assert (
+        'test "$FRONTEND_RECEIPT_TAG" = "frontend-publication-$GITHUB_SHA"' in workflow
+    )
+    assert (
+        '"refs/tags/${FRONTEND_RECEIPT_TAG}:refs/tags/${FRONTEND_RECEIPT_TAG}"'
+        in workflow
+    )
+    assert '"+refs/tags/${FRONTEND_RECEIPT_TAG}' not in workflow
+    assert 'git -C "$GITHUB_WORKSPACE" archive "$GITHUB_SHA" frontend' in workflow
+    assert 'cd "$RUNNER_TEMP/frontend-source/frontend"' in workflow
+    assert 'rsync -a --delete dist/ "$GITHUB_WORKSPACE/frontend/dist/"' in workflow
+    assert 'git archive "$backend_release_sha" backend | tar -x' in workflow
+    assert (
+        'renderer_backend="$RUNNER_TEMP/frontend-backend-subject/backend"' in workflow
+    )
+    assert 'python -I -S - "$renderer_backend"' in workflow
+    assert 'python -I - "$renderer_backend"' in workflow
+    assert (
+        workflow.index("frontend_site_proof.py seal")
+        < workflow.index("Retain verified frontend recovery")
+        < workflow.index("Push static files to the live site repo")
+    )
+    assert "if-no-files-found: error" in workflow
+    assert (
+        'test "$(git rev-parse --verify refs/remotes/origin/main)" = "$GITHUB_SHA"'
+        in workflow
+    )
+    assert "Site mirror compare-and-swap lost" in workflow
+    assert "Stage exact mirror and refuse stale exact-head deployment" in workflow
+    assert workflow.index(
+        "Deploy static fast path to Cloudflare Pages"
+    ) < workflow.index("frontend_site_proof.py public")
