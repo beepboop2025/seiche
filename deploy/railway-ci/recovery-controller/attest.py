@@ -258,11 +258,11 @@ def admit_github(environment, policy, checkout):
 
 
 def validate_tail_inputs(root, inputs, tracked_backend):
-    """Pin the complete backend tree, including deferred imports and governance data."""
+    """Pin the complete backend tree and the root control signer registry."""
     root = root.resolve()
     required = {"deploy/railway-ci/recovery-controller/attest.py", "deploy/railway-ci/recovery-controller/verify.py",
                 "deploy/railway-ci/recovery-controller/requirements.lock", "ops/railway/resume_recovery.py",
-                "ops/deploy/seiche-s3-object-lock.sh", *tracked_backend}
+                "ops/deploy/seiche-s3-object-lock.sh", "governance/railway-control-signers.json", *tracked_backend}
     require(tracked_backend and isinstance(inputs, dict) and required <= set(inputs), "tail input manifest omits local module or governance inputs")
     for name, expected in inputs.items():
         require(isinstance(name, str) and isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{64}", expected), "tail input manifest entry is malformed")

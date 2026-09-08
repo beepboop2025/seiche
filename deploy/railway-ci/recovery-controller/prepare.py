@@ -108,7 +108,7 @@ def prepare(repository, output, case, target, public_key):
     if (output / "restore.sh").read_text() != expected_restore:
         raise ValueError("native restore differs from the original body beyond its separate output name")
     names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", ORIGINAL_SOURCE, "backend"], text=True).splitlines()
-    names += ["ops/railway/resume_recovery.py", "ops/deploy/seiche-s3-object-lock.sh"]
+    names += ["ops/railway/resume_recovery.py", "ops/deploy/seiche-s3-object-lock.sh", *RECOVERY_GOVERNANCE]
     for name in names:
         destination = output / "trusted" / name
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -130,10 +130,11 @@ def prepare(repository, output, case, target, public_key):
 
 RECOVERY_HELPERS = ("ops/railway/resume_recovery.py", "ops/railway/retry_read.py", "ops/railway/fetch_recovery_logs.py",
                     "ops/railway/wait_production_ready.py", "ops/deploy/seiche-s3-object-lock.sh")
+RECOVERY_GOVERNANCE = ("governance/railway-control-signers.json",)
 
 
 def admitted_source_paths(names):
-    return {name for name in names if name in RECOVERY_HELPERS or
+    return {name for name in names if name in (*RECOVERY_HELPERS, *RECOVERY_GOVERNANCE) or
             (name.startswith("backend/") and not name.startswith("backend/tests/")
              and not name.startswith("backend/seiche/dispatches/"))}
 
@@ -156,7 +157,7 @@ def add_recurring_assembly(repository, output, revision, target_path, public_key
                     "--output", str(output / "monitor"), "--target", str(target_path),
                     "--signer-public-key", str(signer_public_key)], check=True)
     names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", revision, "backend"], text=True).splitlines()
-    names += list(RECOVERY_HELPERS)
+    names += [*RECOVERY_HELPERS, *RECOVERY_GOVERNANCE]
     for name in names:
         destination = output / "trusted" / name
         destination.parent.mkdir(parents=True, exist_ok=True)

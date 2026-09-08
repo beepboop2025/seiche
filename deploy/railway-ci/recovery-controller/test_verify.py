@@ -31,6 +31,17 @@ class RecoveryTests(unittest.TestCase):
         # Includes the six receipt/proof members in addition to the bundle.
         self.assertEqual(size, 1609428065)
 
+    def test_control_registry_loads_from_the_assembled_repository_root(self):
+        registry = "governance/railway-control-signers.json"
+        body = (verify.TRUSTED / registry).read_bytes()
+        if self.policy.get("operation") == "export-recurring":
+            self.assertEqual(self.policy["trusted_source_sha256"][registry], verify.digest(body))
+        subprocess.run([sys.executable, "-B", "-c",
+                        "from seiche import stateful_control as c; "
+                        "assert c.RECOVERY_KEY_ID in c.load_signer_registry()"],
+                       env={"PATH": os.environ["PATH"], "PYTHONPATH": str(verify.TRUSTED / "backend")},
+                       check=True, timeout=30)
+
     def test_wrong_source_deployment_or_bucket_is_rejected(self):
         for key in ("application_source", "application_deployment", "request_id"):
             policy = {**self.policy, key: "invalid"}
