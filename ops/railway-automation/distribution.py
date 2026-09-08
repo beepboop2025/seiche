@@ -38,7 +38,20 @@ def run_job(name, job, matrix):
         temp = Path(directory)
         context = {"github.workspace": str(ROOT), "runner.temp": directory}
         context.update({"matrix." + key: value for key, value in matrix.items()})
-        python_version = matrix.get("python", "3.12")
+        python_version = "3.12.12"
+        for step in job["steps"]:
+            action = step.get("uses", "").split("@", 1)[0]
+            settings = step.get("with", {})
+            if action == "actions/setup-python":
+                python_version = expand(settings["python-version"], context)
+            elif action == "actions/setup-node":
+                if settings.get("node-version") != "22":
+                    raise ValueError("Node runtime changed; update the Railway image")
+            elif action == "r-lib/actions/setup-r":
+                if settings.get("r-version") != "release":
+                    raise ValueError("R runtime changed; update the Railway image")
+            elif action == "actions/checkout" and any(key in settings for key in ("ref", "repository", "path")):
+                raise ValueError("Custom checkout requires an explicit Railway adapter")
         env = dict(os.environ)
         for key in ("GITHUB_TOKEN", "GH_TOKEN", "RAILWAY_TOKEN", "RAILWAY_API_TOKEN",
                     "CLOUDFLARE_API_TOKEN", "PYPI_TOKEN"):

@@ -109,6 +109,18 @@ def copy_public_tree(source, target):
         raise RuntimeError("Publication has no entry point")
 
 
+def verify_publication(steps, trusted, candidate, env, receipt):
+    for name in ("Prove the canonical dataset landing and DCAT catalog are live",
+                 "Prove exact frontend shell, assets, catalog and sealed data bytes"):
+        step = steps[name]
+        if step.get("if") and not receipt:
+            continue
+        command = step["run"].replace("/tmp/cloudflare-site", str(candidate)).replace("/tmp/site", str(candidate))
+        if command.startswith("python ops/"):
+            command = command.replace("python ops/", "python -I -S ops/", 1)
+        run(["bash", "-euo", "pipefail", "-c", command], trusted, env)
+
+
 def main():
     source_sha = current_main()
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
@@ -116,15 +128,12 @@ def main():
         raise RuntimeError("Requested source is no longer current main")
     apply = os.environ.get("PUBLISH_APPLY") == "1"
     evidence = Path("/evidence")
+    prior_state = None
     if os.path.ismount(evidence):
         evidence.chmod(0o700)
         state_path = evidence / "current.json"
         if apply and state_path.is_file():
-            state = json.loads(state_path.read_text())
-            mirror_head = git(["ls-remote", "--exit-code", MIRROR, "refs/heads/main"], CONTROLLER).split()[0]
-            if state.get("source") == source_sha and state.get("site") == mirror_head:
-                print(f"RAILWAY_STATIC_UNCHANGED source={source_sha} site={mirror_head}", flush=True)
-                return
+            prior_state = json.loads(state_path.read_text())
     signer = os.environ["RELEASE_SIGNING_KEY_FINGERPRINT"]
     workflow_path = CONTROLLER / "publish-static.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
@@ -151,13 +160,21 @@ def main():
         temp.mkdir()
         env = clean_env({"GITHUB_SHA": source_sha, "GITHUB_WORKSPACE": str(trusted),
                          "RUNNER_TEMP": str(temp), "FRONTEND_RECEIPT_TAG": receipt,
-                         "RELEASE_SIGNING_KEY_FINGERPRINT": signer, "GITHUB_RUN_ATTEMPT": "1"})
+                         "RELEASE_SIGNING_KEY_FINGERPRINT": signer, "GITHUB_RUN_ATTEMPT": str(time.time_ns())})
         for name in ("Fetch the exact declared release tag", "Gate catalog on the signed release, runtime, and PyPI receipts"):
             print("RAILWAY_STATIC_STEP " + name, flush=True)
             run(["bash", "-euo", "pipefail", "-c", steps[name]["run"]], trusted, env)
         mirror = root / "mirror"
         git(["clone", "--quiet", MIRROR, str(mirror)], root)
         previous_sha = git(["rev-parse", "HEAD"], mirror)
+        if prior_state and prior_state.get("source") == source_sha and prior_state.get("site") == previous_sha:
+            recovery_name = prior_state.get("recovery", "")
+            if "/" in recovery_name or not recovery_name.startswith(source_sha + "-seiche-publication-"):
+                raise RuntimeError("Invalid retained recovery identity")
+            verify_publication(steps, trusted, mirror, clean_env({**env,
+                "RUNNER_TEMP": str(evidence / recovery_name)}), receipt)
+            print(f"RAILWAY_STATIC_UNCHANGED_VERIFIED source={source_sha} site={previous_sha}", flush=True)
+            return
         if receipt:
             proof = run(["python", "-I", "-S", str(trusted / "ops/release/frontend_site_proof.py"),
                          "snapshot", "--site-root", str(mirror), "--archive", str(root / "previous-site.tar")],
@@ -252,15 +269,8 @@ def main():
         run(["wrangler", "pages", "deploy", str(candidate), "--project-name=seiche", "--branch=main", "--commit-hash", source_sha],
             CONTROLLER, clean_env({"CLOUDFLARE_API_TOKEN": os.environ["CLOUDFLARE_API_TOKEN"],
                                    "CLOUDFLARE_ACCOUNT_ID": os.environ["CLOUDFLARE_ACCOUNT_ID"]}))
-        for name in ("Prove the canonical dataset landing and DCAT catalog are live", "Prove exact frontend shell, assets, catalog and sealed data bytes"):
-            step = steps[name]
-            if step.get("if") and not receipt:
-                continue
-            command = step["run"].replace("/tmp/cloudflare-site", str(candidate)).replace("/tmp/site", str(candidate))
-            if command.startswith("python ops/"):
-                command = command.replace("python ops/", "python -I -S ops/", 1)
-            run(["bash", "-euo", "pipefail", "-c", command], trusted,
-                clean_env({**env, "RUNNER_TEMP": str(build_temp)}))
+        verify_publication(steps, trusted, candidate,
+                           clean_env({**env, "RUNNER_TEMP": str(build_temp)}), receipt)
         state = evidence / "current.json.tmp"
         state.write_text(json.dumps({"source": source_sha, "site": site_sha,
                                      "recovery": recovery.name, "verified_at": time.time()}))
