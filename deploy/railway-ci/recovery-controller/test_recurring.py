@@ -220,6 +220,16 @@ class NativeAdmissionTests(unittest.TestCase):
 
 
 class RestoreWrapperTests(unittest.TestCase):
+    def test_workspace_parent_is_traversable_under_the_real_private_umask(self):
+        with tempfile.TemporaryDirectory() as name:
+            before = os.umask(0o077)
+            try:
+                work = recurring.restore_workspace(Path(name))
+            finally:
+                os.umask(before)
+            self.assertEqual(stat.S_IMODE(work.parent.stat().st_mode), 0o755)
+            self.assertFalse(work.exists())
+
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0 and Path("/controller/restore-native.sh").exists(),
                          "requires the assembled native recovery image")
     def test_actual_image_inputs_are_readable_but_not_writable_by_restore_uid(self):
@@ -252,17 +262,20 @@ else:
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0 and Path("/usr/lib/postgresql/18/bin/initdb").exists(),
                          "requires isolated Linux root and PostgreSQL18 CI image")
     def test_real_pg18_child_is_unprivileged_private_inputs_stay_sealed_and_server_stops(self):
+        old_umask = os.umask(0o077)
+        self.addCleanup(os.umask, old_umask)
         with tempfile.TemporaryDirectory(prefix="native-wrapper-test-") as name:
             root = Path(name)
             root.chmod(0o755)
             private, public, controller = root / "private", root / "public", root / "controller"
             private.mkdir(mode=0o700)
             public.mkdir(mode=0o755)
+            public.chmod(0o755)
             controller.mkdir(mode=0o755)
+            controller.chmod(0o755)
             (private / "fixture-key").write_text("never visible to restore UID")
-            work = public / "recovery-verification/export"
+            work = recurring.restore_workspace(public)
             (work / "proof").mkdir(mode=0o700, parents=True)
-            work.parent.chmod(0o755)
             original = work / "recovery-receipt.json"
             original.write_text('{"fixture":true}\n')
             (controller / "restore-native.sh").write_text("""#!/usr/bin/env bash
