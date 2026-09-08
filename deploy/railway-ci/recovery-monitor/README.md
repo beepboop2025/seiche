@@ -20,6 +20,7 @@ Supply a non-secret target JSON containing the six `TARGET_NAMES` in `monitor.py
 
 ```sh
 python prepare.py --repository /path/to/seiche --revision REVIEWED_SHA \
+  --signer-public-key /trusted/owner-signing-key.pub \
   --target /private/monitor-target.json --output /private/monitor-build
 ```
 

@@ -4,13 +4,19 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import shutil
+import re
 import subprocess
+import tempfile
 
 import yaml
 
 
 WORKFLOW = ".github/workflows/railway-stateful-recovery.yml"
+SIGNER_FINGERPRINT = "SHA256:yhoa/PIDMM6M/ZennILp8jtRJy5pArncJRARbQssTMI"
+TARGET_NAMES = {
+    "RAILWAY_PROJECT_ID", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_POSTGRES_SERVICE_ID",
+    "RAILWAY_STATEFUL_SERVICE_ID", "RAILWAY_STATEFUL_VOLUME_ID", "RAILWAY_STATEFUL_ORIGIN",
+}
 INPUTS = [
     "backend/seiche/__init__.py",
     "backend/seiche/stateful_control.py",
@@ -32,19 +38,36 @@ def digest(value):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def prepare(repository, revision, output, target):
+def prepare(repository, revision, output, target, signer_public_key):
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise ValueError("Selected source must be one full immutable commit SHA")
+    if set(target) != TARGET_NAMES:
+        raise ValueError("Target fields differ from the reviewed monitor schema")
+    for name, value in target.items():
+        pattern = (r"https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app"
+                   if name.endswith("ORIGIN") else
+                   r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+        if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
+            raise ValueError("Invalid fixed monitor target: " + name)
     def show(path):
         return subprocess.check_output(["git", "-C", str(repository), "show",
                                         f"{revision}:{path}"])
 
     here = Path(__file__).parent
     controller_source = subprocess.check_output(["git", "-C", str(here), "rev-parse", "HEAD"], text=True).strip()
-    dirty = subprocess.check_output(["git", "-C", str(here), "status", "--porcelain", "--", "."], text=True)
-    if dirty:
-        raise ValueError("Commit the reviewed controller before preparing an image")
+    repository_root = Path(subprocess.check_output(["git", "-C", str(here), "rev-parse", "--show-toplevel"], text=True).strip())
+    fingerprint = subprocess.check_output(["ssh-keygen", "-lf", str(signer_public_key)], text=True).split()[1]
+    if fingerprint != SIGNER_FINGERPRINT:
+        raise ValueError("Controller signer differs from the established owner key")
+    with tempfile.TemporaryDirectory(prefix="monitor-signature-") as name:
+        allowed = Path(name) / "allowed-signers"
+        allowed.write_text("owner " + signer_public_key.read_text().strip() + "\n")
+        subprocess.run(["git", "-C", str(here), "-c", "gpg.format=ssh", "-c",
+                        "gpg.ssh.allowedSignersFile=" + str(allowed),
+                        "verify-commit", controller_source], check=True)
     output.mkdir(parents=True, exist_ok=False)
     policy = {"source": revision, "controller_source": controller_source,
-              "inputs": {}, "target": target}
+              "controller_signer": fingerprint, "inputs": {}, "target": target}
     for path in INPUTS:
         body = show(path)
         destination = output / "trusted" / path
@@ -72,7 +95,9 @@ def prepare(repository, revision, output, target):
     (output / "validator.py").write_text(validator + "\n")
     (output / "policy.json").write_text(json.dumps(policy, indent=2) + "\n")
     for name in ("Dockerfile", "monitor.py", "prepare.py", "test_monitor.py", "requirements.lock"):
-        shutil.copyfile(here / name, output / name)
+        path = (here / name).relative_to(repository_root)
+        body = subprocess.check_output(["git", "-C", str(here), "show", f"{controller_source}:{path}"])
+        (output / name).write_bytes(body)
     manifest = {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in sorted(output.rglob("*")) if path.is_file()}
     (output / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
@@ -86,6 +111,7 @@ if __name__ == "__main__":
     parser.add_argument("--revision", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target", type=Path, required=True)
+    parser.add_argument("--signer-public-key", type=Path, required=True)
     args = parser.parse_args()
     prepare(args.repository, args.revision, args.output,
-            json.loads(args.target.read_text()))
+            json.loads(args.target.read_text()), args.signer_public_key)
