@@ -43,10 +43,16 @@ The old signed corpus receipt must target that actual backend release; no source
 SHA is substituted into it. The receipt asserts UI compatibility, not that the
 backend has activated the UI merge SHA.
 
-The same responses used for runtime health, discovery and corpus validation
-must identify that exact backend SHA, production authority and one consistent
-Railway deployment UUID. A same-version replacement, missing identity, candidate
-or deployment change during verification stops publication.
+The Seiche health and discovery responses must identify that exact backend SHA,
+production authority and one consistent Railway deployment UUID. The three
+exact corpus health/catalog/MCP receipt URLs route to an independent gateway
+(`ops/Caddyfile:370–405`); they must instead carry one `X-Corpus-Release` equal
+to the release ID in the independently signed corpus catalog receipt. GET/POST
+classification is exact, and the corpus POST permits only the existing bounded
+`tools/list` request. Missing, duplicate, conflicting or changed identities stop
+publication. Corpus responses make no Seiche Railway deployment claim; the
+verification output records these two runtime subjects separately. All existing
+corpus deep-health, content-hash, count, catalog and MCP semantic checks remain.
 
 ## Review, receipt and publication
 

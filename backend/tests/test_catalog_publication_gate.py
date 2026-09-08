@@ -1727,6 +1727,7 @@ def test_frontend_receipt_refuses_uncommitted_build_inputs(frontend_repo, failur
         "duplicate-source",
         "duplicate-authority",
         "duplicate-deployment",
+        "corpus-owner",
     ],
 )
 def test_frontend_runtime_subject_remains_the_actual_backend_receipt(mutation):
@@ -1736,10 +1737,14 @@ def test_frontend_runtime_subject_remains_the_actual_backend_receipt(mutation):
         "X-Seiche-Railway-Deployment": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     }
     observed = front.RuntimeReceipts(
-        "b" * 40, request=lambda _request: (b'{"ok":true}', headers)
+        "b" * 40,
+        version="0.12.4",
+        corpus_release_id="corpus-" + "c" * 16,
+        request=lambda _request: (b'{"ok":true}', headers),
     )
     assert observed.fetch_json(
-        "https://api.seiche.info/api/health", expected_host="api.seiche.info"
+        "https://api.seiche.info/api/health?release=0.12.4",
+        expected_host="api.seiche.info",
     ) == {"ok": True}
     if mutation == "same-version-different-source":
         headers["X-Seiche-Release-SHA"] = "a" * 40
@@ -1751,6 +1756,8 @@ def test_frontend_runtime_subject_remains_the_actual_backend_receipt(mutation):
         headers["X-Seiche-Railway-Deployment"] = "not-a-provider-identity"
     elif mutation == "changed-deployment":
         headers["X-Seiche-Railway-Deployment"] = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    elif mutation == "corpus-owner":
+        headers["X-Corpus-Release"] = "corpus-" + "c" * 16
     elif mutation and mutation.startswith("duplicate-"):
         from email.message import Message
 
@@ -1766,21 +1773,237 @@ def test_frontend_runtime_subject_remains_the_actual_backend_receipt(mutation):
         headers = duplicate
     if mutation:
         with pytest.raises(
-            front.Error, match="backend production subject|identity changed"
+            front.Error,
+            match="backend production subject|identity changed|conflicting corpus-owner",
         ):
-            observed.post_json(
-                "https://api.seiche.info/api/v2/corpus/mcp",
-                {"method": "tools/list"},
+            observed.fetch_json(
+                "https://api.seiche.info/.well-known/mcp.json",
                 expected_host="api.seiche.info",
             )
     else:
-        observed.post_json(
-            "https://api.seiche.info/api/v2/corpus/mcp",
-            {"method": "tools/list"},
+        observed.fetch_json(
+            "https://api.seiche.info/.well-known/mcp.json",
             expected_host="api.seiche.info",
         )
         assert observed.subject["releaseSha"] == "b" * 40
         assert len(observed.endpoints) == 2
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "missing", "wrong", "duplicate", "conflicting", "mixed-owner"]
+)
+def test_frontend_corpus_subject_uses_only_its_signed_native_release(mutation):
+    release_id = "corpus-" + "c" * 16
+    headers = {"X-Corpus-Release": release_id}
+    observed = front.RuntimeReceipts(
+        "b" * 40,
+        version="0.12.4",
+        corpus_release_id=release_id,
+        request=lambda _request: (b'{"ok":true}', headers),
+    )
+    observed.fetch_json(
+        front.gate.MARKET_CORPUS_HEALTH_URL, expected_host="api.seiche.info"
+    )
+    if mutation == "missing":
+        headers = {}
+    elif mutation == "wrong":
+        headers = {"X-Corpus-Release": "corpus-" + "d" * 16}
+    elif mutation in {"duplicate", "conflicting"}:
+        from email.message import Message
+
+        headers = Message()
+        headers["X-Corpus-Release"] = release_id
+        headers["x-corpus-release"] = (
+            release_id if mutation == "duplicate" else "corpus-" + "d" * 16
+        )
+    elif mutation == "mixed-owner":
+        headers["X-Seiche-Release-SHA"] = "b" * 40
+    if mutation:
+        with pytest.raises(
+            front.Error, match="corpus subject|conflicting runtime-owner"
+        ):
+            observed.fetch_json(
+                front.gate.MARKET_CORPUS_CATALOG_URL, expected_host="api.seiche.info"
+            )
+    else:
+        observed.fetch_json(
+            front.gate.MARKET_CORPUS_CATALOG_URL, expected_host="api.seiche.info"
+        )
+        observed.post_json(
+            front.gate.MARKET_CORPUS_MCP_URL,
+            {
+                "jsonrpc": "2.0",
+                "id": "market-corpus-publication-proof",
+                "method": "tools/list",
+                "params": {},
+            },
+            expected_host="api.seiche.info",
+        )
+        assert observed.corpus_subject == {
+            "releaseId": release_id,
+            "identityHeader": "X-Corpus-Release",
+        }
+        assert observed.subject is None  # No invented Seiche deployment identity.
+
+
+@pytest.mark.parametrize(
+    "url,method",
+    [
+        (gate.MARKET_CORPUS_HEALTH_URL, "POST"),
+        (gate.MARKET_CORPUS_CATALOG_URL, "POST"),
+        (gate.MARKET_CORPUS_MCP_URL, "GET"),
+        (gate.MARKET_CORPUS_CATALOG_URL + "?different=true", "GET"),
+        (gate.MARKET_CORPUS_MCP_URL + "/", "POST"),
+        ("https://api.seiche.info/api/v2/corpus/other", "GET"),
+        ("https://api.seiche.info/api/v2/corpus/%6dcp", "POST"),
+        ("https://api.seiche.info/.well-known/mcp.json", "POST"),
+        ("https://api.seiche.info/api/health?release=0.12.3", "GET"),
+        ("https://elsewhere.invalid/api/v2/corpus/mcp", "POST"),
+    ],
+)
+def test_frontend_runtime_route_classification_rejects_unregistered_requests(
+    url, method
+):
+    requests = []
+    observed = front.RuntimeReceipts(
+        "b" * 40,
+        version="0.12.4",
+        corpus_release_id="corpus-" + "c" * 16,
+        request=lambda request: requests.append(request),
+    )
+    with pytest.raises(front.Error, match="registered|canonical"):
+        if method == "GET":
+            observed.fetch_json(url, expected_host="api.seiche.info")
+        else:
+            observed.post_json(
+                url, {"method": "tools/list"}, expected_host="api.seiche.info"
+            )
+    assert requests == []
+
+
+@pytest.mark.parametrize("payload", [None, {"method": "tools/call"}])
+def test_frontend_corpus_post_cannot_turn_into_an_arbitrary_tool_call(payload):
+    requests = []
+    observed = front.RuntimeReceipts(
+        "b" * 40,
+        version="0.12.4",
+        corpus_release_id="corpus-" + "c" * 16,
+        request=lambda request: requests.append(request),
+    )
+    with pytest.raises(front.Error, match="exact tools/list|payload is missing"):
+        observed.post_json(
+            gate.MARKET_CORPUS_MCP_URL,
+            payload,
+            expected_host="api.seiche.info",
+        )
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "corpus-count", "runtime-fault", "pypi-body"]
+)
+def test_frontend_independent_subjects_preserve_all_original_semantic_gates(
+    monkeypatch, mutation
+):
+    pypi, health, discovery, bodies = _receipts()
+    corpus_health, corpus_catalog, corpus_discovery, tools = _market_receipts()
+    release_id = gate._market_corpus_publication_receipt(_market_entry())["releaseId"]
+    seiche_headers = {
+        "X-Seiche-Release-SHA": "b" * 40,
+        "X-Seiche-Railway-Authority": "production",
+        "X-Seiche-Railway-Deployment": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    }
+    if mutation == "corpus-count":
+        corpus_catalog["corpora"]["liquilens_engine"]["datasets"] = 999
+    elif mutation == "runtime-fault":
+        health["faults"] = [{"component": "collector"}]
+    elif mutation == "pypi-body":
+        bodies[next(iter(bodies))] = b"tampered immutable package"
+    responses = {
+        "https://api.seiche.info/api/health?release=0.12.4": (health, seiche_headers),
+        "https://api.seiche.info/.well-known/mcp.json?release=0.12.4": (
+            discovery,
+            seiche_headers,
+        ),
+        gate.MARKET_CORPUS_HEALTH_URL: (
+            corpus_health,
+            {"X-Corpus-Release": release_id},
+        ),
+        gate.MARKET_CORPUS_CATALOG_URL: (
+            corpus_catalog,
+            {"X-Corpus-Release": release_id},
+        ),
+        gate.MARKET_CORPUS_DISCOVERY_URL: (corpus_discovery, seiche_headers),
+        gate.MARKET_CORPUS_MCP_URL: (tools, {"X-Corpus-Release": release_id}),
+    }
+
+    def request(request):
+        body, headers = responses[request.full_url]
+        return json.dumps(body).encode(), headers
+
+    observed = front.RuntimeReceipts(
+        "b" * 40, version="0.12.4", corpus_release_id=release_id, request=request
+    )
+    monkeypatch.setattr(front.gate, "_fetch_json", lambda _url, **_kwargs: pypi)
+
+    def verify():
+        front.gate.verify_public_receipts(
+            "0.12.4",
+            fetch_json=observed.fetch_json,
+            fetch_bytes=lambda url, **_kwargs: bodies[url],
+        )
+        front.gate.verify_market_corpus_receipts(
+            _market_entry(),
+            fetch_json=observed.fetch_json,
+            post_json=observed.post_json,
+        )
+
+    if mutation:
+        with pytest.raises(front.Error):
+            verify()
+    else:
+        verify()
+        assert observed.subject["releaseSha"] == "b" * 40
+        assert observed.corpus_subject["releaseId"] == release_id
+        assert len(observed.endpoints) == 6
+
+
+@pytest.mark.parametrize(
+    "final_url",
+    [
+        gate.MARKET_CORPUS_CATALOG_URL,
+        gate.MARKET_CORPUS_HEALTH_URL,
+        gate.MARKET_CORPUS_CATALOG_URL + "?different=true",
+        "https://elsewhere.invalid/api/v2/corpus/v1/catalog",
+    ],
+)
+def test_frontend_runtime_transport_binds_the_final_response_route(
+    monkeypatch, final_url
+):
+    class Response:
+        headers = {"Content-Length": "2"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def geturl(self):
+            return final_url
+
+        def read(self, _bound):
+            return b"{}"
+
+    monkeypatch.setattr(
+        front.urllib.request, "urlopen", lambda _request, **_kwargs: Response()
+    )
+    request = front.urllib.request.Request(gate.MARKET_CORPUS_CATALOG_URL)
+    if final_url == gate.MARKET_CORPUS_CATALOG_URL:
+        assert front._runtime_request(request)[0] == b"{}"
+    else:
+        with pytest.raises(front.Error, match="exact canonical route"):
+            front._runtime_request(request)
 
 
 @pytest.fixture

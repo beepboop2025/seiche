@@ -405,11 +405,12 @@ def _runtime_request(request):
     with urllib.request.urlopen(request, timeout=30) as response:
         final = urllib.parse.urlsplit(response.geturl())
         if (
-            final.scheme != "https"
+            response.geturl() != request.full_url
+            or final.scheme != "https"
             or final.hostname != "api.seiche.info"
             or final.port not in {None, 443}
         ):
-            raise Error("frontend runtime receipt left its canonical host")
+            raise Error("frontend runtime receipt left its exact canonical route")
         declared = response.headers.get("Content-Length")
         if declared is not None and int(declared) > gate.MAX_JSON_BYTES:
             raise Error("frontend runtime receipt exceeds its size limit")
@@ -421,13 +422,41 @@ def _runtime_request(request):
 
 
 class RuntimeReceipts:
-    """Retain original semantic gates, adding identity to their same responses."""
+    """Bind each exact receipt route to its independently signed runtime owner."""
 
-    def __init__(self, backend_sha: str, *, request=_runtime_request):
+    def __init__(
+        self,
+        backend_sha: str,
+        *,
+        version: str,
+        corpus_release_id: str,
+        request=_runtime_request,
+    ):
+        if (
+            gate.VERSION_RE.fullmatch(version) is None
+            or gate.CORPUS_RELEASE_RE.fullmatch(corpus_release_id) is None
+        ):
+            raise Error("frontend runtime subject configuration is malformed")
         self.backend_sha = backend_sha
+        self.corpus_release_id = corpus_release_id
         self.request = request
         self.subject = None
+        self.corpus_subject = None
         self.endpoints = []
+        self.seiche_get_urls = frozenset(
+            {
+                f"https://api.seiche.info/api/health?release={version}",
+                f"https://api.seiche.info/.well-known/mcp.json?release={version}",
+                gate.MARKET_CORPUS_DISCOVERY_URL,
+            }
+        )
+        # ops/Caddyfile routes only these public corpus receipts to the separate
+        # gateway. Its native X-Corpus-Release is not a Railway deployment claim.
+        self.corpus_methods = {
+            gate.MARKET_CORPUS_HEALTH_URL: "GET",
+            gate.MARKET_CORPUS_CATALOG_URL: "GET",
+            gate.MARKET_CORPUS_MCP_URL: "POST",
+        }
 
     def _json(self, url: str, *, payload=None):
         parsed = urllib.parse.urlsplit(url)
@@ -439,6 +468,22 @@ class RuntimeReceipts:
             or parsed.password
         ):
             raise Error("frontend runtime request is not canonical")
+        method = "GET" if payload is None else "POST"
+        corpus_route = url in self.corpus_methods
+        if corpus_route:
+            if method != self.corpus_methods[url]:
+                raise Error("frontend corpus receipt method is not registered")
+            if method == "POST" and payload != {
+                "jsonrpc": "2.0",
+                "id": "market-corpus-publication-proof",
+                "method": "tools/list",
+                "params": {},
+            }:
+                raise Error(
+                    "frontend corpus receipt permits only its exact tools/list request"
+                )
+        elif url not in self.seiche_get_urls or method != "GET":
+            raise Error("frontend runtime receipt URL or method is not registered")
         request = urllib.request.Request(
             url,
             data=None if payload is None else gate._json_identity(payload),
@@ -450,9 +495,40 @@ class RuntimeReceipts:
             },
         )
         body, headers = self.request(request)
-        self.subject = verify_runtime_subject(
-            self.backend_sha, headers, previous=self.subject
-        )
+        if corpus_route:
+            values = [
+                value
+                for key, value in headers.items()
+                if key.lower() == "x-corpus-release"
+            ]
+            if len(values) != 1 or values[0] != self.corpus_release_id:
+                raise Error(
+                    "frontend corpus subject has missing, duplicate or conflicting native release headers"
+                )
+            if any(
+                key.lower()
+                in {
+                    "x-seiche-release-sha",
+                    "x-seiche-railway-authority",
+                    "x-seiche-railway-deployment",
+                }
+                for key, _ in headers.items()
+            ):
+                raise Error(
+                    "frontend corpus response contains conflicting runtime-owner headers"
+                )
+            self.corpus_subject = {
+                "releaseId": values[0],
+                "identityHeader": "X-Corpus-Release",
+            }
+        else:
+            if any(key.lower() == "x-corpus-release" for key, _ in headers.items()):
+                raise Error(
+                    "frontend Seiche response contains a conflicting corpus-owner header"
+                )
+            self.subject = verify_runtime_subject(
+                self.backend_sha, headers, previous=self.subject
+            )
         self.endpoints.append(url)
         return gate._load_json_bytes(body, label="frontend runtime receipt")
 
@@ -464,6 +540,8 @@ class RuntimeReceipts:
     def post_json(self, url: str, payload, *, expected_host: str):
         if expected_host != "api.seiche.info":
             raise Error("frontend runtime POST is not on the canonical host")
+        if payload is None:
+            raise Error("frontend runtime POST payload is missing")
         return self._json(url, payload=payload)
 
 
@@ -516,14 +594,20 @@ def main() -> int:
             # These are the unchanged package/runtime/corpus receipt gates. The
             # publication source is explicitly separate from the backend subject.
             version, _ = gate.verify_local_identity(args.root)
-            observed = RuntimeReceipts(payload["backendReleaseSha"])
+            corpus_entry = gate._market_corpus_catalog_entry(
+                gate._read_json(args.root / gate.AI_CATALOG_PATH)
+            )
+            signed_corpus = gate._market_corpus_publication_receipt(corpus_entry)
+            observed = RuntimeReceipts(
+                payload["backendReleaseSha"],
+                version=version,
+                corpus_release_id=signed_corpus["releaseId"],
+            )
             runtime = gate.verify_public_receipts(
                 version, fetch_json=observed.fetch_json
             )
             corpus = gate.verify_market_corpus_receipts(
-                gate._market_corpus_catalog_entry(
-                    gate._read_json(args.root / gate.AI_CATALOG_PATH)
-                ),
+                corpus_entry,
                 fetch_json=observed.fetch_json,
                 post_json=observed.post_json,
             )
@@ -533,6 +617,7 @@ def main() -> int:
                         "frontendPublication": payload,
                         "backendPublicReceipts": runtime,
                         "backendRuntimeSubject": observed.subject,
+                        "corpusRuntimeSubject": observed.corpus_subject,
                         "runtimeEndpoints": observed.endpoints,
                         "corpusPublicReceipts": corpus,
                     },
