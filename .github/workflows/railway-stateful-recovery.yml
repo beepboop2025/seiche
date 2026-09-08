@@ -2964,13 +2964,12 @@ jobs:
         env:
           MONITOR_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           MONITOR_RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
-          MONITOR_RAILWAY_RECOVERY_PROBE_SSH_KEY: ${{ secrets.RAILWAY_RECOVERY_PROBE_SSH_KEY }}
           RECOVERY_CONTROL_SIGNING_KEY_PEM: ${{ secrets.SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM }}
         run: |
           python3 - <<'PYENCRYPT'
           import base64, hashlib, json, os, subprocess
           from pathlib import Path
-          names = ['MONITOR_RAILWAY_TOKEN', 'MONITOR_RAILWAY_EDGE_TOKEN', 'MONITOR_RAILWAY_RECOVERY_PROBE_SSH_KEY', 'RECOVERY_CONTROL_SIGNING_KEY_PEM']
+          names = ['MONITOR_RAILWAY_TOKEN', 'MONITOR_RAILWAY_EDGE_TOKEN', 'RECOVERY_CONTROL_SIGNING_KEY_PEM']
           values = {name: os.environ.pop(name) for name in names}
           if any(not value for value in values.values()):
               raise SystemExit("Required protected native recovery migration input is absent")
