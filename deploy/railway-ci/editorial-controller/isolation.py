@@ -11,6 +11,7 @@ import time
 
 WRITER_UID = 65532
 MAX_FILE_BYTES = 32 * 1024 * 1024
+MAX_RUNTIME_FILE_BYTES = 512 * 1024 * 1024
 
 def read_regular(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -58,7 +59,9 @@ def drop_privileges():
     if libc.prctl(38, 1, 0, 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "PR_SET_NO_NEW_PRIVS")
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_FILE_BYTES, MAX_FILE_BYTES))
+    # SQLite's internal WAL/cache can exceed one publishable output's bound.
+    # Sealed outputs still pass the separate MAX_FILE_BYTES read limit.
+    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_RUNTIME_FILE_BYTES, MAX_RUNTIME_FILE_BYTES))
     os.setgroups([])
     os.setgid(WRITER_UID)
     os.setuid(WRITER_UID)
@@ -76,5 +79,4 @@ def stop_collectors():
             return
         time.sleep(0.25)
     raise RuntimeError("collector processes did not quiesce")
-
 

@@ -193,6 +193,9 @@ def run_stage(work, args, scratch, runtime, *, writer=None, deadline=2400):
             process.wait()
             raise RuntimeError("editorial stage exceeded its deadline") from None
         if code:
+            sizes = {path.name: path.lstat().st_size for path in list(runtime.iterdir())[:100]
+                     if path.is_file() and not path.is_symlink()}
+            event("editorial_stage_failed", command=args[0], exit_code=code, runtime_file_bytes=sizes)
             raise RuntimeError("editorial stage failed: " + args[0])
     finally:
         stop_collectors()

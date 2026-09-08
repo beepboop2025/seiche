@@ -85,6 +85,27 @@ class PolicyTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0, "native root/UID boundary requires Linux container")
 class NativeTests(unittest.TestCase):
+    def test_runtime_cache_can_exceed_sealed_output_limit(self):
+        with tempfile.TemporaryDirectory() as name:
+            runtime = Path(name)
+            os.chown(runtime, 65532, 65532)
+            script = """import pathlib,sqlite3,sys
+p=pathlib.Path(sys.argv[1])/'cache.sqlite'
+with sqlite3.connect(p) as c:
+ c.execute('PRAGMA journal_mode=WAL')
+ c.execute('CREATE TABLE blobs(body BLOB)')
+ c.execute('INSERT INTO blobs VALUES (zeroblob(34603008))')
+ c.commit()
+ assert c.execute('SELECT length(body) FROM blobs').fetchone()[0]==34603008
+ c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+"""
+            result = subprocess.run([sys.executable, "-c", script, name],
+                                    preexec_fn=drop_privileges, env=editorial.clean_env(runtime),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with self.assertRaisesRegex(ValueError, "oversized output"):
+                read_regular(runtime / "cache.sqlite")
+
     def test_candidate_cannot_read_parent_key_environment_or_fd_or_modify_code(self):
         with tempfile.TemporaryDirectory() as private, tempfile.TemporaryDirectory() as public:
             root, visible = Path(private), Path(public)
