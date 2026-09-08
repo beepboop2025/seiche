@@ -88,6 +88,7 @@ def run(args, cwd, env, unprivileged=False, capture=False):
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        process.wait(timeout=5)
         if unprivileged:
             quiesce_builder()
 
@@ -106,7 +107,20 @@ def current_main():
     return sha
 
 
-def copy_public_tree(source, target):
+def assert_plain_path(path, trusted_root):
+    """Inspect each directory without following builder-controlled symlinks."""
+    path, trusted_root = Path(path), Path(trusted_root)
+    relative = path.relative_to(trusted_root)
+    current = trusted_root
+    for part in (None, *relative.parts):
+        if part is not None:
+            current = current / part
+        if not stat.S_ISDIR(current.lstat().st_mode):
+            raise RuntimeError("Publication directory is not a plain directory")
+
+
+def copy_public_tree(source, target, trusted_root=None):
+    assert_plain_path(source, trusted_root or Path(source.anchor))
     total = count = 0
     for path in source.rglob("*"):
         relative = path.relative_to(source)
@@ -322,7 +336,7 @@ def main():
         quiesce_builder()
         candidate = root / "candidate"
         candidate.mkdir()
-        copy_public_tree(prepared, candidate)
+        copy_public_tree(prepared, candidate, root)
         if receipt:
             proof = run(
                 [
@@ -343,9 +357,9 @@ def main():
                 capture=True,
             )
             # Use the independent privileged seal for public proof, never the builder's claim.
-            (build_temp / "frontend-publication-proof/prepared-site.json").write_text(
-                proof
-            )
+            proof_directory = temp / "frontend-publication-proof"
+            assert_plain_path(proof_directory, root)
+            (proof_directory / "prepared-site.json").write_text(proof)
         if current_main() != source_sha:
             raise RuntimeError("Source main advanced during preparation")
         print(
@@ -367,9 +381,12 @@ def main():
             for path in mirror.iterdir():
                 if path.name != ".git":
                     archive.add(path, arcname=path.name)
-        if (build_temp / "frontend-publication-proof").exists():
+        if receipt:
+            # Retain only the signed gate's controller-owned proof and independent seal.
+            # Builder cache paths are never traversed or read with publishing privileges.
+            assert_plain_path(temp / "frontend-publication-proof", root)
             shutil.copytree(
-                build_temp / "frontend-publication-proof",
+                temp / "frontend-publication-proof",
                 recovery / "frontend-publication-proof",
             )
         (recovery / "identity.json").write_text(
@@ -450,7 +467,7 @@ def main():
             steps,
             trusted,
             candidate,
-            clean_env({**env, "RUNNER_TEMP": str(build_temp)}),
+            clean_env({**env, "RUNNER_TEMP": str(temp)}),
             receipt,
         )
         state = evidence / "current.json.tmp"

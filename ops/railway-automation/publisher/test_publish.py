@@ -36,7 +36,7 @@ class PublisherBoundaryTests(unittest.TestCase):
 
     def test_symlink_cannot_enter_publication_tree(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             source, destination = root / "source", root / "destination"
             source.mkdir()
             destination.mkdir()
@@ -45,9 +45,26 @@ class PublisherBoundaryTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 publisher.copy_public_tree(source, destination)
 
+    def test_publication_root_and_parent_symlinks_cannot_disclose_private_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            private = root / "private"
+            private.mkdir()
+            (private / "index.html").write_text("private-controller-data")
+            link = root / "link"
+            link.symlink_to(private, target_is_directory=True)
+            destination = root / "destination"
+            destination.mkdir()
+            for source in (link, link / "nested"):
+                if source != link:
+                    (private / "nested").mkdir()
+                with self.assertRaises(RuntimeError):
+                    publisher.copy_public_tree(source, destination, root)
+            self.assertEqual(list(destination.iterdir()), [])
+
     def test_hardlink_cannot_enter_publication_tree(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             source, destination = root / "source", root / "destination"
             source.mkdir()
             destination.mkdir()
@@ -62,7 +79,7 @@ class PublisherBoundaryTests(unittest.TestCase):
     )
     def test_detached_builder_cannot_mutate_candidate_after_quiescence(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             root.chmod(0o777)
             ready, late = root / "ready", root / "late"
             code = (
@@ -108,7 +125,7 @@ class PublisherBoundaryTests(unittest.TestCase):
 
     def test_git_metadata_never_enters_static_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             source, destination = root / "source", root / "destination"
             source.mkdir()
             destination.mkdir()
