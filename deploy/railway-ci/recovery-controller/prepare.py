@@ -38,6 +38,16 @@ NATIVE_NAMES = {
 }
 
 
+def private_download_transport(body):
+    """GitHub mask commands do not redact native logs; keep bearer bytes private."""
+    mask = 'echo "::add-mask::$download_bearer"'
+    header = '--header "Authorization: Bearer $download_bearer"'
+    if body.count(mask) != 1 or body.count(header) != 1:
+        raise ValueError("original recovery bearer transport changed")
+    body = body.replace(mask, "printf 'Authorization: Bearer %s\\n' \"$download_bearer\" >\"$PRIVATE_TEMP/download-header\"\nunset download_bearer")
+    return body.replace(header, '--header "@$PRIVATE_TEMP/download-header"')
+
+
 def recurring_scripts(document):
     """Only transport names and private curl-header files differ from original scripts."""
     steps = {step["name"]: step["run"] for step in document["jobs"]["export-recovery"]["steps"] if "run" in step}
@@ -51,6 +61,8 @@ def recurring_scripts(document):
             if header not in body:
                 raise ValueError("original native edge-header transport changed")
             body = body.replace(header, '--header "@$PRIVATE_TEMP/edge-header"')
+        if filename == "export-native.sh":
+            body = private_download_transport(body)
         if "GITHUB_" in body or "${{" in body:
             raise ValueError("unmapped GitHub execution input in the native recovery body")
         result[filename] = body

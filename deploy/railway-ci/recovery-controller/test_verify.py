@@ -206,6 +206,32 @@ assert 'NoNewPrivs:\\t1' in Path('/proc/self/status').read_text()
 
 
 class NativeOrchestrationTests(unittest.TestCase):
+    def test_native_download_bearer_is_absent_from_logs_and_child_arguments(self):
+        from prepare import private_download_transport
+        fixture = '''set -eu
+umask 0077
+download_bearer=$(cat "$PRIVATE_TEMP/bearer")
+echo "::add-mask::$download_bearer"
+curl --header "Authorization: Bearer $download_bearer" https://fixture.invalid
+'''
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            secret = "ephemeral-download-fixture-never-a-credential"
+            (root / "bearer").write_text(secret)
+            provider = root / "curl"
+            provider.write_text("#!" + sys.executable + "\nimport sys,os,json\nfrom pathlib import Path\n"
+                                "root=Path(os.environ['PRIVATE_TEMP'])\n"
+                                "(root/'arguments.json').write_text(json.dumps(sys.argv[1:]))\n"
+                                "assert sys.argv[1:3] == ['--header', '@'+str(root/'download-header')]\n"
+                                "assert (root/'download-header').read_text() == 'Authorization: Bearer '+(root/'bearer').read_text()+'\\n'\n")
+            provider.chmod(0o700)
+            result = subprocess.run(["bash", "-c", private_download_transport(fixture)],
+                                    env={"PATH": name + ":/usr/bin:/bin", "PRIVATE_TEMP": name},
+                                    capture_output=True, timeout=30, check=True)
+            self.assertNotIn(secret.encode(), result.stdout + result.stderr)
+            self.assertNotIn(secret, (root / "arguments.json").read_text())
+            self.assertEqual((root / "download-header").stat().st_mode & 0o777, 0o600)
+
     def test_sealed_restore_rejects_links_and_unexpected_output(self):
         import recurring
         with tempfile.TemporaryDirectory() as name:

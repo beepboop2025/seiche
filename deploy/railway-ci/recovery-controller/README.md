@@ -47,7 +47,9 @@ production recovery policy, objects, keys and original workflow remain available
 `prepare.py --recurring-source <full SHA> --production-target <private JSON>
 --execution-public-key <public hex file>` adds the original governed export,
 restore, and Object Lock scripts from `fff0eabb26088292451edaef10bdd203c074a992`.
-Only execution-variable names and private edge-header transport differ. Current
+Only execution-variable names and private authentication-header transport differ.
+GitHub's mask directive is replaced by a private bearer header file, so native
+logs and child arguments never carry the download bearer. Current
 main is read as data: the complete executable backend/helper input set and all
 pinned bytes must match; backend tests and the existing dispatch content directory
 are excluded from runtime admission. The original strict 26-hour monitor still
