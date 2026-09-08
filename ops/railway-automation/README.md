@@ -42,3 +42,8 @@ the recorded build source and emits deployment-bound proof; it does not repeat
 the full suite. Native Railway PR environments run these jobs for the owner;
 non-owner PRs retain their GitHub fallback. The hardened Docker contract job
 continues independently until its permanent native executor is proven.
+
+Native CI fetches current main and requires it to be an ancestor of the tested
+head. A stale pull request fails admission and must merge/rebase current main
+before another run. The build logs record both exact head and base revisions;
+the native status always describes the tested head itself.

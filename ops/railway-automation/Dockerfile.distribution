@@ -22,7 +22,10 @@ RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     && git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*" \
     && git fetch origin "$RAILWAY_GIT_COMMIT_SHA" \
     && git reset --mixed FETCH_HEAD \
-    && git diff --exit-code HEAD
+    && git diff --exit-code HEAD \
+    && git merge-base --is-ancestor refs/remotes/origin/main HEAD \
+    && printf 'RAILWAY_CI_SOURCE_ADMITTED head=%s base=%s\n' \
+         "$RAILWAY_GIT_COMMIT_SHA" "$(git rev-parse refs/remotes/origin/main)"
 # A failed portable check must fail Railway's native PR deployment status.
 RUN timeout --signal=TERM --kill-after=30 3600 /opt/controller/bin/python \
       ops/railway-automation/distribution.py > /ci-proof.log 2>&1 \
