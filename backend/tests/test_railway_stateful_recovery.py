@@ -1027,11 +1027,11 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "postgres pitr enable" in text
     assert "postgres pitr schedule set --daily --weekly --monthly" in text
     assert "postgres pitr backup lock" in text
-    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 3
+    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 4
     assert text.count('seiche-s3-object-lock.sh" put-verify') == 4
     assert (
         text.count("d2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c")
-        == 3
+        == 4
     )
     assert "DownloadedSHA256" in text
     assert "--content-md5" in object_lock_client
@@ -1054,7 +1054,7 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert text.count("--shadow shadow-receipt.json") == 3
     assert "candidate-receipt.json shadow-receipt.json" in text
     assert "seiche.railway-offsite-preflight-receipt.v1" in text
-    assert text.count("actions/attest-build-provenance@") == 5
+    assert text.count("actions/attest-build-provenance@") == 7
     assert (
         "postgres:18.6-bookworm@sha256:"
         "1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af"
@@ -1473,7 +1473,9 @@ def test_reverse_restore_heredoc_executes_cleanup_and_passes_password_by_env(
     ],
 )
 def test_offsite_retention_heredoc_preserves_earliest_instant_in_canonical_utc(
-    tmp_path: Path, dates: list[str], expected: str | None,
+    tmp_path: Path,
+    dates: list[str],
+    expected: str | None,
 ) -> None:
     workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     marker = "retain_until=$(python -I -S - <<'PY'\n"
@@ -1483,7 +1485,9 @@ def test_offsite_retention_heredoc_preserves_earliest_instant_in_canonical_utc(
     heads = tmp_path / "proof" / "offsite-heads"
     heads.mkdir(parents=True)
     for index, value in enumerate(dates):
-        (heads / f"{index}.json").write_text(json.dumps({"ObjectLockRetainUntilDate": value}))
+        (heads / f"{index}.json").write_text(
+            json.dumps({"ObjectLockRetainUntilDate": value})
+        )
     result = subprocess.run(
         [sys.executable, "-I", "-S", "-"],
         cwd=tmp_path,
@@ -1520,8 +1524,8 @@ def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> N
     )
     assert workflow.count("environment: railway-stateful-recovery-admin") == 1
     assert workflow.count("environment: railway-stateful-recovery-monitor") == 1
-    # Temporary main-only encrypted native-input handoff; restore to three after proof.
-    assert workflow.count("environment: railway-stateful-recovery-export") == 4
+    # Temporary encrypted handoff and manual native attestation proof; both retire after proof.
+    assert workflow.count("environment: railway-stateful-recovery-export") == 5
 
 
 def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path):
@@ -1561,3 +1565,44 @@ def test_online_copy_cannot_hold_the_export_open_indefinitely(tmp_path: Path):
         with sqlite3.connect(tmp_path / "copy.sqlite") as snapshot:
             with pytest.raises(recovery.RecoveryContractError, match="fifteen minutes"):
                 recovery._copy_sqlite_online(live, snapshot, clock=lambda: next(ticks))
+
+
+def test_manual_native_attestation_proof_cannot_start_a_production_export() -> None:
+    workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    job = workflow.split("  attest-native-recovery:\n", 1)[1].split(
+        "  configure-native-backups:\n", 1
+    )[0]
+    for required in (
+        "github.repository == 'beepboop2025/seiche'",
+        "github.ref == 'refs/heads/main'",
+        "github.event_name == 'workflow_dispatch'",
+        "inputs.operation == 'attest-native-recovery'",
+        "inputs.confirmation == 'ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY'",
+        "environment: railway-stateful-recovery-export",
+        "NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}",
+        "secrets.RECOVERY_NATIVE_ATTEST_POLICY_ZLIB_BASE64",
+        "vars.RECOVERY_NATIVE_ATTEST_POLICY_SHA256",
+    ):
+        assert required in job
+    for forbidden in (
+        "github.event_name == 'schedule'",
+        "needs:",
+        "SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM",
+        "RECOVERY_CONTROL_SIGNING_KEY_PEM",
+        "RAILWAY_RECOVERY_PROBE_SSH_KEY",
+        "export-native.sh",
+        "prepare_unsigned_command",
+        "control.RECOVERY_EXPORT_OPERATION",
+    ):
+        assert forbidden not in job
+    assert job.index("Require the protected manual proof switch") < job.index(
+        "Check out the independently reviewed tail"
+    )
+    assert (
+        job.count(
+            "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
+        )
+        == 2
+    )
+    assert "native-attestation-subjects/recovery-receipt.json" in job
+    assert "native-attestation-subjects/offsite-receipt.json" in job
