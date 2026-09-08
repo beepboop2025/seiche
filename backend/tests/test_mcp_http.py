@@ -173,7 +173,7 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
     assert server["url"] == "https://api.seiche.info/mcp"
     assert server["authentication"] == {
         "type": "none",
-        "scope": "twelve anonymous public evidence tools",
+        "scope": "thirteen anonymous public evidence tools",
     }
     assert "tools" not in server
     corpus = document["servers"][1]
@@ -254,7 +254,7 @@ def test_public_api_discovery_is_curated(client):
     assert r.status_code == 200
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "latest_article"
-    assert payload["mcp"]["authentication"] == "none for the twelve public tools"
+    assert payload["mcp"]["authentication"] == "none for the thirteen public tools"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
     assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"

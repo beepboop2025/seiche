@@ -477,7 +477,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "url": "https://api.seiche.info/mcp",
                 "authentication": {
                     "type": "none",
-                    "scope": "twelve anonymous public evidence tools",
+                    "scope": "thirteen anonymous public evidence tools",
                 },
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
@@ -1132,7 +1132,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the twelve public tools",
+            "authentication": "none for the thirteen public tools",
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),

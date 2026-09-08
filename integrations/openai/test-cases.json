@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "plugin": "Seiche",
   "mcp_url": "https://api.seiche.info/mcp",
-  "surface": "anonymous_public_twelve_tools",
+  "surface": "anonymous_public_thirteen_tools",
   "test_cases": [
     {
       "id": "positive-current-funding-and-freshness",
@@ -162,6 +162,21 @@
         "Does not claim causation",
         "Does not state a 100% probability",
         "Preserves the scenario-only and non-composite boundaries"
+      ]
+    },
+    {
+      "id": "positive-connected-research-provenance",
+      "kind": "positive",
+      "prompt": "Connect Palimpsest sources about China with current Seiche funding context and show the next LiquiLens and Undertow research routes.",
+      "expected_tool_calls": [
+        "research_network(topic=china,offset=0,limit=12)"
+      ],
+      "expected_behavior": "Keep catalog metadata separate from observations. Preserve source rights, missingness, freshness and pagination. Treat sibling routes as context, not corroboration or financial authority.",
+      "pass_criteria": [
+        "Reports upstream catalog availability and original source links",
+        "Includes the Seiche funding-context freshness state",
+        "Preserves gated or unknown rights and paginates without claiming omitted entries are absent",
+        "Never infers access to restricted records or trading authority"
       ]
     }
   ]

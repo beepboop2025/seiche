@@ -46,7 +46,7 @@ dataset_info:
 > assigned. Public listing status is receipt-tracked in Seiche's
 > [distribution ledger](https://github.com/beepboop2025/seiche/blob/v0.12.5/distribution/submissions.csv).**
 
-These metadata links target Seiche `0.12.4`; verify publication status from the
+These metadata links target Seiche `0.12.5`; verify publication status from the
 linked distribution ledger. The audited source revision, two CSV hashes and
 11,163 observations are unchanged; the dataset retains version `0.1.0-draft`.
 

@@ -231,7 +231,7 @@ class PublicCatalogContracts(unittest.TestCase):
         )
         self.assertEqual(
             graph[canonical]["dcat:landingPage"]["@id"],
-            f"{REPOSITORY}/tree/v0.12.4/distribution/datasets",
+            f"{REPOSITORY}/tree/v0.12.5/distribution/datasets",
         )
 
         self.assertEqual(

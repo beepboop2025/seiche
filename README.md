@@ -70,7 +70,7 @@ cutoffs, vintage selection, rights filters and per-market fault reporting.
 Verify deployment and package availability from the release receipts and
 linked registries.
 
-Twelve evidence tools remain anonymous and free. Five compute-heavy tools are
+Thirteen evidence tools remain anonymous and free. Five compute-heavy tools are
 account-gated; client and catalog copy must preserve that boundary. See the
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.

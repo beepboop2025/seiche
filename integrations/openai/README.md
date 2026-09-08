@@ -10,11 +10,11 @@ Seiche's universal production endpoint is:
 https://api.seiche.info/mcp
 ```
 
-An anonymous scan sees twelve read-only public tools: `latest_article`,
+An anonymous scan sees thirteen read-only public tools: `latest_article`,
 `funding_stress_now`, `trade_safety_risk_context`, `historical_analogs`,
 `proof_backtest`, `data_health`, `crypto_stress_record`,
 `institutional_flows`, `oil_funding_context`, `fx_materials_passage`,
-`money_market_context`, and `world_markets_context`. The endpoint requires no
+`money_market_context`, `world_markets_context`, and `research_network`. The endpoint requires no
 account or API key for that surface and permits 200 tool calls per IP per UTC
 day. Five analysis tools and five private Agent Room preview tools remain
 bearer-token gated and are not part of the anonymous plugin draft.
@@ -27,7 +27,7 @@ bearer-token gated and are not part of the anonymous plugin draft.
 - accurate read-only, idempotent, non-destructive, closed-world annotations;
 - text `content` alongside structured data for compatibility;
 - privacy-safe typed failure envelopes covered by the same output contracts;
-- seven positive and four negative review cases in
+- eight positive and four negative review cases in
   `test-cases.json`.
 
 `desk_brief` intentionally has no output schema because its successful payload
