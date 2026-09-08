@@ -1558,6 +1558,123 @@ def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
     )
 
 
+def _frontend_merge_daily(root, *, mutation=None):
+    initial = _content_commit(
+        root,
+        {
+            "frontend/public/articles/daily.md": "previous desk",
+            "frontend/public/articles/index.json": '["previous"]',
+        },
+    )
+    _content_git(root, "checkout", "-q", "-b", "reviewed-ui")
+    _frontend_change(root)
+    _content_git(root, "checkout", "-q", "-b", "daily-update", initial)
+    daily = _content_commit(
+        root,
+        {
+            "frontend/public/articles/daily.md": "current lawful desk",
+            "frontend/public/articles/index.json": '["current"]',
+        },
+    )
+    _content_git(root, "checkout", "-q", "reviewed-ui")
+    _content_git(root, "merge", "--no-ff", "--no-commit", daily)
+    if mutation:
+        mutation(root, initial)
+    _content_git(root, "add", "-A")
+    _content_git(
+        root,
+        "commit",
+        "-q",
+        "--author",
+        "reviewer <reviewer@example.invalid>",
+        "-m",
+        "reviewed UI merge of lawful daily desk",
+    )
+    return _content_git(root, "rev-parse", "HEAD"), daily
+
+
+def test_frontend_receipt_accepts_complete_inherited_daily_snapshot(frontend_repo):
+    root, release, fingerprint = frontend_repo
+    source, daily = _frontend_merge_daily(root)
+    assert front._desk_tree(root, source) == front._desk_tree(root, daily)
+    changes = front.compatibility_changes(root, release, source)
+    assert any(
+        change["commit"] == source and change["kind"] == "excluded_desk_content"
+        for change in changes
+    )
+    proof = front.verify_frontend_receipt(
+        root,
+        expected_sha=source,
+        signer_fingerprint=fingerprint,
+        receipt_tag=_frontend_tag(root, fingerprint),
+    )
+    assert proof["sourceSha"] == source
+    assert proof["backendReleaseSha"] == release
+
+
+@pytest.mark.parametrize("mutation", ["add", "modify", "delete", "rollback", "mix"])
+def test_frontend_merge_cannot_author_or_roll_back_generated_content(
+    frontend_repo,
+    mutation,
+):
+    root, release, _ = frontend_repo
+
+    def mutate(root, initial):
+        directory = root / "frontend/public/articles"
+        if mutation == "add":
+            (directory / "forged.md").write_text("merge-authored evidence")
+        elif mutation == "modify":
+            (directory / "daily.md").write_text("merge-modified evidence")
+        elif mutation == "delete":
+            (directory / "daily.md").unlink()
+        elif mutation == "rollback":
+            _content_git(root, "checkout", initial, "--", "frontend/public/articles")
+        else:
+            _content_git(
+                root, "checkout", initial, "--", "frontend/public/articles/index.json"
+            )
+
+    source, _ = _frontend_merge_daily(root, mutation=mutate)
+    with pytest.raises(front.Error, match="unauthorized generated"):
+        front.compatibility_changes(root, release, source)
+
+
+def test_frontend_merge_cannot_discard_a_divergent_valid_desk_history(frontend_repo):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    base = _content_git(root, "rev-parse", "HEAD")
+    _content_git(root, "checkout", "-q", "-b", "left-desk")
+    left = _content_commit(root, {"frontend/public/articles/left.md": "left"})
+    _content_git(root, "checkout", "-q", "-b", "right-desk", base)
+    right = _content_commit(root, {"frontend/public/articles/right.md": "right"})
+    _content_git(root, "merge", "--no-ff", "--no-commit", left)
+    (root / "frontend/public/articles/left.md").unlink()
+    _content_git(root, "add", "-A")
+    _content_git(root, "commit", "-q", "-m", "reviewed merge discarding left desk")
+    source = _content_git(root, "rev-parse", "HEAD")
+    # Matching one parent's bytes alone must not authorize losing the other lane.
+    assert front._desk_tree(root, source) == front._desk_tree(root, right)
+    with pytest.raises(front.Error, match="unauthorized generated"):
+        front.compatibility_changes(root, release, source)
+
+
+def test_frontend_merge_still_rejects_reverted_unauthorized_desk_history(frontend_repo):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    base = _content_git(root, "rev-parse", "HEAD")
+    _content_git(root, "checkout", "-q", "-b", "forged-desk")
+    forged = _frontend_change(root, {"frontend/public/articles/forged.md": "forged"})
+    _content_git(root, "revert", "--no-edit", forged)
+    _content_git(root, "checkout", "-q", "-b", "reviewed-ui", base)
+    _content_git(root, "merge", "--no-ff", "--no-commit", "forged-desk")
+    _content_git(
+        root, "commit", "-q", "-m", "reviewed merge with reverted desk forgery"
+    )
+    source = _content_git(root, "rev-parse", "HEAD")
+    with pytest.raises(front.Error, match="unauthorized generated"):
+        front.compatibility_changes(root, release, source)
+
+
 @pytest.mark.parametrize(
     "relative",
     [
@@ -1571,8 +1688,14 @@ def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
         ".github/workflows/recovery-monitor-handoff-extra.yml",
         "ops/railway/fetch_recovery_logs_extra.py",
         "deploy/railway-ci/recovery-monitor/unreviewed.py",
+        "deploy/railway-ci/editorial-controller/unreviewed.py",
+        "deploy/railway-ci/editorial-controller/requirements-extra.lock",
+        ".github/workflows/market-platform-ci-extra.yml",
         "deploy/railway-ci/recovery-monitor/requirements-extra.lock",
         "ops/railway/test_fetch_recovery_logs_extra.py",
+        "backend/tests/test_railway_stateful_recovery_extra.py",
+        "backend/tests/test_tide_session_alignment_extra.py",
+        "backend/seiche/railway_stateful_recovery.py",
         ".github/workflows/railway-stateful-recovery-extra.yml",
         "frontend/package.json",
         "frontend/package-lock.json",
@@ -1609,6 +1732,8 @@ def test_frontend_contract_rejects_runtime_build_catalog_data_and_unlisted_opera
         "ops/railway-automation/full-publisher/README.md",
         "ops/railway/fetch_recovery_logs.py",
         "ops/railway/test_fetch_recovery_logs.py",
+        "backend/tests/test_railway_stateful_recovery.py",
+        "backend/tests/test_tide_session_alignment.py",
         "deploy/railway-ci/recovery-monitor/Dockerfile",
         "deploy/railway-ci/recovery-monitor/README.md",
         "deploy/railway-ci/recovery-monitor/monitor.py",
@@ -1630,6 +1755,138 @@ def test_frontend_receipt_accepts_only_reviewed_native_controller_paths(
         change["path"] == relative and change["kind"] == "excluded_monitor"
         for change in changes
     )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".github/workflows/market-platform-ci.yml",
+        "deploy/railway-ci/editorial-controller/Dockerfile",
+        "deploy/railway-ci/editorial-controller/README.md",
+        "deploy/railway-ci/editorial-controller/editorial.py",
+        "deploy/railway-ci/editorial-controller/isolation.py",
+        "deploy/railway-ci/editorial-controller/prepare.py",
+        "deploy/railway-ci/editorial-controller/requirements.lock",
+        "deploy/railway-ci/editorial-controller/test_editorial.py",
+    ],
+)
+def test_frontend_receipt_accepts_reviewed_editorial_and_market_ci_paths(
+    frontend_repo, relative
+):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    source = _frontend_change(
+        root, {relative: "# isolated controller; no frontend execution\n"}
+    )
+    changes = front.compatibility_changes(root, release, source)
+    assert any(
+        change["path"] == relative and change["kind"] == "excluded_monitor"
+        for change in changes
+    )
+
+
+def test_frontend_desk_descendant_keeps_receipt_subject_separate(frontend_repo):
+    root, _, fingerprint = frontend_repo
+    ancestor = _frontend_change(root)
+    tag = _frontend_tag(root, fingerprint)
+    _content_commit(root, {"frontend/public/articles/daily.md": "lawful daily"})
+    current = _content_commit(
+        root,
+        {"frontend/public/articles/weekly.md": "lawful weekly"},
+        subject="week ahead: lawful",
+    )
+    proof = front.verify_desk_only_descendant(
+        root,
+        receipt_source_sha=ancestor,
+        current_source_sha=current,
+    )
+    assert proof == {
+        "schema": "seiche.frontend-desk-descendant.v1",
+        "receiptSourceSha": ancestor,
+        "currentSourceSha": current,
+        "purpose": "unchanged_frontend_only_no_desk_publication",
+    }
+    # The receipt is never reinterpreted as signing the newer desk source.
+    with pytest.raises(front.Error, match="exact source SHA"):
+        front.verify_frontend_receipt(
+            root,
+            expected_sha=current,
+            signer_fingerprint=fingerprint,
+            receipt_tag=tag,
+        )
+    _content_git(root, "checkout", "-q", "--detach", ancestor)
+    assert (
+        front.verify_frontend_receipt(
+            root,
+            expected_sha=ancestor,
+            signer_fingerprint=fingerprint,
+            receipt_tag=tag,
+        )["sourceSha"]
+        == ancestor
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "author",
+        "subject",
+        "ui",
+        "runtime",
+        "controller",
+        "reverted",
+        "mode",
+        "merge",
+        "nonancestor",
+    ],
+)
+def test_frontend_desk_descendant_rejects_every_unreviewed_other_lane(
+    frontend_repo, failure
+):
+    root, _, _ = frontend_repo
+    ancestor = _frontend_change(root)
+    if failure in {"author", "subject"}:
+        _content_commit(
+            root,
+            {"frontend/public/articles/forged.md": "forged"},
+            author="intruder@example.invalid"
+            if failure == "author"
+            else "desk@seiche.info",
+            subject="fix: forged" if failure == "subject" else "dispatch: forged",
+        )
+    elif failure in {"ui", "runtime", "controller", "reverted"}:
+        path = {
+            "ui": "frontend/src/App.tsx",
+            "runtime": "backend/seiche/api.py",
+            "controller": "ops/railway-automation/publisher/publish.py",
+            "reverted": "frontend/src/App.tsx",
+        }[failure]
+        bad = _content_commit(root, {path: "forbidden change"})
+        if failure == "reverted":
+            _content_git(root, "revert", "--no-commit", bad)
+            _content_git(root, "commit", "-q", "-m", "dispatch: restore original")
+    elif failure == "mode":
+        path = root / "frontend/public/articles/unsafe.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("../../src/App.tsx")
+        _content_git(root, "add", "-A")
+        _content_git(root, "commit", "-q", "-m", "dispatch: symlink")
+    elif failure == "merge":
+        _content_git(root, "checkout", "-q", "-b", "left")
+        left = _content_commit(root, {"frontend/public/articles/left.md": "left"})
+        _content_git(root, "checkout", "-q", "-b", "right", ancestor)
+        _content_commit(root, {"frontend/public/articles/right.md": "right"})
+        _content_git(root, "merge", "--no-ff", "-q", "-m", "dispatch: merge", left)
+    else:
+        _content_git(root, "checkout", "-q", "-b", "other", ancestor + "^")
+        _content_commit(root, {"frontend/public/articles/other.md": "other"})
+    current = _content_git(root, "rev-parse", "HEAD")
+    with pytest.raises(front.Error, match="generated-content"):
+        front.verify_desk_only_descendant(
+            root,
+            receipt_source_sha=ancestor,
+            current_source_sha=current,
+        )
 
 
 def test_frontend_receipt_requires_one_time_handoff_to_be_removed(frontend_repo):

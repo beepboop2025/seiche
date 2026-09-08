@@ -19,9 +19,16 @@ RUN curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     && tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy && rm /tmp/caddy.tar.gz
 COPY . /app
 WORKDIR /app
+ARG RAILWAY_GIT_COMMIT_SHA
+RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
+    && git init && git remote add origin https://github.com/beepboop2025/seiche.git \
+    && git fetch --no-tags origin "$RAILWAY_GIT_COMMIT_SHA" main \
+    && git reset --hard "$RAILWAY_GIT_COMMIT_SHA" && git clean -ffdx \
+    && git merge-base --is-ancestor refs/remotes/origin/main HEAD \
+    && printf 'RAILWAY_MARKET_SOURCE_ADMITTED source=%s base=%s\n' \
+       "$RAILWAY_GIT_COMMIT_SHA" "$(git rev-parse refs/remotes/origin/main)"
 RUN python -m pip install --no-cache-dir -e './backend[dev,collectors,postgres]' PyYAML==6.0.3 \
     && python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt
-ARG RAILWAY_GIT_COMMIT_SHA
 RUN /usr/bin/tini -s -- timeout --signal=TERM --kill-after=30 1500 bash ops/railway-automation/market-contracts/run.sh
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["python", "-c", "import os; print('RAILWAY_MARKET_CONTRACTS_PASS source='+os.environ.get('RAILWAY_GIT_COMMIT_SHA','unavailable')+' deployment='+os.environ.get('RAILWAY_DEPLOYMENT_ID','unavailable'),flush=True)"]

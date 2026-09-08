@@ -126,7 +126,10 @@ async def test_date_only_rows_share_one_business_date_across_market_timezones() 
 
     assert result.status is KernelStatus.READY
     assert result.value == 100.0
-    assert result.event_cutoff == "2026-04-15T00:00:00+00:00"
+    expected_cutoff = datetime.combine(
+        session_days[-1], datetime.min.time(), tzinfo=UTC
+    ).isoformat()
+    assert result.event_cutoff == expected_cutoff
 
 
 @pytest.mark.asyncio
