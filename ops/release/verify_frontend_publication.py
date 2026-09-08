@@ -51,6 +51,7 @@ EXCLUDED_MONITOR_PATHS = frozenset(
         "deploy/railway-ci/editorial-controller/requirements.lock",
         "deploy/railway-ci/editorial-controller/test_editorial.py",
         "backend/scripts/ard_coverage.py",
+        "ops/deploy/RAILWAY-STATEFUL-RECOVERY.md",
         ".github/workflows/distribution-contracts.yml",
         "ops/railway-automation/Dockerfile",
         "ops/railway-automation/Dockerfile.dockerignore",
