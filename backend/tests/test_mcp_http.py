@@ -549,6 +549,7 @@ def test_anonymous_sees_only_public_tools(client):
     r = client.post("/mcp", json=_rpc("tools/list"))
     names = {t["name"] for t in r.json()["result"]["tools"]}
     assert names == {
+        "research_network",
         "latest_article",
         "funding_stress_now",
         "trade_safety_risk_context",
@@ -578,7 +579,7 @@ def test_anonymous_tool_descriptors_are_openai_plugin_ready(client):
     tools = response.json()["result"]["tools"]
 
     assert response.status_code == 200
-    assert len(tools) == 12
+    assert len(tools) == 13
     for tool in tools:
         assert tool["outputSchema"]["type"] == "object"
         assert tool["annotations"] == {

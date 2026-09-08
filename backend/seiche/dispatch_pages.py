@@ -816,6 +816,7 @@ same product; the callable contract remains the MCP server above.
 - [Money-market research workflow]({SITE}/use-cases/money-market-research/): move from an exact benchmark through rights, native clocks and system cash before routing institution and exit questions
 - [Capital-market transmission workflow]({SITE}/use-cases/capital-market-transmission/): trace price, position, intermediary and funding links without treating co-movement as causality
 - [China economy evidence workflow]({SITE}/use-cases/china-economy-evidence/): use Palimpsest for revision-safe public observations and Seiche for structural macro identity, rights and transmission context
+- [Connected research desk]({SITE}/#RESEARCH): browse the complete Palimpsest source registry beside Seiche funding context, with explicit routes into LiquiLens, Undertow and NarcoScope; MCP `research_network`, REST `https://api.seiche.info/api/v2/research-network`
 - [Financial-evidence Agent Skill](https://github.com/beepboop2025/financial-evidence-skills/tree/main/financial-evidence): route research across Seiche, LiquiLens, Undertow and Palimpsest and fetch bounded no-auth JSON with explicit source errors
 - [World markets evidence atlas]({SITE}/markets/): money, forex and capital markets joined by one provenance, clock, rights and evidence-status contract
 - [Market Atlas]({SITE}/#corpus): canonical instruments and observations joined to the rights-aware Hetzner dataset and BIS corpus, with bounded record pagination and explicit clocks

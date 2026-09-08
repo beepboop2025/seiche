@@ -48,12 +48,13 @@ Works against any of the three Seiche MCP wirings: local stdio
 
 ## Anonymous tool contract
 
-The hosted endpoint exposes these twelve tools without a token. The list is
+The hosted endpoint exposes these thirteen tools without a token. The list is
 tested against the server registry so a runtime change cannot leave this kit
 silently teaching an obsolete surface.
 
 | Tool | Hermes uses it for |
 |---|---|
+| `research_network` | Palimpsest source discovery, Seiche funding context and explicit next steps across the product family |
 | `latest_article` | Exact published editorial, evidence clock, and publication receipt |
 | `funding_stress_now` | Current regime, composite, decomposition, and Tell |
 | `historical_analogs` | Nearest point-in-time precedents and novelty |
