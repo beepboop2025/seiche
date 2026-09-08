@@ -200,8 +200,8 @@ def index_signing_bytes(payload):
     return INDEX_DOMAIN + canonical(payload)
 
 
-def sign_execution_index(payload, pem, public_hex):
-    """This evidence key never signs production control commands or acknowledgments."""
+def evidence_signer(pem, public_hex):
+    """Validate the independent evidence key before any governed export begins."""
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     key = serialization.load_pem_private_key(pem.encode(), password=None)
@@ -213,6 +213,12 @@ def sign_execution_index(payload, pem, public_hex):
     # No production signer may be reused for this evidence-only purpose.
     if digest(public) in CONTROL_KEY_IDS:
         raise ValueError("production control key cannot sign native execution evidence")
+    return key, public
+
+
+def sign_execution_index(payload, pem, public_hex):
+    """This evidence key never signs production control commands or acknowledgments."""
+    key, public = evidence_signer(pem, public_hex)
     signature = key.sign(index_signing_bytes(payload))
     return {"payload": payload, "key_id": digest(public), "signature": base64.b64encode(signature).decode()}
 
@@ -336,6 +342,10 @@ def validate_index_receipts(payload, *, bodies, heads, recovery, policy, now):
 
 
 def main():
+    if os.environ.get("RECOVERY_OPERATION") == "export-recurring":
+        import recurring
+        recurring.main()
+        return
     if os.geteuid() != 0:
         raise RuntimeError("trusted storage controller must own its private credentials")
     if os.environ.get("RECOVERY_OPERATION", "verify-existing") != "verify-existing":

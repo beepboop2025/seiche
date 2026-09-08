@@ -18,11 +18,43 @@ FINGERPRINT = "SHA256:yhoa/PIDMM6M/ZennILp8jtRJy5pArncJRARbQssTMI"
 RECOVERY_HASH = "f10919a2dc77d6a73cff45ecfc00941a7aff529b115a9588474811e185d930a2"
 OFFSITE_HASH = "0c0093b0afcc5c8e7233fdbb6f8e916d3d4600160286e21bfacca1ac86bdda68"
 METADATA = ("activation-receipt.json", "candidate-receipt.json", "shadow-receipt.json", "request.json", "recovery-receipt.json", "offsite-receipt.json")
-FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md")
+FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md", "recurring.py", "attest.py", "test_attest.py", "test_recurring.py")
 
 
 def digest(body):
     return hashlib.sha256(body).hexdigest()
+
+
+RECURRING_STEPS = {
+    "export-native.sh": "Request and download an activation-bound portable export",
+    "restore-native.sh": "Perform an isolated filesystem and PostgreSQL reverse-restore proof",
+    "seal-native.sh": "Seal the portable export in external S3 Object Lock compliance mode",
+}
+NATIVE_NAMES = {
+    "GITHUB_WORKSPACE": "TRUSTED_SOURCE", "GITHUB_REPOSITORY": "GOVERNANCE_REPOSITORY",
+    "GITHUB_RUN_ID": "NATIVE_DEPLOYMENT_ID", "GITHUB_RUN_ATTEMPT": "NATIVE_REPLICA_ID",
+    "GITHUB_EVENT_NAME": "NATIVE_INVOCATION", "GITHUB_OUTPUT": "NATIVE_OUTPUT",
+    "GITHUB_STEP_SUMMARY": "NATIVE_SUMMARY", "RUNNER_TEMP": "PRIVATE_TEMP",
+}
+
+
+def recurring_scripts(document):
+    """Only transport names and private curl-header files differ from original scripts."""
+    steps = {step["name"]: step["run"] for step in document["jobs"]["export-recovery"]["steps"] if "run" in step}
+    result = {}
+    for filename, title in RECURRING_STEPS.items():
+        body = steps[title]
+        for old, new in NATIVE_NAMES.items():
+            body = body.replace(old, new)
+        header = '--header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN"'
+        if filename != "restore-native.sh":
+            if header not in body:
+                raise ValueError("original native edge-header transport changed")
+            body = body.replace(header, '--header "@$PRIVATE_TEMP/edge-header"')
+        if "GITHUB_" in body or "${{" in body:
+            raise ValueError("unmapped GitHub execution input in the native recovery body")
+        result[filename] = body
+    return result
 
 
 def prepare(repository, output, case, target, public_key):
@@ -84,9 +116,70 @@ def prepare(repository, output, case, target, public_key):
     print(json.dumps({"prepared": str(output), "controller_source": controller, "controller_digest": digest((output / "manifest.json").read_bytes()), "files": len(manifest)}))
 
 
+RECOVERY_HELPERS = ("ops/railway/resume_recovery.py", "ops/railway/retry_read.py", "ops/railway/fetch_recovery_logs.py",
+                    "ops/railway/wait_production_ready.py", "ops/deploy/seiche-s3-object-lock.sh")
+
+
+def admitted_source_paths(names):
+    return {name for name in names if name in RECOVERY_HELPERS or
+            (name.startswith("backend/") and not name.startswith("backend/tests/")
+             and not name.startswith("backend/seiche/dispatches/"))}
+
+
+def add_recurring_assembly(repository, output, revision, target_path, public_key_path, signer_public_key):
+    """Add a disarmed native job around the original scripts and strict monitor."""
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise ValueError("recurring source must be one immutable commit")
+    public_hex = public_key_path.read_text().strip()
+    if re.fullmatch(r"[0-9a-f]{64}", public_hex) is None:
+        raise ValueError("native evidence public key must be one raw Ed25519 key")
+    source = lambda path: subprocess.check_output(["git", "-C", str(repository), "show", revision + ":" + path])
+    original = yaml.safe_load(subprocess.check_output(["git", "-C", str(repository), "show", ORIGINAL_SOURCE + ":" + WORKFLOW]))
+    for name, body in recurring_scripts(original).items():
+        (output / name).write_text(body)
+    target = json.loads(target_path.read_text())
+    # The reused monitor validates the fixed production IDs/origin and controller signature.
+    subprocess.run(["python", str(Path(__file__).parent.parent / "recovery-monitor/prepare.py"),
+                    "--repository", str(repository), "--revision", revision,
+                    "--output", str(output / "monitor"), "--target", str(target_path),
+                    "--signer-public-key", str(signer_public_key)], check=True)
+    names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", revision, "backend"], text=True).splitlines()
+    names += list(RECOVERY_HELPERS)
+    for name in names:
+        destination = output / "trusted" / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source(name))
+    policy = json.loads((output / "policy.json").read_text())
+    policy.update(operation="export-recurring", source=revision, production_target=target,
+                  execution_public_key=public_hex,
+                  controller_project_id="9c094747-8662-4ba7-8d6b-5a4fa7ca27eb",
+                  controller_environment_id="e16a2d28-22b0-4028-9a6e-e67710ecbe5e",
+                  controller_service_id="1edc46a6-25e8-4497-941f-0903eb8f6e5d")
+    policy["recurring_steps_sha256"] = digest(json.dumps(
+        [{name: step[name] for name in ("name", "run", "env") if name in step}
+         for step in original["jobs"]["export-recovery"]["steps"] if step.get("name") in RECURRING_STEPS.values()],
+        sort_keys=True, separators=(",", ":")).encode())
+    policy["trusted_source_sha256"] = {name: digest(source(name)) for name in admitted_source_paths(names)}
+    (output / "policy.json").write_text(json.dumps(policy, sort_keys=True) + "\n")
+    manifest = {str(path.relative_to(output)): digest(path.read_bytes()) for path in sorted(output.rglob("*"))
+                if path.is_file() and path != output / "manifest.json"}
+    (output / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+    print(json.dumps({"prepared_recurring": str(output), "controller_source": policy["controller_source"],
+                      "manifest_sha256": digest((output / "manifest.json").read_bytes()), "activation": "disarmed"}))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("repository", "output", "case", "target", "public-key"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--recurring-source")
+    parser.add_argument("--production-target", type=Path)
+    parser.add_argument("--execution-public-key", type=Path)
     args = parser.parse_args()
     prepare(args.repository, args.output, args.case, json.loads(args.target.read_text()), args.public_key)
+
+    if args.recurring_source:
+        if not args.production_target or not args.execution_public_key:
+            parser.error("recurring preparation requires fixed production target and evidence public key")
+        add_recurring_assembly(args.repository, args.output, args.recurring_source,
+                               args.production_target, args.execution_public_key, args.public_key)

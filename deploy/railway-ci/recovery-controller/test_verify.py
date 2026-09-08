@@ -205,6 +205,66 @@ assert 'NoNewPrivs:\\t1' in Path('/proc/self/status').read_text()
 
 
 
+class NativeOrchestrationTests(unittest.TestCase):
+    def test_sealed_restore_rejects_links_and_unexpected_output(self):
+        import recurring
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "proof").mkdir()
+            item = root / "input"
+            item.write_text("immutable")
+            link = root / "escape"
+            link.symlink_to(item)
+            with self.assertRaises(ValueError):
+                recurring.seal_restore_inputs(root)
+            link.unlink()
+            os.link(item, link)
+            with self.assertRaises(ValueError):
+                recurring.seal_restore_inputs(root)
+            link.unlink()
+            recurring.seal_restore_inputs(root)
+            self.assertEqual(item.stat().st_mode & 0o777, 0o444)
+            before = {str(p.relative_to(root)) for p in root.rglob("*")}
+            (root / "proof/reverse-restore.json").write_text("{}")
+            (root / "proof/unexpected").write_text("not admitted")
+            with self.assertRaises(ValueError):
+                recurring.accepted_restore_output(root, before)
+
+    @unittest.skipUnless(sys.platform == "linux", "requires original Linux storage helper")
+    def test_actual_storage_constructor_and_nonexecutably_copied_bucket_helper(self):
+        import attest
+        import recurring
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            root.chmod(0o700)
+            binary = root / "bin"
+            binary.mkdir(mode=0o700)
+            provider = binary / "aws"
+            provider.write_text("#!/usr/local/bin/python\nimport sys,json\n"
+                                "args=sys.argv[1:]\n"
+                                "if args == ['--version']: print('aws-cli/2.36.35 fixture')\n"
+                                "elif 'get-object-lock-configuration' in args: print(json.dumps({'ObjectLockConfiguration': {'ObjectLockEnabled':'Enabled','Rule':{'DefaultRetention':{'Mode':'COMPLIANCE','Days':90}}}}))\n"
+                                "elif 'get-bucket-versioning' in args: print(json.dumps({'Status':'Enabled'}))\n"
+                                "else: raise SystemExit('unexpected fixture provider operation')\n")
+            provider.chmod(0o700)
+            environment = {**verify.environment(root), "PATH": str(binary) + ":" + verify.environment(root)["PATH"],
+                           "AWS_ACCESS_KEY_ID": "fixture", "AWS_SECRET_ACCESS_KEY": "fixture", "AWS_DEFAULT_REGION": "fixture",
+                           "S3_ENDPOINT": "https://fixture.invalid", "S3_BUCKET": "fixture-bucket", "S3_PREFIX": "fixture",
+                           "S3_SSE_C_KEY_B64": base64.b64encode(b'F' * 32).decode(), "RUNNER_TEMP": str(root),
+                           "GITHUB_WORKSPACE": str(verify.TRUSTED)}
+            original = verify.modules()[1]
+            fetch_root = root / "index-fetch"
+            fetch_root.mkdir(mode=0o700)
+            store = attest.Storage(fetch_root, environment, original)
+            self.assertEqual(store.key_path.stat().st_mode & 0o777, 0o600)
+            helper = root / "copied-helper.sh"
+            helper.write_bytes((verify.TRUSTED / "ops/deploy/seiche-s3-object-lock.sh").read_bytes())
+            helper.chmod(0o644)
+            output = root / "bucket.json"
+            verify.run(["bash", str(helper), "probe-bucket", str(output)], env=environment)
+            self.assertEqual(json.loads(output.read_text())["default_days"], 90)
+
+
 class ExecutionIndexTests(unittest.TestCase):
     def setUp(self):
         from cryptography.hazmat.primitives import serialization
