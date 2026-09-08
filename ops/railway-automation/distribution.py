@@ -50,7 +50,7 @@ def run_job(name, job, matrix):
                     "VIRTUAL_ENV": str(venv), "RUNNER_TEMP": directory,
                     "GITHUB_WORKSPACE": str(ROOT), "GITHUB_ENV": str(temp / "env"),
                     "GITHUB_OUTPUT": str(temp / "output"), "GITHUB_PATH": str(temp / "path"),
-                    "PYTHONDONTWRITEBYTECODE": "1"})
+                    "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": "--tb=short"})
         env.update({key: expand(value, context) for key, value in job.get("env", {}).items()})
         defaults = job.get("defaults", {}).get("run", {})
         for index, step in enumerate(job["steps"]):

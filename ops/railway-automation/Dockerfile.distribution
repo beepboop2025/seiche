@@ -6,7 +6,7 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-    && apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates tini \
+    && apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates openssh-client tini \
     && rm -rf /var/lib/apt/lists/*
 ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy
 RUN uv python install 3.10 3.11 3.12 3.13 3.14 \
@@ -19,7 +19,8 @@ ARG RAILWAY_GIT_COMMIT_SHA
 RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     && git init \
     && git remote add origin https://github.com/beepboop2025/seiche.git \
-    && git fetch --depth=1 origin "$RAILWAY_GIT_COMMIT_SHA" \
+    && git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*" \
+    && git fetch origin "$RAILWAY_GIT_COMMIT_SHA" \
     && git reset --mixed FETCH_HEAD \
     && git diff --exit-code HEAD
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
