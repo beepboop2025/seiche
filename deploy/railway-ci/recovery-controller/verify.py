@@ -356,6 +356,10 @@ def main():
         if digest((ROOT / name).read_bytes()) != expected:
             raise RuntimeError("controller bytes differ from the signed preparation")
     policy = json.loads((ROOT / "policy.json").read_text())
+    recurring_restore = policy.get("operation") == "export-recurring"
+    if recurring_restore:
+        # Use the same private mask and workspace path as the production route.
+        os.umask(0o077)
     credentials = {name: os.environ.pop(source_name) for name, source_name in INPUT_NAMES.items()}
     if any(not value or any(ord(c) < 32 for c in value) for value in credentials.values()):
         raise ValueError("invalid protected storage input")
@@ -372,9 +376,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix="recovery-storage-") as private, tempfile.TemporaryDirectory(prefix="recovery-work-") as public:
         private_root, public_root = Path(private), Path(public)
         public_root.chmod(0o755)
-        base = public_root / "recovery-verification"
-        base.mkdir(mode=0o755)
-        work = base / "existing"
+        if recurring_restore:
+            import recurring
+            work = recurring.restore_workspace(public_root)
+        else:
+            base = public_root / "recovery-verification"
+            base.mkdir(mode=0o755)
+            work = base / "existing"
         work.mkdir(mode=0o700)
         for name in ("bundle", "proof", "proof/resume-offsite-heads"):
             (work / name).mkdir(mode=0o700)
@@ -401,28 +409,24 @@ def main():
         work.chmod(0o755)
         # A sticky root-owned proof directory admits only new restore output.
         (work / "proof").chmod(0o1777)
-        uid = pwd.getpwnam("postgres").pw_uid
-        if uid in (0, RESTORE_UID):
-            raise RuntimeError("PostgreSQL identity is not independently isolated")
-        pgroot = public_root / "postgres"
-        pgenv = environment(pgroot)
-        try:
-            uid, pgenv = start_postgres(pgroot)
-            scratch = public_root / "restore-home"
-            scratch.mkdir(mode=0o700)
-            os.chown(scratch, RESTORE_UID, RESTORE_UID)
-            child_env = {**environment(scratch), "EVIDENCE_ROOT": str(work), "SNAPSHOT_ID": offsite["snapshot_id"],
-                         "RELEASE_SHA": offsite["commit"], "GITHUB_REPOSITORY": "beepboop2025/seiche",
-                         "GITHUB_WORKSPACE": str(TRUSTED), "PGPASSWORD": "phase6-restore-only"}
-            run(["bash", str(ROOT / "restore.sh")], env=child_env, uid=RESTORE_UID, timeout=2700)
-        finally:
-            stop_uid(RESTORE_UID)
-            if (pgroot / "data/postmaster.pid").exists():
-                try:
-                    run(["/usr/lib/postgresql/18/bin/pg_ctl", "-D", str(pgroot / "data"), "-m", "fast", "-w", "stop"], env=pgenv, uid=uid)
-                finally:
-                    stop_uid(uid)
-            (work / "proof").chmod(0o755)
+        if recurring_restore:
+            # The downloaded original proof stays byte-identical. Exercise the
+            # actual recurring script, then retain its fresh proof separately.
+            original_proof = work / "proof/reverse-restore.json"
+            original_body = original_proof.read_bytes()
+            repeated_proof = work / "proof/railway-reverse-restore.json"
+            if repeated_proof.exists() or repeated_proof.is_symlink():
+                raise ValueError("separate recurring verification proof already exists")
+            original_proof.unlink()
+            event("existing_recurring_restore_start", production_export_requested=False)
+            recurring.original_restore(work, private_root, public_root,
+                                       {"snapshot_id": offsite["snapshot_id"], "release_sha": offsite["commit"]})
+            original_proof.rename(repeated_proof)
+            original_proof.write_bytes(original_body)
+            original_proof.chmod(0o444)
+            event("existing_recurring_restore_pass", production_export_requested=False)
+        else:
+            restore_legacy_existing(work, public_root, offsite)
         result_path = work / "proof/railway-reverse-restore.json"
         if result_path.is_symlink() or result_path.stat().st_nlink != 1:
             raise ValueError("restore proof is not a regular isolated result")
@@ -432,7 +436,6 @@ def main():
                 len(restored["postgres_count_floor"]) != len(restored["postgres_counts"]) or
                 any(actual < floor for actual, floor in zip(restored["postgres_counts"], restored["postgres_count_floor"]))):
             raise ValueError("isolated restore result differs from immutable recovery")
-        # Original locked proof is kept untouched; this proof explicitly names Railway execution.
         validate_proof_tree(work / "proof", offsite["objects"])
         shutil.copytree(work / "proof", evidence / "proof")
         for name in ("recovery-receipt.json", "offsite-receipt.json"):
@@ -446,10 +449,35 @@ def main():
                  "immutable_objects_verified": len(offsite["objects"]) + 1, "downloaded_bytes": total + policy["offsite_object"]["size"],
                  "postgres_counts": restored["postgres_counts"], "retain_until": offsite["retain_until"],
                  "production_export_requested": False, "s3_objects_written": False, "authority_changed": False,
+                 "restore_route": "recurring-original" if recurring_restore else "legacy-existing",
                  "observed_at": datetime.now(timezone.utc).isoformat()}
         (evidence / "verification.json").write_text(json.dumps(proof, sort_keys=True) + "\n")
     event("RAILWAY_EXISTING_RECOVERY_VERIFY_PASS", **proof)
 
+
+def restore_legacy_existing(work, public_root, offsite):
+    uid = pwd.getpwnam("postgres").pw_uid
+    if uid in (0, RESTORE_UID):
+        raise RuntimeError("PostgreSQL identity is not independently isolated")
+    pgroot = public_root / "postgres"
+    pgenv = environment(pgroot)
+    try:
+        uid, pgenv = start_postgres(pgroot)
+        scratch = public_root / "restore-home"
+        scratch.mkdir(mode=0o700)
+        os.chown(scratch, RESTORE_UID, RESTORE_UID)
+        child_env = {**environment(scratch), "EVIDENCE_ROOT": str(work), "SNAPSHOT_ID": offsite["snapshot_id"],
+                     "RELEASE_SHA": offsite["commit"], "GITHUB_REPOSITORY": "beepboop2025/seiche",
+                     "GITHUB_WORKSPACE": str(TRUSTED), "PGPASSWORD": "phase6-restore-only"}
+        run(["bash", str(ROOT / "restore.sh")], env=child_env, uid=RESTORE_UID, timeout=2700)
+    finally:
+        stop_uid(RESTORE_UID)
+        if (pgroot / "data/postmaster.pid").exists():
+            try:
+                run(["/usr/lib/postgresql/18/bin/pg_ctl", "-D", str(pgroot / "data"), "-m", "fast", "-w", "stop"], env=pgenv, uid=uid)
+            finally:
+                stop_uid(uid)
+        (work / "proof").chmod(0o755)
 
 if __name__ == "__main__":
     main()

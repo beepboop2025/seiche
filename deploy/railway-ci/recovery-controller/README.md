@@ -11,6 +11,11 @@ restore UID can read, with traversable directories and no unprivileged writes.
 An actual-image test reads and hashes every manifest member as that UID, imports
 the original recovery modules, and checks the packaged restore script. Runtime
 credentials remain in a separate private directory and are never in the image.
+The recurring workspace explicitly grants directory traversal after creation
+under the private umask. For a recurring assembly, `verify-existing` restores the
+previously attested backup through that same workspace and `restore-native.sh`.
+It preserves the downloaded original proof and retains the new restore proof
+separately, without requesting production work or writing any S3 object.
 
 `prepare.py` verifies the owner-signed controller commit and both original
 GitHub receipt attestations. Controller files and the original backend/helpers
