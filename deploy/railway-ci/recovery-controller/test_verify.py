@@ -216,8 +216,8 @@ curl --header "Authorization: Bearer $download_bearer" https://fixture.invalid
 '''
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
-            secret = "ephemeral-download-fixture-never-a-credential"
-            (root / "bearer").write_text(secret)
+            sentinel = "TEST-ONLY-HEADER-CONTENT-0123456789"
+            (root / "bearer").write_text(sentinel)
             provider = root / "curl"
             provider.write_text("#!" + sys.executable + "\nimport sys,os,json\nfrom pathlib import Path\n"
                                 "root=Path(os.environ['PRIVATE_TEMP'])\n"
@@ -228,8 +228,8 @@ curl --header "Authorization: Bearer $download_bearer" https://fixture.invalid
             result = subprocess.run(["bash", "-c", private_download_transport(fixture)],
                                     env={"PATH": name + ":/usr/bin:/bin", "PRIVATE_TEMP": name},
                                     capture_output=True, timeout=30, check=True)
-            self.assertNotIn(secret.encode(), result.stdout + result.stderr)
-            self.assertNotIn(secret, (root / "arguments.json").read_text())
+            self.assertNotIn(sentinel.encode(), result.stdout + result.stderr)
+            self.assertNotIn(sentinel, (root / "arguments.json").read_text())
             self.assertEqual((root / "download-header").stat().st_mode & 0o777, 0o600)
 
     def test_sealed_restore_rejects_links_and_unexpected_output(self):
