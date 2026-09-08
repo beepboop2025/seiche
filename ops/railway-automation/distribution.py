@@ -46,6 +46,8 @@ def run_job(name, job, matrix):
                 raise RuntimeError(f"Refusing a publishing credential in CI: {key}")
         venv = temp / "venv"
         run(["uv", "venv", "--seed", "--python", python_version, str(venv)], env=env)
+        run([str(venv / "bin/python"), "-c",
+             "import sys; assert sys.version_info.releaselevel == 'final', sys.version; print(sys.version)"], env=env)
         env.update({"PATH": str(venv / "bin") + ":" + env["PATH"],
                     "VIRTUAL_ENV": str(venv), "RUNNER_TEMP": directory,
                     "GITHUB_WORKSPACE": str(ROOT), "GITHUB_ENV": str(temp / "env"),
