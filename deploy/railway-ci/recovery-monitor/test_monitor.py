@@ -117,6 +117,20 @@ class MonitorTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Reviewed recovery helper changed"):
                 monitor.admit(Path(name) / "source", policy, monitor.public_env(Path(name)))
 
+    def test_agent_socket_disappearance_is_tolerated_but_permissions_fail(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name) / "probe"
+            root.mkdir()
+            def disappearing(path, *, onexc):
+                onexc(os.unlink, str(path / "agent.sock"), FileNotFoundError("agent already removed socket"))
+            with mock.patch.object(monitor.shutil, "rmtree", side_effect=disappearing):
+                monitor.cleanup_probe(root)
+            def denied(path, *, onexc):
+                onexc(os.unlink, str(path / "identity"), PermissionError("private identity removal denied"))
+            with mock.patch.object(monitor.shutil, "rmtree", side_effect=denied):
+                with self.assertRaises(PermissionError):
+                    monitor.cleanup_probe(root)
+
     def test_real_pair_parser_rejects_missing_proof(self):
         sys.path.insert(0, str(ROOT / "trusted" / "backend"))
         from seiche.stateful_control import ControlContractError, extract_latest_recovery_pair

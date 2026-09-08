@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -73,6 +74,21 @@ def read_env_file(path):
     return result
 
 
+def cleanup_probe(root):
+    """The agent may unlink its own socket while its private directory is removed."""
+    pid_file = root / "agent-pid"
+    if pid_file.exists():
+        try:
+            os.kill(int(pid_file.read_text()), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    def vanished(function, path, error):
+        if not isinstance(error, FileNotFoundError):
+            raise error
+    if root.exists():
+        shutil.rmtree(root, onexc=vanished)
+
+
 def main():
     os.umask(0o077)
     manifest_body = (ROOT / "manifest.json").read_bytes()
@@ -138,11 +154,10 @@ def main():
                      "railway_deployment": deployment, "bootstrap": False,
                      "observed_at": datetime.now(timezone.utc).isoformat(),
                      **identity, **pair}
-            (evidence / "monitor-proof.json").write_text(json.dumps(proof, sort_keys=True) + "\n")
-            print("RAILWAY_RECOVERY_MONITOR_PASS " + json.dumps(proof, sort_keys=True), flush=True)
         finally:
-            subprocess.run(["bash", str(ROOT / "cleanup.sh")], env=env, cwd=source,
-                           timeout=30, check=False)
+            cleanup_probe(temporary / "postgres-health-probe")
+    (evidence / "monitor-proof.json").write_text(json.dumps(proof, sort_keys=True) + "\n")
+    print("RAILWAY_RECOVERY_MONITOR_PASS " + json.dumps(proof, sort_keys=True), flush=True)
     cutoff = datetime.now(timezone.utc).timestamp() - 90 * 86400
     for old in evidence_base.iterdir():
         if (old.is_dir() and not old.is_symlink() and
