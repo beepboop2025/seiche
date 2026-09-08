@@ -65,6 +65,16 @@ EXCLUDED_MONITOR_PATHS = frozenset(
         "ops/railway-automation/full-publisher/publish.py",
         "ops/railway-automation/full-publisher/test_publish.py",
         "ops/railway-automation/full-publisher/README.md",
+        "ops/railway/fetch_recovery_logs.py",
+        "ops/railway/test_fetch_recovery_logs.py",
+        "deploy/railway-ci/recovery-monitor/Dockerfile",
+        "deploy/railway-ci/recovery-monitor/README.md",
+        "deploy/railway-ci/recovery-monitor/monitor.py",
+        "deploy/railway-ci/recovery-monitor/prepare.py",
+        "deploy/railway-ci/recovery-monitor/requirements.in",
+        "deploy/railway-ci/recovery-monitor/requirements.lock",
+        "deploy/railway-ci/recovery-monitor/test_monitor.py",
+        ".github/workflows/railway-stateful-recovery.yml",
     }
 )
 RETIRED_HANDOFF_PATH = ".github/workflows/recovery-monitor-handoff.yml"

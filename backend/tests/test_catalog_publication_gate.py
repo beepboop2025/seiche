@@ -1569,6 +1569,11 @@ def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
         "ops/railway-automation/market-contracts/unreviewed.sh",
         "ops/railway-automation/full-publisher/unreviewed.py",
         ".github/workflows/recovery-monitor-handoff-extra.yml",
+        "ops/railway/fetch_recovery_logs_extra.py",
+        "deploy/railway-ci/recovery-monitor/unreviewed.py",
+        "deploy/railway-ci/recovery-monitor/requirements-extra.lock",
+        "ops/railway/test_fetch_recovery_logs_extra.py",
+        ".github/workflows/railway-stateful-recovery-extra.yml",
         "frontend/package.json",
         "frontend/package-lock.json",
         "frontend/tsconfig.json",
@@ -1600,6 +1605,16 @@ def test_frontend_contract_rejects_runtime_build_catalog_data_and_unlisted_opera
     "ops/railway-automation/full-publisher/publish.py",
     "ops/railway-automation/full-publisher/test_publish.py",
     "ops/railway-automation/full-publisher/README.md",
+    "ops/railway/fetch_recovery_logs.py",
+    "ops/railway/test_fetch_recovery_logs.py",
+    "deploy/railway-ci/recovery-monitor/Dockerfile",
+    "deploy/railway-ci/recovery-monitor/README.md",
+    "deploy/railway-ci/recovery-monitor/monitor.py",
+    "deploy/railway-ci/recovery-monitor/prepare.py",
+    "deploy/railway-ci/recovery-monitor/requirements.in",
+    "deploy/railway-ci/recovery-monitor/requirements.lock",
+    "deploy/railway-ci/recovery-monitor/test_monitor.py",
+    ".github/workflows/railway-stateful-recovery.yml",
 ])
 def test_frontend_receipt_accepts_only_reviewed_native_controller_paths(frontend_repo, relative):
     root, release, _ = frontend_repo
