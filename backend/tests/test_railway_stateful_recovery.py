@@ -1006,8 +1006,11 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     dockerfile = STATEFUL_DOCKERFILE.read_text(encoding="utf-8")
     object_lock_client = OBJECT_LOCK_CLIENT.read_text(encoding="utf-8")
 
-    assert 'cron: "17 */6 * * *"' in text
+    # The proven Railway monitor owns this cadence; keep daily export and the
+    # protected manual/OIDC paths until their own replacements are verified.
+    assert 'cron: "17 */6 * * *"' not in text
     assert 'cron: "31 2 * * *"' in text
+    assert "workflow_dispatch:" in text
     assert "vars.RAILWAY_STATEFUL_PHASE6_ENABLED == 'true'" in text
     for environment in (
         "railway-stateful-recovery-admin",
