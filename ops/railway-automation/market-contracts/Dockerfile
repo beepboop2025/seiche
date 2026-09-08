@@ -6,7 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git build-essential libffi-dev libssl-dev libpq5 libllvm14 libicu72 \
     libldap-2.5-0 libxml2 libxslt1.1 libpam0g libedit2 liblz4-1 libzstd1 \
     tini sudo util-linux procps passwd openssh-client systemd shellcheck \
-    && rm -rf /var/lib/apt/lists/* && useradd --system --create-home postgres
+    && rm -rf /var/lib/apt/lists/* && useradd --system --create-home postgres \
+    && useradd --uid 10001 --create-home runner \
+    && echo "runner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/runner \
+    && chmod 0440 /etc/sudoers.d/runner
 COPY --from=postgres /usr/lib/x86_64-linux-gnu/libpq.so.5* /usr/lib/x86_64-linux-gnu/
 ENV PATH="/usr/lib/postgresql/17/bin:${PATH}"
 ENV OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2
