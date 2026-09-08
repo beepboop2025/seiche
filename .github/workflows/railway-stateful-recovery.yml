@@ -2,7 +2,7 @@ name: railway-stateful-recovery
 
 on:
   schedule:
-    - cron: "31 2 * * *"
+    - cron: "46 4 * * *"
   workflow_dispatch:
     inputs:
       operation:
@@ -15,7 +15,6 @@ on:
           - monitor
           - export-recovery
           - resume-offsite
-          - migration-native-handoff
           - attest-native-recovery
       offsite_receipt_version:
         description: "resume-offsite only: exact immutable original-N3 receipt version"
@@ -49,9 +48,10 @@ jobs:
   attest-native-recovery:
     if: >-
       github.repository == 'beepboop2025/seiche' && github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.operation == 'attest-native-recovery' &&
-      inputs.confirmation == 'ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY'
+      ((github.event_name == 'workflow_dispatch' &&
+        inputs.operation == 'attest-native-recovery' &&
+        inputs.confirmation == 'ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY') ||
+       (github.event_name == 'schedule' && github.event.schedule == '46 4 * * *'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: railway-stateful-recovery-export
@@ -63,7 +63,7 @@ jobs:
       group: seiche-native-recovery-attestation
       cancel-in-progress: false
     steps:
-      - name: Require the protected manual proof switch before checkout or secret inputs
+      - name: Require the protected native attestation switch before checkout or secret inputs
         shell: bash
         env:
           NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}
@@ -867,11 +867,9 @@ jobs:
   monitor:
     if: >-
       github.repository == 'beepboop2025/seiche' &&
-      ((github.event_name == 'workflow_dispatch' &&
-        (inputs.operation == 'monitor' || inputs.operation == 'export-recovery' ||
-         (inputs.operation == 'resume-offsite' && github.ref == 'refs/heads/main'))) ||
-       (github.event_name == 'schedule' &&
-        vars.RAILWAY_STATEFUL_PHASE6_ENABLED == 'true'))
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.operation == 'monitor' || inputs.operation == 'export-recovery' ||
+       (inputs.operation == 'resume-offsite' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: railway-stateful-recovery-monitor
@@ -1357,9 +1355,7 @@ jobs:
     needs: monitor
     if: >-
       always() && needs.monitor.result == 'success' &&
-      ((github.event_name == 'workflow_dispatch' && inputs.operation == 'export-recovery') ||
-       (github.event_name == 'schedule' && github.event.schedule == '31 2 * * *' &&
-        vars.RAILWAY_STATEFUL_PHASE6_ENABLED == 'true'))
+      github.event_name == 'workflow_dispatch' && inputs.operation == 'export-recovery'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: railway-stateful-recovery-export
@@ -2950,50 +2946,3 @@ jobs:
             ${{ runner.temp }}/railway-recovery-resume/proof/paired-recovery-evidence.json
           if-no-files-found: ignore
           retention-days: 30
-
-  migration-native-handoff:
-    if: >-
-      github.repository == 'beepboop2025/seiche' && github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' && inputs.operation == 'migration-native-handoff' &&
-      inputs.confirmation == 'MIGRATE_EXISTING_RECOVERY_INPUTS_TO_REVIEWED_RAILWAY_CONTROLLER'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    environment: railway-stateful-recovery-export
-    steps:
-      - name: Encrypt only existing recovery inputs for the reviewed workstation recipient
-        env:
-          MONITOR_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          MONITOR_RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
-          RECOVERY_CONTROL_SIGNING_KEY_PEM: ${{ secrets.SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM }}
-        run: |
-          python3 - <<'PYENCRYPT'
-          import base64, hashlib, json, os, subprocess
-          from pathlib import Path
-          names = ['MONITOR_RAILWAY_TOKEN', 'MONITOR_RAILWAY_EDGE_TOKEN', 'RECOVERY_CONTROL_SIGNING_KEY_PEM']
-          values = {name: os.environ.pop(name) for name in names}
-          if any(not value for value in values.values()):
-              raise SystemExit("Required protected native recovery migration input is absent")
-          public = Path(os.environ["RUNNER_TEMP"]) / "recovery-native-recipient.pub"
-          public.write_text('-----BEGIN PUBLIC KEY-----\nMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAmClUOv8ZzmEwwL7CtNEh\nMXKxLLR286orvA1Tk4YZoKYB84lH6Qm85KQIKPZanMyDwsR5k6YNq8iJreBkhOoZ\n+Ql1WXJUJ2lDbI1+h1mm0IOe16KwrVtSey1pvBRNYxYuJjREdlEmDJ2qoGKkREWE\nxeWWncF/AENxzcWb0ONlzIk4Zx5WK3hCyILClsH2hQSV1EY8H8Avtpy/4vF41sD/\nK+VITUuXpA5Ory21LOOQ9h1dG+l+nsJk5+LEiRuIzexeZAHc9iom3G0V8BG7wFhJ\nqwy6FvHy+ngidmFkty8PlQSN7ZtghSg/fnhse9KzMxvCRLdGbA8unhY6deAYwNIS\nDAZp6FUYAfOA2Dg2RP8udA37PUUm7A1XU847yS6PTll2n9L7YYo3lWVPsM87ktEr\nB1Twg5xrbt1HEVMvDn5dcm1+Xbuv1WeNeD6OHB1MRYHiDcMGzXY2wizMZ3hPzhTL\n72s6QZviimi9YNpIMCgxgRV8B3Zn1h3ufwx1EM8N+DkK0oqxc/j4bat4c0G3eZlQ\nOzK4/6VkmZQEN07RahxOdfRPzE8amdkbj8zJ8/wJTdOBG7fX72mSiAWtlVFXeV6W\nwz7dK6m1FnFrQ3BkPDGntD3fQXyfM+lTrrQUe/2J1XDkNto5yfgVQtx3LhbnCT94\nT5HcVxKuspihOgSdqQJhA4ECAwEAAQ==\n-----END PUBLIC KEY-----\n')
-          recipient = hashlib.sha256(public.read_bytes()).hexdigest()
-          if recipient != '3722a07afcfd87380fae6b05a63a113118f3174b830eb640f2ec2acd480aab0a':
-              raise SystemExit("Recipient differs from reviewed migration")
-          payload = json.dumps({"source": os.environ["GITHUB_SHA"], "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "repository": os.environ["GITHUB_REPOSITORY"], "target_environment": "e16a2d28-22b0-4028-9a6e-e67710ecbe5e", "purpose": "existing-native-recovery-inputs", "target_service": '1edc46a6-25e8-4497-941f-0903eb8f6e5d', "recipient_sha256": recipient, "values": values}, sort_keys=True).encode()
-          chunks = []
-          for offset in range(0, len(payload), 400):
-              result = subprocess.run(["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", str(public), "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256", "-pkeyopt", "rsa_mgf1_md:sha256"], input=payload[offset:offset+400], capture_output=True, env={"PATH": os.environ["PATH"]})
-              if result.returncode != 0:
-                  raise SystemExit("Recipient encryption failed")
-              chunks.append(base64.b64encode(result.stdout).decode())
-          output = Path(os.environ["RUNNER_TEMP"]) / "recovery-native-handoff.encrypted.json"
-          output.write_text(json.dumps({"format": "ordered-rsa-oaep-sha256-chunks-v1", "source": os.environ["GITHUB_SHA"], "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "recipient_sha256": recipient, "chunks": chunks}, sort_keys=True) + "\n")
-          output.chmod(0o600)
-          print("RECOVERY_NATIVE_HANDOFF_ENCRYPTED sha256=" + hashlib.sha256(output.read_bytes()).hexdigest() + " source=" + os.environ["GITHUB_SHA"])
-          PYENCRYPT
-      - name: Retain ciphertext for one day
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: recovery-native-encrypted-handoff
-          path: ${{ runner.temp }}/recovery-native-handoff.encrypted.json
-          if-no-files-found: error
-          retention-days: 1
