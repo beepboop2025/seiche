@@ -417,14 +417,16 @@ def test_agent_room_tools_are_identity_bound(room_client):
     client, _store = room_client
 
     anonymous = client.post("/mcp", json=_rpc("tools/list")).json()["result"]["tools"]
-    assert len(anonymous) == 12
+    assert len(anonymous) == 13
+    research = next(tool for tool in anonymous if tool["name"] == "research_network")
+    assert research["annotations"]["readOnlyHint"] is True
     assert not ({tool["name"] for tool in anonymous} & mcp_server.AGENT_ROOM_TOOLS)
 
     authenticated = client.post(
         "/mcp", json=_rpc("tools/list"), headers=_headers("alice")
     ).json()["result"]["tools"]
     by_name = {tool["name"]: tool for tool in authenticated}
-    assert len(authenticated) == 22
+    assert len(authenticated) == 23
     assert set(mcp_server.AGENT_ROOM_TOOLS) <= set(by_name)
     assert by_name["agent_room_append_event"]["annotations"]["readOnlyHint"] is False
     assert by_name["agent_room_list_events"]["annotations"]["readOnlyHint"] is True

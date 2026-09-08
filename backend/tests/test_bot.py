@@ -807,7 +807,7 @@ def test_setup_registers_the_short_command_tray(sent):
                         if method == "setMyCommands")
     commands = [item["command"] for item in command_call["commands"]]
     assert commands == [
-        "now", "snap", "ask", "letter", "tandem", "atlas", "china", "where",
+        "research", "now", "snap", "ask", "letter", "tandem", "atlas", "china", "where",
         "privacy", "delete_me", "help", "start", "stop",
     ]
     assert 8 <= len(commands) <= 14
