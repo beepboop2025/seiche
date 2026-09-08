@@ -36,7 +36,7 @@ def source_identity(policy, private):
     source = git("rev-parse", "FETCH_HEAD").decode().strip()
     if re.fullmatch(r"[0-9a-f]{40}", source) is None:
         raise ValueError("current source is not an immutable Git identity")
-    current_paths = admitted_source_paths(git("ls-tree", "-r", "--name-only", source, "backend", "ops").decode().splitlines())
+    current_paths = admitted_source_paths(git("ls-tree", "-r", "--name-only", source, "backend", "ops", "governance").decode().splitlines())
     if current_paths != set(policy["trusted_source_sha256"]):
         raise ValueError("current recovery source input path set changed")
     for name, expected in policy["trusted_source_sha256"].items():

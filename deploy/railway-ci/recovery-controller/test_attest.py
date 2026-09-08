@@ -183,7 +183,7 @@ class TailTests(unittest.TestCase):
             backend = ["backend/seiche/deferred.py", "backend/governance/authority.json"]
             paths = ["deploy/railway-ci/recovery-controller/attest.py", "deploy/railway-ci/recovery-controller/verify.py",
                      "deploy/railway-ci/recovery-controller/requirements.lock", "ops/railway/resume_recovery.py",
-                     "ops/deploy/seiche-s3-object-lock.sh", *backend]
+                     "ops/deploy/seiche-s3-object-lock.sh", "governance/railway-control-signers.json", *backend]
             for item in paths:
                 path = root / item
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +192,13 @@ class TailTests(unittest.TestCase):
             attest.validate_tail_inputs(root, inputs, backend)
             with self.assertRaises(ValueError):
                 attest.validate_tail_inputs(root, {k: v for k, v in inputs.items() if k != backend[0]}, backend)
+            registry = "governance/railway-control-signers.json"
+            with self.assertRaises(ValueError):
+                attest.validate_tail_inputs(root, {k: v for k, v in inputs.items() if k != registry}, backend)
+            (root / registry).write_bytes(b"changed signer")
+            with self.assertRaises(ValueError):
+                attest.validate_tail_inputs(root, inputs, backend)
+            (root / registry).write_bytes(b"fixture")
             (root / backend[1]).write_bytes(b"changed authority")
             with self.assertRaises(ValueError):
                 attest.validate_tail_inputs(root, inputs, backend)
