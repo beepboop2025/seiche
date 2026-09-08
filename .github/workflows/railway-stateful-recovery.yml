@@ -16,6 +16,7 @@ on:
           - export-recovery
           - resume-offsite
           - migration-native-handoff
+          - attest-native-recovery
       offsite_receipt_version:
         description: "resume-offsite only: exact immutable original-N3 receipt version"
         required: false
@@ -45,6 +46,137 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  attest-native-recovery:
+    if: >-
+      github.repository == 'beepboop2025/seiche' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'attest-native-recovery' &&
+      inputs.confirmation == 'ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: railway-stateful-recovery-export
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    concurrency:
+      group: seiche-native-recovery-attestation
+      cancel-in-progress: false
+    steps:
+      - name: Require the protected manual proof switch before checkout or secret inputs
+        shell: bash
+        env:
+          NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}
+        run: |
+          set -euo pipefail
+          test "$NATIVE_TAIL_ENABLED" = '1'
+      - name: Check out the independently reviewed tail
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ vars.RECOVERY_NATIVE_TAIL_SOURCE }}
+          persist-credentials: false
+      - name: Set up the receipt verifier
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12.11'
+      - name: Install locked verifier dependencies and original checksum-pinned readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r deploy/railway-ci/recovery-controller/requirements.lock
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+          aws_archive="${RUNNER_TEMP}/awscli-2.36.35.zip"
+          aws_installer="${RUNNER_TEMP}/awscli-installer"
+          aws_install_root="${RUNNER_TEMP}/awscli"
+          aws_tool_dir="${RUNNER_TEMP}/aws-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.36.35.zip' \
+            --output "$aws_archive"
+          echo 'd2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c  '"$aws_archive" |
+            sha256sum --check --strict
+          mkdir -p "$aws_installer" "$aws_tool_dir"
+          unzip -q "$aws_archive" -d "$aws_installer"
+          "$aws_installer/aws/install" --install-dir "$aws_install_root" \
+            --bin-dir "$aws_tool_dir"
+          echo "$aws_tool_dir" >>"$GITHUB_PATH"
+          "$aws_tool_dir/aws" --version 2>&1 | grep -Eq '^aws-cli/2\.36\.35 '
+
+          sudo ln -sf "$tool_dir/railway" /usr/local/bin/railway-real
+          sudo ln -sf "$aws_tool_dir/aws" /usr/local/bin/aws
+      - name: Materialize the protected policy and public installation evidence
+        shell: bash
+        env:
+          POLICY_ZLIB_BASE64: ${{ secrets.RECOVERY_NATIVE_ATTEST_POLICY_ZLIB_BASE64 }}
+          POLICY_SHA256: ${{ vars.RECOVERY_NATIVE_ATTEST_POLICY_SHA256 }}
+          INSTALLATION_JSON: ${{ vars.RECOVERY_NATIVE_INSTALLATION_JSON }}
+          INSTALLATION_SSHSIG: ${{ vars.RECOVERY_NATIVE_INSTALLATION_SSHSIG }}
+        run: |
+          set -euo pipefail
+          umask 0077
+          python - <<'PYCODE'
+          import base64, hashlib, os, re, zlib
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'native-attestation-policy'
+          root.mkdir(mode=0o700)
+          encoded = os.environ['POLICY_ZLIB_BASE64']
+          if not encoded or len(encoded) > 64 * 1024:
+              raise SystemExit('protected policy transport is missing or oversized')
+          compressed = base64.b64decode(encoded, validate=True)
+          decoder = zlib.decompressobj()
+          policy = decoder.decompress(compressed, 512 * 1024 + 1)
+          if not policy or len(policy) > 512 * 1024 or not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+              raise SystemExit('protected policy transport is incomplete or outside its bound')
+          expected = os.environ['POLICY_SHA256']
+          if not re.fullmatch(r'[0-9a-f]{64}', expected) or hashlib.sha256(policy).hexdigest() != expected:
+              raise SystemExit('protected policy differs from its independently reviewed raw digest')
+          (root / 'policy.json').write_bytes(policy)
+          for variable, name in [('INSTALLATION_JSON', 'installation.json'), ('INSTALLATION_SSHSIG', 'installation.sig')]:
+              body = os.environ[variable].encode()
+              if not body or len(body) > 512 * 1024:
+                  raise SystemExit('reviewed installation evidence is missing or oversized')
+              (root / name).write_bytes(body)
+          PYCODE
+      - name: Validate native execution and prepare exactly the two original subjects
+        shell: bash
+        env:
+          ATTEST_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          ATTEST_RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          ATTEST_AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
+          ATTEST_AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
+          ATTEST_AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
+          ATTEST_S3_SSE_C_KEY_B64: ${{ secrets.SEICHE_OFFSITE_S3_SSE_C_KEY_B64 }}
+          POLICY_SHA256: ${{ vars.RECOVERY_NATIVE_ATTEST_POLICY_SHA256 }}
+        run: |
+          set -euo pipefail
+          umask 0077
+          python -B deploy/railway-ci/recovery-controller/attest.py \
+            --policy "$RUNNER_TEMP/native-attestation-policy/policy.json" \
+            --policy-sha256 "$POLICY_SHA256" \
+            --installation "$RUNNER_TEMP/native-attestation-policy/installation.json" \
+            --installation-signature "$RUNNER_TEMP/native-attestation-policy/installation.sig" \
+            --output "$RUNNER_TEMP/native-attestation-subjects"
+      - name: OIDC-attest the exact recovery receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: ${{ runner.temp }}/native-attestation-subjects/recovery-receipt.json
+      - name: OIDC-attest the immutable off-site receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: ${{ runner.temp }}/native-attestation-subjects/offsite-receipt.json
+
   configure-native-backups:
     if: >-
       github.repository == 'beepboop2025/seiche' &&
@@ -2832,13 +2964,12 @@ jobs:
         env:
           MONITOR_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           MONITOR_RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
-          MONITOR_RAILWAY_RECOVERY_PROBE_SSH_KEY: ${{ secrets.RAILWAY_RECOVERY_PROBE_SSH_KEY }}
           RECOVERY_CONTROL_SIGNING_KEY_PEM: ${{ secrets.SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM }}
         run: |
           python3 - <<'PYENCRYPT'
           import base64, hashlib, json, os, subprocess
           from pathlib import Path
-          names = ['MONITOR_RAILWAY_TOKEN', 'MONITOR_RAILWAY_EDGE_TOKEN', 'MONITOR_RAILWAY_RECOVERY_PROBE_SSH_KEY', 'RECOVERY_CONTROL_SIGNING_KEY_PEM']
+          names = ['MONITOR_RAILWAY_TOKEN', 'MONITOR_RAILWAY_EDGE_TOKEN', 'RECOVERY_CONTROL_SIGNING_KEY_PEM']
           values = {name: os.environ.pop(name) for name in names}
           if any(not value for value in values.values()):
               raise SystemExit("Required protected native recovery migration input is absent")
