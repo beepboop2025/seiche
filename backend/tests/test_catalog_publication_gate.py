@@ -1780,6 +1780,110 @@ def test_frontend_receipt_accepts_reviewed_editorial_and_market_ci_paths(
     )
 
 
+def test_frontend_desk_descendant_keeps_receipt_subject_separate(frontend_repo):
+    root, _, fingerprint = frontend_repo
+    ancestor = _frontend_change(root)
+    tag = _frontend_tag(root, fingerprint)
+    _content_commit(root, {"frontend/public/articles/daily.md": "lawful daily"})
+    current = _content_commit(
+        root,
+        {"frontend/public/articles/weekly.md": "lawful weekly"},
+        subject="week ahead: lawful",
+    )
+    proof = front.verify_desk_only_descendant(
+        root,
+        receipt_source_sha=ancestor,
+        current_source_sha=current,
+    )
+    assert proof == {
+        "schema": "seiche.frontend-desk-descendant.v1",
+        "receiptSourceSha": ancestor,
+        "currentSourceSha": current,
+        "purpose": "unchanged_frontend_only_no_desk_publication",
+    }
+    # The receipt is never reinterpreted as signing the newer desk source.
+    with pytest.raises(front.Error, match="exact source SHA"):
+        front.verify_frontend_receipt(
+            root,
+            expected_sha=current,
+            signer_fingerprint=fingerprint,
+            receipt_tag=tag,
+        )
+    _content_git(root, "checkout", "-q", "--detach", ancestor)
+    assert (
+        front.verify_frontend_receipt(
+            root,
+            expected_sha=ancestor,
+            signer_fingerprint=fingerprint,
+            receipt_tag=tag,
+        )["sourceSha"]
+        == ancestor
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "author",
+        "subject",
+        "ui",
+        "runtime",
+        "controller",
+        "reverted",
+        "mode",
+        "merge",
+        "nonancestor",
+    ],
+)
+def test_frontend_desk_descendant_rejects_every_unreviewed_other_lane(
+    frontend_repo, failure
+):
+    root, _, _ = frontend_repo
+    ancestor = _frontend_change(root)
+    if failure in {"author", "subject"}:
+        _content_commit(
+            root,
+            {"frontend/public/articles/forged.md": "forged"},
+            author="intruder@example.invalid"
+            if failure == "author"
+            else "desk@seiche.info",
+            subject="fix: forged" if failure == "subject" else "dispatch: forged",
+        )
+    elif failure in {"ui", "runtime", "controller", "reverted"}:
+        path = {
+            "ui": "frontend/src/App.tsx",
+            "runtime": "backend/seiche/api.py",
+            "controller": "ops/railway-automation/publisher/publish.py",
+            "reverted": "frontend/src/App.tsx",
+        }[failure]
+        bad = _content_commit(root, {path: "forbidden change"})
+        if failure == "reverted":
+            _content_git(root, "revert", "--no-commit", bad)
+            _content_git(root, "commit", "-q", "-m", "dispatch: restore original")
+    elif failure == "mode":
+        path = root / "frontend/public/articles/unsafe.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("../../src/App.tsx")
+        _content_git(root, "add", "-A")
+        _content_git(root, "commit", "-q", "-m", "dispatch: symlink")
+    elif failure == "merge":
+        _content_git(root, "checkout", "-q", "-b", "left")
+        left = _content_commit(root, {"frontend/public/articles/left.md": "left"})
+        _content_git(root, "checkout", "-q", "-b", "right", ancestor)
+        _content_commit(root, {"frontend/public/articles/right.md": "right"})
+        _content_git(root, "merge", "--no-ff", "-q", "-m", "dispatch: merge", left)
+    else:
+        _content_git(root, "checkout", "-q", "-b", "other", ancestor + "^")
+        _content_commit(root, {"frontend/public/articles/other.md": "other"})
+    current = _content_git(root, "rev-parse", "HEAD")
+    with pytest.raises(front.Error, match="generated-content"):
+        front.verify_desk_only_descendant(
+            root,
+            receipt_source_sha=ancestor,
+            current_source_sha=current,
+        )
+
+
 def test_frontend_receipt_requires_one_time_handoff_to_be_removed(frontend_repo):
     root, release, _ = frontend_repo
     _frontend_change(root)

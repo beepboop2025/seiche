@@ -435,6 +435,31 @@ def verify_frontend_receipt(
     return payload
 
 
+def verify_desk_only_descendant(
+    root: Path, *, receipt_source_sha: str, current_source_sha: str
+) -> dict:
+    """Check desk ancestry; the exact ancestor receipt must be authenticated separately.
+
+    This does not reinterpret a signed receipt or authorize current desk bytes
+    for publication. It proves that publishing the unchanged signed frontend
+    remains compatible with the separately identified current main.
+    """
+    _assert_clean(root, current_source_sha)
+    if receipt_source_sha == current_source_sha:
+        raise Error("desk descendant admission requires a distinct receipt ancestor")
+    # Omitting the optional signer deliberately rejects even signed controller
+    # repairs. Only the existing single-parent daily/weekly desk lane is allowed.
+    gate._verify_generated_content_descendants(
+        root, release=receipt_source_sha, head=current_source_sha
+    )
+    return {
+        "schema": "seiche.frontend-desk-descendant.v1",
+        "receiptSourceSha": receipt_source_sha,
+        "currentSourceSha": current_source_sha,
+        "purpose": "unchanged_frontend_only_no_desk_publication",
+    }
+
+
 def require_unused_tag(root: Path, tag: str) -> None:
     if re.fullmatch(r"frontend-publication-[0-9a-f]{40}", tag) is None:
         raise Error("frontend tag name is malformed")

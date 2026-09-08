@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -122,6 +123,109 @@ class PublisherBoundaryTests(unittest.TestCase):
             finally:
                 child.kill() if child.poll() is None else None
                 child.wait()
+
+    def test_explicit_receipt_cannot_be_reinterpreted_as_an_ancestor(self):
+        with self.assertRaisesRegex(RuntimeError, "current main exactly"):
+            publisher.select_publication_source(
+                Path("/trusted"), "a" * 40, "frontend-publication-" + "b" * 40
+            )
+
+    def test_pinned_ancestor_is_separate_from_current_desk_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = Path(directory)
+            ancestor, current = "a" * 40, "b" * 40
+            (controller / "controller-source.json").write_text(
+                json.dumps({"sha": ancestor})
+            )
+            admission = {
+                "schema": "seiche.frontend-desk-descendant.v1",
+                "receiptSourceSha": ancestor,
+                "currentSourceSha": current,
+                "purpose": "unchanged_frontend_only_no_desk_publication",
+            }
+
+            def git_result(args, root):
+                if args[:2] == ["tag", "--list"]:
+                    return (
+                        args[2] if args[2] == "frontend-publication-" + ancestor else ""
+                    )
+                return ""
+
+            with (
+                patch.object(publisher, "CONTROLLER", controller),
+                patch.object(publisher, "git", side_effect=git_result) as git_mock,
+                patch.object(
+                    publisher, "run", return_value=json.dumps(admission)
+                ) as run_mock,
+            ):
+                result = publisher.select_publication_source(
+                    Path("/trusted"), current, ""
+                )
+            self.assertEqual(
+                result, (ancestor, "frontend-publication-" + ancestor, admission)
+            )
+            self.assertEqual(run_mock.call_args.args[0][:3], ["python", "-I", "-S"])
+            git_mock.assert_called_with(
+                ["checkout", "--quiet", "--detach", ancestor], Path("/trusted")
+            )
+
+    def test_absent_pinned_receipt_does_not_search_other_tags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = Path(directory)
+            (controller / "controller-source.json").write_text(
+                json.dumps({"sha": "a" * 40})
+            )
+            with (
+                patch.object(publisher, "CONTROLLER", controller),
+                patch.object(publisher, "git", return_value="") as git_mock,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "no receipt or pinned frontend ancestor"
+                ):
+                    publisher.select_publication_source(Path("/trusted"), "b" * 40, "")
+            self.assertEqual(git_mock.call_count, 2)
+            self.assertTrue(
+                all(
+                    call.args[0][:2] == ["tag", "--list"]
+                    for call in git_mock.call_args_list
+                )
+            )
+
+    def test_wrong_or_failed_desk_admission_never_selects_ancestor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = Path(directory)
+            (controller / "controller-source.json").write_text(
+                json.dumps({"sha": "a" * 40})
+            )
+
+            def git_result(args, root):
+                return (
+                    args[2]
+                    if args[:2] == ["tag", "--list"] and args[2].endswith("a" * 40)
+                    else ""
+                )
+
+            for outcome in ("{}", RuntimeError("forbidden generated-content path")):
+                with (
+                    patch.object(publisher, "CONTROLLER", controller),
+                    patch.object(publisher, "git", side_effect=git_result) as git_mock,
+                    patch.object(
+                        publisher,
+                        "run",
+                        side_effect=outcome if isinstance(outcome, Exception) else None,
+                        return_value=outcome,
+                    ),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        publisher.select_publication_source(
+                            Path("/trusted"), "b" * 40, ""
+                        )
+                self.assertFalse(
+                    any(
+                        call.args[0][0] == "checkout"
+                        for call in git_mock.call_args_list
+                    )
+                )
 
     def test_git_metadata_never_enters_static_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
