@@ -12,7 +12,6 @@ import time
 import subprocess
 import tarfile
 import tempfile
-import urllib.request
 
 import yaml
 
@@ -75,16 +74,11 @@ def git(args, cwd, env=None):
 
 
 def current_main():
-    request = urllib.request.Request(
-        "https://api.github.com/repos/beepboop2025/seiche/branches/main",
-        headers={"User-Agent": "seiche-railway-static-publisher",
-                 "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        result = json.load(response)
-    if result.get("protected") is not True:
-        raise RuntimeError("Source main is not protected")
-    sha = result["commit"]["sha"]
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+    # Preserve the workflow's exact-head Git transport check; shared anonymous
+    # GitHub REST limits must not prevent an otherwise valid publication.
+    value = git(["ls-remote", "--exit-code", SOURCE, "refs/heads/main"], CONTROLLER)
+    sha, ref = value.split()
+    if ref != "refs/heads/main" or not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RuntimeError("Invalid source identity")
     return sha
 

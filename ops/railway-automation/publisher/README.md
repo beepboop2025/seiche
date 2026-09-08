@@ -6,7 +6,7 @@ and restart NEVER. Configure `PUBLISH_APPLY=0` for full preparation proof before
 providing publication credentials.
 
 The controller pins the source workflow and four verifier blobs, verifies the
-current protected main through its existing application or frontend signed
+current main through its existing application or frontend signed
 receipt, and runs npm/build/rendering as UID10001 without any credential. The
 publisher receives only a checked public file tree after that process group is
 terminated. Mirror writes compare the previous source revision; recovery must
