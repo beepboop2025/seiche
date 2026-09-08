@@ -149,7 +149,7 @@ def research_steps(topic: str) -> list[dict]:
                   "https://liquilens-undertow.com/app/#crypto", mcp="https://api.seiche.info/undertow/mcp",
                   tool="liquidity_tiers", bot="https://t.me/undertow_LiquiLens_bot"),
             _step("NarcoScope", "Which granular drug, arms and informal-economy observations cover this geography and period?",
-                  "https://narcoscope.com/#data", mcp="https://narcoscope.com/api/mcp", tool="get_market_catalog",
+                  "https://narcoscope.com/#data", mcp="https://www.narcoscope.com/mcp", tool="get_market_catalog",
                   bot="https://t.me/NarcoScopeEvidenceBot"),
             _step("Market Brief", "Can the separate research records support a source-linked market brief?",
                   "https://beepboop2025.github.io/market-brief/"),
