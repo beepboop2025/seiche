@@ -152,6 +152,60 @@ class PublisherBoundaryTests(unittest.TestCase):
                 [path.name for path in destination.iterdir()], ["index.html"]
             )
 
+    def test_sealed_candidate_stays_inside_release_root_without_replacing_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            trusted, prepared = root / "trusted", root / "builder"
+            trusted.mkdir()
+            prepared.mkdir()
+            source = trusted / "frontend/public/.well-known/ai-catalog.json"
+            source.parent.mkdir(parents=True)
+            source.write_text('{"entries":[]}')
+            catalog = prepared / ".well-known/ai-catalog.json"
+            catalog.parent.mkdir()
+            catalog.write_bytes(source.read_bytes())
+            (prepared / "index.html").write_text("public")
+            candidate = publisher.seal_candidate(prepared, trusted)
+            self.assertEqual(candidate.parent, trusted)
+            self.assertEqual(candidate.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(source.read_bytes(), b'{"entries":[]}')
+            self.assertEqual((candidate / ".well-known/ai-catalog.json").read_bytes(), source.read_bytes())
+            # The sealed artifact is independent of subsequent builder writes.
+            catalog.write_text('{"untrusted":"late change"}')
+            self.assertEqual((candidate / ".well-known/ai-catalog.json").read_bytes(), source.read_bytes())
+
+    def test_original_catalog_gate_accepts_sealed_path_and_rejects_external_or_changed_bytes(self):
+        candidates = (
+            parent / "ops/release/verify_catalog_publication.py"
+            for parent in Path(__file__).resolve().parents
+        )
+        gate = next((path for path in candidates if path.is_file()), None)
+        if gate is None:
+            self.skipTest("Original release verifier integration runs from the repository checkout")
+        spec = importlib.util.spec_from_file_location("original_catalog_gate", gate)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            trusted, prepared = root / "trusted", root / "builder"
+            trusted.mkdir()
+            prepared.mkdir()
+            source = trusted / verifier.AI_CATALOG_PATH
+            source.parent.mkdir(parents=True)
+            source.write_text('{"entries":[]}')
+            catalog = prepared / ".well-known/ai-catalog.json"
+            catalog.parent.mkdir()
+            catalog.write_bytes(source.read_bytes())
+            (prepared / "index.html").write_text("public")
+            with self.assertRaisesRegex(verifier.PublicationGateError, "escapes the release root"):
+                verifier.verify_published_catalog(trusted, catalog)
+            candidate = publisher.seal_candidate(prepared, trusted)
+            sealed_catalog = candidate / ".well-known/ai-catalog.json"
+            verifier.verify_published_catalog(trusted, sealed_catalog)
+            sealed_catalog.write_text('{"entries":[{"modified":true}]}')
+            with self.assertRaisesRegex(verifier.PublicationGateError, "bytes differ from source"):
+                verifier.verify_published_catalog(trusted, sealed_catalog)
+
 
 if __name__ == "__main__":
     unittest.main()

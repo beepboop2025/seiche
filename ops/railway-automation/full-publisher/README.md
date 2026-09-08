@@ -9,6 +9,13 @@ as UID10001 without deployment credentials; all descendants are stopped before
 bounded regular-file output is sealed. Git and Cloudflare writes are performed
 only by the immutable reviewed controller after fresh current-main checks.
 
+Sealed output lives in a new private directory under the trusted release
+checkout, so the original catalog verifier's root-containment and exact-byte
+checks apply unchanged. The checked-in catalog and release identity files are
+never replaced by builder output. Repository tests exercise the actual verifier
+against the sealed path, an external path and changed catalog bytes; the minimal
+controller image separately checks containment and source/output independence.
+
 Provision a separate evidence volume and service-scoped SITE_DEPLOY_KEY,
 CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and RELEASE_SIGNING_KEY_FINGERPRINT.
 PUBLISH_APPLY=0 proves preparation; PUBLISH_APPLY=1 additionally requires the

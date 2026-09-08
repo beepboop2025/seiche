@@ -145,6 +145,14 @@ def copy_public_tree(source, target):
         raise RuntimeError("Publication has no entry point")
 
 
+def seal_candidate(prepared, trusted):
+    """Keep sealed output inside the unchanged release verifier's root boundary."""
+    assert_plain_path(trusted, Path(trusted.anchor))
+    candidate = Path(tempfile.mkdtemp(prefix=".railway-publication-", dir=trusted))
+    copy_public_tree(prepared, candidate)
+    return candidate
+
+
 def verify_publication(steps, trusted, candidate, env, receipt):
     run(["python", "-I", "-S", str(trusted / "ops/release/verify_public_dataset.py"),
          "--expected-root", str(candidate), "--cache-key", env["PUBLICATION_SOURCE_SHA"]
@@ -300,9 +308,7 @@ def main():
                 build, build_env, unprivileged=True)
         prepared = build / "frontend/dist"
         quiesce_builder()
-        candidate = root / "candidate"
-        candidate.mkdir()
-        copy_public_tree(prepared, candidate)
+        candidate = seal_candidate(prepared, trusted)
         run(["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
              "--expected-sha", source_sha, "--signer-fingerprint", signer,
              "--published-catalog", str(candidate / ".well-known/ai-catalog.json")],
