@@ -1027,7 +1027,8 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "postgres pitr enable" in text
     assert "postgres pitr schedule set --daily --weekly --monthly" in text
     assert "postgres pitr backup lock" in text
-    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 3
+    # One extra mapping belongs to the reviewed, temporary S3-only handoff.
+    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 4
     assert text.count('seiche-s3-object-lock.sh" put-verify') == 4
     assert (
         text.count("d2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c")
@@ -1520,7 +1521,8 @@ def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> N
     )
     assert workflow.count("environment: railway-stateful-recovery-admin") == 1
     assert workflow.count("environment: railway-stateful-recovery-monitor") == 1
-    assert workflow.count("environment: railway-stateful-recovery-export") == 3
+    # Includes the temporary main-only S3 handoff, removed after native proof.
+    assert workflow.count("environment: railway-stateful-recovery-export") == 4
 
 
 def test_online_copy_allows_a_usage_write_before_backup_completes(tmp_path: Path):

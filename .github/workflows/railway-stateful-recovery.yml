@@ -15,6 +15,7 @@ on:
           - monitor
           - export-recovery
           - resume-offsite
+          - migration-s3-handoff
       offsite_receipt_version:
         description: "resume-offsite only: exact immutable original-N3 receipt version"
         required: false
@@ -2817,3 +2818,54 @@ jobs:
             ${{ runner.temp }}/railway-recovery-resume/proof/paired-recovery-evidence.json
           if-no-files-found: ignore
           retention-days: 30
+
+  migration-s3-handoff:
+    if: >-
+      github.repository == 'beepboop2025/seiche' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && inputs.operation == 'migration-s3-handoff' &&
+      inputs.confirmation == 'MIGRATE_S3_TO_REVIEWED_RAILWAY_CONTROLLER'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: railway-stateful-recovery-export
+    steps:
+      - name: Encrypt only S3 inputs for the reviewed workstation recipient
+        env:
+          RECOVERY_S3_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
+          RECOVERY_S3_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
+          RECOVERY_S3_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
+          RECOVERY_S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
+          RECOVERY_S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
+          RECOVERY_S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          RECOVERY_S3_SSE_C_KEY_B64: ${{ secrets.SEICHE_OFFSITE_S3_SSE_C_KEY_B64 }}
+        run: |
+          python3 - <<'PYENCRYPT'
+          import base64, hashlib, json, os, subprocess
+          from pathlib import Path
+          names = ['RECOVERY_S3_ACCESS_KEY_ID', 'RECOVERY_S3_SECRET_ACCESS_KEY', 'RECOVERY_S3_REGION', 'RECOVERY_S3_ENDPOINT', 'RECOVERY_S3_BUCKET', 'RECOVERY_S3_PREFIX', 'RECOVERY_S3_SSE_C_KEY_B64']
+          values = {name: os.environ.pop(name) for name in names}
+          if any(not value for value in values.values()):
+              raise SystemExit("Required protected S3 migration input is absent")
+          public = Path(os.environ["RUNNER_TEMP"]) / "recovery-s3-recipient.pub"
+          public.write_text('-----BEGIN PUBLIC KEY-----\nMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAps1OdLlFvdytjARWyVXs\nkF75+9m65V2ChKh2PWYPAU2VsMJ8joDXedgotSpdZdx+rxvHKdVZv0hYUUo6I+bV\nulcOVzGkDrFjgQVagcGwR9MJgs97ZVOCUWx9ECEFETl3lQF4/8SHISZnoyXQ9RZn\nceILlONMCtdG+djtXxWO/AKPfdRenGNZQd5jL8yIwuNZCWEzp7e9Jcn0ViE0uYy9\noHVaURSf0+B88Gu8rUaEGy+zpe7oimyZoOWgHpRTNGPs3cs4dSzwUz1SB+copztF\nTLmCudlboBrzmLpcmLjRFzCV7Apujf42l5jmJ5W0v8y7DyO2bA+S2+bjHa28+k3f\nHUFFPhWqJ6A56j2VEBeysCeogV0lqg4C7ac0Hkd3R3Xb66g7td7BYuE+VP9EdLv5\nmOfyy/COc2SstKJar99adUTThFlC+7/ypjUPitii+sWZu3SpzBDYcw4C5FIK6Q3I\n1jV9RhB8VuP1UBf9G5X7xrA2irC0uOWcdBCojHszLUA1cVF1ZayHlgCsHzP1+NEs\nZzpGHWui+2qwAq7EDs4N8OnDIq16ip83sTl9yLcr65Mcxb52AxZTYmhkDIimip7w\nYR2jpjmf7TYqk0uy071as4Epp3bOjGqGcEG4qV4f4I0xZCvbJREY4WYa/4k50qff\n297ZuQGC3tAMWWmmQwy2tccCAwEAAQ==\n-----END PUBLIC KEY-----\n')
+          recipient = hashlib.sha256(public.read_bytes()).hexdigest()
+          if recipient != '2653dbd6c5db358f66f0f4790c9d05c8cd08a54e69373ffcbfe92dc00695bdd6':
+              raise SystemExit("Recipient differs from reviewed migration")
+          payload = json.dumps({"source": os.environ["GITHUB_SHA"], "repository": os.environ["GITHUB_REPOSITORY"], "target_service": '1edc46a6-25e8-4497-941f-0903eb8f6e5d', "recipient_sha256": recipient, "values": values}, sort_keys=True).encode()
+          chunks = []
+          for offset in range(0, len(payload), 400):
+              result = subprocess.run(["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", str(public), "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256", "-pkeyopt", "rsa_mgf1_md:sha256"], input=payload[offset:offset+400], capture_output=True, env={"PATH": os.environ["PATH"]})
+              if result.returncode != 0:
+                  raise SystemExit("Recipient encryption failed")
+              chunks.append(base64.b64encode(result.stdout).decode())
+          output = Path(os.environ["RUNNER_TEMP"]) / "recovery-s3-handoff.encrypted.json"
+          output.write_text(json.dumps({"format": "ordered-rsa-oaep-sha256-chunks-v1", "source": os.environ["GITHUB_SHA"], "recipient_sha256": recipient, "chunks": chunks}, sort_keys=True) + "\n")
+          output.chmod(0o600)
+          print("RECOVERY_S3_HANDOFF_ENCRYPTED sha256=" + hashlib.sha256(output.read_bytes()).hexdigest() + " source=" + os.environ["GITHUB_SHA"])
+          PYENCRYPT
+      - name: Retain ciphertext for one day
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: recovery-s3-encrypted-handoff
+          path: ${{ runner.temp }}/recovery-s3-handoff.encrypted.json
+          if-no-files-found: error
+          retention-days: 1
