@@ -45,23 +45,6 @@ class PublisherBoundaryTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 publisher.copy_public_tree(source, destination)
 
-    def test_publication_root_and_parent_symlinks_cannot_disclose_private_files(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory).resolve()
-            private = root / "private"
-            private.mkdir()
-            (private / "index.html").write_text("private-controller-data")
-            link = root / "link"
-            link.symlink_to(private, target_is_directory=True)
-            destination = root / "destination"
-            destination.mkdir()
-            for source in (link, link / "nested"):
-                if source != link:
-                    (private / "nested").mkdir()
-                with self.assertRaises(RuntimeError):
-                    publisher.copy_public_tree(source, destination, root)
-            self.assertEqual(list(destination.iterdir()), [])
-
     def test_hardlink_cannot_enter_publication_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -72,6 +55,38 @@ class PublisherBoundaryTests(unittest.TestCase):
             os.link(source / "index.html", source / "duplicate")
             with self.assertRaises(RuntimeError):
                 publisher.copy_public_tree(source, destination)
+
+    def test_publication_root_and_ancestor_symlinks_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            secret = root / "secret"
+            secret.mkdir()
+            (secret / "index.html").write_text("private")
+            link = root / "linked"
+            link.symlink_to(secret, target_is_directory=True)
+            out = root / "out"
+            out.mkdir()
+            with self.assertRaises(RuntimeError):
+                publisher.copy_public_tree(link, out)
+            child = secret / "child"
+            child.mkdir()
+            (child / "index.html").write_text("private")
+            with self.assertRaises(RuntimeError):
+                publisher.copy_public_tree(link / "child", out)
+
+    def test_history_rejects_parent_symlink_and_non_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            secret = root / "secret"
+            secret.mkdir()
+            (secret / "data.json").write_text('{"private":true}')
+            link = root / "linked"
+            link.symlink_to(secret, target_is_directory=True)
+            with self.assertRaises(RuntimeError):
+                publisher.copy_history(link / "data.json", root / "out")
+            (root / "bad.json").write_text("not JSON")
+            with self.assertRaises(ValueError):
+                publisher.copy_history(root / "bad.json", root / "out")
 
     @unittest.skipUnless(
         sys.platform == "linux" and os.geteuid() == 0,

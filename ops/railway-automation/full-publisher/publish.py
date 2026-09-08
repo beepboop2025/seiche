@@ -1,4 +1,4 @@
-"""Reviewed Railway controller for Seiche's bounded static publication path."""
+"""Reviewed Railway controller for Seiche's full engine publication path."""
 
 import hashlib
 import json
@@ -20,8 +20,6 @@ SOURCE = "https://github.com/beepboop2025/seiche.git"
 MIRROR = "https://github.com/beepboop2025/seiche-site.git"
 GATES = (
     "ops/release/verify_catalog_publication.py",
-    "ops/release/verify_frontend_publication.py",
-    "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
 )
 
@@ -77,7 +75,7 @@ def run(args, cwd, env, unprivileged=False, capture=False):
         text=True,
     )
     try:
-        output, _ = process.communicate(timeout=600)
+        output, _ = process.communicate(timeout=5400)
         if process.returncode:
             raise RuntimeError(
                 f"publication command failed: {args[0]} exit={process.returncode}"
@@ -107,20 +105,19 @@ def current_main():
     return sha
 
 
-def assert_plain_path(path, trusted_root):
-    """Inspect each directory without following builder-controlled symlinks."""
-    path, trusted_root = Path(path), Path(trusted_root)
-    relative = path.relative_to(trusted_root)
-    current = trusted_root
-    for part in (None, *relative.parts):
-        if part is not None:
-            current = current / part
-        if not stat.S_ISDIR(current.lstat().st_mode):
-            raise RuntimeError("Publication directory is not a plain directory")
+def assert_plain_path(path, boundary):
+    path.relative_to(boundary)
+    for parent in [path, *path.parents]:
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError("Publication directory has a symlink or non-directory ancestor")
+        if parent == boundary:
+            return
+    raise RuntimeError("Publication path escaped its boundary")
 
 
-def copy_public_tree(source, target, trusted_root=None):
-    assert_plain_path(source, trusted_root or Path(source.anchor))
+def copy_public_tree(source, target):
+    assert_plain_path(source, Path(source.anchor))
     total = count = 0
     for path in source.rglob("*"):
         relative = path.relative_to(source)
@@ -149,21 +146,32 @@ def copy_public_tree(source, target, trusted_root=None):
 
 
 def verify_publication(steps, trusted, candidate, env, receipt):
-    for name in (
-        "Prove the canonical dataset landing and DCAT catalog are live",
-        "Prove exact frontend shell, assets, catalog and sealed data bytes",
-    ):
-        step = steps[name]
-        if step.get("if") and not receipt:
-            continue
-        command = (
-            step["run"]
-            .replace("/tmp/cloudflare-site", str(candidate))
-            .replace("/tmp/site", str(candidate))
-        )
-        if command.startswith("python ops/"):
-            command = command.replace("python ops/", "python -I -S ops/", 1)
-        run(["bash", "-euo", "pipefail", "-c", command], trusted, env)
+    run(["python", "-I", "-S", str(trusted / "ops/release/verify_public_dataset.py"),
+         "--expected-root", str(candidate), "--cache-key", env["PUBLICATION_SOURCE_SHA"]
+         + "-" + env["GITHUB_RUN_ATTEMPT"]], trusted, env)
+
+
+def copy_history(source, destination, builder=False):
+    """Retain only bounded JSON data, never a cache-controlled executable or link."""
+    assert_plain_path(source.parent, Path(source.anchor))
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 32*1024*1024:
+            raise RuntimeError("Unsafe GDELT history")
+        data = stream.read(32*1024*1024 + 1)
+    if len(data) > 32*1024*1024:
+        raise RuntimeError("GDELT history exceeded bound")
+    json.loads(data)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(data)
+    destination.chmod(0o600)
+    if builder:
+        shutil.chown(destination.parent, user=10001, group=10001)
+        shutil.chown(destination, user=10001, group=10001)
+    else:
+        with destination.open("rb") as stream:
+            os.fsync(stream.fileno())
 
 
 def main():
@@ -171,6 +179,7 @@ def main():
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
     if expected != source_sha:
         raise RuntimeError("Requested source is no longer current main")
+    print(f"RAILWAY_FULL_START source={source_sha} deployment={os.environ.get('RAILWAY_DEPLOYMENT_ID', 'local')}", flush=True)
     apply = os.environ.get("PUBLISH_APPLY") == "1"
     evidence = Path("/evidence")
     prior_state = None
@@ -180,10 +189,10 @@ def main():
         if apply and state_path.is_file():
             prior_state = json.loads(state_path.read_text())
     signer = os.environ["RELEASE_SIGNING_KEY_FINGERPRINT"]
-    workflow_path = CONTROLLER / "publish-static.yml"
+    workflow_path = CONTROLLER / "publish.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
     steps = {
-        step.get("name"): step for step in workflow["jobs"]["copy-static"]["steps"]
+        step.get("name"): step for step in workflow["jobs"]["build-and-deploy"]["steps"]
     }
     with tempfile.TemporaryDirectory(prefix="seiche-publication-") as directory:
         root = Path(directory)
@@ -192,7 +201,7 @@ def main():
         git(["clone", "--quiet", SOURCE, str(trusted)], root)
         git(["checkout", "--quiet", "--detach", source_sha], trusted)
         if (
-            trusted / ".github/workflows/publish-static.yml"
+            trusted / ".github/workflows/publish.yml"
         ).read_bytes() != workflow_path.read_bytes():
             raise RuntimeError(
                 "Publication workflow changed; update the reviewed controller"
@@ -207,16 +216,13 @@ def main():
                 raise RuntimeError(
                     "Publication verifier changed; update the reviewed controller"
                 )
-        receipt = os.environ.get("FRONTEND_RECEIPT_TAG", "")
-        if not receipt:
-            candidate = "frontend-publication-" + source_sha
-            if git(["tag", "--list", candidate], trusted) == candidate:
-                receipt = candidate
+        receipt = ""  # Full engine output requires the original backend release gate.
         temp = root / "temp"
         temp.mkdir()
         env = clean_env(
             {
                 "GITHUB_SHA": source_sha,
+                "PUBLICATION_SOURCE_SHA": source_sha,
                 "GITHUB_WORKSPACE": str(trusted),
                 "RUNNER_TEMP": str(temp),
                 "FRONTEND_RECEIPT_TAG": receipt,
@@ -228,51 +234,20 @@ def main():
             "Fetch the exact declared release tag",
             "Gate catalog on the signed release, runtime, and PyPI receipts",
         ):
-            print("RAILWAY_STATIC_STEP " + name, flush=True)
-            run(["bash", "-euo", "pipefail", "-c", steps[name]["run"]], trusted, env)
+            print("RAILWAY_FULL_STEP " + name, flush=True)
+            command = steps[name]["run"].replace("frontend/dist/.well-known/ai-catalog.json",
+                                                   "frontend/public/.well-known/ai-catalog.json")
+            run(["bash", "-euo", "pipefail", "-c", command], trusted, env)
         mirror = root / "mirror"
         git(["clone", "--quiet", MIRROR, str(mirror)], root)
         previous_sha = git(["rev-parse", "HEAD"], mirror)
-        if (
-            prior_state
-            and prior_state.get("source") == source_sha
-            and prior_state.get("site") == previous_sha
-        ):
-            recovery_name = prior_state.get("recovery", "")
-            if "/" in recovery_name or not recovery_name.startswith(
-                source_sha + "-seiche-publication-"
-            ):
-                raise RuntimeError("Invalid retained recovery identity")
-            verify_publication(
-                steps,
-                trusted,
-                mirror,
-                clean_env({**env, "RUNNER_TEMP": str(evidence / recovery_name)}),
-                receipt,
-            )
-            print(
-                f"RAILWAY_STATIC_UNCHANGED_VERIFIED source={source_sha} site={previous_sha}",
-                flush=True,
-            )
-            return
-        if receipt:
-            proof = run(
-                [
-                    "python",
-                    "-I",
-                    "-S",
-                    str(trusted / "ops/release/frontend_site_proof.py"),
-                    "snapshot",
-                    "--site-root",
-                    str(mirror),
-                    "--archive",
-                    str(root / "previous-site.tar"),
-                ],
-                trusted,
-                clean_env(),
-                capture=True,
-            )
-            (root / "previous-site.json").write_text(proof)
+        digest = hashlib.sha256()
+        for name in ("publish.py", "Dockerfile", "publish.yml", "gate-sha256.json",
+                     "requirements-social-cards.txt"):
+            digest.update(name.encode() + b"\0" + (CONTROLLER / name).read_bytes())
+        controller_digest = digest.hexdigest()
+        reusable = bool(prior_state and prior_state.get("source") == source_sha
+                        and prior_state.get("controller_digest") == controller_digest)
         build = root / "build"
         git(["clone", "--quiet", "--no-hardlinks", str(trusted), str(build)], root)
         shutil.chown(build, user=10001, group=10001)
@@ -283,87 +258,59 @@ def main():
         build_temp = root / "build-temp"
         build_temp.mkdir()
         shutil.chown(build_temp, user=10001, group=10001)
-        if (temp / "frontend-publication-proof").exists():
-            shutil.copytree(
-                temp / "frontend-publication-proof",
-                build_temp / "frontend-publication-proof",
-            )
-            for path in (build_temp / "frontend-publication-proof").rglob("*"):
-                shutil.chown(path, user=10001, group=10001)
-            shutil.chown(
-                build_temp / "frontend-publication-proof", user=10001, group=10001
-            )
         build_env = clean_env(
             {
                 "GITHUB_SHA": source_sha,
+                "PUBLICATION_SOURCE_SHA": source_sha,
                 "GITHUB_WORKSPACE": str(build),
                 "RUNNER_TEMP": str(build_temp),
                 "FRONTEND_RECEIPT_TAG": receipt,
                 "XDG_CACHE_HOME": str(build_temp / "cache"),
             }
         )
-        print("RAILWAY_STATIC_STEP test and build frontend", flush=True)
-        run(
-            [
-                "bash",
-                "-euo",
-                "pipefail",
-                "-c",
-                steps["Test and build exact-head frontend"]["run"],
-            ],
-            build / "frontend",
-            build_env,
-            unprivileged=True,
-        )
-        prepare = steps["Prepare static files from the recoverable site mirror"]["run"]
-        start = prepare.index("mkdir -p ~/.ssh")
-        end = prepare.index('if [ -n "$FRONTEND_RECEIPT_TAG" ]; then')
-        prepared = build_temp / "site"
-        git(["clone", "--quiet", "--no-hardlinks", str(mirror), str(prepared)], root)
-        shutil.chown(prepared, user=10001, group=10001)
-        for path in prepared.rglob("*"):
-            if not path.is_symlink():
-                shutil.chown(path, user=10001, group=10001)
-        prepare = prepare[:start] + prepare[end:]
-        prepare = prepare.replace("/tmp/site", str(prepared))
-        print("RAILWAY_STATIC_STEP prepare sealed mirror", flush=True)
-        run(
-            ["bash", "-euo", "pipefail", "-c", prepare],
-            build,
-            build_env,
-            unprivileged=True,
-        )
+        history = evidence / "gdelt-web-history.json"
+        if history.is_file():
+            copy_history(history, build / ".cache/gdelt-web-history.json", builder=True)
+        run(["python", "-m", "venv", str(build_temp / "venv")], build,
+            build_env, unprivileged=True)
+        build_env.update({
+            "PATH": str(build_temp / "venv/bin") + ":" + build_env["PATH"],
+            "HOME": str(build_temp),
+            "PUBLICATION_SOURCE_SHA": source_sha,
+            "GDELT_WEB_HISTORY_FILE": str(build / ".cache/gdelt-web-history.json"),
+            "RUN_FULL_SUITE": "false" if reusable else "true",
+        })
+        for name in (
+            "Install backend",
+            "Install hash-locked social-card renderer",
+            "Engine tests (publish gates on green)",
+            "Seed GDELT WEB-NGRAM baseline when cache is cold",
+            "Run engines, export snapshot",
+            "Append Book record (hash-chained ledger)",
+            "Render dispatch pages", "Render methodology page", "Render skeptic pack",
+            "Render ampleness check", "Render referee page",
+            "Test and build frontend (snapshot baked into dist/)",
+            "Prerender the no-JS home page", "Build contextual social cards",
+        ):
+            if reusable and name == "Engine tests (publish gates on green)":
+                print("RAILWAY_FULL_STEP exact source/controller test proof reused", flush=True)
+                continue
+            print("RAILWAY_FULL_STEP " + name, flush=True)
+            run(["bash", "-euo", "pipefail", "-c", steps[name]["run"]],
+                build, build_env, unprivileged=True)
+        prepared = build / "frontend/dist"
         quiesce_builder()
         candidate = root / "candidate"
         candidate.mkdir()
-        copy_public_tree(prepared, candidate, root)
-        if receipt:
-            proof = run(
-                [
-                    "python",
-                    "-I",
-                    "-S",
-                    str(trusted / "ops/release/frontend_site_proof.py"),
-                    "seal",
-                    "--site-root",
-                    str(candidate),
-                    "--source-sha",
-                    source_sha,
-                    "--manifest",
-                    str(root / "previous-site.json"),
-                ],
-                trusted,
-                clean_env(),
-                capture=True,
-            )
-            # Use the independent privileged seal for public proof, never the builder's claim.
-            proof_directory = temp / "frontend-publication-proof"
-            assert_plain_path(proof_directory, root)
-            (proof_directory / "prepared-site.json").write_text(proof)
+        copy_public_tree(prepared, candidate)
+        run(["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
+             "--expected-sha", source_sha, "--signer-fingerprint", signer,
+             "--published-catalog", str(candidate / ".well-known/ai-catalog.json")],
+            trusted, clean_env())
         if current_main() != source_sha:
             raise RuntimeError("Source main advanced during preparation")
         print(
-            f"RAILWAY_STATIC_PREPARE_PASS source={source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
+            f"RAILWAY_FULL_PREPARE_PASS source={source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
             flush=True,
         )
         if not apply:
@@ -381,14 +328,6 @@ def main():
             for path in mirror.iterdir():
                 if path.name != ".git":
                     archive.add(path, arcname=path.name)
-        if receipt:
-            # Retain only the signed gate's controller-owned proof and independent seal.
-            # Builder cache paths are never traversed or read with publishing privileges.
-            assert_plain_path(temp / "frontend-publication-proof", root)
-            shutil.copytree(
-                temp / "frontend-publication-proof",
-                recovery / "frontend-publication-proof",
-            )
         (recovery / "identity.json").write_text(
             json.dumps({"source": source_sha, "previous_site": previous_sha})
         )
@@ -427,7 +366,7 @@ def main():
         git(["add", "-A"], mirror)
         if git(["status", "--porcelain"], mirror):
             git(
-                ["commit", "-m", "Verified Railway static publication " + source_sha],
+                ["commit", "-m", "Verified Railway full publication " + source_sha],
                 mirror,
             )
             if current_main() != source_sha:
@@ -467,9 +406,14 @@ def main():
             steps,
             trusted,
             candidate,
-            clean_env({**env, "RUNNER_TEMP": str(temp)}),
+            clean_env({**env, "RUNNER_TEMP": str(build_temp)}),
             receipt,
         )
+        # Publish-success commits the history cache; failed generations never replace it.
+        generated_history = build / ".cache/gdelt-web-history.json"
+        if generated_history.is_file():
+            copy_history(generated_history, evidence / "gdelt-web-history.json.tmp")
+            (evidence / "gdelt-web-history.json.tmp").replace(history)
         state = evidence / "current.json.tmp"
         state.write_text(
             json.dumps(
@@ -478,6 +422,7 @@ def main():
                     "site": site_sha,
                     "recovery": recovery.name,
                     "verified_at": time.time(),
+                    "controller_digest": controller_digest,
                 }
             )
         )
@@ -485,7 +430,7 @@ def main():
             os.fsync(stream.fileno())
         state.replace(evidence / "current.json")
         print(
-            f"RAILWAY_STATIC_PUBLISH_PASS source={source_sha} site={site_sha}",
+            f"RAILWAY_FULL_PUBLISH_PASS source={source_sha} site={site_sha}",
             flush=True,
         )
 
