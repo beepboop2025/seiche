@@ -145,7 +145,9 @@ class MarketRepository(Protocol):
 
     def save_collector_run(self, run: dict) -> str: ...
 
-    def latest_collector_runs(self, market_id: str | None = None) -> list[dict]: ...
+    def latest_collector_runs(
+        self, market_id: str | None = None, *, successful_only: bool = False
+    ) -> list[dict]: ...
 
     def load_collector_states(self, market_id: str | None = None) -> list[dict]: ...
 
@@ -1487,9 +1489,14 @@ class PostgresMarketRepository:
             )
         return run_id
 
-    def latest_collector_runs(self, market_id: str | None = None) -> list[dict]:
+    def latest_collector_runs(
+        self, market_id: str | None = None, *, successful_only: bool = False
+    ) -> list[dict]:
         self._ensure_schema()
-        predicate = "WHERE market_id=%s" if market_id is not None else ""
+        conditions = ["market_id=%s"] if market_id is not None else []
+        if successful_only:
+            conditions.append("status='SUCCESS'")
+        predicate = "WHERE " + " AND ".join(conditions) if conditions else ""
         params = (market_id.upper(),) if market_id is not None else ()
         with self._connect() as connection:
             rows = connection.execute(

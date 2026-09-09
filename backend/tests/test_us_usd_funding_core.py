@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
-from seiche import market_runtime
+from seiche import market_runtime, store
 from seiche.collectors import CollectorRun, CollectorRunStatus
 from seiche.domain.observation import (
     CanonicalUnit,
@@ -31,6 +33,8 @@ from seiche.markets.us_usd.funding_core import (
     build_funding_core_input_pack_from_repository,
     export_funding_core_input_pack,
 )
+from seiche.repository import SQLiteMarketRepository
+from seiche.sources.base import ObservationBatch
 
 START = datetime(2023, 1, 3, tzinfo=UTC)
 AS_OF = datetime(2026, 8, 9, tzinfo=UTC)
@@ -517,3 +521,192 @@ async def test_percent_rate_marker_waits_for_ready_funding_export(
 
     marker = state / "US-USD--nyfed_rates--nyfed-sofrai-averages-index-v4.done"
     assert marker.exists() is (export_status == "SUCCESS")
+
+
+@pytest.mark.asyncio
+async def test_completed_nyfed_export_survives_interrupted_foreign_cycle(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "interrupted.sqlite")
+    monkeypatch.setenv("SEICHE_USD_FUNDING_CORE_EXPORT_DIR", str(tmp_path / "export"))
+    repository = SQLiteMarketRepository()
+    repository.save_observations(_rows(504))
+    foreign_started, exported = asyncio.Event(), asyncio.Event()
+    loop = asyncio.get_running_loop()
+    real_export = market_runtime.export_funding_core_input_pack
+
+    def observe_export(*args, **kwargs):
+        target = real_export(*args, **kwargs)
+        loop.call_soon_threadsafe(exported.set)
+        return target
+
+    class _Nyfed:
+        market_id, adapter_id = "US-USD", "nyfed_rates"
+
+        async def collect(self):
+            return ObservationBatch(
+                self.market_id,
+                self.adapter_id,
+                datetime.now(UTC),
+                tuple(_rows(505)[-3:]),
+            )
+
+    class _BlockedForeign:
+        market_id, adapter_id = "JP-JPY", "boj_rates"
+
+        async def collect(self):
+            foreign_started.set()
+            await asyncio.Event().wait()
+
+    def supervisor_factory(**kwargs):
+        supervisor = market_runtime.CollectorSupervisor(
+            registry=kwargs["registry"],
+            observation_writer=repository.save_observations,
+            run_writer=kwargs["run_writer"],
+        )
+        supervisor.register(_Nyfed())
+        supervisor.register(_BlockedForeign())
+        return supervisor
+
+    monkeypatch.setattr(market_runtime, "build_supervisor", supervisor_factory)
+    monkeypatch.setattr(
+        market_runtime, "export_funding_core_input_pack", observe_export
+    )
+    cycle = asyncio.create_task(
+        market_runtime.collect_once(repository=repository, materialize=False)
+    )
+    try:
+        await asyncio.wait_for(foreign_started.wait(), timeout=5)
+        await asyncio.wait_for(exported.wait(), timeout=5)
+        assert not cycle.done()
+        run = repository.latest_collector_runs("US-USD")[0]
+        pack = json.loads((tmp_path / "export" / EXPORT_FILENAME).read_bytes())
+        assert pack["as_of"] == run["finished_at"]
+        assert pack["coverage"]["event_time_count"] == 505
+        assert run["status"] == "SUCCESS"
+    finally:
+        cycle.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cycle
+    assert (tmp_path / "export" / EXPORT_FILENAME).is_file()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "existing_state", ["stale", "corrupt", "future", "newer", "failed_only"]
+)
+async def test_worker_restart_reconciles_completed_export_before_next_due(
+    monkeypatch, tmp_path, existing_state
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "restart.sqlite")
+    monkeypatch.setenv("SEICHE_USD_FUNDING_CORE_EXPORT_DIR", str(tmp_path / "export"))
+    repository = SQLiteMarketRepository()
+    repository.save_observations(_rows(504))
+    future_due = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    success = replace(_run("US-USD", "nyfed_rates"), next_due=future_due)
+    if existing_state != "failed_only":
+        repository.save_collector_run(success.to_dict())
+    # A later failed attempt must not hide the earlier completed success.
+    repository.save_collector_run(
+        replace(
+            success,
+            status=CollectorRunStatus.FAILED,
+            finished_at=(AS_OF + timedelta(hours=1)).isoformat(),
+            observations_written=0,
+            fault="source unavailable",
+        ).to_dict()
+    )
+    existing_offset = (
+        timedelta(minutes=1) if existing_state == "newer" else -timedelta(minutes=1)
+    )
+    if existing_state == "future":
+        existing_offset = timedelta(days=10000)
+    target = export_funding_core_input_pack(
+        repository,
+        as_of=AS_OF + existing_offset,
+        directory=tmp_path / "export",
+    )
+    if existing_state == "corrupt":
+        target.write_text('{"as_of":"2999-01-01T00:00:00+00:00"}')
+    original_bytes, original_mtime = target.read_bytes(), target.stat().st_mtime_ns
+    queried = False
+
+    class _NotDue:
+        async def run_due(self, *, now):
+            nonlocal queried
+            queried = True
+            assert datetime.fromisoformat(future_due) > now
+            pack = json.loads(target.read_bytes())
+            expected = AS_OF
+            if existing_state == "newer":
+                expected += timedelta(minutes=1)
+            elif existing_state == "failed_only":
+                expected -= timedelta(minutes=1)
+            assert datetime.fromisoformat(pack["as_of"]) == expected
+            return []
+
+    class _StopWorker(Exception):
+        pass
+
+    async def stop_after_poll(_seconds):
+        raise _StopWorker
+
+    async def parked_heartbeat(*_args, **_kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(market_runtime, "build_supervisor", lambda **_kwargs: _NotDue())
+    monkeypatch.setattr(market_runtime, "_worker_heartbeat_loop", parked_heartbeat)
+    monkeypatch.setattr(market_runtime.asyncio, "sleep", stop_after_poll)
+    with pytest.raises(_StopWorker):
+        await market_runtime.run_worker(poll_seconds=5, repository=repository)
+    assert queried
+    if existing_state in {"newer", "failed_only"}:
+        assert target.read_bytes() == original_bytes
+        assert target.stat().st_mtime_ns == original_mtime
+
+
+def test_failed_completion_export_retries_without_advancing_source_clock(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "retry.sqlite")
+    monkeypatch.setenv("SEICHE_USD_FUNDING_CORE_EXPORT_DIR", str(tmp_path / "export"))
+    repository = SQLiteMarketRepository()
+    repository.save_observations(_rows(504))
+    run = _run("US-USD", "nyfed_rates")
+    real_export = market_runtime.export_funding_core_input_pack
+    attempts = 0
+
+    def transient_export(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("temporary export failure")
+        return real_export(*args, **kwargs)
+
+    monkeypatch.setattr(
+        market_runtime, "export_funding_core_input_pack", transient_export
+    )
+    handler = market_runtime._completed_run_handler(
+        repository=repository,
+        registry=market_runtime.default_registry(),
+        backfill=False,
+        materialize=False,
+        record_forward=False,
+        published_snapshots={},
+    )
+    handler(run.to_dict())
+    assert repository.latest_collector_runs("US-USD")[0]["status"] == "SUCCESS"
+    assert not (tmp_path / "export" / EXPORT_FILENAME).exists()
+    result = market_runtime._export_usd_funding_core_after_runs(
+        [run], repository=repository, cutoff=AS_OF + timedelta(hours=6)
+    )
+    assert result["status"] == "SUCCESS"
+    target = tmp_path / "export" / EXPORT_FILENAME
+    assert json.loads(target.read_bytes())["as_of"] == run.finished_at
+    before = target.stat().st_mtime_ns
+    again = market_runtime._export_usd_funding_core_after_runs(
+        [run], repository=repository, cutoff=AS_OF + timedelta(days=1)
+    )
+    assert again["unchanged"] is True
+    assert target.stat().st_mtime_ns == before
+    assert attempts == 2

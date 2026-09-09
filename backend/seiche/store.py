@@ -1204,8 +1204,13 @@ def save_collector_run(run: dict) -> str:
     return run_id
 
 
-def latest_collector_runs(market_id: str | None = None) -> list[dict]:
-    predicate = "WHERE market_id=?" if market_id is not None else ""
+def latest_collector_runs(
+    market_id: str | None = None, *, successful_only: bool = False
+) -> list[dict]:
+    conditions = ["market_id=?"] if market_id is not None else []
+    if successful_only:
+        conditions.append("status='SUCCESS'")
+    predicate = "WHERE " + " AND ".join(conditions) if conditions else ""
     params = (market_id.upper(),) if market_id is not None else ()
     with _lock, _conn() as conn:
         rows = conn.execute(
