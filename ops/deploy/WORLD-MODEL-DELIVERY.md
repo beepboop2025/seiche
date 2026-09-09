@@ -6,7 +6,7 @@ delivery envelope:
 ```text
 offline Lab runner
   -> /var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json
-  -> authenticated Seiche byte relay
+  -> standalone authenticated Seiche byte relay on loopback:8788
   -> Railway LiquiLens consumer
   -> Ed25519 verification before acceptance
 ```
@@ -58,15 +58,34 @@ openssl rand -hex 32 > /root/seiche-world-model-relay.token
 chmod 0600 /root/seiche-world-model-relay.token
 SEICHE_WORLD_MODEL_DELIVERY_TOKEN_FILE=/root/seiche-world-model-relay.token \
   bash /home/seiche/app/ops/deploy/install-world-model-delivery-relay.sh
-systemctl restart seiche-api.service
+bash ops/deploy/install-standalone-world-model-relay.sh
 ```
 
 The helper first requires the Lab reader group and exact signed export to
 exist, verifies read access as `seiche`, then atomically installs
 `/etc/seiche/world-model-delivery.env` as `root:seiche` mode `0640`. It never
-prints the token. `install-market-platform.sh` validates the file without
-sourcing it and adds it to the API service through an optional systemd
-`EnvironmentFile`; an absent file remains disabled.
+prints the token. The standalone installer copies only the byte handler and
+existing delivery validator to a root-owned, content-addressed directory under
+`/opt/seiche-world-model-relay`. The service reads this existing environment file,
+runs as `seiche` with the Lab reader group, and binds only `127.0.0.1:8788`.
+It imports no API, database, model, or collector. Systemd denies writes and
+non-loopback network access. Missing configuration prevents service startup;
+malformed configuration keeps the route disabled.
+
+After verifying the installed service, change only the exact GET delivery
+handler in the installed Caddyfile to `reverse_proxy 127.0.0.1:8788`, validate
+that configuration, and reload Caddy. Preserve a copy of the prior Caddyfile
+and the installed source digest. Verify unauthorized access is still `401`,
+authenticated bytes match the producer export, and the LiquiLens consumer
+accepts or recognizes the already verified envelope. Keep the retired
+`seiche-api.service` and all Railway-fenced writers masked. Public Seiche routes
+continue to use their established Railway upstream.
+
+The installer retains the preceding module release in
+`/opt/seiche-world-model-relay/previous-release`. A failed activation must leave
+the original Caddyfile installed; stop the new relay if it cannot pass its
+authenticated byte and isolation checks. Never fall back to an unauthenticated
+file server or reactivate a fenced writer to provide this route.
 
 The environment contract is:
 
@@ -103,5 +122,6 @@ The LiquiLens public key configuration remains separate and authoritative.
   oversized, malformed, or signature-invalid response.
 
 Token rotation requires coordinated replacement of the root-only token file,
-rerunning the helper, updating the Railway secret, and restarting Seiche.
+rerunning the helper, updating the Railway secret, and restarting only
+`seiche-world-model-relay.service`.
 There is intentionally no unauthenticated external smoke probe for this route.

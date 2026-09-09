@@ -418,7 +418,7 @@ api.seiche.info {
     handle @world_model_delivery {
         header Cache-Control "no-store, no-transform"
         header X-Content-Type-Options "nosniff"
-        reverse_proxy 127.0.0.1:8787
+        reverse_proxy 127.0.0.1:8788
     }
     @world_model_delivery_non_get path /api/internal/v1/world-model/us-usd-funding-core-v2
     handle @world_model_delivery_non_get {
