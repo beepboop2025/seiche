@@ -35,6 +35,11 @@ from seiche.markets.us_usd.funding_core import (
 )
 from seiche.repository import SQLiteMarketRepository
 from seiche.sources.base import ObservationBatch
+from seiche.markets.world_model import (
+    RequiredWorldModelState,
+    build_world_model_input_pack,
+    verify_world_model_input_pack,
+)
 
 START = datetime(2023, 1, 3, tzinfo=UTC)
 AS_OF = datetime(2026, 8, 9, tzinfo=UTC)
@@ -593,7 +598,7 @@ async def test_completed_nyfed_export_survives_interrupted_foreign_cycle(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "existing_state", ["stale", "corrupt", "future", "newer", "failed_only"]
+    "existing_state", ["stale", "corrupt", "foreign", "future", "newer", "failed_only"]
 )
 async def test_worker_restart_reconciles_completed_export_before_next_due(
     monkeypatch, tmp_path, existing_state
@@ -628,6 +633,22 @@ async def test_worker_restart_reconciles_completed_export_before_next_due(
     )
     if existing_state == "corrupt":
         target.write_text('{"as_of":"2999-01-01T00:00:00+00:00"}')
+    elif existing_state == "foreign":
+        foreign = build_world_model_input_pack(
+            [
+                row
+                for row in _rows(504)
+                if row.semantic_role is SemanticRole.RATE_MEDIAN
+            ],
+            required_states=(
+                RequiredWorldModelState(
+                    "foreign_median", "US-USD", SemanticRole.RATE_MEDIAN
+                ),
+            ),
+            as_of=AS_OF + timedelta(minutes=1),
+        )
+        assert verify_world_model_input_pack(foreign) == foreign
+        target.write_text(json.dumps(foreign))
     original_bytes, original_mtime = target.read_bytes(), target.stat().st_mtime_ns
     queried = False
 
@@ -710,3 +731,51 @@ def test_failed_completion_export_retries_without_advancing_source_clock(
     assert again["unchanged"] is True
     assert target.stat().st_mtime_ns == before
     assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_startup_export_history_failure_does_not_stop_collector(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "history-failure.sqlite")
+    repository = SQLiteMarketRepository()
+    polled = False
+    notifications = []
+
+    def failed_history(*_args, **_kwargs):
+        raise RuntimeError("temporary history read failure private-password")
+
+    class _Supervisor:
+        async def run_due(self, *, now):
+            nonlocal polled
+            polled = True
+            assert "READY=1" in notifications
+            assert (
+                repository.load_worker_heartbeat(
+                    market_runtime.COLLECTOR_WORKER_COMPONENT_ID
+                )
+                is not None
+            )
+            return []
+
+    class _StopWorker(Exception):
+        pass
+
+    async def stop_after_poll(_seconds):
+        raise _StopWorker
+
+    async def parked_heartbeat(*_args, **_kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(repository, "latest_collector_runs", failed_history)
+    monkeypatch.setattr(
+        market_runtime, "build_supervisor", lambda **_kwargs: _Supervisor()
+    )
+    monkeypatch.setattr(market_runtime, "_systemd_notify", notifications.append)
+    monkeypatch.setattr(market_runtime, "_worker_heartbeat_loop", parked_heartbeat)
+    monkeypatch.setattr(market_runtime.asyncio, "sleep", stop_after_poll)
+    with pytest.raises(_StopWorker):
+        await market_runtime.run_worker(poll_seconds=5, repository=repository)
+    assert polled
+    assert "startup recovery failed fault_type=RuntimeError" in caplog.text
+    assert "private-password" not in caplog.text

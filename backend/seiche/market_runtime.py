@@ -24,6 +24,8 @@ from seiche.markets.us_usd.funding_core import (
     EXPORT_DIRECTORY_ENV,
     EXPORT_FILENAME,
     FUNDING_CORE_PROFILE_ID,
+    FUNDING_CORE_STATES,
+    MINIMUM_COMPLETE_DATES,
     export_funding_core_input_pack,
 )
 from seiche.markets.world_model import verify_world_model_input_pack
@@ -404,6 +406,24 @@ def _export_completed_funding_run(
                 existing = verify_world_model_input_pack(
                     json.loads(target.read_text(encoding="utf-8"))
                 )
+                expected_states = [
+                    {
+                        "state_name": item.state_name,
+                        "market_id": "US-USD",
+                        "currency": "USD",
+                        "instrument_id": item.instrument_id,
+                        "semantic_role": item.semantic_role.value,
+                        "canonical_unit": item.canonical_unit.value,
+                    }
+                    for item in FUNDING_CORE_STATES
+                ]
+                if (
+                    existing["state_definitions"] != expected_states
+                    or len(existing["event_grid"]) < MINIMUM_COMPLETE_DATES
+                ):
+                    raise ValueError(
+                        "existing export is not the pinned funding profile"
+                    )
                 existing_cutoff = datetime.fromisoformat(existing["as_of"])
                 if cutoff <= existing_cutoff <= datetime.now(UTC):
                     return {"status": "SUCCESS", "path": str(target), "unchanged": True}
@@ -434,9 +454,16 @@ def _recover_completed_funding_export(
     loader = getattr(repository, "latest_collector_runs", None)
     if not callable(loader):
         return {"status": "SKIPPED", "reason": "collector history unavailable"}
-    for run in loader("US-USD", successful_only=True):
-        if run["adapter_id"] == "nyfed_rates":
-            return _export_completed_funding_run(run, repository=repository)
+    try:
+        for run in loader("US-USD", successful_only=True):
+            if run["adapter_id"] == "nyfed_rates":
+                return _export_completed_funding_run(run, repository=repository)
+    except Exception as exc:  # noqa: BLE001 — isolate research recovery failure
+        LOGGER.error(
+            "USD funding-core startup recovery failed fault_type=%s",
+            type(exc).__name__,
+        )
+        return {"status": "FAILED", "fault": type(exc).__name__}
     return {"status": "SKIPPED", "reason": "no successful NY Fed history"}
 
 
