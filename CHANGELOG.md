@@ -22,6 +22,12 @@ they change a public contract, methodology, or release artifact.
 - Keep the connection contextual: no common score, inferred causation, training
   permission or execution authority is created.
 
+### Fixed
+
+- Run synchronous health validation outside the shared API request loop and
+  bound PostgreSQL heartbeat connection and query waits. Preserve the existing
+  readiness checks, publication-rights audit and sanitized unknown worker state.
+
 ## [0.12.4] - 2026-09-05
 
 ### Fixed

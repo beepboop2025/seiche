@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -50,6 +51,33 @@ pytestmark = pytest.mark.skipif(
     not os.getenv("SEICHE_TEST_POSTGRES_URL"),
     reason="SEICHE_TEST_POSTGRES_URL is not configured",
 )
+
+
+def test_postgres_heartbeat_wait_is_bounded_by_statement_timeout() -> None:
+    import psycopg
+
+    repository = PostgresMarketRepository(os.environ["SEICHE_TEST_POSTGRES_URL"])
+    repository._ensure_schema()
+    released = threading.Event()
+    with repository._connect() as blocker:
+        blocker.execute("SET LOCAL lock_timeout = '5000ms'")
+        blocker.execute("LOCK TABLE worker_heartbeats IN ACCESS EXCLUSIVE MODE")
+
+        def watchdog():
+            # A missing query deadline must fail the assertion, not hang CI.
+            if not released.wait(6):
+                blocker.rollback()
+
+        worker = threading.Thread(target=watchdog)
+        worker.start()
+        try:
+            with pytest.raises(psycopg.errors.QueryCanceled):
+                repository.load_worker_heartbeat("health-deadline-fixture")
+        finally:
+            released.set()
+            worker.join(timeout=7)
+        assert not worker.is_alive()
+    assert repository.load_worker_heartbeat("health-deadline-fixture") is None
 
 
 def test_postgres_round_trip_covers_the_complete_market_repository() -> None:

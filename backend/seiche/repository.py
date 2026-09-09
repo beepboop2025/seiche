@@ -482,12 +482,13 @@ class PostgresMarketRepository:
         self._initialized = False
         self._init_lock = threading.Lock()
 
-    def _connect(self):
+    def _connect(self, *, connect_timeout: int | None = None):
         try:
             import psycopg
         except ImportError as exc:  # pragma: no cover - deployment dependency
             raise RuntimeError("PostgreSQL selected; install seiche[postgres]") from exc
-        return psycopg.connect(self.dsn)
+        options = {} if connect_timeout is None else {"connect_timeout": connect_timeout}
+        return psycopg.connect(self.dsn, **options)
 
     def _ensure_schema(self) -> None:
         if self._initialized:
@@ -1599,7 +1600,11 @@ class PostgresMarketRepository:
 
     def load_worker_heartbeat(self, component_id: str) -> dict | None:
         self._ensure_schema()
-        with self._connect() as connection:
+        # Public health can retain its completed snapshot while a worker's
+        # heartbeat is unknown. Do not let this small liveness read wait on
+        # database connection or query stalls without a deadline.
+        with self._connect(connect_timeout=2) as connection:
+            connection.execute("SET LOCAL statement_timeout = '2000ms'")
             row = connection.execute(
                 """SELECT component_id, heartbeat_at, expected_by
                      FROM worker_heartbeats WHERE component_id=%s""",

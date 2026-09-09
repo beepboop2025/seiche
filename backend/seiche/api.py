@@ -3554,7 +3554,8 @@ def _worker_heartbeat_fault(
 @app.get("/api/health")
 async def health(response: Response, require_rebuilt: bool = False):
     """Public cached availability, plus an optional rebuild readiness gate."""
-    return _health_response(
+    return await asyncio.to_thread(
+        _health_response,
         response,
         require_rebuilt=require_rebuilt,
         include_release_candidate=False,
@@ -3563,6 +3564,11 @@ async def health(response: Response, require_rebuilt: bool = False):
 
 @app.get("/healthz", include_in_schema=False)
 async def railway_stateful_health(response: Response):
+    """Keep receipt and database checks off the shared request loop."""
+    return await asyncio.to_thread(_railway_stateful_health_response, response)
+
+
+def _railway_stateful_health_response(response: Response):
     """Admit only a receipted Railway shadow, candidate, or production runtime."""
     mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "")
     if mode not in {"shadow", "cutover_candidate", "production"}:
@@ -3652,7 +3658,8 @@ async def railway_stateful_health(response: Response):
 @app.get("/api/internal/v1/release-health", include_in_schema=False)
 async def release_health(response: Response):
     """Loopback-only deployment gate with the exact activation capability."""
-    return _health_response(
+    return await asyncio.to_thread(
+        _health_response,
         response,
         require_rebuilt=True,
         include_release_candidate=True,
