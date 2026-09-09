@@ -7,7 +7,7 @@
     }
   ],
   "publication_date": "2026-09-09",
-  "version": "0.12.6",
+  "version": "0.13.0",
   "upload_type": "software",
   "language": "eng",
   "access_right": "open",
@@ -31,7 +31,7 @@
       "scheme": "url"
     },
     {
-      "identifier": "https://pypi.org/project/seiche/0.12.6/",
+      "identifier": "https://pypi.org/project/seiche/0.13.0/",
       "relation": "isSupplementTo",
       "scheme": "url"
     }

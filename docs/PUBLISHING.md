@@ -1,10 +1,10 @@
 # Publishing Seiche release surfaces
 
-This runbook covers **0.12.6 estuary**. This maintenance release repairs funding
-export recovery and private model delivery after Railway cutover. Source rights,
-observation clocks and the connected research contracts remain unchanged.
-Verify deployment and availability from the exact-source validation and
-publication receipts described below.
+This runbook covers **0.13.0 estuary**. This release adds the structured funding,
+forex and China workbench, deeper canonical NY Fed observations and an atomic
+ECB reference-rate collector. Palimpsest numerical China activation retains its
+independent offline acceptance and durability requirements. Verify deployment
+and availability from the exact-source validation and publication receipts below.
 
 ## Contextual link cards
 
@@ -36,10 +36,11 @@ summary instead of a fabricated single-series reading. The generated manifest
 keeps `share_route_contract.fragment_only_gaps` empty, and the frontend route
 test proves no exposed public share action hands an unfurler a `/#...` URL.
 
-Three surfaces deliberately expose no share action. CORPUS is an unbounded,
+Four surfaces deliberately expose no share action. CORPUS is an unbounded,
 rights-aware remote registry; TIME MACHINE is an arbitrary request-time replay
 rather than a sealed publication input; ACCOUNT contains private viewer and
-credential state. Their reasons are recorded under
+credential state. WORKBENCH contains arbitrary provider, pair and history selections.
+Their reasons are recorded under
 `share_route_contract.non_shareable_surfaces`. Article detail pages already
 carry unique cards; the article archive remains an archive-level page, not a
 fabricated article selection.
@@ -49,7 +50,7 @@ CI lanes install the reviewed CPython 3.12 Linux wheel from
 `ops/requirements-social-cards.txt` with `--only-binary=:all:` and
 `--require-hashes` before collecting the card tests or invoking the renderer.
 This keeps the image toolchain outside `backend/pyproject.toml`; the package
-metadata carries version `0.12.6`. The image dependencies remain hash-pinned
+metadata carries version `0.13.0`. The image dependencies remain hash-pinned
 separately from the package metadata.
 
 The shared corpus is an explicit gap in the finite publisher. Dataset IDs are
@@ -98,17 +99,17 @@ below remains required for runtime, package, catalog or data-contract changes.
    been verified against that deployment, create the catalog-declared receipt
    tag on that exact commit. This receipt is independent of the corpus version
    tag: it binds the current catalog bytes and live release evidence to the
-   workflow SHA. The `r9` receipt does not change corpus version
+   workflow SHA. The `r10` receipt does not change corpus version
    `1.0.0`, its release ID, counts or content hashes. Never move or reuse an
    existing receipt tag.
    ```bash
    release_sha="$(git rev-parse HEAD)"
    test "$release_sha" = "$(git rev-parse origin/main)"
-   receipt_tag=market-corpus-receipt-corpus-7cb1695c6affa707-r9
+   receipt_tag=market-corpus-receipt-corpus-7cb1695c6affa707-r10
    test "$(jq -r '.entries[] | select(.identifier == "urn:air:seiche.info:mcp:market-corpus") | .metadata.publicationReceipt | fromjson | .tag' frontend/public/.well-known/ai-catalog.json)" = "$receipt_tag"
    ! git rev-parse --verify --quiet "refs/tags/$receipt_tag"
    ! git ls-remote --exit-code --tags origin "refs/tags/$receipt_tag"
-   git tag -s -m "Seiche exact-SHA market corpus receipt r9" \
+   git tag -s -m "Seiche exact-SHA market corpus receipt r10" \
      "$receipt_tag" "$release_sha"
    git -c gpg.format=ssh \
      -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
@@ -130,8 +131,8 @@ below remains required for runtime, package, catalog or data-contract changes.
    ```bash
    gh workflow run publish-pypi.yml \
      --repo beepboop2025/seiche \
-     --ref v0.12.6 \
-     -f release_tag=v0.12.6
+     --ref v0.13.0 \
+     -f release_tag=v0.13.0
    ```
    Do not run a local token-backed `twine upload`: PyPI versions are immutable,
    and bypassing the signed-tag/OIDC gate would sever the artifact-to-commit
@@ -147,13 +148,13 @@ below remains required for runtime, package, catalog or data-contract changes.
 4. **Wait for the immutable PyPI receipt.** Do not create the GitHub Release
    while the tag-triggered PyPI workflow is queued or failing. Watch that run to
    completion, then confirm PyPI exposes exactly one wheel and one source archive
-   for `0.12.6` and retain their server-reported SHA-256 digests:
+   for `0.13.0` and retain their server-reported SHA-256 digests:
    ```bash
    gh run list --repo beepboop2025/seiche \
      --workflow publish-pypi.yml --event push --limit 10
    gh run watch RUN_ID --repo beepboop2025/seiche --exit-status
    curl --fail --show-error --silent \
-     https://pypi.org/pypi/seiche/0.12.6/json |
+     https://pypi.org/pypi/seiche/0.13.0/json |
      jq -r '.urls[] | [.filename, .digests.sha256] | @tsv'
    ```
    The workflow already verifies the immutable PyPI bytes against the signed
@@ -194,7 +195,7 @@ below remains required for runtime, package, catalog or data-contract changes.
    and verify that `beepboop2025/seiche` is toggled **On**. Zenodo archives new
    GitHub releases only after repository enablement. The repository's
    [`.zenodo.json` follows Zenodo's documented GitHub authoring format](https://help.zenodo.org/docs/github/describe-software/zenodo-json/) and
-   explicitly carries version `0.12.6`, language `eng`, `upload_type`, license,
+   explicitly carries version `0.13.0`, language `eng`, `upload_type`, license,
    access, creators, related identifiers, and the research boundary. Because
    Zenodo ignores `CITATION.cff` whenever `.zenodo.json` is present, all required
    release metadata must remain complete in this file. CI pins and checks the
@@ -203,8 +204,8 @@ below remains required for runtime, package, catalog or data-contract changes.
    schema is not the raw `.zenodo.json` authoring contract.
    Confirm that no release exists yet:
    ```bash
-   if gh release view v0.12.6 --repo beepboop2025/seiche >/dev/null 2>&1; then
-     echo "v0.12.6 already released; inspect receipts instead of recreating it" >&2
+   if gh release view v0.13.0 --repo beepboop2025/seiche >/dev/null 2>&1; then
+     echo "v0.13.0 already released; inspect receipts instead of recreating it" >&2
      exit 1
    fi
    ```
@@ -213,10 +214,10 @@ below remains required for runtime, package, catalog or data-contract changes.
    starts Zenodo archival plus the MCP and GHCR publishers. It must happen only
    after steps 4 and 5 are green:
    ```bash
-   gh release create v0.12.6 \
+   gh release create v0.13.0 \
      --repo beepboop2025/seiche \
      --verify-tag \
-     --title "Seiche 0.12.6" \
+     --title "Seiche 0.13.0" \
      --generate-notes
    ```
    Do not delete and recreate the release as a retry mechanism. Use the
@@ -226,16 +227,16 @@ below remains required for runtime, package, catalog or data-contract changes.
 7. **Receipt the three release-triggered surfaces.** Treat these as separate
    outcomes even though the GitHub Release starts them concurrently:
 
-   - **Zenodo:** wait for the integration to archive `v0.12.6`; open the record,
-     confirm version `0.12.6`, software type, open access, creator, license, and
+   - **Zenodo:** wait for the integration to archive `v0.13.0`; open the record,
+     confirm version `0.13.0`, software type, open access, creator, license, and
      GitHub relationship, then record the version DOI, concept DOI, record URL,
      and archive checksum. Do not claim a DOI while only `.zenodo.json` exists.
    - **MCP Registry:** watch `publish-mcp.yml`, then query the owner namespace and
-     retain the workflow URL plus the returned `0.12.6` record. Recovery must use
+     retain the workflow URL plus the returned `0.13.0` record. Recovery must use
      the tag as both workflow ref and explicit input:
      ```bash
      gh workflow run publish-mcp.yml --repo beepboop2025/seiche \
-       --ref v0.12.6 -f release_tag=v0.12.6
+       --ref v0.13.0 -f release_tag=v0.13.0
      curl --fail --show-error --silent \
        'https://registry.modelcontextprotocol.io/v0.1/servers/io.github.beepboop2025%2Fseiche/versions/latest'
      ```
@@ -266,7 +267,7 @@ below remains required for runtime, package, catalog or data-contract changes.
 8. **Verify the independently published OpenBB extension.** Version `0.1.0`
    is already published from Seiche `v0.12.1` with a
    [successful verification receipt](https://github.com/beepboop2025/seiche/actions/runs/33942222780).
-   Do not dispatch another publication of that immutable version for `v0.12.6`.
+   Do not dispatch another publication of that immutable version for `v0.13.0`.
    The following records the original publication procedure; a future OpenBB
    update requires its own new version. Configure the PyPI pending or
    trusted publisher for project `openbb-seiche`, workflow

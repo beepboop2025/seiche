@@ -11,6 +11,31 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-09
+
+### Added
+
+- Add the WORKBENCH workspace and bounded REST/MCP contract for funding,
+  forex comparisons, source-dated history, structured exports and accepted
+  Palimpsest China economic context.
+- Retain 23 additional NY Fed distribution and volume series, for 34 canonical
+  instruments, and collect official ECB FX history with 29 current currencies.
+- Preserve China annual-data clocks, rights, selected histories and explicit
+  coverage gaps. Numerical production activation remains independently gated.
+
+### Fixed
+
+- Commit ECB currencies and capture evidence atomically. Reject older upstream
+  dates and conflicting refreshes; read values and manifests as one generation.
+- Keep exact-date currency crosses, missing legs, stale observations and revoked
+  export rights explicit. Expose document-specific capture hashes and coverage.
+
+### Changed
+
+- Align software discovery and metadata with version `0.13.0` and new corpus
+  publication receipt `r10`. Existing corpus and direct-OFR dataset identities,
+  values and content hashes remain unchanged.
+
 ## [0.12.6] - 2026-09-09
 
 ### Fixed

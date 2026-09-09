@@ -23,7 +23,7 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
 
-def _receipts(version: str = "0.12.6"):
+def _receipts(version: str = "0.13.0"):
     wheel_url = f"https://files.pythonhosted.org/packages/seiche-{version}.whl"
     sdist_url = f"https://files.pythonhosted.org/packages/seiche-{version}.tar.gz"
     bodies = {wheel_url: b"canonical wheel", sdist_url: b"canonical sdist"}
@@ -77,7 +77,7 @@ def _verify(pypi, health, discovery, bodies):
         return bodies[url]
 
     return gate.verify_public_receipts(
-        "0.12.6", fetch_json=fetch_json, fetch_bytes=fetch_bytes
+        "0.13.0", fetch_json=fetch_json, fetch_bytes=fetch_bytes
     )
 
 
@@ -195,7 +195,7 @@ def _verify_market(health, catalog, discovery, tools, *, entry=None):
 def test_local_catalog_release_identity_is_internally_exact():
     version, entry = gate.verify_local_identity(ROOT)
 
-    assert version == "0.12.6"
+    assert version == "0.13.0"
     assert len(entry["capabilities"]) == 14
     assert "trade_safety_risk_context" in entry["capabilities"]
     assert entry["prompts"] == [
@@ -299,7 +299,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
 
     assert receipt == {
         "schemaVersion": "1.0.0",
-        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r9",
+        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r10",
         "releaseId": "corpus-7cb1695c6affa707",
         "indexSha256": (
             "29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36"
@@ -379,7 +379,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         expected_sha=expected_sha,
         signer_fingerprint="SHA256:" + "A" * 43,
     )
-    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r9"
+    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r10"
     assert gate._market_corpus_publication_receipt(entry)["releaseId"] == (
         "corpus-7cb1695c6affa707"
     )
@@ -390,7 +390,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
 
     monkeypatch.setattr(gate, "_verify_annotated_signed_tag", stale_receipt_tag)
     monkeypatch.setattr(
-        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.12.6"
+        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.13.0"
     )
     monkeypatch.setattr(
         gate,
@@ -467,7 +467,7 @@ def _sign_content_release(root, *, receipt=True):
     _content_git(root, "config", "user.signingkey", str(key))
     _content_git(root, "add", ".")
     _content_git(root, "commit", "-q", "--amend", "--no-edit", "-S")
-    tags = ["v0.12.6", "market-corpus-v1.0.0"]
+    tags = ["v0.13.0", "market-corpus-v1.0.0"]
     if receipt:
         tags.append(gate._market_corpus_publication_receipt(_market_entry())["tag"])
     for tag in tags:
@@ -527,9 +527,9 @@ def test_fresh_exact_head_corpus_receipt_keeps_existing_independent_release_path
     _content_git(root, "tag", "-s", "-m", "fresh exact-head receipt", tag)
     assert (
         gate.verify_signed_release(
-            root, version="0.12.6", expected_sha=head, signer_fingerprint=fingerprint
+            root, version="0.13.0", expected_sha=head, signer_fingerprint=fingerprint
         )
-        == "v0.12.6"
+        == "v0.13.0"
     )
     assert (
         gate.verify_market_corpus_release(
@@ -564,7 +564,7 @@ def test_generated_content_rejects_even_reverted_release_or_code_drift(
     head = _content_commit(root, {}, subject="week ahead: reverted drift")
     # The old endpoint-only release identity comparison still passes.
     gate.verify_signed_release(
-        root, version="0.12.6", expected_sha=head, signer_fingerprint=fingerprint
+        root, version="0.13.0", expected_sha=head, signer_fingerprint=fingerprint
     )
     with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
         gate.verify_market_corpus_release(
@@ -727,17 +727,17 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
         assert (
             gate.verify_signed_release(
                 root,
-                version="0.12.6",
+                version="0.13.0",
                 expected_sha=head,
                 signer_fingerprint=fingerprint,
             )
-            == "v0.12.6"
+            == "v0.13.0"
         )
         receipt, _ = gate.verify_market_corpus_release(
             root, expected_sha=head, signer_fingerprint=fingerprint
         )
         assert _content_git(root, "rev-parse", f"{receipt}^{{commit}}") == release
-        assert _content_git(root, "rev-parse", "v0.12.6^{commit}") == release
+        assert _content_git(root, "rev-parse", "v0.13.0^{commit}") == release
         _content_git(root, "checkout", "-q", "--detach", current)
     # Exercise the real CLI identity output; public network receipt collection
     # is a separate concern and is intentionally stubbed in this offline test.
@@ -760,7 +760,7 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
     assert report["revision"] == head
     assert report["releaseRevision"] == release
     assert report["releaseRevision"] != report["revision"]
-    assert report["releaseTag"] == "v0.12.6"
+    assert report["releaseTag"] == "v0.13.0"
 
 
 @pytest.mark.parametrize("failure", ["unsigned", "wrong-key", "missing-pin"])
@@ -1215,10 +1215,10 @@ def test_local_identity_rejects_an_unsafe_package_readme(tmp_path, unsafe_readme
 def test_public_receipts_require_both_exact_pypi_bodies_and_live_runtime():
     receipt = _verify(*_receipts())
 
-    assert receipt["version"] == "0.12.6"
+    assert receipt["version"] == "0.13.0"
     assert [item["filename"] for item in receipt["artifacts"]] == [
-        "seiche-0.12.6-py3-none-any.whl",
-        "seiche-0.12.6.tar.gz",
+        "seiche-0.13.0-py3-none-any.whl",
+        "seiche-0.13.0.tar.gz",
     ]
 
 
@@ -1397,14 +1397,14 @@ def test_signed_release_gate_rejects_malformed_external_pins_before_git_use():
     with pytest.raises(gate.PublicationGateError, match="SHA is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.12.6",
+            version="0.13.0",
             expected_sha="main",
             signer_fingerprint="SHA256:" + "A" * 43,
         )
     with pytest.raises(gate.PublicationGateError, match="fingerprint is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.12.6",
+            version="0.13.0",
             expected_sha="a" * 40,
             signer_fingerprint="untrusted",
         )
@@ -2106,12 +2106,12 @@ def test_frontend_runtime_subject_remains_the_actual_backend_receipt(mutation):
     }
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.12.6",
+        version="0.13.0",
         corpus_release_id="corpus-" + "c" * 16,
         request=lambda _request: (b'{"ok":true}', headers),
     )
     assert observed.fetch_json(
-        "https://api.seiche.info/api/health?release=0.12.6",
+        "https://api.seiche.info/api/health?release=0.13.0",
         expected_host="api.seiche.info",
     ) == {"ok": True}
     if mutation == "same-version-different-source":
@@ -2165,7 +2165,7 @@ def test_frontend_corpus_subject_uses_only_its_signed_native_release(mutation):
     headers = {"X-Corpus-Release": release_id}
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.12.6",
+        version="0.13.0",
         corpus_release_id=release_id,
         request=lambda _request: (b'{"ok":true}', headers),
     )
@@ -2235,7 +2235,7 @@ def test_frontend_runtime_route_classification_rejects_unregistered_requests(
     requests = []
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.12.6",
+        version="0.13.0",
         corpus_release_id="corpus-" + "c" * 16,
         request=lambda request: requests.append(request),
     )
@@ -2254,7 +2254,7 @@ def test_frontend_corpus_post_cannot_turn_into_an_arbitrary_tool_call(payload):
     requests = []
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.12.6",
+        version="0.13.0",
         corpus_release_id="corpus-" + "c" * 16,
         request=lambda request: requests.append(request),
     )
@@ -2288,8 +2288,8 @@ def test_frontend_independent_subjects_preserve_all_original_semantic_gates(
     elif mutation == "pypi-body":
         bodies[next(iter(bodies))] = b"tampered immutable package"
     responses = {
-        "https://api.seiche.info/api/health?release=0.12.6": (health, seiche_headers),
-        "https://api.seiche.info/.well-known/mcp.json?release=0.12.6": (
+        "https://api.seiche.info/api/health?release=0.13.0": (health, seiche_headers),
+        "https://api.seiche.info/.well-known/mcp.json?release=0.13.0": (
             discovery,
             seiche_headers,
         ),
@@ -2310,13 +2310,13 @@ def test_frontend_independent_subjects_preserve_all_original_semantic_gates(
         return json.dumps(body).encode(), headers
 
     observed = front.RuntimeReceipts(
-        "b" * 40, version="0.12.6", corpus_release_id=release_id, request=request
+        "b" * 40, version="0.13.0", corpus_release_id=release_id, request=request
     )
     monkeypatch.setattr(front.gate, "_fetch_json", lambda _url, **_kwargs: pypi)
 
     def verify():
         front.gate.verify_public_receipts(
-            "0.12.6",
+            "0.13.0",
             fetch_json=observed.fetch_json,
             fetch_bytes=lambda url, **_kwargs: bodies[url],
         )
