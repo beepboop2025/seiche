@@ -653,10 +653,15 @@ async def test_worker_restart_reconciles_completed_export_before_next_due(
     queried = False
 
     class _NotDue:
-        async def run_due(self, *, now):
+        async def run_due(self, *, now, startup_due=frozenset()):
             nonlocal queried
             queried = True
             assert datetime.fromisoformat(future_due) > now
+            # Reconcile the completed export before the first polling pass,
+            # even when missing new fields request startup initialization.
+            assert startup_due == frozenset(
+                {("US-USD", "nyfed_rates"), ("US-USD", "nyfed_unsecured_rates")}
+            )
             pack = json.loads(target.read_bytes())
             expected = AS_OF
             if existing_state == "newer":
@@ -746,9 +751,12 @@ async def test_startup_export_history_failure_does_not_stop_collector(
         raise RuntimeError("temporary history read failure private-password")
 
     class _Supervisor:
-        async def run_due(self, *, now):
+        async def run_due(self, *, now, startup_due=frozenset()):
             nonlocal polled
             polled = True
+            assert startup_due == frozenset(
+                {("US-USD", "nyfed_rates"), ("US-USD", "nyfed_unsecured_rates")}
+            )
             assert "READY=1" in notifications
             assert (
                 repository.load_worker_heartbeat(
