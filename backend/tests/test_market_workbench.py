@@ -148,6 +148,29 @@ def test_cross_never_forward_fills_missing_dates_or_uses_future_observations():
     assert row["change_1obs_pct"] is None
 
 
+@pytest.mark.parametrize("capture_last", ["2026-09-07", "2026-09-09"])
+def test_ecb_reader_rejects_retained_rows_outside_capture_generation(
+    monkeypatch, capture_last
+):
+    row = series("ECBFX_USD", [1.1, 1.2])
+    manifest = capture()
+    row.fetched_at = manifest["fetched_at"]
+    manifest["last_observation_date"] = capture_last
+    monkeypatch.setattr(
+        wb.store,
+        "load_series_window_snapshot",
+        lambda *a, **k: ({"ECBFX_USD": row}, {"ecb_fx:latest": manifest}),
+    )
+    monkeypatch.setattr(wb.context_views, "public_china_economic_context", lambda: None)
+    result = wb.read({"provider": "ecb", "base": "EUR", "quote": "USD"})
+    assert result["forex"]["history"] == []
+    selected = next(
+        item for item in result["forex"]["rows"] if item["quote_currency"] == "USD"
+    )
+    assert selected["value"] is None
+    assert selected["sources"] == []
+
+
 @pytest.mark.parametrize("values", [[0, -1], [float("nan"), float("inf")]])
 def test_invalid_reference_values_remain_unavailable(values):
     result = wb.project({"CNY": series("CNY", values)}, evaluated_at=NOW)

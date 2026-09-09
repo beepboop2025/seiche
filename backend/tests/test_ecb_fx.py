@@ -37,6 +37,14 @@ def parse(payload: bytes):
     return ecb_fx.parse_xml(payload, fetched_at=FETCHED, source_url=ecb_fx.SOURCE_URLS["history"])
 
 
+def database_generation():
+    with sqlite3.connect(store.DB_PATH) as connection:
+        return {
+            table: connection.execute(f"SELECT * FROM {table} ORDER BY 1,2").fetchall()
+            for table in ("observations", "observation_vintages", "fetches", "blobs")
+        }
+
+
 @pytest.fixture
 def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
@@ -230,13 +238,6 @@ async def test_failed_second_currency_rolls_back_series_vintages_and_manifest(is
         calls += 1
         return httpx.Response(200, content=old if calls == 1 else new)
 
-    def database_generation():
-        with sqlite3.connect(store.DB_PATH) as connection:
-            return {
-                table: connection.execute(f"SELECT * FROM {table} ORDER BY 1,2").fetchall()
-                for table in ("observations", "observation_vintages", "fetches", "blobs")
-            }
-
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         await ecb_fx.fetch(client, force=True)
         before = database_generation()
@@ -342,3 +343,86 @@ async def test_whole_download_deadline_stops_slow_stream(isolated_store, monkeyp
     assert closed
     assert store.load_blob(ecb_fx.LATEST_CAPTURE_KEY) is None
     assert store.load_series("ECBFX_USD") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["daily", "history90d", "history"])
+async def test_regressed_latest_date_preserves_entire_generation_and_cache(isolated_store, monkeypatch, mode):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        when = "2026-09-08" if calls == 1 else "2026-09-07"
+        return httpx.Response(200, content=xml(day(when)))
+
+    faults = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await ecb_fx.fetch(client, force=True)
+        before = database_generation()
+        raw_before = sorted((isolated_store / "raw").rglob("*.xml"))
+        monkeypatch.setattr(ecb_fx, "utcnow_iso", lambda: "2026-09-09T00:01:00+00:00")
+        retained = await ecb_fx.fetch(client, faults, mode=mode, force=True)
+        assert retained["ECBFX_USD"].asof == "2026-09-08"
+        assert retained["ECBFX_USD"].fetched_at == FETCHED
+        assert "regressed from 2026-09-08 to 2026-09-07" in faults[0]["detail"]
+        assert database_generation() == before
+        assert sorted((isolated_store / "raw").rglob("*.xml")) == raw_before
+        assert ecb_fx._load_cache()["ECBFX_USD"].fetched_at == FETCHED
+        monkeypatch.setattr(store, "is_fresh", lambda *_: True)
+        cached = await ecb_fx.fetch(client)
+    assert calls == 2
+    assert cached["ECBFX_USD"].asof == "2026-09-08"
+    assert database_generation() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bootstrap", [False, True])
+async def test_overlapping_older_capture_cannot_overwrite_newer_generation(isolated_store, monkeypatch, bootstrap):
+    calls = 0
+    old_started = asyncio.Event()
+    release_old = asyncio.Event()
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        if not bootstrap and calls == 1:
+            when = "2026-09-07"
+        elif calls == (1 if bootstrap else 2):
+            old_started.set()
+            await release_old.wait()
+            when = "2026-09-08"
+        else:
+            when = "2026-09-09"
+        return httpx.Response(200, content=xml(day(when)))
+
+    faults = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        if not bootstrap:
+            await ecb_fx.fetch(client, force=True)
+        old_request = asyncio.create_task(ecb_fx.fetch(client, faults, force=True))
+        await asyncio.wait_for(old_started.wait(), timeout=5)
+        monkeypatch.setattr(ecb_fx, "utcnow_iso", lambda: "2026-09-09T00:01:00+00:00")
+        winner = await ecb_fx.fetch(client, force=True)
+        before_old_finishes = database_generation()
+        monkeypatch.setattr(ecb_fx, "utcnow_iso", lambda: "2026-09-09T00:02:00+00:00")
+        release_old.set()
+        retained = await asyncio.wait_for(old_request, timeout=5)
+        assert "SeriesBatchConflictError" in faults[0]["detail"]
+        assert database_generation() == before_old_finishes
+        assert retained["ECBFX_USD"].asof == winner["ECBFX_USD"].asof == "2026-09-09"
+        assert retained["ECBFX_USD"].fetched_at == winner["ECBFX_USD"].fetched_at == "2026-09-09T00:01:00+00:00"
+        assert retained["ECBFX_USD"].points.equals(winner["ECBFX_USD"].points)
+        monkeypatch.setattr(store, "is_fresh", lambda *_: True)
+        cached = await ecb_fx.fetch(client)
+    assert calls == (2 if bootstrap else 3)
+    assert cached["ECBFX_USD"].fetched_at == winner["ECBFX_USD"].fetched_at
+    assert database_generation() == before_old_finishes
+
+
+@pytest.mark.parametrize("expected", [{}, {"other": None}, {"a": None, "b": None, "c": None}])
+def test_batch_expected_manifest_comparison_is_bounded(isolated_store, expected):
+    series = parse(xml(day("2026-09-08")))
+    with pytest.raises(ValueError, match="1..2 keys"):
+        store.save_series_batch(series.values(), blobs={"a": {}, "b": {}, "c": {}}, expected_blobs=expected)
+    assert not store.DB_PATH.exists()

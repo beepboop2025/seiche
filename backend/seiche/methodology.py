@@ -109,16 +109,17 @@ def csv_restriction(mnemonic: str) -> str | None:
     """Reason string when a series cannot be bulk-exported; None when it can."""
     spec = ALL_SERIES.get(mnemonic)
     label = spec.label if spec else mnemonic
+    source = getattr(spec, "source", None)
+    if mnemonic in CSV_RESTRICTED:
+        origin = "third-party licensed data mirrored on FRED" if source == "fred" else "restricted upstream data"
+        return (f"{label} is {origin}; "
+                f"bulk redistribution is not ours to grant. Pull the raw "
+                f"history from the upstream source; the board publishes only "
+                f"derived readings of it.")
     if spec is not None and spec in ECB_FX_SERIES:
         # This exact ECB-produced FX reference panel has a reviewed reuse
         # contract. It does not grant rights to unrelated ECB/third-party data.
         return None
-    if mnemonic in CSV_RESTRICTED:
-        return (f"{label} is third-party licensed data mirrored on FRED; "
-                f"bulk redistribution is not ours to grant. Pull the raw "
-                f"history from the upstream source; the board publishes only "
-                f"derived readings of it.")
-    source = getattr(spec, "source", None)
     if spec is not None and source not in CSV_ALLOWED_SOURCES:
         owner = CSV_SOURCE_OWNER.get(str(source), f"the {source} upstream")
         return (f"{label} comes from {owner}, which licenses its data rather than "
