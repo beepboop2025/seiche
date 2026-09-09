@@ -17,7 +17,7 @@ export type WorldMarketView =
 
 /** Every finite public tab inherits one crawler-visible card route. Exact
  * series/market/card routes declared deeper in the DOM still win via
- * Element.closest(). The three excluded tabs are intentionally not shareable:
+ * Element.closest(). The excluded tabs are intentionally not shareable:
  * CORPUS is unbounded and rights-aware, TIME MACHINE is an arbitrary request-
  * time reconstruction, and ACCOUNT contains private viewer state. */
 const UI_TAB_SHARE_PATHS: Readonly<Record<string, string>> = Object.freeze({
@@ -43,6 +43,7 @@ const UI_TAB_SHARE_PATHS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export const UNSHAREABLE_UI_TABS: Readonly<Record<string, string>> = Object.freeze({
+  WORKBENCH: "arbitrary query-selected reference histories and structural evidence",
   CORPUS: "unbounded rights-aware dataset registry",
   "TIME MACHINE": "arbitrary request-time historical reconstruction",
   ACCOUNT: "private viewer and credential state",

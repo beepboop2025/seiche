@@ -70,7 +70,7 @@ cutoffs, vintage selection, rights filters and per-market fault reporting.
 Verify deployment and package availability from the release receipts and
 linked registries.
 
-Thirteen evidence tools remain anonymous and free. Five compute-heavy tools are
+Fourteen evidence tools remain anonymous and free. Five compute-heavy tools are
 account-gated; client and catalog copy must preserve that boundary. See the
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.
@@ -324,7 +324,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Thirteen tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Fourteen tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -346,6 +346,7 @@ The copy-paste quickstart and live tool runner are at
 | `crypto_stress_record` | labelled crypto episodes replayed against the funding board |
 | `institutional_flows` | who is positioned where, from public prints |
 | `money_market_context` | compact, chartless USD desk summary or one requested section, plus sources/methodology selectors |
+| `market_workbench` | selectable official FX providers, matching-date crosses, dated histories and accepted Palimpsest China structural evidence |
 | `world_markets_context` | bounded summary or money, forex, capital, source and methodology sections with canonical citation URLs |
 | `oil_funding_context` | observed oil/funding and Ballast evidence, live-vs-reference market structure, plus clearly separated scenarios |
 | `fx_materials_passage` | upstream FX/material pressure and the Passage's holdout-tested links |
@@ -365,7 +366,7 @@ tools: `agent_room_register_key`, `agent_room_create`,
 They record client-signed, server-co-signed agent discussion in a tamper-evident
 room; every record is non-executable and grants no acceptance, order, execution,
 payment, settlement, or custody authority. The full bearer-authenticated hosted
-catalog is therefore 23 tools (13 public evidence + five gated analysis + five
+catalog is therefore 24 tools (14 public evidence + five gated analysis + five
 Agent Room). See [the exact security and signing contract](docs/AGENT-ROOM.md).
 
 Nothing fails at call time over this: `tools/list` returns exactly the tools the
@@ -462,7 +463,7 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-The thirteen-tool public evidence surface needs no account and does not depend on
+The fourteen-tool public evidence surface needs no account and does not depend on
 paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
 Five compute-heavy forecast, replay, positioning, prose and LLM tools are
 account-gated. Seiche does not claim intraday-tick coverage: daily cadence plus

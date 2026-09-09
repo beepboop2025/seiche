@@ -110,10 +110,10 @@ def test_nyfed_revision_indicator_cannot_replace_field_and_event_lineage() -> No
 
     points = parse_nyfed_rates(document)
 
-    assert len({point.revision_id for point in points}) == 3
+    assert len({point.revision_id for point in points}) == 4
     assert all(
         re.fullmatch(
-            r"nyfed:(?:percentRate|percentPercentile99|volumeInBillions):"
+            r"nyfed:(?:percentRate|percentPercentile25|percentPercentile99|volumeInBillions):"
             r"2026-08-06:R1-[0-9a-f]{16}",
             str(point.revision_id),
         )
@@ -286,17 +286,33 @@ def test_nyfed_unsecured_parser_maps_canonical_effr_and_obfr_distribution() -> N
 
     assert [point.instrument_id for point in points] == [
         "US.NYFED.EFFR_MEDIAN",
+        "US.NYFED.EFFR_P01",
+        "US.NYFED.EFFR_P25",
+        "US.NYFED.EFFR_P75",
         "US.NYFED.EFFR_P99",
+        "US.NYFED.EFFR_VOLUME",
         "US.NYFED.OBFR_MEDIAN",
+        "US.NYFED.OBFR_P01",
+        "US.NYFED.OBFR_P25",
+        "US.NYFED.OBFR_P75",
         "US.NYFED.OBFR_P99",
+        "US.NYFED.OBFR_VOLUME",
     ]
     assert {
         instrument: point.raw_value for instrument, point in by_instrument.items()
     } == {
         "US.NYFED.EFFR_MEDIAN": Decimal("3.63"),
+        "US.NYFED.EFFR_P01": Decimal("3.60"),
+        "US.NYFED.EFFR_P25": Decimal("3.62"),
+        "US.NYFED.EFFR_P75": Decimal("3.63"),
         "US.NYFED.EFFR_P99": Decimal("3.69"),
+        "US.NYFED.EFFR_VOLUME": Decimal("102"),
         "US.NYFED.OBFR_MEDIAN": Decimal("3.63"),
+        "US.NYFED.OBFR_P01": Decimal("3.53"),
+        "US.NYFED.OBFR_P25": Decimal("3.62"),
+        "US.NYFED.OBFR_P75": Decimal("3.63"),
         "US.NYFED.OBFR_P99": Decimal("3.68"),
+        "US.NYFED.OBFR_VOLUME": Decimal("229"),
     }
     assert re.fullmatch(
         r"nyfed:EFFR:percentRate:2026-08-20:R1-[0-9a-f]{16}",
@@ -404,25 +420,25 @@ def test_nyfed_unsecured_adapter_registration_and_pack_contract() -> None:
     assert spec.publication_clock.local_time is not None
     assert spec.publication_clock.local_time.isoformat() == "09:00:00"
     assert set(instruments) == {
-        "US.NYFED.EFFR_MEDIAN",
-        "US.NYFED.EFFR_P99",
-        "US.NYFED.OBFR_MEDIAN",
-        "US.NYFED.OBFR_P99",
+        f"US.NYFED.{benchmark}_{suffix}"
+        for benchmark in ("EFFR", "OBFR")
+        for suffix in ("P01", "P25", "MEDIAN", "P75", "P99", "VOLUME")
     }
-    assert {
-        instrument: item.semantic_role for instrument, item in instruments.items()
-    } == {
-        "US.NYFED.EFFR_MEDIAN": SemanticRole.RATE_MEDIAN,
-        "US.NYFED.EFFR_P99": SemanticRole.RATE_P99,
-        "US.NYFED.OBFR_MEDIAN": SemanticRole.RATE_MEDIAN,
-        "US.NYFED.OBFR_P99": SemanticRole.RATE_P99,
-    }
-    assert all(item.source_unit == "percent" for item in instruments.values())
-    assert all(
-        item.canonical_unit is CanonicalUnit.BASIS_POINTS
-        and item.value_multiplier == Decimal("100")
-        for item in instruments.values()
-    )
+    for instrument_id, instrument in instruments.items():
+        if instrument_id.endswith("_VOLUME"):
+            assert instrument.semantic_role is SemanticRole.UNSECURED_FUNDING_VOLUME
+            assert instrument.source_unit == "USD billions"
+            assert instrument.canonical_unit is CanonicalUnit.LOCAL_CURRENCY_MILLIONS
+            assert instrument.value_multiplier == Decimal("1000")
+            assert instrument.rate_compounding is None
+            assert instrument.day_count is None
+        else:
+            suffix = instrument_id.rsplit("_", 1)[1]
+            assert instrument.semantic_role is SemanticRole[f"RATE_{suffix}"]
+            assert instrument.semantic_role in RATE_ROLES
+            assert instrument.source_unit == "percent"
+            assert instrument.canonical_unit is CanonicalUnit.BASIS_POINTS
+            assert instrument.value_multiplier == Decimal("100")
     assert (
         pack.instrument_map["US.NYFED.SOFR_MEDIAN"].source_adapter_id == "nyfed_rates"
     )

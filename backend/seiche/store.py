@@ -301,26 +301,54 @@ def _conn() -> sqlite3.Connection:
 
 def save_series(s: Series) -> None:
     with _lock, _conn() as conn:
-        knowledge_time = _canonical_utc(s.fetched_at)
-        rows = [
-            (s.mnemonic, idx.date().isoformat(), None if pd.isna(v) else float(v))
-            for idx, v in s.points.items()
-        ]
-        conn.executemany(
-            "INSERT OR REPLACE INTO observations VALUES (?,?,?)",
-            rows,
-        )
-        conn.executemany(
-            "INSERT OR IGNORE INTO observation_vintages VALUES (?,?,?,?)",
-            [
-                (mnemonic, obs_date, knowledge_time, value)
-                for mnemonic, obs_date, value in rows
-            ],
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO fetches VALUES (?,?,?,?,?,?,?)",
-            (s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at),
-        )
+        _save_series_in_transaction(conn, s)
+
+
+def _save_series_in_transaction(conn: sqlite3.Connection, s: Series) -> None:
+    knowledge_time = _canonical_utc(s.fetched_at)
+    rows = [(s.mnemonic, idx.date().isoformat(), None if pd.isna(v) else float(v)) for idx, v in s.points.items()]
+    conn.executemany("INSERT OR REPLACE INTO observations VALUES (?,?,?)", rows)
+    conn.executemany("INSERT OR IGNORE INTO observation_vintages VALUES (?,?,?,?)",
+                     [(mnemonic, day, knowledge_time, value) for mnemonic, day, value in rows])
+    conn.execute("INSERT OR REPLACE INTO fetches VALUES (?,?,?,?,?,?,?)",
+                 (s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at))
+
+
+class SeriesBatchConflictError(RuntimeError):
+    """A competing capture changed a manifest before this batch could publish."""
+
+
+def save_series_batch(
+    series: Iterable[Series], *, blobs: dict[str, object],
+    expected_blobs: dict[str, object] | None = None,
+) -> None:
+    """Publish a provider capture atomically, optionally checking 1..2 prior manifests.
+
+    An expected value of None requires that the manifest key does not exist.
+    """
+    selected = tuple(series)
+    if not selected or len(selected) > 64 or len({s.mnemonic for s in selected}) != len(selected):
+        raise ValueError("expected 1..64 distinct series")
+    if not blobs or any(type(key) is not str or not key for key in blobs):
+        raise ValueError("capture manifests require nonempty string keys")
+    if expected_blobs is not None and (
+        not 1 <= len(expected_blobs) <= 2 or not expected_blobs.keys() <= blobs.keys()
+    ):
+        raise ValueError("expected manifests require 1..2 keys from the capture manifests")
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+    manifests = [(key, timestamp, json.dumps(value, allow_nan=False)) for key, value in blobs.items()]
+    with _lock, _conn() as conn:
+        # Acquire the SQLite writer lock before reading the expected pointers.
+        # The process-local lock alone cannot exclude another collector process.
+        conn.execute("BEGIN IMMEDIATE")
+        for key, expected in (expected_blobs or {}).items():
+            row = conn.execute("SELECT payload FROM blobs WHERE key = ?", (key,)).fetchone()
+            matches = row is None if expected is None else row is not None and json.loads(row[0]) == expected
+            if not matches:
+                raise SeriesBatchConflictError(f"capture manifest changed before publication: {key}")
+        for item in selected:
+            _save_series_in_transaction(conn, item)
+        conn.executemany("INSERT OR REPLACE INTO blobs VALUES (?,?,?)", manifests)
 
 
 def _canonical_utc(value: str | datetime) -> str:
@@ -1547,6 +1575,54 @@ def load_series_as_of(
         fetched_at,
         points,
     )
+
+
+def load_series_window(mnemonics: tuple[str, ...], *, start: str, end: str) -> dict[str, Series]:
+    return load_series_window_snapshot(mnemonics, start=start, end=end)[0]
+
+
+def load_series_window_snapshot(mnemonics: tuple[str, ...], *, start: str, end: str, blob_keys: tuple[str, ...] = ()) -> tuple[dict[str, Series], dict[str, object]]:
+    """Read a bounded public research window without initializing/mutating DB.
+
+    One read transaction keeps series metadata and values consistent while a
+    collector refreshes. Dates are inclusive; at most 32 x 3651 rows are read.
+    """
+    from datetime import date
+
+    first, last = date.fromisoformat(start), date.fromisoformat(end)
+    if not 0 <= (last - first).days <= 3650 or not 1 <= len(mnemonics) <= 32:
+        raise ValueError("series window exceeds supported bounds")
+    if len(set(mnemonics)) != len(mnemonics):
+        raise ValueError("duplicate series selection")
+    if len(blob_keys) > 2 or any(type(key) is not str or not key for key in blob_keys):
+        raise ValueError("at most two named capture manifests may be selected")
+    database = Path(DB_PATH)
+    if not database.is_file():
+        return {}, {}
+    conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+    result, blobs = {}, {}
+    try:
+        conn.execute("BEGIN")
+        for mnemonic in mnemonics:
+            meta = conn.execute(
+                "SELECT source, remote_id, label, unit, freq, fetched_at FROM fetches WHERE mnemonic=?",
+                (mnemonic,),
+            ).fetchone()
+            if meta is None:
+                continue
+            rows = conn.execute(
+                "SELECT obs_date, value FROM observations WHERE mnemonic=? AND obs_date>=? AND obs_date<=? ORDER BY obs_date DESC LIMIT 3651",
+                (mnemonic, start, end),
+            ).fetchall()[::-1]
+            points = pd.Series([r[1] for r in rows], index=pd.DatetimeIndex([r[0] for r in rows]), dtype=float)
+            result[mnemonic] = Series(mnemonic, *meta, points)
+        for key in blob_keys:
+            row = conn.execute("SELECT payload FROM blobs WHERE key=?", (key,)).fetchone()
+            if row is not None:
+                blobs[key] = json.loads(row[0])
+    finally:
+        conn.close()
+    return result, blobs
 
 
 def load_series(mnemonic: str) -> Series | None:

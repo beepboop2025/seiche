@@ -477,7 +477,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "url": "https://api.seiche.info/mcp",
                 "authentication": {
                     "type": "none",
-                    "scope": "thirteen anonymous public evidence tools",
+                    "scope": "fourteen anonymous public evidence tools",
                 },
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
@@ -1132,7 +1132,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the thirteen public tools",
+            "authentication": "none for the fourteen public tools",
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
@@ -1181,6 +1181,7 @@ def api_index() -> dict[str, Any]:
             "fx_materials": "/api/estuary",
             "health": "/api/health",
             "research_network": "/api/v2/research-network",
+            "market_workbench": "/api/v2/market-workbench",
             "series_catalog": "/api/series/index.json",
             "realtime_venue": "/undertow/live/quotes.json",
         },
@@ -1712,6 +1713,13 @@ def _public_openapi_document() -> dict[str, Any]:
         },
         "paths": {
             **paths,
+            "/api/v2/market-workbench": {"get": {
+                "operationId": "getMarketWorkbench",
+                "summary": "Read structured FX and Palimpsest China economic evidence",
+                "parameters": [{"name": key, "in": "query", "schema": value}
+                               for key, value in mcp_server.market_workbench.INPUT_SCHEMA["properties"].items()],
+                "responses": {"200": object_response, "422": {"description": "Invalid currency or window"}},
+            }},
             "/api/v2/research-network": {"get": {
                 "summary": "Explore Palimpsest evidence and connected product research",
                 "parameters": [{"name": key, "in": "query", "schema": value}
@@ -2377,6 +2385,19 @@ def research_network_v2(request: Request, response: Response, topic: str = "all"
     except mcp_server.ToolError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.get("/api/v2/market-workbench")
+def market_workbench_v2(request: Request, response: Response, provider: str = "h10", base: str = "USD", quote: str = "CNY", days: int = 365, china_series: str = ""):
+    """Bounded reads only; collection remains owned by scheduled workers."""
+    if not _market_series_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})
+    try:
+        result = mcp_server.tool_market_workbench({"provider": provider, "base": base, "quote": quote, "days": days, "china_series": china_series}, True)
+    except mcp_server.ToolError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    response.headers["Cache-Control"] = "public, max-age=60"
     return result
 
 

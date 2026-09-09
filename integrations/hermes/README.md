@@ -48,7 +48,7 @@ Works against any of the three Seiche MCP wirings: local stdio
 
 ## Anonymous tool contract
 
-The hosted endpoint exposes these thirteen tools without a token. The list is
+The hosted endpoint exposes these fourteen tools without a token. The list is
 tested against the server registry so a runtime change cannot leave this kit
 silently teaching an obsolete surface.
 
@@ -80,3 +80,5 @@ never turn an acknowledgement into acceptance or execution.
 
 Not investment advice; every reading the agent relays is backed by the
 public PROOF scoreboard, misses included.
+
+The public `market_workbench` tool accepts `provider` (`h10` or `ecb`), `base`, `quote`, `days` (30–3650), and optional `china_series`. It reads cached, dated reference FX and owner-accepted annual Palimpsest China evidence; the WORKBENCH tab and `/api/v2/market-workbench` use the same contract. It never collects during a request or creates executable quotes.
