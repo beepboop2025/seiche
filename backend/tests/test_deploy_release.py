@@ -1116,7 +1116,8 @@ def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
             "@world_model_delivery_non_get"
         )
     ]
-    assert "reverse_proxy 127.0.0.1:8787" in private_delivery
+    assert "reverse_proxy 127.0.0.1:8788" in private_delivery
+    assert "reverse_proxy 127.0.0.1:8787" not in private_delivery
     assert "seiche_stateful_upstream" not in private_delivery
 
 
@@ -3899,7 +3900,8 @@ def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
         caddy.index("@world_model_delivery {") : caddy.index("@public {")
     ]
     assert 'header Cache-Control "no-store, no-transform"' in private_edge
-    assert "reverse_proxy 127.0.0.1:8787" in private_edge
+    assert "reverse_proxy 127.0.0.1:8788" in private_edge
+    assert "reverse_proxy 127.0.0.1:8787" not in private_edge
     assert "@world_model_delivery_non_get path" in private_edge
     assert 'respond "not here" 404' in private_edge
     public_edge = caddy[caddy.index("@public {") : caddy.index("@login {")]
