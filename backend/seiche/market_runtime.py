@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -21,9 +22,11 @@ from seiche.markets.materialize import materialize_global_tide, materialize_mark
 from seiche.markets.registry import MarketRegistry, default_registry
 from seiche.markets.us_usd.funding_core import (
     EXPORT_DIRECTORY_ENV,
+    EXPORT_FILENAME,
     FUNDING_CORE_PROFILE_ID,
     export_funding_core_input_pack,
 )
+from seiche.markets.world_model import verify_world_model_input_pack
 from seiche.repository import (
     COLLECTOR_WORKER_COMPONENT_ID,
     MarketRepository,
@@ -228,6 +231,7 @@ def _completed_run_handler(
     def handle(run: dict) -> object:
         run_id = repository.save_collector_run(run)
         market_id = str(run["market_id"]).upper()
+        funding_export = _export_completed_funding_run(run, repository=repository)
         publication_complete = not materialize or market_id == "US-USD"
         if materialize and market_id != "US-USD":
             # A later adapter for the same market makes the earlier per-cycle
@@ -254,8 +258,11 @@ def _completed_run_handler(
             backfill
             and run["status"] == "SUCCESS"
             and publication_complete
-            and not _marker_requires_funding_core_export(
-                market_id, str(run["adapter_id"])
+            and (
+                not _marker_requires_funding_core_export(
+                    market_id, str(run["adapter_id"])
+                )
+                or funding_export.get("status") == "SUCCESS"
             )
         ):
             _mark_backfill_complete(market_id, str(run["adapter_id"]))
@@ -362,21 +369,22 @@ def _notify_materialization_status(faulted_markets: frozenset[str]) -> None:
         )
 
 
-def _export_usd_funding_core_after_runs(
-    runs: list[CollectorRun],
-    *,
-    repository: MarketRepository,
-    cutoff: datetime,
+def _export_completed_funding_run(
+    run: dict, *, repository: MarketRepository
 ) -> dict[str, object]:
-    """Attempt one research export at a completed US cycle boundary.
+    """Export a completed NY Fed cut without granting a new retrieval clock.
 
-    Profile readiness is deliberately independent from collector health.  An
-    insufficient/corrected-lineage failure is logged and returned to the
-    operator, but it never changes a sibling collector's completed outcome.
+    The supervisor awaits run-writer callbacks sequentially. Startup recovery
+    runs before that supervisor and cycle retries run after it, keeping all
+    canonical export attempts in the existing single-writer path.
     """
 
-    if not any(item.market_id == "US-USD" for item in runs):
-        return {"status": "SKIPPED", "reason": "cycle had no US-USD collector"}
+    if (
+        str(run["market_id"]).upper() != "US-USD"
+        or run["adapter_id"] != "nyfed_rates"
+        or run["status"] != "SUCCESS"
+    ):
+        return {"status": "SKIPPED", "reason": "no successful NY Fed completion"}
     directory = os.getenv(EXPORT_DIRECTORY_ENV, "").strip()
     if not directory:
         return {
@@ -384,21 +392,67 @@ def _export_usd_funding_core_after_runs(
             "reason": f"{EXPORT_DIRECTORY_ENV} is not configured",
         }
     try:
+        cutoff = datetime.fromisoformat(str(run["finished_at"]))
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            raise ValueError("completed NY Fed cutoff must be timezone-aware")
+        cutoff = cutoff.astimezone(UTC)
+        if cutoff > datetime.now(UTC):
+            raise ValueError("completed NY Fed cutoff is in the future")
+        target = Path(directory).expanduser().resolve() / EXPORT_FILENAME
+        if target.is_file() and not target.is_symlink():
+            try:
+                existing = verify_world_model_input_pack(
+                    json.loads(target.read_text(encoding="utf-8"))
+                )
+                existing_cutoff = datetime.fromisoformat(existing["as_of"])
+                if cutoff <= existing_cutoff <= datetime.now(UTC):
+                    return {"status": "SUCCESS", "path": str(target), "unchanged": True}
+            except (OSError, ValueError, TypeError):
+                # A missing/corrupt export must not suppress durable recovery.
+                # The normal exporter below still validates the source rows.
+                pass
         target = export_funding_core_input_pack(
             repository,
             as_of=cutoff,
             directory=directory,
         )
     except Exception as exc:  # noqa: BLE001 — non-fatal research export boundary
-        LOGGER.exception(
-            "USD funding-core export failed after completed collector cycle"
-        )
+        LOGGER.exception("USD funding-core export failed after completed NY Fed run")
         return {
             "status": "FAILED",
             "fault": f"{type(exc).__name__}: {exc}",
         }
     LOGGER.info("USD funding-core research input exported to %s", target)
     return {"status": "SUCCESS", "path": str(target)}
+
+
+def _recover_completed_funding_export(
+    repository: MarketRepository,
+) -> dict[str, object]:
+    """Recover success persisted before an interrupted export, before polling."""
+
+    loader = getattr(repository, "latest_collector_runs", None)
+    if not callable(loader):
+        return {"status": "SKIPPED", "reason": "collector history unavailable"}
+    for run in loader("US-USD", successful_only=True):
+        if run["adapter_id"] == "nyfed_rates":
+            return _export_completed_funding_run(run, repository=repository)
+    return {"status": "SKIPPED", "reason": "no successful NY Fed history"}
+
+
+def _export_usd_funding_core_after_runs(
+    runs: list[CollectorRun],
+    *,
+    repository: MarketRepository,
+    cutoff: datetime,
+) -> dict[str, object]:
+    # Retry a failed completion export, using its durable source cutoff rather
+    # than the wall clock at the end of an unrelated, potentially long cycle.
+    del cutoff
+    for run in runs:
+        if run.market_id == "US-USD" and run.adapter_id == "nyfed_rates":
+            return _export_completed_funding_run(run.to_dict(), repository=repository)
+    return {"status": "SKIPPED", "reason": "cycle had no NY Fed completion"}
 
 
 async def collect_once(
@@ -488,6 +542,7 @@ async def run_worker(
     markets = registry or default_registry()
     published_snapshots: dict[str, object] = {}
     faulted_markets: set[str] = set()
+    await asyncio.to_thread(_recover_completed_funding_export, repo)
     heartbeat_enabled = asyncio.Event()
     heartbeat_enabled.set()
     heartbeat_write_lock = asyncio.Lock()

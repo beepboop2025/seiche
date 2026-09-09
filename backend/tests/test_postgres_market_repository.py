@@ -287,6 +287,29 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         for item in repository.latest_collector_runs("US-USD")
     )
 
+    repository.save_collector_run(
+        {
+            **run,
+            "status": "FAILED",
+            "finished_at": (knowledge + timedelta(hours=1)).isoformat(),
+            "observations_written": 0,
+            "fault": "later source failure",
+        }
+    )
+    latest = next(
+        item
+        for item in repository.latest_collector_runs("US-USD")
+        if item["adapter_id"] == "postgres_integration"
+    )
+    completed = next(
+        item
+        for item in repository.latest_collector_runs("US-USD", successful_only=True)
+        if item["adapter_id"] == "postgres_integration"
+    )
+    assert latest["status"] == "FAILED"
+    assert completed["status"] == "SUCCESS"
+    assert completed["finished_at"] == knowledge.isoformat()
+
     payload = {
         "schema": "seiche.postgres-integration.v1",
         "value": 42,
