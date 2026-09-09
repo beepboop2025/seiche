@@ -87,6 +87,17 @@ the original Caddyfile installed; stop the new relay if it cannot pass its
 authenticated byte and isolation checks. Never fall back to an unauthenticated
 file server or reactivate a fenced writer to provide this route.
 
+Until this operational change is included in the next signed application
+release, keep the Railway-fenced full release poller masked. A full Hetzner
+deployment, including a same-release reconciliation, installs `ops/Caddyfile`
+from its signed asset tree. Before reenabling that poller or running the full
+update wrapper, require the signed release to contain the standalone relay and
+the exact protected-route upstream `127.0.0.1:8788`, then repeat the authenticated
+byte and consumer checks. The static/full site publishers do not install the
+host Caddyfile; the Railway edge-mode helper validates the existing file and
+changes its environment and service drop-in without replacing its routes.
+Do not add an unattended whole-file replacement to conceal configuration drift.
+
 The environment contract is:
 
 ```text
