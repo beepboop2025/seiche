@@ -1,0 +1,41 @@
+[Unit]
+Description=Read-only authenticated Seiche world-model byte relay
+After=network.target
+
+[Service]
+Type=simple
+User=seiche
+Group=seiche
+SupplementaryGroups=liquilens-world-model-readers
+WorkingDirectory=/
+EnvironmentFile=/etc/seiche/world-model-delivery.env
+ExecStart=/usr/bin/python3 -I -B /opt/seiche-world-model-relay/current/world_model_relay.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+InaccessiblePaths=-/var/lib/liquilens-world-model/archive
+ReadOnlyPaths=/var/lib/liquilens-world-model/export
+MemoryMax=64M
+TasksMax=16
+LimitNOFILE=64
+
+[Install]
+WantedBy=multi-user.target
