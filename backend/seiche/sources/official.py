@@ -39,6 +39,7 @@ from seiche.sources.canonical import (
     FetchedDocument,
     FunctionalCanonicalAdapter,
     ParsedPoint,
+    PublicationTimePolicy,
     get_documents,
 )
 
@@ -791,7 +792,12 @@ _NYFED_DISTRIBUTION_FIELDS = {
 }
 
 
-def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+def parse_nyfed_rates(
+    document: FetchedDocument,
+    *,
+    publication_time_policy: PublicationTimePolicy = PublicationTimePolicy.INFER,
+) -> tuple[ParsedPoint, ...]:
+    publication_time_policy = PublicationTimePolicy(publication_time_policy)
     payload = json.loads(document.payload)
     rows = payload.get("refRates")
     if not isinstance(rows, list):
@@ -830,11 +836,15 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
             # date, while the Averages and Index are labelled with their same-
             # day value date. They are published shortly after 08:00 ET on
             # that value date, so the adapter's T+1 SOFR clock cannot be used.
-            publication_time = datetime.combine(
-                event_day,
-                time(8, 0),
-                tzinfo=ZoneInfo("America/New_York"),
-            ).astimezone(UTC)
+            publication_time = (
+                None
+                if publication_time_policy is PublicationTimePolicy.UNKNOWN
+                else datetime.combine(
+                    event_day,
+                    time(8, 0),
+                    tzinfo=ZoneInfo("America/New_York"),
+                ).astimezone(UTC)
+            )
             lineage_prefix = "nyfed:SOFRAI"
         else:
             continue
@@ -862,6 +872,7 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
                     value,
                     row_evidence,
                     source_publication_time=publication_time,
+                    publication_time_policy=publication_time_policy,
                     # Bind the semantic source field and event explicitly even
                     # when upstream supplies no revision indicator. This keeps
                     # the median, tail, averaging horizons, and index distinct
@@ -887,9 +898,12 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
 
 def parse_nyfed_unsecured_rates(
     document: FetchedDocument,
+    *,
+    publication_time_policy: PublicationTimePolicy = PublicationTimePolicy.INFER,
 ) -> tuple[ParsedPoint, ...]:
-    """Parse published EFFR/OBFR percentiles and unsecured funding volumes."""
+    """Parse modern volume-weighted medians; pre-2016 EFFR was a mean."""
 
+    publication_time_policy = PublicationTimePolicy(publication_time_policy)
     payload = json.loads(document.payload)
     rows = payload.get("refRates")
     if not isinstance(rows, list):
@@ -911,7 +925,9 @@ def parse_nyfed_unsecured_rates(
         if mapping is None:
             continue
         event_day = _date(row.get("effectiveDate"), "%Y-%m-%d")
-        if event_day is None:
+        if event_day is None or event_day < date(2016, 3, 1):
+            # EFFR changed from a mean to a median on this date; OBFR began
+            # then. Earlier data must use a separately governed instrument.
             continue
         revision = str(row.get("revisionIndicator") or "").strip()
         revision_token = re.sub(
@@ -938,6 +954,7 @@ def parse_nyfed_unsecured_rates(
                     event_day,
                     value,
                     row_evidence,
+                    publication_time_policy=publication_time_policy,
                     revision_id=(
                         f"nyfed:{rate_type}:{field}:{event_day.isoformat()}:"
                         f"{revision_token or 'unrevised'}-{content_token}"

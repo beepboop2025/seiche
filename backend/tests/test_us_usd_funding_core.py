@@ -787,3 +787,15 @@ async def test_startup_export_history_failure_does_not_stop_collector(
     assert polled
     assert "startup recovery failed fault_type=RuntimeError" in caplog.text
     assert "private-password" not in caplog.text
+
+
+def test_funding_profile_excludes_unknown_publication_history():
+    rows = _rows(504)
+    expected = build_funding_core_input_pack(rows, as_of=AS_OF)
+    unknown = replace(
+        rows[0], event_time=START - timedelta(days=1),
+        source_publication_time=None, revision_id="archive-unknown-publication",
+    )
+    assert build_funding_core_input_pack([unknown, *rows], as_of=AS_OF) == expected
+    with pytest.raises(FundingCoreProfileError, match="no declared funding-core instruments"):
+        build_funding_core_input_pack([unknown], as_of=AS_OF)

@@ -951,6 +951,23 @@ def cmd_market_backfill(args) -> int:
     return 0 if all(run["status"] == "UNAVAILABLE" for run in runs) else 1
 
 
+
+def cmd_nyfed_history_import(args) -> int:
+    """Validate a pinned archive, then append only missing canonical history."""
+    from seiche.nyfed_history import import_nyfed_history
+    from seiche.repository import get_repository
+
+    payload = import_nyfed_history(
+        Path(args.archive_root),
+        inventory_sha256=args.inventory_sha256,
+        repository=None if args.dry_run else get_repository(),
+        state_path=Path(args.state_path),
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_market_worker(args) -> int:
     from seiche.market_runtime import run_worker
 
@@ -1327,6 +1344,16 @@ def main() -> None:
     p.add_argument("--market", action="append", help="market ID; repeat to select several")
     p.add_argument("--no-materialize", action="store_true")
     p.set_defaults(fn=cmd_market_backfill)
+
+    p = sub.add_parser(
+        "nyfed-history-import",
+        help="verify a pinned NY Fed archive and append missing history with unknown publication clocks",
+    )
+    p.add_argument("--archive-root", required=True, help="absolute preserved archive directory")
+    p.add_argument("--inventory-sha256", required=True, help="independently pinned archive inventory digest")
+    p.add_argument("--state-path", required=True, help="protected durable ingestion identity and receipt")
+    p.add_argument("--dry-run", action="store_true", help="validate without database or state writes")
+    p.set_defaults(fn=cmd_nyfed_history_import)
 
     p = sub.add_parser("market-worker", help="run independent market schedules forever")
     p.add_argument("--poll-seconds", type=int, default=30)

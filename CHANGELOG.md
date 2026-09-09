@@ -11,6 +11,28 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-09
+
+### Added
+
+- Add a bounded NY Fed historical importer that verifies the retained archive,
+  reparses native annual responses, appends missing observations and resumes
+  without replacing existing live vintages or duplicating completed imports.
+
+### Fixed
+
+- Preserve unknown source publication clocks in canonical observations and
+  migrate existing SQLite and PostgreSQL stores without changing existing rows,
+  evidence hashes or indexes. Use consistent ordering for nullable clocks.
+- Keep actual ingestion times on archived data, native missing percentiles and
+  the modern EFFR methodology cutoff. History does not become fresh or available
+  in past knowledge cutoffs; forecast packs still require known publication times.
+
+### Changed
+
+- Align distribution metadata with `0.13.1` and corpus publication receipt `r11`.
+  Existing corpus and direct-OFR dataset identities and content hashes are unchanged.
+
 ## [0.13.0] - 2026-09-09
 
 ### Added

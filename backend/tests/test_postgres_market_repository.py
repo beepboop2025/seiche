@@ -53,6 +53,227 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture
+def isolated_legacy_postgres():
+    """Use an owned schema so migration tests cannot rewrite another test's rows."""
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+    from seiche.repository import _POSTGRES_SCHEMA
+
+    base_dsn = os.environ["SEICHE_TEST_POSTGRES_URL"]
+    schema = "nullable_publication_" + uuid4().hex
+    with psycopg.connect(base_dsn) as connection:
+        connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    repository = PostgresMarketRepository(make_conninfo(base_dsn, options=f"-csearch_path={schema}"))
+    try:
+        with repository._connect() as connection:
+            for statement in _POSTGRES_SCHEMA.split(";"):
+                statement = statement.strip()
+                if statement.startswith("CREATE TABLE IF NOT EXISTS canonical_observations"):
+                    connection.execute(statement.replace(
+                        "source_publication_time TIMESTAMPTZ,",
+                        "source_publication_time TIMESTAMPTZ NOT NULL,",
+                    ))
+                elif statement.startswith("CREATE INDEX IF NOT EXISTS canonical_observations"):
+                    connection.execute(statement)
+        yield repository
+    finally:
+        with psycopg.connect(base_dsn) as connection:
+            connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+
+def _nullable_test_observation() -> Observation:
+    event = datetime(2026, 1, 2, tzinfo=UTC)
+    return Observation(
+        market_id="US-USD", monetary_area_id="US", jurisdiction_codes=("US",), currency="USD",
+        instrument_id="US.TEST.NULLABLE", semantic_role=SemanticRole.SECURED_OVERNIGHT,
+        value="500.00", canonical_unit=CanonicalUnit.BASIS_POINTS,
+        rate_compounding=RateCompounding.SIMPLE, day_count=DayCountConvention.ACT_360,
+        event_time=event, knowledge_time=event + timedelta(days=1, hours=9),
+        source_publication_time=event + timedelta(days=1, hours=8), revision_id="a-known",
+        source="a-official-test", evidence_hash=evidence_sha256("nullable-publication-original"),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=RedistributionStatus.ALLOWED, quality=QualityState.VERIFIED,
+        staleness=StalenessState.FRESH,
+    )
+
+
+def _insert_legacy_postgres(connection, observation):
+    from seiche.repository import (
+        _OBSERVATION_INSERT_COLUMNS, _OBSERVATION_INSERT_PLACEHOLDERS, _observation_values,
+    )
+
+    connection.execute(
+        f"INSERT INTO canonical_observations ({','.join(_OBSERVATION_INSERT_COLUMNS)}) "
+        f"VALUES ({','.join(_OBSERVATION_INSERT_PLACEHOLDERS)})", _observation_values(observation),
+    )
+
+
+def test_postgres_existing_nullable_migration_preserves_hashes_rows_and_indexes(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    known = _nullable_test_observation()
+    with repository._connect() as connection:
+        _insert_legacy_postgres(connection, known)
+        before = connection.execute("SELECT ctid,* FROM canonical_observations").fetchall()
+        indexes = connection.execute(
+            "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() ORDER BY indexname"
+        ).fetchall()
+    # Exercise the ordinary writer entrypoint, not a test-only migration call.
+    unknown = replace(known, source_publication_time=None, revision_id="z-unknown", value="900",
+                      evidence_hash=evidence_sha256("unknown-publication"))
+    assert repository.save_observations([known, unknown]) == 1
+    assert repository.save_observations([known, unknown]) == 0
+    with repository._connect() as connection:
+        assert connection.execute(
+            "SELECT ctid,* FROM canonical_observations WHERE revision_id='a-known'"
+        ).fetchall() == before
+        assert connection.execute(
+            "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() "
+            "AND tablename='canonical_observations' ORDER BY indexname"
+        ).fetchall() == indexes
+        assert connection.execute(
+            "SELECT attnotnull FROM pg_attribute WHERE attrelid='canonical_observations'::regclass "
+            "AND attname='source_publication_time'"
+        ).fetchone() == (False,)
+    assert repository.load_observation_revisions_as_of("US-USD", known.knowledge_time) == [unknown, known]
+    with pytest.raises(ValueError, match="identity collision"):
+        repository.save_observations([replace(known, source_publication_time=None)])
+    # A new process/repository repeats schema convergence without modifying rows.
+    restarted = PostgresMarketRepository(repository.dsn)
+    assert restarted.load_observation_revisions_as_of("US-USD", known.knowledge_time) == [unknown, known]
+
+
+def test_postgres_nullable_migration_rolls_back_with_later_schema_failure(isolated_legacy_postgres, monkeypatch):
+    import psycopg
+    import seiche.repository as module
+
+    repository = isolated_legacy_postgres
+    known = _nullable_test_observation()
+    with repository._connect() as connection:
+        _insert_legacy_postgres(connection, known)
+        before = connection.execute("SELECT ctid,* FROM canonical_observations").fetchall()
+    schema = module._POSTGRES_SCHEMA
+    monkeypatch.setattr(module, "_POSTGRES_SCHEMA", schema + ";SELECT * FROM missing_migration_failure_fixture;")
+    with pytest.raises(psycopg.errors.UndefinedTable):
+        repository._ensure_schema()
+    assert not repository._initialized
+    with repository._connect() as connection:
+        assert connection.execute("SELECT ctid,* FROM canonical_observations").fetchall() == before
+        assert connection.execute(
+            "SELECT attnotnull FROM pg_attribute WHERE attrelid='canonical_observations'::regclass "
+            "AND attname='source_publication_time'"
+        ).fetchone() == (True,)
+    monkeypatch.setattr(module, "_POSTGRES_SCHEMA", schema)
+    assert repository.save_observations([replace(known, source_publication_time=None, revision_id="retry")]) == 1
+
+
+def test_mixed_publication_clocks_rank_identically_in_all_postgres_queries(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    known = _nullable_test_observation()
+    unknown = replace(known, source_publication_time=None, revision_id="z-unknown", value="900",
+                      evidence_hash=evidence_sha256("unknown-publication"))
+    source_tie = replace(known, source="z-official-test", value="501",
+                         evidence_hash=evidence_sha256("known-publication-source-tie"))
+    assert repository.save_observations([source_tie, unknown, known]) == 3
+    cutoff = known.knowledge_time
+    assert repository.load_observation_revisions("US-USD", cutoff) == [unknown, known, source_tie]
+    assert repository.load_observation_revisions_as_of("US-USD", cutoff) == [unknown, known, source_tie]
+    assert repository.load_observations_as_of("US-USD", cutoff) == [source_tie]
+    assert repository.load_observation_page("US-USD", cutoff, limit=1)[0] == [source_tie]
+    assert repository.latest_observation_hashes("US-USD", cutoff) == {
+        (known.instrument_id, known.event_time): source_tie.evidence_hash,
+    }
+    assert repository.load_observations_batch_as_of(
+        {"US-USD": (known.instrument_id,)}, cutoff, event_time=cutoff,
+        event_time_from=known.event_time,
+    ) == {"US-USD": [source_tie]}
+    assert repository.load_latest_observations_by_instrument(
+        "US-USD", cutoff, event_time=cutoff, instrument_ids=(known.instrument_id,),
+        redistribution_statuses=(RedistributionStatus.ALLOWED,),
+    ) == {known.instrument_id: source_tie}
+    later_unknown = replace(unknown, knowledge_time=cutoff + timedelta(days=1))
+    repository.save_observations([later_unknown])
+    assert repository.load_observations_as_of("US-USD", later_unknown.knowledge_time) == [later_unknown]
+    assert repository.load_observation_page("US-USD", later_unknown.knowledge_time, limit=1)[0] == [later_unknown]
+    assert repository.load_observations_as_of("US-USD", cutoff - timedelta(seconds=1)) == []
+
+
+def test_postgres_missing_history_append_is_atomic_and_preserves_live_vintages(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    existing = _nullable_test_observation()
+    repository.save_observations([existing])
+    archive = replace(existing, source_publication_time=None, revision_id="archive", value="900",
+                      knowledge_time=existing.knowledge_time + timedelta(days=5))
+    missing = replace(archive, event_time=existing.event_time - timedelta(days=1))
+    other_source = replace(archive, source="other-official-test")
+    assert repository.save_missing_observations([archive, missing, other_source]) == 2
+    assert repository.save_missing_observations([archive, missing, other_source]) == 0
+    assert repository.load_observation_revisions("US-USD", archive.knowledge_time) == [missing, existing, other_source]
+    new_row = replace(missing, instrument_id="US.TEST.ROLLBACK")
+    with pytest.raises(ValueError, match="identity collision"):
+        repository.save_missing_observations([new_row, replace(missing, value="123")])
+    assert repository.load_observation_revisions("US-USD", archive.knowledge_time,
+                                                 instrument_ids=(new_row.instrument_id,)) == []
+    with pytest.raises(ValueError, match="5000"):
+        repository.save_missing_observations([missing] * 5001)
+
+
+def test_postgres_missing_history_waits_for_concurrent_collector(isolated_legacy_postgres):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+    repository = isolated_legacy_postgres
+    repository._ensure_schema()
+    existing = _nullable_test_observation()
+    archive = replace(existing, source_publication_time=None, revision_id="archive",
+                      knowledge_time=existing.knowledge_time + timedelta(days=5))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with repository._connect() as collector:
+            _insert_legacy_postgres(collector, existing)
+            future = pool.submit(repository.save_missing_observations, [archive])
+            try:
+                with pytest.raises(TimeoutError):
+                    future.result(timeout=0.2)
+            finally:
+                collector.commit()
+        assert future.result(timeout=10) == 0
+    assert repository.load_observation_revisions("US-USD", archive.knowledge_time) == [existing]
+
+
+def test_postgres_migration_serializes_initializers_and_nullable_readers_need_no_ddl(isolated_legacy_postgres):
+    from concurrent.futures import ThreadPoolExecutor
+
+    repository = isolated_legacy_postgres
+    known = _nullable_test_observation()
+    with repository._connect() as connection:
+        _insert_legacy_postgres(connection, known)
+    barrier = threading.Barrier(2)
+
+    def migrate():
+        with repository._connect() as connection:
+            connection.execute("SET LOCAL lock_timeout='5000ms'")
+            barrier.wait(timeout=5)
+            repository._converge_nullable_publication_time(connection)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(migrate) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=10)
+    with repository._connect() as connection:
+        calls = []
+
+        class TracedConnection:
+            def execute(self, query):
+                calls.append(query)
+                return connection.execute(query)
+
+        repository._converge_nullable_publication_time(TracedConnection())
+        assert len(calls) == 1
+        assert calls[0].startswith("SELECT attnotnull FROM pg_attribute")
+    unknown = replace(known, source_publication_time=None, revision_id="unknown")
+    assert repository.save_observations([unknown]) == 1
+
+
 def test_postgres_heartbeat_wait_is_bounded_by_statement_timeout() -> None:
     import psycopg
 

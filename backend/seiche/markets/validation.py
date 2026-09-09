@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from seiche.domain.observation import (
+    publication_time_order_key,
     ConnectorClassification,
     Observation,
     QualityState,
@@ -108,6 +109,7 @@ def _is_quarantined_legacy_cfets_contract(
         and observation.revision_id
         == f"sha256:{observation.evidence_hash[:20]}"
         and observation.event_time < LEGACY_CFETS_PRODUCER_CUTOVER_UTC
+        and observation.source_publication_time is not None
         and observation.source_publication_time
         < LEGACY_CFETS_PRODUCER_CUTOVER_UTC
         and observation.knowledge_time < LEGACY_CFETS_PRODUCER_CUTOVER_UTC
@@ -670,7 +672,10 @@ def _extra_reporting_lag(
     delayed = [
         replace(
             item,
-            source_publication_time=item.source_publication_time + lag,
+            source_publication_time=(
+                item.source_publication_time + lag
+                if item.source_publication_time is not None else None
+            ),
             knowledge_time=item.knowledge_time + lag,
         )
         if item.source == selected_source
@@ -754,7 +759,7 @@ def _revision_vintage_leakage(
             vintages,
             key=lambda item: (
                 item.knowledge_time,
-                item.source_publication_time,
+                publication_time_order_key(item.source_publication_time),
                 item.revision_id,
                 item.source,
             ),

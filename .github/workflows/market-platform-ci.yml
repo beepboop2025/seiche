@@ -88,6 +88,14 @@ jobs:
           backend/tests/test_universal_kernel.py
           backend/tests/test_market_materialize.py
           backend/tests/test_official_adapters.py
+          backend/tests/test_canonical_adapters.py
+          backend/tests/test_nyfed_distribution_depth.py
+          backend/tests/test_observation_v2.py
+          backend/tests/test_nyfed_history.py
+          backend/tests/test_nyfed_history_cli.py
+          backend/tests/test_world_model_input_pack.py
+          backend/tests/test_us_usd_funding_core.py
+          backend/tests/test_market_validation_runner.py
           backend/tests/test_cfets_rights_boundary.py
           backend/tests/test_china_economic_focus.py
           backend/tests/test_palimpsest_china_intake.py

@@ -741,3 +741,18 @@ def test_promotion_report_refuses_tampered_evidence(tmp_path, monkeypatch) -> No
             evidence_store=evidence,
             registry=MarketRegistry((US_PACK,)),
         )
+
+
+def test_reporting_lag_keeps_unknown_publication_unknown(tmp_path, monkeypatch):
+    repository = _repository(tmp_path, monkeypatch)
+    pack, calibration = _compact_contract()
+    cutoff = datetime(2026, 8, 8, 12, tzinfo=UTC)
+    rows = [replace(row, source_publication_time=None) for row in _compact_rows(
+        event_time=cutoff - timedelta(days=2),
+        knowledge_time=cutoff - timedelta(days=1),
+    )]
+    result = _extra_reporting_lag(pack, calibration, rows, [], cutoff, repository)
+    assert result.status is ValidationStatus.PASS
+    assert result.metrics["rows_perturbed"] == 2
+    assert result.metrics["rows_withheld"] == 2
+    assert all(row.source_publication_time is None for row in rows)

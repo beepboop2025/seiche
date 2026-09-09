@@ -231,7 +231,7 @@ class PublicCatalogContracts(unittest.TestCase):
         )
         self.assertEqual(
             graph[canonical]["dcat:landingPage"]["@id"],
-            f"{REPOSITORY}/tree/v0.13.0/distribution/datasets",
+            f"{REPOSITORY}/tree/v0.13.1/distribution/datasets",
         )
 
         self.assertEqual(
@@ -270,8 +270,8 @@ class PublicCatalogContracts(unittest.TestCase):
         positions = [publishing.index(marker) for marker in ordered_markers]
         self.assertEqual(positions, sorted(positions))
         for workflow, release in (
-            ("publish-pypi.yml", "v0.13.0"),
-            ("publish-mcp.yml", "v0.13.0"),
+            ("publish-pypi.yml", "v0.13.1"),
+            ("publish-mcp.yml", "v0.13.1"),
             ("publish-openbb.yml", "v0.12.1"),
         ):
             command = publishing.split(f"gh workflow run {workflow}", maxsplit=1)[1]

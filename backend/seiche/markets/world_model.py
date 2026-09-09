@@ -30,6 +30,7 @@ from decimal import Decimal
 from typing import Any
 
 from seiche.domain.observation import (
+    publication_time_order_key,
     CanonicalUnit,
     Observation,
     RedistributionStatus,
@@ -321,6 +322,10 @@ def _validate_input_rows(
             )
         if observation.event_time > as_of:
             raise WorldModelInputError("observation event_time cannot follow as_of")
+        if observation.source_publication_time is None:
+            raise WorldModelInputError(
+                "world-model inputs require a known source_publication_time"
+            )
         if observation.source_publication_time > as_of:
             raise WorldModelInputError(
                 "observation source_publication_time cannot follow as_of"
@@ -400,7 +405,7 @@ def _ordered_revisions(revisions: Iterable[Observation]) -> tuple[Observation, .
             revisions,
             key=lambda item: (
                 item.knowledge_time,
-                item.source_publication_time,
+                publication_time_order_key(item.source_publication_time),
                 item.revision_id,
             ),
         )
@@ -836,6 +841,10 @@ def _validated_observations(
             raise WorldModelInputError(
                 f"observations[{index}].event_time follows as_of"
             )
+        if observation.source_publication_time is None:
+            raise WorldModelInputError(
+                "world-model inputs require a known source_publication_time"
+            )
         if observation.source_publication_time > as_of:
             raise WorldModelInputError(
                 f"observations[{index}].source_publication_time follows as_of"
@@ -897,7 +906,7 @@ def _validated_observations(
             revisions,
             key=lambda item: (
                 item[1].knowledge_time,
-                item[1].source_publication_time,
+                publication_time_order_key(item[1].source_publication_time),
                 item[1].revision_id,
             ),
         )

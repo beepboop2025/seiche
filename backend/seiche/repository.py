@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import threading
+from itertools import islice
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
@@ -36,6 +37,8 @@ LEGACY_SOURCE_WORKER_COMPONENT_ID = "legacy-source-worker"
 
 class MarketRepository(Protocol):
     def save_observations(self, observations: Iterable[Observation]) -> int: ...
+
+    def save_missing_observations(self, observations: Iterable[Observation]) -> int: ...
 
     def load_observations_as_of(
         self,
@@ -187,6 +190,7 @@ class SQLiteMarketRepository:
     """Delegate to the additive SQLite migration in ``seiche.store``."""
 
     save_observations = staticmethod(store.save_observations)
+    save_missing_observations = staticmethod(store.save_missing_observations)
     load_observations_as_of = staticmethod(store.load_observations_as_of)
     load_observation_revisions = staticmethod(store.load_observation_revisions)
     load_observation_revisions_as_of = staticmethod(
@@ -288,7 +292,7 @@ CREATE TABLE IF NOT EXISTS canonical_observations (
   day_count TEXT,
   event_time TIMESTAMPTZ NOT NULL,
   knowledge_time TIMESTAMPTZ NOT NULL,
-  source_publication_time TIMESTAMPTZ NOT NULL,
+  source_publication_time TIMESTAMPTZ,
   revision_id TEXT NOT NULL,
   source TEXT NOT NULL,
   evidence_hash TEXT NOT NULL,
@@ -492,6 +496,28 @@ class PostgresMarketRepository:
         options = {} if connect_timeout is None else {"connect_timeout": connect_timeout}
         return psycopg.connect(self.dsn, **options)
 
+    @staticmethod
+    def _converge_nullable_publication_time(connection) -> None:
+        """Relax only legacy schemas; upgraded readers never take a DDL lock."""
+
+        query = (
+            "SELECT attnotnull FROM pg_attribute "
+            "WHERE attrelid='canonical_observations'::regclass "
+            "AND attname='source_publication_time' AND NOT attisdropped"
+        )
+        if connection.execute(query).fetchone() != (True,):
+            return
+        # Existing workers can initialize concurrently. Serialize this metadata
+        # change and re-read after acquiring the transaction-scoped lock.
+        connection.execute(
+            "SELECT pg_advisory_xact_lock('canonical_observations'::regclass::oid::bigint)"
+        )
+        if connection.execute(query).fetchone() == (True,):
+            connection.execute(
+                "ALTER TABLE canonical_observations "
+                "ALTER COLUMN source_publication_time DROP NOT NULL"
+            )
+
     def _ensure_schema(self) -> None:
         if self._initialized:
             return
@@ -510,6 +536,10 @@ class PostgresMarketRepository:
                 for statement in _POSTGRES_SCHEMA.split(";"):
                     if statement.strip():
                         connection.execute(statement)
+                        if statement.strip().startswith(
+                            "CREATE TABLE IF NOT EXISTS canonical_observations"
+                        ):
+                            self._converge_nullable_publication_time(connection)
             self._initialized = True
 
     def save_observations(self, observations: Iterable[Observation]) -> int:
@@ -549,6 +579,52 @@ class PostgresMarketRepository:
                     )
                     existing = cursor.fetchone()
                     if existing is None or existing[0] != values[-1]:
+                        raise ValueError(
+                            "canonical observation identity collision with different content"
+                        )
+        return inserted
+
+    def save_missing_observations(self, observations: Iterable[Observation]) -> int:
+        """Append missing histories in bounded batches, preserving live vintages."""
+
+        batch = tuple(islice(observations, 5001))
+        if len(batch) > 5000:
+            raise ValueError("missing-history batch cannot exceed 5000 observations")
+        if not batch:
+            return 0
+        self._ensure_schema()
+        columns = ",".join(_OBSERVATION_INSERT_COLUMNS)
+        placeholders = ",".join(_OBSERVATION_INSERT_PLACEHOLDERS)
+        inserted = 0
+        with self._connect() as connection:
+            # Competes with ordinary INSERT's ROW EXCLUSIVE lock as well as
+            # other archive batches. Ordinary readers remain available.
+            connection.execute("SET LOCAL lock_timeout = '10000ms'")
+            connection.execute(
+                "LOCK TABLE canonical_observations IN SHARE ROW EXCLUSIVE MODE"
+            )
+            for observation in batch:
+                values = _observation_values(observation)
+                history = (
+                    observation.market_id, observation.instrument_id,
+                    observation.event_time, observation.source,
+                )
+                cursor = connection.execute(
+                    f"INSERT INTO canonical_observations ({columns}) "
+                    f"SELECT {placeholders} WHERE NOT EXISTS "
+                    "(SELECT 1 FROM canonical_observations WHERE market_id=%s "
+                    "AND instrument_id=%s AND event_time=%s AND source=%s)",
+                    (*values, *history),
+                )
+                inserted += cursor.rowcount
+                if not cursor.rowcount:
+                    existing = connection.execute(
+                        "SELECT record_hash FROM canonical_observations "
+                        "WHERE market_id=%s AND instrument_id=%s AND event_time=%s "
+                        "AND source=%s AND knowledge_time=%s AND revision_id=%s",
+                        (*history, observation.knowledge_time, observation.revision_id),
+                    ).fetchone()
+                    if existing is not None and existing[0] != values[-1]:
                         raise ValueError(
                             "canonical observation identity collision with different content"
                         )
@@ -600,8 +676,8 @@ class PostgresMarketRepository:
               SELECT {selected},
                      ROW_NUMBER() OVER (
                        PARTITION BY market_id, instrument_id, event_time
-                       ORDER BY knowledge_time DESC, source_publication_time DESC,
-                                revision_id DESC
+                       ORDER BY knowledge_time DESC, source_publication_time DESC NULLS LAST,
+                                revision_id DESC, source DESC
                      ) AS vintage_rank
                 FROM canonical_observations
                WHERE {" AND ".join(predicates)}
@@ -671,8 +747,8 @@ class PostgresMarketRepository:
               SELECT {selected},
                      ROW_NUMBER() OVER (
                        PARTITION BY market_id, instrument_id, event_time
-                       ORDER BY knowledge_time DESC, source_publication_time DESC,
-                                revision_id DESC
+                       ORDER BY knowledge_time DESC, source_publication_time DESC NULLS LAST,
+                                revision_id DESC, source DESC
                      ) AS vintage_rank
                 FROM canonical_observations
                WHERE knowledge_time<=%s AND event_time<=%s AND event_time>=%s
@@ -722,7 +798,7 @@ class PostgresMarketRepository:
                WHERE market_id=%s AND knowledge_time<=%s AND event_time<=%s
                  AND instrument_id = ANY(%s)
                ORDER BY instrument_id, event_time DESC, knowledge_time DESC,
-                        source_publication_time DESC, revision_id DESC, source DESC
+                        source_publication_time DESC NULLS LAST, revision_id DESC, source DESC
             )
             SELECT DISTINCT ON (instrument_id) {selected}
               FROM latest_vintages
@@ -778,7 +854,7 @@ class PostgresMarketRepository:
                       FROM canonical_observations
                      WHERE {' AND '.join(predicates)}
                      ORDER BY event_time, instrument_id, knowledge_time,
-                              source_publication_time, revision_id, source"""
+                              source_publication_time ASC NULLS FIRST, revision_id, source"""
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         observations: list[Observation] = []
@@ -819,7 +895,7 @@ class PostgresMarketRepository:
               FROM canonical_observations
              WHERE {" AND ".join(predicates)}
              ORDER BY event_time, instrument_id, knowledge_time,
-                      source_publication_time, revision_id, source
+                      source_publication_time ASC NULLS FIRST, revision_id, source
         """
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -962,7 +1038,7 @@ class PostgresMarketRepository:
                    AND observation.event_time=candidate.event_time
                    AND observation.instrument_id=candidate.instrument_id
                  ORDER BY observation.knowledge_time DESC,
-                          observation.source_publication_time DESC,
+                          observation.source_publication_time DESC NULLS LAST,
                           observation.revision_id DESC,
                           observation.source DESC
                  LIMIT 1
@@ -1035,7 +1111,7 @@ class PostgresMarketRepository:
               SELECT instrument_id, event_time, evidence_hash,
                      ROW_NUMBER() OVER (
                        PARTITION BY market_id, instrument_id, event_time
-                       ORDER BY knowledge_time DESC, source_publication_time DESC,
+                       ORDER BY knowledge_time DESC, source_publication_time DESC NULLS LAST,
                                 revision_id DESC, source DESC
                      ) AS vintage_rank
                 FROM canonical_observations

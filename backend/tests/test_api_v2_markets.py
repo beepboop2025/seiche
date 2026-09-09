@@ -691,6 +691,31 @@ def test_market_series_uses_sql_page_cursor_and_fails_closed_on_evidence(
     ]
 
 
+def test_market_series_preserves_unknown_publication_and_actual_knowledge(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "unknown-publication.sqlite")
+    ingested = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    row = replace(
+        _rate_observation(
+            event_time=datetime(2018, 4, 2, tzinfo=UTC), knowledge_time=ingested,
+            instrument_id="US.NYFED.SOFR_MEDIAN", source="nyfed_rates", value="180",
+        ),
+        source_publication_time=None, staleness=StalenessState.UNKNOWN,
+    )
+    store.save_observations([row])
+    payload = api.market_series_v2("US-USD", _request(), Response())
+    record = payload["observations"][0]
+    assert record["value"] == "180"
+    assert record["canonical_unit"] == "basis_points"
+    assert record["source_publication_time"] is None
+    assert record["knowledge_time"] == ingested.isoformat()
+    assert record["staleness"] == "dead"
+    assert payload["evidence_eligibility"]["eligible"] is False
+    assert not SQLiteMarketRepository().load_observations_as_of(
+        "US-USD", ingested - timedelta(seconds=1)
+    )
+    json.dumps(payload, allow_nan=False)
+
+
 def test_market_series_instruments_publish_honest_source_references(
     tmp_path, monkeypatch
 ) -> None:

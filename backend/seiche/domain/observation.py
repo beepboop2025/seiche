@@ -151,6 +151,19 @@ def _aware_utc(value: datetime, field_name: str) -> datetime:
     return value.astimezone(UTC).replace(microsecond=0)
 
 
+def publication_time_order_key(
+    value: datetime | None,
+) -> tuple[bool, datetime | None]:
+    """Order unknown publication before known times without inventing a clock.
+
+    Use after knowledge time in vintage keys: max/reverse prefers a known
+    publication at equal knowledge time; ascending histories place null first.
+    Observation normalizes known timestamps to aware UTC before this helper.
+    """
+
+    return value is not None, value
+
+
 def _decimal(value: Decimal | int | float | str | None) -> Decimal | None:
     if value is None:
         return None
@@ -186,7 +199,7 @@ class Observation:
     day_count: DayCountConvention | None
     event_time: datetime
     knowledge_time: datetime
-    source_publication_time: datetime
+    source_publication_time: datetime | None
     revision_id: str
     source: str
     evidence_hash: str
@@ -214,7 +227,11 @@ class Observation:
         object.__setattr__(
             self,
             "source_publication_time",
-            _aware_utc(self.source_publication_time, "source_publication_time"),
+            (
+                _aware_utc(self.source_publication_time, "source_publication_time")
+                if self.source_publication_time is not None
+                else None
+            ),
         )
 
         if not _MARKET_ID_RE.fullmatch(market_id):
@@ -235,7 +252,10 @@ class Observation:
             raise ValueError("source is required")
         if not _SHA256_RE.fullmatch(self.evidence_hash):
             raise ValueError("evidence_hash must be a lowercase SHA-256 hex digest")
-        if self.knowledge_time < self.source_publication_time:
+        if (
+            self.source_publication_time is not None
+            and self.knowledge_time < self.source_publication_time
+        ):
             raise ValueError("knowledge_time cannot precede source_publication_time")
 
         is_unavailable = self.quality is QualityState.UNAVAILABLE
@@ -301,7 +321,11 @@ class Observation:
             "day_count": self.day_count.value if self.day_count else None,
             "event_time": self.event_time.isoformat(),
             "knowledge_time": self.knowledge_time.isoformat(),
-            "source_publication_time": self.source_publication_time.isoformat(),
+            "source_publication_time": (
+                self.source_publication_time.isoformat()
+                if self.source_publication_time is not None
+                else None
+            ),
             "revision_id": self.revision_id,
             "source": self.source,
             "evidence_hash": self.evidence_hash,
@@ -337,7 +361,11 @@ class Observation:
             day_count=(DayCountConvention(record["day_count"]) if record.get("day_count") else None),
             event_time=timestamp("event_time"),
             knowledge_time=timestamp("knowledge_time"),
-            source_publication_time=timestamp("source_publication_time"),
+            source_publication_time=(
+                timestamp("source_publication_time")
+                if record["source_publication_time"] is not None
+                else None
+            ),
             revision_id=record["revision_id"],
             source=record["source"],
             evidence_hash=record["evidence_hash"],

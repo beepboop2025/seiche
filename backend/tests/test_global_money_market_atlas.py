@@ -1139,3 +1139,55 @@ def test_expansion_ledger_validation_rejects_duplicate_ids_and_non_https_urls():
     row["official_reference_url"] = row["source_url"]
     with pytest.raises(ValueError, match="HTTPS URL"):
         _validate_expansion_ledger((row,))
+
+
+def test_unknown_publication_preserves_values_without_claiming_freshness():
+    pack = default_registry().get("AU-AUD")
+    day = datetime(2026, 9, 4, tzinfo=UTC)
+    cash = replace(_row(
+        "AU-AUD", "AU.RBA.AONIA", SemanticRole.UNSECURED_OVERNIGHT,
+        day, 435, source="rba_cash", currency="AUD", area="AU",
+        jurisdictions=("AU",),
+    ), source_publication_time=None)
+    target = _row(
+        "AU-AUD", "AU.RBA.CASH_TARGET", SemanticRole.POLICY_TARGET,
+        day, 430, source="rba_policy", currency="AUD", area="AU",
+        jurisdictions=("AU",),
+    )
+    result = build_global_money_market_atlas(
+        (pack,), {pack.market_id: [cash, target]}, as_of=day + timedelta(hours=12)
+    )
+    market = result["markets"][0]
+    metric = next(row for row in market["metrics"] if row["id"] == cash.instrument_id)
+    assert metric["value"] == 4.35
+    assert metric["published_at"] is None
+    assert metric["status"] == "UNKNOWN"
+    assert metric["freshness_basis"] == "source publication time unknown"
+    assert metric["missed_publication_opportunities"] is None
+    assert metric["knowledge_time"] == cash.knowledge_time.isoformat()
+    spread = market["policy_relative_spread"]
+    assert spread["value"] == 5
+    assert spread["published_at"] is None
+    assert spread["status"] == "UNKNOWN"
+    assert spread["current_for_prose"] is False
+    assert spread["input_lineage"][0]["published_at"] is None
+    json.dumps(result, allow_nan=False)
+
+
+def test_known_publication_wins_same_knowledge_tie_in_public_atlas():
+    pack = default_registry().get("EA-EUR")
+    day = datetime(2026, 9, 4, tzinfo=UTC)
+    known = _row(
+        "EA-EUR", "EA.ECB.ESTR", SemanticRole.UNSECURED_OVERNIGHT,
+        day, 200, source="ecb_benchmark", currency="EUR", area="EA",
+        jurisdictions=("DE",),
+    )
+    unknown = replace(known, source_publication_time=None, value=999, revision_id="z-unknown")
+    forward = build_global_money_market_atlas(
+        (pack,), {pack.market_id: [known, unknown]}, as_of=day + timedelta(hours=12)
+    )
+    reverse = build_global_money_market_atlas(
+        (pack,), {pack.market_id: [unknown, known]}, as_of=day + timedelta(hours=12)
+    )
+    assert forward == reverse
+    assert forward["markets"][0]["benchmark"]["value"] == 2.0

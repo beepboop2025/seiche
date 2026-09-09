@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from enum import StrEnum
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -44,6 +45,13 @@ class FetchedDocument:
     label: str = ""
 
 
+class PublicationTimePolicy(StrEnum):
+    """Distinguish missing clocks to infer from deliberately unknown clocks."""
+
+    INFER = "infer"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class ParsedPoint:
     """A source-native row before pack-declared unit conversion."""
@@ -55,6 +63,13 @@ class ParsedPoint:
     source_publication_time: datetime | None = None
     revision_id: str | None = None
     quality: QualityState | None = None
+    publication_time_policy: PublicationTimePolicy = PublicationTimePolicy.INFER
+
+    def __post_init__(self) -> None:
+        policy = PublicationTimePolicy(self.publication_time_policy)
+        object.__setattr__(self, "publication_time_policy", policy)
+        if policy is PublicationTimePolicy.UNKNOWN and self.source_publication_time is not None:
+            raise ValueError("unknown publication policy cannot carry a publication timestamp")
 
 
 class DocumentFetcher(Protocol):
@@ -277,6 +292,8 @@ class FunctionalCanonicalAdapter:
                 publication = (
                     _as_utc(point.source_publication_time, "source publication time")
                     if point.source_publication_time is not None
+                    else None
+                    if point.publication_time_policy is PublicationTimePolicy.UNKNOWN
                     else _inferred_publication_time(
                         event_day,
                         self.pack,
@@ -287,7 +304,7 @@ class FunctionalCanonicalAdapter:
                 # A bounded calendar is also the bounded backfill contract.
                 # Rows outside it are withheld rather than weekday-guessed.
                 continue
-            if publication > captured_at:
+            if publication is not None and publication > captured_at:
                 # A same-day source can expose an effective date before the
                 # declared publication clock. It is not knowable yet.
                 continue
@@ -303,13 +320,20 @@ class FunctionalCanonicalAdapter:
                 existing is not None
                 and existing.evidence_hash == row_hash
                 and explicit_lineage_matches
+                and (
+                    point.publication_time_policy is not PublicationTimePolicy.UNKNOWN
+                    or existing.source_publication_time is None
+                )
             ):
                 observations.append(existing)
                 continue
             if existing is not None:
                 # Preserve an upstream revision timestamp when it is explicit;
                 # otherwise capture is the only defensible publication bound.
-                if point.source_publication_time is None:
+                if (
+                    point.source_publication_time is None
+                    and point.publication_time_policy is not PublicationTimePolicy.UNKNOWN
+                ):
                     publication = captured_at
                 knowledge = captured_at
                 quality = QualityState.REVISED
@@ -331,8 +355,8 @@ class FunctionalCanonicalAdapter:
                     QualityState.VERIFIED
                     if (
                         point.source_publication_time is not None
-                        or spec.publication_clock.precision
-                        in {
+                        or point.publication_time_policy is not PublicationTimePolicy.UNKNOWN
+                        and spec.publication_clock.precision in {
                             PublicationClockPrecision.EXACT,
                             PublicationClockPrecision.SCHEDULED,
                         }

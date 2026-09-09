@@ -559,3 +559,10 @@ def test_verifier_rejects_tampering_and_noncontiguous_revision_history() -> None
     )
     with pytest.raises(WorldModelInputError, match="not contiguous"):
         verify_world_model_input_pack(_reseal(pack))
+
+
+def test_world_model_rejects_unknown_publication_with_contract_error():
+    rows = _complete_rows()
+    rows[0] = replace(rows[0], source_publication_time=None)
+    with pytest.raises(WorldModelInputError, match="known source_publication_time"):
+        _build(rows=rows)

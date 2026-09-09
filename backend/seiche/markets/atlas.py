@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from seiche.domain.observation import (
+    publication_time_order_key,
     RATE_ROLES,
     Observation,
     QualityState,
@@ -1233,6 +1234,9 @@ def _publication_opportunity_clock(
 ) -> tuple[StalenessState, int | None, datetime | None, str]:
     """Age a row by source publication opportunities, not wall-clock days."""
 
+    if latest.source_publication_time is None:
+        return (StalenessState.UNKNOWN, None, None, "source publication time unknown")
+
     local_zone = calendar.timezone
     event_day = latest.event_time.astimezone(local_zone).date()
     try:
@@ -1340,11 +1344,11 @@ def _latest_by_event(rows: Iterable[Observation]) -> list[Observation]:
         current = by_event.get(row.event_time)
         if current is None or (
             row.knowledge_time,
-            row.source_publication_time,
+            publication_time_order_key(row.source_publication_time),
             row.revision_id,
         ) > (
             current.knowledge_time,
-            current.source_publication_time,
+            publication_time_order_key(current.source_publication_time),
             current.revision_id,
         ):
             by_event[row.event_time] = row
@@ -1534,7 +1538,9 @@ def _metric(
         "asof": raw_latest.event_time.date().isoformat() if raw_latest else None,
         "event_time": raw_latest.event_time.isoformat() if raw_latest else None,
         "published_at": (
-            raw_latest.source_publication_time.isoformat() if raw_latest else None
+            raw_latest.source_publication_time.isoformat()
+            if raw_latest is not None and raw_latest.source_publication_time is not None
+            else None
         ),
         "knowledge_time": raw_latest.knowledge_time.isoformat() if raw_latest else None,
         "cadence": adapter.expected_cadence,
@@ -1780,10 +1786,12 @@ def _spread_metric(
         "unit": "bp",
         "asof": latest_time.date().isoformat(),
         "event_time": latest_time.isoformat(),
-        "published_at": max(
-            latest_benchmark.source_publication_time,
-            latest_anchor.source_publication_time,
-        ).isoformat(),
+        "published_at": (
+            max(latest_benchmark.source_publication_time, latest_anchor.source_publication_time).isoformat()
+            if latest_benchmark.source_publication_time is not None
+            and latest_anchor.source_publication_time is not None
+            else None
+        ),
         "knowledge_time": max(
             latest_benchmark.knowledge_time,
             latest_anchor.knowledge_time,
@@ -1803,7 +1811,7 @@ def _spread_metric(
         "freshness_basis": (
             "worse of the two input publication-opportunity clocks; the faster/stricter leg governs"
             if spread_state is not StalenessState.UNKNOWN
-            else "UNKNOWN because at least one input calendar is outside its validated range"
+            else "UNKNOWN because at least one input publication clock is unavailable"
         ),
         "cadence": "exact common event dates",
         "source": f"{benchmark.source_adapter_id} + {anchor.source_adapter_id}",
@@ -1815,7 +1823,10 @@ def _spread_metric(
             {
                 "instrument_id": row.instrument_id,
                 "event_time": row.event_time.isoformat(),
-                "published_at": row.source_publication_time.isoformat(),
+                "published_at": (
+                    row.source_publication_time.isoformat()
+                    if row.source_publication_time is not None else None
+                ),
                 "knowledge_time": row.knowledge_time.isoformat(),
                 "revision_id": row.revision_id,
                 "evidence_hash": row.evidence_hash,

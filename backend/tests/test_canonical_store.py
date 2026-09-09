@@ -102,6 +102,184 @@ def test_each_row_keeps_its_own_knowledge_time(tmp_path, monkeypatch) -> None:
     assert store.save_observations([early]) == 0
 
 
+def _create_legacy_canonical_database(path):
+    # The preceding schema had exactly this NOT NULL constraint. Include extra
+    # schema objects to ensure the rebuild does not silently discard them.
+    with store._conn() as template:
+        schema = template.execute(
+            "SELECT sql FROM sqlite_master WHERE name='canonical_observations'"
+        ).fetchone()[0]
+    schema = schema.replace("source_publication_time TEXT,", "source_publication_time TEXT NOT NULL,")
+    conn = sqlite3.connect(path)
+    conn.execute(schema)
+    conn.execute("CREATE UNIQUE INDEX legacy_hash_lookup ON canonical_observations(record_hash)")
+    conn.execute("CREATE TABLE insert_audit (revision_id TEXT)")
+    conn.execute(
+        "CREATE TRIGGER legacy_insert_audit AFTER INSERT ON canonical_observations "
+        "BEGIN INSERT INTO insert_audit VALUES (NEW.revision_id); END"
+    )
+    conn.execute("CREATE VIEW legacy_observation_view AS SELECT * FROM canonical_observations")
+    conn.execute(
+        "CREATE TABLE evidence_reference (record_hash TEXT REFERENCES "
+        "canonical_observations(record_hash))"
+    )
+    row = _observation(event_day=2, knowledge_day=3, value="500.00", revision="original")
+    values = store._observation_row(row)
+    conn.execute(
+        f"INSERT INTO canonical_observations (rowid,{','.join((*store._CANONICAL_COLUMNS, 'record_hash'))}) "
+        f"VALUES (97,{','.join('?' for _ in values)})", values,
+    )
+    conn.execute("INSERT INTO evidence_reference VALUES (?)", (values[-1],))
+    conn.commit()
+    return conn, row
+
+
+def test_existing_sqlite_nullable_upgrade_preserves_all_rows_hashes_and_schema(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "template.sqlite")
+    database = tmp_path / "legacy.sqlite"
+    conn, original = _create_legacy_canonical_database(database)
+    conn.execute("PRAGMA foreign_keys=ON")
+    before = conn.execute("SELECT rowid,* FROM canonical_observations").fetchall()
+    objects = conn.execute(
+        "SELECT type,name,sql FROM sqlite_master WHERE type IN ('index','trigger','view')"
+    ).fetchall()
+    store._converge_nullable_publication_time(conn)
+    assert conn.execute("SELECT rowid,* FROM canonical_observations").fetchall() == before
+    assert conn.execute("SELECT * FROM legacy_observation_view").fetchall() == [before[0][1:]]
+    assert conn.execute(
+        "SELECT type,name,sql FROM sqlite_master WHERE type IN ('index','trigger','view')"
+    ).fetchall() != []
+    assert set(conn.execute(
+        "SELECT type,name,sql FROM sqlite_master WHERE type IN ('index','trigger','view')"
+    )) == set(objects)
+    assert conn.execute("SELECT * FROM insert_audit").fetchall() == [("original",)]
+    assert conn.execute("PRAGMA foreign_keys").fetchone() == (1,)
+    assert conn.execute("PRAGMA legacy_alter_table").fetchone() == (0,)
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("SELECT * FROM evidence_reference").fetchall() == [(before[0][-1],)]
+    assert not next(row for row in conn.execute("PRAGMA table_info(canonical_observations)")
+                    if row[1] == "source_publication_time")[3]
+    store._converge_nullable_publication_time(conn)
+    assert conn.execute("SELECT rowid,* FROM canonical_observations").fetchall() == before
+    conn.close()
+    monkeypatch.setattr(store, "DB_PATH", database)
+    unknown = replace(original, source_publication_time=None, revision_id="unknown")
+    assert store.save_observations([original, unknown]) == 1
+    assert store.load_observation_revisions("US-USD", original.knowledge_time) == [unknown, original]
+    with sqlite3.connect(database) as checked:
+        assert checked.execute("SELECT * FROM insert_audit").fetchall() == [("original",), ("unknown",)]
+        assert checked.execute("SELECT rowid,* FROM canonical_observations WHERE revision_id='original'").fetchall() == before
+    with pytest.raises(ValueError, match="identity collision"):
+        store.save_observations([replace(original, source_publication_time=None)])
+
+
+def test_existing_sqlite_upgrade_is_automatic_and_rolls_back_after_copy_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "template.sqlite")
+    database = tmp_path / "legacy.sqlite"
+    conn, original = _create_legacy_canonical_database(database)
+    conn.execute("PRAGMA foreign_keys=ON")
+    before = conn.execute("SELECT type,name,sql FROM sqlite_master").fetchall()
+    rows = conn.execute("SELECT rowid,* FROM canonical_observations").fetchall()
+
+    def deny_rename(action, first, second, database_name, trigger):
+        return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_ALTER_TABLE else sqlite3.SQLITE_OK
+
+    conn.set_authorizer(deny_rename)
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        store._converge_nullable_publication_time(conn)
+    conn.set_authorizer(None)
+    assert conn.execute("SELECT type,name,sql FROM sqlite_master").fetchall() == before
+    assert conn.execute("SELECT rowid,* FROM canonical_observations").fetchall() == rows
+    assert conn.execute("PRAGMA foreign_keys").fetchone() == (1,)
+    assert conn.execute("PRAGMA legacy_alter_table").fetchone() == (0,)
+    conn.execute("INSERT INTO insert_audit VALUES ('caller-uncommitted')")
+    with pytest.raises(RuntimeError, match="clean transaction"):
+        store._converge_nullable_publication_time(conn)
+    assert conn.in_transaction
+    conn.rollback()
+    conn.close()
+    monkeypatch.setattr(store, "DB_PATH", database)
+    assert store.save_observations([replace(original, source_publication_time=None, revision_id="after-retry")]) == 1
+
+
+def test_mixed_publication_clocks_rank_identically_in_all_sqlite_queries(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "mixed.sqlite")
+    known = _observation(event_day=2, knowledge_day=3, value="500", revision="a-known")
+    unknown = replace(known, source_publication_time=None, revision_id="z-unknown", value="900",
+                      evidence_hash=evidence_sha256("unknown-publication"))
+    source_tie = replace(known, source="z-official-test", value="501",
+                         evidence_hash=evidence_sha256("known-publication-source-tie"))
+    assert store.save_observations([source_tie, unknown, known]) == 3
+    cutoff = known.knowledge_time
+    assert store.load_observation_revisions("US-USD", cutoff) == [unknown, known, source_tie]
+    assert store.load_observation_revisions_as_of("US-USD", cutoff) == [unknown, known, source_tie]
+    assert store.load_observations_as_of("US-USD", cutoff) == [source_tie]
+    assert store.load_observation_page("US-USD", cutoff, limit=1)[0] == [source_tie]
+    assert store.latest_observation_hashes("US-USD", cutoff) == {
+        (known.instrument_id, known.event_time): source_tie.evidence_hash,
+    }
+    later_unknown = replace(unknown, knowledge_time=datetime(2026, 1, 4, tzinfo=UTC))
+    store.save_observations([later_unknown])
+    assert store.load_observations_as_of("US-USD", later_unknown.knowledge_time) == [later_unknown]
+    assert store.load_observation_page("US-USD", later_unknown.knowledge_time, limit=1)[0] == [later_unknown]
+    assert store.load_observations_as_of("US-USD", datetime(2026, 1, 3, 8, tzinfo=UTC)) == []
+
+
+def test_missing_history_append_is_atomic_idempotent_and_preserves_existing_vintages(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "missing.sqlite")
+    existing = _observation(event_day=2, knowledge_day=3, value="500", revision="live")
+    store.save_observations([existing])
+    archive = replace(existing, source_publication_time=None, revision_id="archive",
+                      knowledge_time=datetime(2026, 1, 8, tzinfo=UTC), value="900")
+    missing = replace(archive, event_time=datetime(2026, 1, 1, tzinfo=UTC))
+    other_source = replace(archive, source="other-official-test")
+    assert store.save_missing_observations([archive, missing, other_source]) == 2
+    assert store.save_missing_observations([archive, missing, other_source]) == 0
+    assert store.load_observation_revisions("US-USD", archive.knowledge_time) == [missing, existing, other_source]
+    new_row = replace(missing, instrument_id="US.TEST.ROLLBACK")
+    with pytest.raises(ValueError, match="identity collision"):
+        store.save_missing_observations([new_row, replace(missing, value="123")])
+    assert store.load_observation_revisions("US-USD", archive.knowledge_time,
+                                             instrument_ids=(new_row.instrument_id,)) == []
+    with pytest.raises(ValueError, match="5000"):
+        store.save_missing_observations([missing] * 5001)
+
+
+def test_missing_history_waits_for_concurrent_sqlite_collector(tmp_path, monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "concurrent.sqlite")
+    with store._conn():
+        pass
+    existing = _observation(event_day=2, knowledge_day=3, value="500", revision="live")
+    archive = replace(existing, source_publication_time=None, revision_id="archive",
+                      knowledge_time=datetime(2026, 1, 8, tzinfo=UTC))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with sqlite3.connect(store.DB_PATH) as collector:
+            collector.execute("BEGIN IMMEDIATE")
+            values = store._observation_row(existing)
+            collector.execute(
+                f"INSERT INTO canonical_observations VALUES ({','.join('?' for _ in values)})", values,
+            )
+            future = pool.submit(store.save_missing_observations, [archive])
+            try:
+                with pytest.raises(TimeoutError):
+                    future.result(timeout=0.2)
+            finally:
+                collector.commit()
+        assert future.result(timeout=10) == 0
+    assert store.load_observation_revisions("US-USD", archive.knowledge_time) == [existing]
+
+
+def test_upgraded_sqlite_schema_only_reads_column_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "upgraded.sqlite")
+    with store._conn() as connection:
+        queries = []
+        connection.set_trace_callback(queries.append)
+        store._converge_nullable_publication_time(connection)
+        assert queries == ["PRAGMA table_info(canonical_observations)"]
+
+
 def test_market_identity_prevents_cross_market_collision(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "markets.sqlite")
     usd = _observation(event_day=2, knowledge_day=3, value="500", revision="initial")

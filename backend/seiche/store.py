@@ -11,7 +11,9 @@ import json
 import hashlib
 import hmac
 import sqlite3
+import re
 import threading
+from itertools import islice
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
@@ -101,6 +103,89 @@ def _require_forward_child_index(conn: sqlite3.Connection) -> None:
         )
 
 
+def _converge_nullable_publication_time(conn: sqlite3.Connection) -> None:
+    """Preserve stored bytes and schema objects while relaxing the legacy clock.
+
+    SQLite cannot drop NOT NULL in place. Rebuild only an existing legacy table,
+    in one reserved write transaction, keeping rowids, primary keys, indexes,
+    triggers and foreign-key references. Never commit an existing caller's work.
+    """
+
+    def needs_upgrade() -> bool:
+        return any(
+            row[1] == "source_publication_time" and row[3]
+            for row in conn.execute("PRAGMA table_info(canonical_observations)")
+        )
+
+    if not needs_upgrade():
+        return
+    if conn.in_transaction:
+        raise RuntimeError("publication clock migration requires a clean transaction")
+    foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    legacy_alter = conn.execute("PRAGMA legacy_alter_table").fetchone()[0]
+    # Both pragmas are connection-local; foreign_keys must change before BEGIN.
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("PRAGMA legacy_alter_table=ON")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # A different process may have completed the migration while we waited.
+        if not needs_upgrade():
+            conn.commit()
+            return
+        violations_before = set(conn.execute("PRAGMA foreign_key_check"))
+        schema = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='canonical_observations'"
+        ).fetchone()[0]
+        replacement, changed = re.subn(
+            r"\bsource_publication_time\s+TEXT\s+NOT\s+NULL\b",
+            "source_publication_time TEXT", schema, flags=re.IGNORECASE,
+        )
+        if changed != 1:
+            raise RuntimeError("unsupported legacy publication column declaration")
+        temporary = "canonical_observations_nullable_upgrade"
+        replacement, renamed = re.subn(
+            r'(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)'
+            r'(?:"canonical_observations"|canonical_observations)(?=\s*\()',
+            lambda match: match[1] + temporary, replacement,
+            count=1, flags=re.IGNORECASE,
+        )
+        if renamed != 1:
+            raise RuntimeError("unsupported legacy canonical table declaration")
+        objects = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name='canonical_observations' "
+            "AND type IN ('index', 'trigger') AND sql IS NOT NULL "
+            "ORDER BY type, name"
+        ).fetchall()
+        columns = [
+            row[1] for row in conn.execute("PRAGMA table_xinfo(canonical_observations)")
+            if row[6] == 0
+        ]
+        names = ", ".join('"' + name.replace('"', '""') + '"' for name in columns)
+        # The canonical compound primary key uses an ordinary rowid table.
+        # Preserve those rowids too, including gaps and externally used rowids.
+        if "WITHOUT ROWID" not in schema.upper():
+            names = "rowid, " + names
+        conn.execute(replacement)
+        conn.execute(
+            f"INSERT INTO {temporary} ({names}) "
+            f"SELECT {names} FROM canonical_observations"
+        )
+        conn.execute("DROP TABLE canonical_observations")
+        conn.execute(f"ALTER TABLE {temporary} RENAME TO canonical_observations")
+        for (statement,) in objects:
+            conn.execute(statement)
+        if set(conn.execute("PRAGMA foreign_key_check")) != violations_before:
+            raise RuntimeError("publication clock migration changed foreign key integrity")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute(f"PRAGMA legacy_alter_table={legacy_alter}")
+        conn.execute(f"PRAGMA foreign_keys={foreign_keys}")
+
+
 def _conn() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -134,7 +219,7 @@ def _conn() -> sqlite3.Connection:
              day_count TEXT,
              event_time TEXT NOT NULL,
              knowledge_time TEXT NOT NULL,
-             source_publication_time TEXT NOT NULL,
+             source_publication_time TEXT,
              revision_id TEXT NOT NULL,
              source TEXT NOT NULL,
              evidence_hash TEXT NOT NULL,
@@ -148,6 +233,11 @@ def _conn() -> sqlite3.Connection:
                source, revision_id
              ))"""
     )
+    try:
+        _converge_nullable_publication_time(conn)
+    except BaseException:
+        conn.close()
+        raise
     conn.execute(
         """CREATE INDEX IF NOT EXISTS canonical_observations_asof
              ON canonical_observations (
@@ -442,6 +532,52 @@ def save_observations(observations: Iterable[Observation]) -> int:
     return inserted
 
 
+def save_missing_observations(observations: Iterable[Observation]) -> int:
+    """Append at most 5,000 missing instrument/event/source histories atomically.
+
+    Existing histories remain authoritative even if an archive has a later
+    ingestion clock. Retries skip identical rows; identity collisions still fail.
+    This deliberately writes no collector/freshness state.
+    """
+
+    batch = tuple(islice(observations, 5001))
+    if len(batch) > 5000:
+        raise ValueError("missing-history batch cannot exceed 5000 observations")
+    if not batch:
+        return 0
+    columns = ",".join((*_CANONICAL_COLUMNS, "record_hash"))
+    placeholders = ",".join("?" for _ in range(len(_CANONICAL_COLUMNS) + 1))
+    inserted = 0
+    with _lock, _conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for observation in batch:
+            row = _observation_row(observation)
+            history = (
+                observation.market_id, observation.instrument_id,
+                observation.event_time.isoformat(), observation.source,
+            )
+            cursor = conn.execute(
+                f"INSERT INTO canonical_observations ({columns}) "
+                f"SELECT {placeholders} WHERE NOT EXISTS "
+                "(SELECT 1 FROM canonical_observations WHERE market_id=? "
+                "AND instrument_id=? AND event_time=? AND source=?)",
+                (*row, *history),
+            )
+            inserted += cursor.rowcount
+            if not cursor.rowcount:
+                existing = conn.execute(
+                    "SELECT record_hash FROM canonical_observations "
+                    "WHERE market_id=? AND instrument_id=? AND event_time=? "
+                    "AND source=? AND knowledge_time=? AND revision_id=?",
+                    (*history, observation.knowledge_time.isoformat(), observation.revision_id),
+                ).fetchone()
+                if existing is not None and existing[0] != row[-1]:
+                    raise ValueError(
+                        "canonical observation identity collision with different content"
+                    )
+    return inserted
+
+
 def _row_to_observation(row: sqlite3.Row | tuple) -> Observation:
     record = dict(zip(_CANONICAL_COLUMNS, row[: len(_CANONICAL_COLUMNS)], strict=True))
     return Observation.from_record(record)
@@ -503,8 +639,8 @@ def load_observations_as_of(
           SELECT {selected},
                  ROW_NUMBER() OVER (
                    PARTITION BY market_id, instrument_id, event_time
-                   ORDER BY knowledge_time DESC, source_publication_time DESC,
-                            revision_id DESC
+                   ORDER BY knowledge_time DESC, source_publication_time DESC NULLS LAST,
+                            revision_id DESC, source DESC
                  ) AS vintage_rank
             FROM canonical_observations
            WHERE {where}
@@ -549,7 +685,7 @@ def load_observation_revisions(
                   FROM canonical_observations
                  WHERE {' AND '.join(predicates)}
                  ORDER BY event_time, instrument_id, knowledge_time,
-                          source_publication_time, revision_id, source"""
+                          source_publication_time ASC NULLS FIRST, revision_id, source"""
     with _lock, _conn() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_observation(row) for row in rows]
@@ -579,7 +715,7 @@ def load_observation_revisions_as_of(
           FROM canonical_observations
          WHERE {" AND ".join(predicates)}
          ORDER BY event_time, instrument_id, knowledge_time,
-                  source_publication_time, revision_id, source
+                  source_publication_time ASC NULLS FIRST, revision_id, source
     """
     with _lock, _conn() as conn:
         rows = conn.execute(query, params).fetchall()
@@ -686,7 +822,7 @@ def load_observation_page(
                                 observation.instrument_id,
                                 observation.event_time
                    ORDER BY observation.knowledge_time DESC,
-                            observation.source_publication_time DESC,
+                            observation.source_publication_time DESC NULLS LAST,
                             observation.revision_id DESC,
                             observation.source DESC
                  ) AS vintage_rank
@@ -754,7 +890,7 @@ def latest_observation_hashes(
           SELECT instrument_id, event_time, evidence_hash,
                  ROW_NUMBER() OVER (
                    PARTITION BY market_id, instrument_id, event_time
-                   ORDER BY knowledge_time DESC, source_publication_time DESC,
+                   ORDER BY knowledge_time DESC, source_publication_time DESC NULLS LAST,
                             revision_id DESC, source DESC
                  ) AS vintage_rank
             FROM canonical_observations

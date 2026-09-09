@@ -46,7 +46,8 @@ def test_database_url_selects_postgres_without_connecting_at_import(monkeypatch)
 def test_postgres_schema_preserves_bitemporal_and_snapshot_indexes() -> None:
     assert "event_time TIMESTAMPTZ NOT NULL" in _POSTGRES_SCHEMA
     assert "knowledge_time TIMESTAMPTZ NOT NULL" in _POSTGRES_SCHEMA
-    assert "source_publication_time TIMESTAMPTZ NOT NULL" in _POSTGRES_SCHEMA
+    assert "source_publication_time TIMESTAMPTZ," in _POSTGRES_SCHEMA
+    assert "source_publication_time TIMESTAMPTZ NOT NULL" not in _POSTGRES_SCHEMA
     assert "market_snapshots_latest" in _POSTGRES_SCHEMA
     assert "CREATE TABLE IF NOT EXISTS market_snapshot_staging" in _POSTGRES_SCHEMA
     assert "CREATE TABLE IF NOT EXISTS release_snapshot_handoffs" in _POSTGRES_SCHEMA

@@ -16,6 +16,7 @@ from seiche.domain.observation import (
     SemanticRole,
     StalenessState,
     evidence_sha256,
+    publication_time_order_key,
 )
 
 
@@ -63,6 +64,35 @@ def test_observation_requires_per_row_aware_clocks() -> None:
         _rate_observation(
             knowledge_time=datetime(2026, 8, 8, 7, tzinfo=UTC),
         )
+
+
+def test_unknown_publication_round_trips_without_inventing_a_clock() -> None:
+    observation = _rate_observation(source_publication_time=None)
+    assert observation.source_publication_time is None
+    assert observation.to_record()["source_publication_time"] is None
+    assert Observation.from_record(observation.to_record()) == observation
+    assert observation.usable
+    assert observation.knowledge_time == datetime(2026, 8, 8, 8, 1, tzinfo=UTC)
+    with pytest.raises(ValueError, match="knowledge_time must be timezone-aware"):
+        _rate_observation(source_publication_time=None, knowledge_time=datetime(2026, 8, 8))
+    with pytest.raises(ValueError, match="source_publication_time must be timezone-aware"):
+        _rate_observation(source_publication_time=datetime(2026, 8, 8))
+
+
+def test_known_publication_keeps_original_record_hash_and_explicit_null_order() -> None:
+    import hashlib
+    import json
+
+    known = _rate_observation()
+    original_hash = "19e22a80109c39591a1474b0d25d5bdd6f870a00ebfce97eb30cf0b45ce5731f"
+    encoded = json.dumps(known.to_record(), sort_keys=True, separators=(",", ":"))
+    assert hashlib.sha256(encoded.encode()).hexdigest() == original_hash
+    earlier = datetime(2026, 8, 8, 7, tzinfo=UTC)
+    clocks = [known.source_publication_time, None, earlier, None]
+    assert sorted(clocks, key=publication_time_order_key) == [
+        None, None, earlier, known.source_publication_time,
+    ]
+    assert max(clocks, key=publication_time_order_key) == known.source_publication_time
 
 
 def test_missing_observation_is_unavailable_not_zero() -> None:

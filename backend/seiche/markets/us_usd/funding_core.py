@@ -22,6 +22,7 @@ from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 
 from seiche.domain.observation import (
+    publication_time_order_key,
     CanonicalUnit,
     DayCountConvention,
     Observation,
@@ -116,12 +117,12 @@ def _latest_by_event(
         current = by_event.get(observation.event_time)
         if current is None or (
             observation.knowledge_time,
-            observation.source_publication_time,
+            publication_time_order_key(observation.source_publication_time),
             observation.revision_id,
             observation.evidence_hash,
         ) > (
             current.knowledge_time,
-            current.source_publication_time,
+            publication_time_order_key(current.source_publication_time),
             current.revision_id,
             current.evidence_hash,
         ):
@@ -185,6 +186,7 @@ def _profile_rows(
         if item.market_id == _MARKET_ID
         and item.instrument_id in _INSTRUMENT_IDS
         and item.event_time <= as_of
+        and item.source_publication_time is not None
         and item.source_publication_time <= as_of
         and item.knowledge_time <= as_of
     )
