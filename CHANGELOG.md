@@ -11,6 +11,16 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-09-09
+
+### Fixed
+
+- Export successful NY Fed funding observations when collection completes and
+  recover completed but unexported work after a collector restart. Preserve the
+  original source, observation and collection clocks.
+- Restore the authenticated private world-model delivery route after Railway
+  cutover with an isolated read-only relay.
+
 ## [0.12.5] - 2026-09-08
 
 ### Added
@@ -280,7 +290,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.5...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.6...HEAD
+[0.12.6]: https://github.com/beepboop2025/seiche/compare/v0.12.5...v0.12.6
 [0.12.5]: https://github.com/beepboop2025/seiche/compare/v0.12.4...v0.12.5
 [0.12.4]: https://github.com/beepboop2025/seiche/compare/v0.12.3...v0.12.4
 [0.12.3]: https://github.com/beepboop2025/seiche/compare/v0.12.2...v0.12.3

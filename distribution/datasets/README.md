@@ -12,7 +12,7 @@ the mismatched primary-dealer row, licensed/restricted series, and all
 Seiche-derived outputs are excluded.
 
 The metadata publication and source-data revision are deliberately separate:
-catalog citations target the `v0.12.5/distribution/datasets` tree. Verify that
+catalog citations target the `v0.12.6/distribution/datasets` tree. Verify that
 version's availability from its release and publication receipts.
 Every observation URL and hash stays pinned to the audited
 `93e83bbc.../integrations/datacommons` source tree. The dataset remains

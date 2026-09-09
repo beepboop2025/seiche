@@ -44,9 +44,9 @@ dataset_info:
 
 > **Dataset identity: rights-reviewed direct-OFR snapshot. No DOI has been
 > assigned. Public listing status is receipt-tracked in Seiche's
-> [distribution ledger](https://github.com/beepboop2025/seiche/blob/v0.12.5/distribution/submissions.csv).**
+> [distribution ledger](https://github.com/beepboop2025/seiche/blob/v0.12.6/distribution/submissions.csv).**
 
-These metadata links target Seiche `0.12.5`; verify publication status from the
+These metadata links target Seiche `0.12.6`; verify publication status from the
 linked distribution ledger. The audited source revision, two CSV hashes and
 11,163 observations are unchanged; the dataset retains version `0.1.0-draft`.
 
@@ -59,7 +59,7 @@ The package deliberately excludes every value fetched through FRED, New York
 Fed reference-rate rows with additional terms, the semantically mismatched
 primary-dealer row, licensed/restricted series, and all Seiche-derived outputs.
 The exact inclusion and exclusion review is recorded in
-[`integrations/datacommons/RIGHTS_AND_SOURCES.md`](https://github.com/beepboop2025/seiche/blob/v0.12.5/integrations/datacommons/RIGHTS_AND_SOURCES.md).
+[`integrations/datacommons/RIGHTS_AND_SOURCES.md`](https://github.com/beepboop2025/seiche/blob/v0.12.6/integrations/datacommons/RIGHTS_AND_SOURCES.md).
 
 ## Data contract
 
