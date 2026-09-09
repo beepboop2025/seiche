@@ -75,7 +75,7 @@ def isolated_legacy_postgres():
                         "source_publication_time TIMESTAMPTZ,",
                         "source_publication_time TIMESTAMPTZ NOT NULL,",
                     ))
-                elif statement.startswith("CREATE INDEX IF NOT EXISTS canonical_observations"):
+                elif statement:
                     connection.execute(statement)
         yield repository
     finally:
@@ -117,7 +117,8 @@ def test_postgres_existing_nullable_migration_preserves_hashes_rows_and_indexes(
         _insert_legacy_postgres(connection, known)
         before = connection.execute("SELECT ctid,* FROM canonical_observations").fetchall()
         indexes = connection.execute(
-            "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() ORDER BY indexname"
+            "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() "
+            "AND tablename='canonical_observations' ORDER BY indexname"
         ).fetchall()
     # Exercise the ordinary writer entrypoint, not a test-only migration call.
     unknown = replace(known, source_publication_time=None, revision_id="z-unknown", value="900",
@@ -250,10 +251,17 @@ def test_postgres_migration_serializes_initializers_and_nullable_readers_need_no
     barrier = threading.Barrier(2)
 
     def migrate():
-        with repository._connect() as connection:
+        fresh_repository = PostgresMarketRepository(repository.dsn)
+        connect = fresh_repository._connect
+
+        def bounded_connect():
+            connection = connect()
             connection.execute("SET LOCAL lock_timeout='5000ms'")
-            barrier.wait(timeout=5)
-            repository._converge_nullable_publication_time(connection)
+            return connection
+
+        fresh_repository._connect = bounded_connect
+        barrier.wait(timeout=5)
+        fresh_repository._ensure_schema()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(migrate) for _ in range(2)]

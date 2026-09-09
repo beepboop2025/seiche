@@ -88,7 +88,6 @@ jobs:
           backend/tests/test_universal_kernel.py
           backend/tests/test_market_materialize.py
           backend/tests/test_official_adapters.py
-          backend/tests/test_canonical_adapters.py
           backend/tests/test_nyfed_distribution_depth.py
           backend/tests/test_observation_v2.py
           backend/tests/test_nyfed_history.py

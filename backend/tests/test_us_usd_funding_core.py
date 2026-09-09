@@ -799,3 +799,15 @@ def test_funding_profile_excludes_unknown_publication_history():
     assert build_funding_core_input_pack([unknown, *rows], as_of=AS_OF) == expected
     with pytest.raises(FundingCoreProfileError, match="no declared funding-core instruments"):
         build_funding_core_input_pack([unknown], as_of=AS_OF)
+
+
+def test_unknown_publication_correction_cannot_revive_older_forecast_value():
+    rows = _rows(504)
+    correction = replace(
+        rows[0], source_publication_time=None,
+        knowledge_time=rows[0].knowledge_time + timedelta(hours=1),
+        value="999", revision_id="unknown-clock-correction",
+    )
+    for observations in ([correction, *rows], [*rows, correction]):
+        with pytest.raises(FundingCoreProfileError, match="504"):
+            build_funding_core_input_pack(observations, as_of=AS_OF)

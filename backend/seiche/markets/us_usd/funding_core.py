@@ -180,15 +180,28 @@ def _profile_rows(
     # Filter before invoking the role-oriented generic builder.  A future
     # instrument assigned RATE_MEDIAN/RATE_P99/REPO_VOLUME cannot silently
     # replace the exact identities this version was trained against.
-    selected = tuple(
+    scoped = tuple(
         item
         for item in captured
         if item.market_id == _MARKET_ID
         and item.instrument_id in _INSTRUMENT_IDS
         and item.event_time <= as_of
+        and item.knowledge_time <= as_of
+    )
+    # Select the current vintage before checking its clock. A correction with
+    # unknown publication must withhold that event, not revive an older value.
+    eligible_events = {
+        (instrument_id, event)
+        for instrument_id, events in _latest_by_event(scoped).items()
+        for event, latest in events.items()
+        if latest.source_publication_time is not None
+        and latest.source_publication_time <= as_of
+    }
+    selected = tuple(
+        item for item in scoped
+        if (item.instrument_id, item.event_time) in eligible_events
         and item.source_publication_time is not None
         and item.source_publication_time <= as_of
-        and item.knowledge_time <= as_of
     )
     if not selected:
         raise FundingCoreProfileError(
