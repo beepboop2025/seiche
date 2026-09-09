@@ -241,6 +241,69 @@ def test_postgres_missing_history_waits_for_concurrent_collector(isolated_legacy
     assert repository.load_observation_revisions("US-USD", archive.knowledge_time) == [existing]
 
 
+def test_postgres_missing_history_keeps_ordered_duplicate_semantics(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    first = replace(_nullable_test_observation(), source_publication_time=None)
+    later_vintage = replace(first, knowledge_time=first.knowledge_time + timedelta(days=1),
+                            revision_id="later-vintage", value="999")
+    assert repository.save_missing_observations([first, later_vintage, first]) == 1
+    assert repository.load_observation_revisions("US-USD", later_vintage.knowledge_time) == [first]
+
+    # A collision against an earlier row inserted by this same batch must roll
+    # back every insertion, not merely the conflicting final statement.
+    new = replace(first, instrument_id="US.TEST.PIPELINED.COLLISION")
+    with pytest.raises(ValueError, match="identity collision"):
+        repository.save_missing_observations([new, later_vintage, replace(new, value="321")])
+    assert repository.load_observation_revisions(
+        "US-USD", later_vintage.knowledge_time, instrument_ids=(new.instrument_id,),
+    ) == []
+
+
+def test_postgres_missing_history_thousand_rows_have_bounded_driver_waits(
+    isolated_legacy_postgres, monkeypatch, record_property,
+):
+    """A network delay per driver wait must not grow with archive row count."""
+    import psycopg
+    from time import monotonic
+
+    repository = isolated_legacy_postgres
+    base = replace(_nullable_test_observation(), source_publication_time=None)
+    batch = [replace(base, event_time=base.event_time - timedelta(days=offset))
+             for offset in range(1000)]
+    repository.save_missing_observations(batch[:500])
+    with repository._connect() as connection:
+        original = connection.execute(
+            "SELECT ctid::text,record_hash FROM canonical_observations ORDER BY record_hash"
+        ).fetchall()
+
+    waits = []
+
+    class MeasuredConnection(psycopg.Connection):
+        def wait(self, generator, interval=0.1):
+            waits.append(generator.gi_code.co_name)
+            return super().wait(generator, interval=interval)
+
+    # Counts actual driver I/O boundaries, not mocked SQL results. A serial
+    # execute per row needs at least1000 waits, even on a zero-latency localhost.
+    with monkeypatch.context() as patch:
+        patch.setattr(repository, "_connect", lambda: MeasuredConnection.connect(repository.dsn))
+        started = monotonic()
+        assert repository.save_missing_observations(batch) == 500
+        elapsed = monotonic() - started
+    assert len(waits) <= 12, waits[:20]
+    record_property("batch_rows", len(batch))
+    record_property("inserted_rows", 500)
+    record_property("driver_waits", len(waits))
+    record_property("elapsed_seconds", elapsed)
+    record_property("psycopg_version", psycopg.__version__)
+    with repository._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM canonical_observations").fetchone() == (1000,)
+        after = connection.execute(
+            "SELECT ctid::text,record_hash FROM canonical_observations ORDER BY record_hash"
+        ).fetchall()
+    assert set(original) <= set(after)
+
+
 def test_postgres_migration_serializes_initializers_and_nullable_readers_need_no_ddl(isolated_legacy_postgres):
     from concurrent.futures import ThreadPoolExecutor
 

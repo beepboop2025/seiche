@@ -595,7 +595,12 @@ class PostgresMarketRepository:
         self._ensure_schema()
         columns = ",".join(_OBSERVATION_INSERT_COLUMNS)
         placeholders = ",".join(_OBSERVATION_INSERT_PLACEHOLDERS)
-        inserted = 0
+        values = [_observation_values(observation) for observation in batch]
+        histories = [
+            (observation.market_id, observation.instrument_id,
+             observation.event_time, observation.source)
+            for observation in batch
+        ]
         with self._connect() as connection:
             # Competes with ordinary INSERT's ROW EXCLUSIVE lock as well as
             # other archive batches. Ordinary readers remain available.
@@ -603,31 +608,43 @@ class PostgresMarketRepository:
             connection.execute(
                 "LOCK TABLE canonical_observations IN SHARE ROW EXCLUSIVE MODE"
             )
-            for observation in batch:
-                values = _observation_values(observation)
-                history = (
-                    observation.market_id, observation.instrument_id,
-                    observation.event_time, observation.source,
-                )
-                cursor = connection.execute(
+            # executemany pipelines the ordered statements: later occurrences
+            # of one history see earlier inserts in this transaction, exactly
+            # as the serial loop did, without a network wait per observation.
+            # Retain each result so collision checks apply only to skipped rows.
+            with connection.cursor() as cursor:
+                cursor.executemany(
                     f"INSERT INTO canonical_observations ({columns}) "
                     f"SELECT {placeholders} WHERE NOT EXISTS "
                     "(SELECT 1 FROM canonical_observations WHERE market_id=%s "
                     "AND instrument_id=%s AND event_time=%s AND source=%s)",
-                    (*values, *history),
+                    [(*row, *history) for row, history in zip(values, histories, strict=True)],
+                    returning=True,
                 )
-                inserted += cursor.rowcount
-                if not cursor.rowcount:
-                    existing = connection.execute(
+                inserted = 0
+                skipped = []
+                for index in range(len(batch)):
+                    inserted += cursor.rowcount
+                    if not cursor.rowcount:
+                        skipped.append(index)
+                    cursor.nextset()
+            if skipped:
+                with connection.cursor() as cursor:
+                    cursor.executemany(
                         "SELECT record_hash FROM canonical_observations "
                         "WHERE market_id=%s AND instrument_id=%s AND event_time=%s "
                         "AND source=%s AND knowledge_time=%s AND revision_id=%s",
-                        (*history, observation.knowledge_time, observation.revision_id),
-                    ).fetchone()
-                    if existing is not None and existing[0] != values[-1]:
-                        raise ValueError(
-                            "canonical observation identity collision with different content"
-                        )
+                        [(*histories[index], batch[index].knowledge_time, batch[index].revision_id)
+                         for index in skipped],
+                        returning=True,
+                    )
+                    for index in skipped:
+                        existing = cursor.fetchone()
+                        if existing is not None and existing[0] != values[index][-1]:
+                            raise ValueError(
+                                "canonical observation identity collision with different content"
+                            )
+                        cursor.nextset()
         return inserted
 
     def load_observations_as_of(
