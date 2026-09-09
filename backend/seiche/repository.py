@@ -692,6 +692,58 @@ class PostgresMarketRepository:
             observations[observation.market_id].append(observation)
         return observations
 
+    def load_latest_observations_by_instrument(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        event_time: str | datetime,
+        instrument_ids: Iterable[str],
+        redistribution_statuses: Iterable[RedistributionStatus],
+    ) -> dict[str, Observation]:
+        """Read the latest visible event per selected instrument in one query.
+
+        Rank each event's vintage before filtering rights, as pagination does.
+        A newer prohibited revision must never expose an older allowed vintage
+        of that same event. An earlier visible event can still supply status.
+        The result is bounded by the explicit instrument selection.
+        """
+
+        instruments = tuple(dict.fromkeys(instrument_ids))
+        statuses = tuple(dict.fromkeys(status.value for status in redistribution_statuses))
+        if not instruments or not statuses:
+            return {}
+        self._ensure_schema()
+        selected = ",".join(_OBSERVATION_COLUMNS)
+        query = f"""
+            WITH latest_vintages AS (
+              SELECT DISTINCT ON (instrument_id, event_time) {selected}
+                FROM canonical_observations
+               WHERE market_id=%s AND knowledge_time<=%s AND event_time<=%s
+                 AND instrument_id = ANY(%s)
+               ORDER BY instrument_id, event_time DESC, knowledge_time DESC,
+                        source_publication_time DESC, revision_id DESC, source DESC
+            )
+            SELECT DISTINCT ON (instrument_id) {selected}
+              FROM latest_vintages
+             WHERE redistribution_status = ANY(%s)
+             ORDER BY instrument_id, event_time DESC
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                query,
+                (market_id.upper(), _utc(knowledge_time), _utc(event_time),
+                 list(instruments), list(statuses)),
+            ).fetchall()
+        result = {}
+        for row in rows:
+            record = dict(zip(_OBSERVATION_COLUMNS, row, strict=True))
+            if isinstance(record["jurisdiction_codes"], str):
+                record["jurisdiction_codes"] = json.loads(record["jurisdiction_codes"])
+            observation = Observation.from_record(record)
+            result[observation.instrument_id] = observation
+        return result
+
     def load_observation_revisions(
         self,
         market_id: str,
@@ -1419,6 +1471,31 @@ class PostgresMarketRepository:
                 (market_id.upper(), product),
             ).fetchone()
         return self._snapshot(row)
+
+    def load_latest_market_snapshots(
+        self, market_ids: Iterable[str], product: str
+    ) -> dict[str, dict | None]:
+        """Read one latest snapshot per requested market in one connection."""
+
+        markets = tuple(dict.fromkeys(market_id.upper() for market_id in market_ids))
+        result: dict[str, dict | None] = dict.fromkeys(markets)
+        if not markets:
+            return result
+        self._ensure_schema()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT ON (market_id)
+                          snapshot_id, market_id, product, event_cutoff,
+                          knowledge_cutoff, sealed_at, calibration_id,
+                          evidence_eligible, payload_hash, payload
+                     FROM market_snapshots
+                    WHERE market_id = ANY(%s) AND product=%s
+                    ORDER BY market_id, knowledge_cutoff DESC, sealed_at DESC""",
+                (list(markets), product),
+            ).fetchall()
+        for row in rows:
+            result[row[1]] = self._snapshot(row)
+        return result
 
     def load_market_snapshot_as_of(
         self,

@@ -152,6 +152,67 @@ def test_v2_catalog_does_not_collect_at_request_time(tmp_path, monkeypatch) -> N
     }
 
 
+def test_catalog_batches_snapshots_and_keeps_faults_with_their_market(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "catalog-batch.sqlite")
+    base = SQLiteMarketRepository()
+    cutoff = datetime(2026, 8, 9, tzinfo=UTC)
+    store.seal_market_snapshot(
+        market_id="IN-INR", product="gauge", event_cutoff=cutoff,
+        knowledge_cutoff=cutoff, calibration_id="private", evidence_eligible=False,
+        payload={"schema": "seiche.local-gauge.v2", "source": "private-not-public"},
+    )
+    runs = [
+        {"market_id": market, "adapter_id": "nyfed_rates", "status": "FAILED",
+         "fault": "timeout", "finished_at": cutoff.isoformat(), "next_due": cutoff.isoformat()}
+        for market in ("US-USD", "EA-EUR")
+    ]
+    monkeypatch.setattr(base, "latest_collector_runs", lambda market=None: [r for r in runs if market is None or r["market_id"] == market])
+    monkeypatch.setattr(api, "get_repository", lambda: base)
+    expected = api.markets_v2(Response())
+    calls = []
+
+    class Batched:
+        def load_latest_market_snapshots(self, markets, product):
+            markets = tuple(markets)
+            calls.append(("snapshots", markets))
+            return {market: base.load_latest_market_snapshot(market, product) for market in markets}
+
+        def latest_collector_runs(self):
+            calls.append(("runs",))
+            return runs
+
+    monkeypatch.setattr(api, "get_repository", Batched)
+    actual = api.markets_v2(Response())
+    assert actual == expected
+    assert [call[0] for call in calls] == ["snapshots", "runs"]
+    assert "private-not-public" not in json.dumps(actual)
+    assert len(next(m for m in actual["markets"] if m["market_id"] == "US-USD")["faults"]) == 1
+
+
+def test_series_status_batch_retains_selection_cutoffs_and_rights(monkeypatch):
+    cutoff = datetime(2026, 8, 9, tzinfo=UTC)
+    pack = api._market_pack("US-USD")
+    selected = api._public_instrument_ids(pack)
+    observations = {selected[0]: object()}
+    calls = []
+
+    class Batched:
+        def load_latest_observations_by_instrument(self, market, known, **kwargs):
+            calls.append((market, known, kwargs))
+            return observations
+
+        def load_observation_page(self, *args, **kwargs):
+            raise AssertionError("Status must not open a connection for each instrument")
+
+    assert api._latest_public_series_observations(Batched(), pack, cutoff) == observations
+    assert calls == [("US-USD", cutoff, {
+        "event_time": cutoff, "instrument_ids": selected,
+        "redistribution_statuses": (RedistributionStatus.ALLOWED,
+                                   RedistributionStatus.DERIVED_ONLY,
+                                   RedistributionStatus.METADATA_ONLY),
+    })]
+
+
 def test_market_without_snapshot_is_explicitly_unavailable(
     tmp_path, monkeypatch
 ) -> None:

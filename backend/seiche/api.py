@@ -695,7 +695,7 @@ def _v2_capabilities(pack) -> tuple[dict[str, str], list[dict[str, Any]]]:
     return matrix, missing
 
 
-def _v2_collector_faults(pack) -> list[dict[str, Any]]:
+def _v2_collector_faults(pack, *, runs: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     public_adapters = {
         adapter.adapter_id
         for adapter in pack.source_adapters
@@ -714,8 +714,9 @@ def _v2_collector_faults(pack) -> list[dict[str, Any]]:
             default_market_id=pack.market_id,
             default_source=item["adapter_id"],
         )
-        for item in get_repository().latest_collector_runs(pack.market_id)
+        for item in (get_repository().latest_collector_runs(pack.market_id) if runs is None else runs)
         if item["status"] != "SUCCESS" and item["adapter_id"] in public_adapters
+        and (runs is None or item["market_id"] == pack.market_id)
     ]
 
 
@@ -927,6 +928,15 @@ def _latest_public_series_observations(repository, pack, cutoff: datetime) -> di
         RedistributionStatus.DERIVED_ONLY,
         RedistributionStatus.METADATA_ONLY,
     )
+    batch_reader = getattr(repository, "load_latest_observations_by_instrument", None)
+    if callable(batch_reader):
+        return batch_reader(
+            pack.market_id,
+            cutoff,
+            event_time=cutoff,
+            instrument_ids=_public_instrument_ids(pack),
+            redistribution_statuses=statuses,
+        )
     for instrument_id in _public_instrument_ids(pack):
         rows, _ = repository.load_observation_page(
             pack.market_id,
@@ -1951,9 +1961,26 @@ def _public_snapshot_payload(record: dict | None) -> dict | None:
 def markets_v2(response: Response):
     response.headers["Cache-Control"] = "public, max-age=300"
     markets = []
-    for pack in default_registry().list():
+    packs = default_registry().list()
+    repository = get_repository()
+    batch_reader = getattr(repository, "load_latest_market_snapshots", None)
+    latest_by_market = (
+        batch_reader((pack.market_id for pack in packs), "gauge")
+        if callable(batch_reader) else None
+    )
+    collector_runs = (
+        repository.latest_collector_runs()
+        if latest_by_market is not None and any(
+            _public_snapshot_payload(latest_by_market.get(pack.market_id)) is None
+            for pack in packs
+        ) else None
+    )
+    for pack in packs:
         summary = pack.summary()
-        latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+        latest = (
+            latest_by_market.get(pack.market_id) if latest_by_market is not None
+            else repository.load_latest_market_snapshot(pack.market_id, "gauge")
+        )
         payload = _public_snapshot_payload(latest)
         latest = latest if payload is not None else None
         summary["latest_snapshot"] = (
@@ -1982,7 +2009,7 @@ def markets_v2(response: Response):
             payload.get("knowledge_cutoff") if payload else None
         )
         summary["faults"] = (
-            payload.get("faults", []) if payload else _v2_collector_faults(pack)
+            payload.get("faults", []) if payload else _v2_collector_faults(pack, runs=collector_runs)
         )
         summary["stale_inputs"] = payload.get("stale_inputs", []) if payload else []
         markets.append(summary)

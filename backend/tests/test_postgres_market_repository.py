@@ -770,3 +770,108 @@ def test_postgres_atlas_batch_matches_individual_histories(monkeypatch) -> None:
         {"US-USD": ()}, cutoff, event_time=cutoff, event_time_from=floor,
     ) == {"US-USD": []}
     assert len(opened) == before_empty
+
+
+def test_postgres_latest_instrument_batch_matches_visible_pages(monkeypatch) -> None:
+    """A later rights restriction hides its old vintage before status selection."""
+
+    repository = PostgresMarketRepository(os.environ["SEICHE_TEST_POSTGRES_URL"])
+    token = uuid4().hex
+    event = datetime(2026, 8, 8, tzinfo=UTC)
+    cutoff = event + timedelta(days=2)
+    first = Observation(
+        market_id="US-USD", monetary_area_id="US", jurisdiction_codes=("US",),
+        currency="USD", instrument_id=f"TEST.LATEST.{token}.A",
+        semantic_role=SemanticRole.SECURED_OVERNIGHT, value="531",
+        canonical_unit=CanonicalUnit.BASIS_POINTS, rate_compounding=RateCompounding.SIMPLE,
+        day_count=DayCountConvention.ACT_360, event_time=event,
+        source_publication_time=event, knowledge_time=event, revision_id="v1",
+        source="a-test", evidence_hash=evidence_sha256(token),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=RedistributionStatus.ALLOWED, quality=QualityState.VERIFIED,
+        staleness=StalenessState.FRESH,
+    )
+    older = replace(first, event_time=event - timedelta(days=1))
+    restricted = replace(first, knowledge_time=event + timedelta(hours=1), revision_id="v2",
+                         redistribution_status=RedistributionStatus.PROHIBITED)
+    other = replace(first, instrument_id=f"TEST.LATEST.{token}.B")
+    source_tie = replace(other, source="z-test", value="532")
+    derived = replace(first, instrument_id=f"TEST.LATEST.{token}.C",
+                      redistribution_status=RedistributionStatus.DERIVED_ONLY)
+    metadata = replace(first, instrument_id=f"TEST.LATEST.{token}.D",
+                       redistribution_status=RedistributionStatus.METADATA_ONLY)
+    prohibited = replace(first, instrument_id=f"TEST.LATEST.{token}.E",
+                         redistribution_status=RedistributionStatus.PROHIBITED)
+    repository.save_observations([
+        older, first, restricted, other, source_tie, derived, metadata, prohibited,
+        replace(first, knowledge_time=cutoff + timedelta(seconds=1), revision_id="future-knowledge"),
+        replace(first, event_time=cutoff + timedelta(seconds=1), revision_id="future-event"),
+        replace(first, market_id="EA-EUR", currency="EUR", monetary_area_id="EA"),
+        replace(first, instrument_id=f"TEST.LATEST.{token}.UNSELECTED"),
+    ])
+    instruments = (first.instrument_id, other.instrument_id, derived.instrument_id,
+                   metadata.instrument_id, prohibited.instrument_id, f"TEST.LATEST.{token}.MISSING")
+    opened = []
+    connect = repository._connect
+
+    def counted_connect():
+        opened.append(True)
+        return connect()
+
+    monkeypatch.setattr(repository, "_connect", counted_connect)
+    statuses = (RedistributionStatus.ALLOWED, RedistributionStatus.DERIVED_ONLY,
+                RedistributionStatus.METADATA_ONLY)
+    actual = repository.load_latest_observations_by_instrument(
+        "us-usd", cutoff.isoformat(), event_time=cutoff,
+        instrument_ids=(*instruments, instruments[0]), redistribution_statuses=statuses,
+    )
+    assert len(opened) == 1
+    assert actual == {row.instrument_id: row for row in (older, source_tie, derived, metadata)}
+    expected = {}
+    for instrument in instruments:
+        page, _ = repository.load_observation_page(
+            "US-USD", cutoff, event_time=cutoff, limit=1,
+            instrument_ids=(instrument,), redistribution_statuses=statuses,
+        )
+        if page:
+            expected[instrument] = page[0]
+    assert actual == expected
+    connections = len(opened)
+    for selected, allowed in (((), statuses), (instruments, ())):
+        assert repository.load_latest_observations_by_instrument(
+            "US-USD", cutoff, event_time=cutoff,
+            instrument_ids=selected, redistribution_statuses=allowed,
+        ) == {}
+    assert len(opened) == connections
+
+
+def test_postgres_catalog_snapshot_batch_matches_individual_reads(monkeypatch) -> None:
+    repository = PostgresMarketRepository(os.environ["SEICHE_TEST_POSTGRES_URL"])
+    token = uuid4().hex
+    product = f"batch-catalog-{token}"
+    event = datetime(2026, 8, 8, tzinfo=UTC)
+    for market in ("US-USD", "EA-EUR"):
+        for offset in (0, 1):
+            cutoff = event + timedelta(days=offset)
+            repository.seal_market_snapshot(
+                market_id=market, product=product, event_cutoff=cutoff,
+                knowledge_cutoff=cutoff, calibration_id=token, evidence_eligible=False,
+                payload={"market_id": market, "generation": offset},
+            )
+    opened = []
+    connect = repository._connect
+
+    def counted_connect():
+        opened.append(True)
+        return connect()
+
+    monkeypatch.setattr(repository, "_connect", counted_connect)
+    actual = repository.load_latest_market_snapshots(("us-usd", "EA-EUR", "US-USD", "UK-GBP"), product)
+    assert len(opened) == 1
+    assert actual == {market: repository.load_latest_market_snapshot(market, product)
+                      for market in ("US-USD", "EA-EUR", "UK-GBP")}
+    assert actual["US-USD"]["payload"]["generation"] == 1
+    assert actual["UK-GBP"] is None
+    connections = len(opened)
+    assert repository.load_latest_market_snapshots((), product) == {}
+    assert len(opened) == connections
