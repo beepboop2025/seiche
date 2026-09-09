@@ -32,6 +32,16 @@ Each request batch uses one interval; explicit historical backfills retain
 their original cutoff. Older series require a separately validated historical
 load, including publication calendars and the pre-2016 EFFR methodology boundary.
 
+The supervised worker checks the 23 added instrument identities within that
+recent window at startup. It uses bounded, exact-source observation queries and
+can include a missing secured or unsecured group in its first ordinary collection
+pass, keeping the existing acquisition, persistence, export and circuit checks.
+An early initialization preserves the regular due time; a circuit can postpone
+collection. Complete persisted coverage skips the extra startup attempt on later
+restarts. Incomplete initialization gets no repeated forcing within the worker
+loop and may retry through the normal schedule or a subsequent startup. This
+does not start another collector process or import the historical archive.
+
 Source event dates, captured raw response bytes, row evidence hashes, revision
 indicators and per-row knowledge times remain available. Existing SOFR lineage
 is unchanged. Pack clocks use the following business day at 08:00 New York

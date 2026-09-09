@@ -15,7 +15,7 @@ import tempfile
 import uuid
 from builtins import ExceptionGroup
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -339,16 +339,33 @@ class CollectorSupervisor:
         *,
         now: datetime | None = None,
         force: bool = False,
+        startup_due: frozenset[tuple[str, str]] = frozenset(),
     ) -> list[CollectorRun]:
+        """Run normal schedules plus explicitly scoped startup initialization.
+
+        An early startup run retains its saved daily deadline. Source policy,
+        circuit state, retries and all persistence still use ``_run_one``;
+        only a newly opened circuit may postpone that original deadline.
+        """
+
         current = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
         due = [
             (key, task)
             for key, task in self._tasks.items()
-            if force or self._states[key].next_due <= current
+            if force or key in startup_due or self._states[key].next_due <= current
         ]
-        pending = [
-            asyncio.create_task(self._run_one(key, task, current)) for key, task in due
-        ]
+
+        async def run_selected(key, task):
+            original_due = self._states[key].next_due
+            run = await self._run_one(key, task, current)
+            if not force and key in startup_due and original_due > current:
+                state = self._states[key]
+                retained_due = max(original_due, state.open_until or original_due)
+                state.next_due = retained_due
+                run = replace(run, next_due=retained_due.isoformat())
+            return run
+
+        pending = [asyncio.create_task(run_selected(key, task)) for key, task in due]
         runs: list[CollectorRun] = []
         writer_errors: list[Exception] = []
         # Persist in completion order. A slow or retrying source therefore
@@ -479,6 +496,7 @@ class CollectorSupervisor:
             batch = None
 
         if batch is not None:
+
             def persist_if_available(operation: Callable[[], _T]) -> _T:
                 # Run this in the same worker invocation as the write so an
                 # approval cannot be revoked between an outer preflight and

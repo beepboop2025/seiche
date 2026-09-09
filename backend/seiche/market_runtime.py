@@ -18,6 +18,7 @@ from seiche.collectors import (
     FileRawCaptureSink,
     ParquetPartitionSink,
 )
+from seiche.domain.observation import QualityState
 from seiche.markets.materialize import materialize_global_tide, materialize_market
 from seiche.markets.registry import MarketRegistry, default_registry
 from seiche.markets.us_usd.funding_core import (
@@ -50,6 +51,84 @@ DEFAULT_HEARTBEAT_GRACE_SECONDS = 120.0
 _BACKFILL_MARKER_GENERATIONS = {
     ("US-USD", "nyfed_rates"): "nyfed-sofrai-averages-index-v4",
 }
+
+# Only the 23 fields newly exposed by the NY Fed distribution expansion.
+# Persisted observations prove initialization across releases/restarts; this is
+# separate from historical backfill and never changes its completion markers.
+_STARTUP_NYFED_INSTRUMENTS = {
+    ("US-USD", "nyfed_rates"): tuple(
+        f"US.NYFED.{benchmark}_{suffix}"
+        for benchmark in ("TGCR", "BGCR")
+        for suffix in ("MEDIAN", "P01", "P25", "P75", "P99", "VOLUME")
+    ),
+    ("US-USD", "nyfed_unsecured_rates"): (
+        *(
+            f"US.NYFED.EFFR_{suffix}"
+            for suffix in ("P01", "P25", "P75", "P99", "VOLUME")
+        ),
+        *(
+            f"US.NYFED.OBFR_{suffix}"
+            for suffix in ("MEDIAN", "P01", "P25", "P75", "P99", "VOLUME")
+        ),
+    ),
+}
+
+
+def _startup_nyfed_refresh_keys(
+    repository: MarketRepository, *, now: datetime
+) -> frozenset[tuple[str, str]]:
+    """Check bounded, source-specific pages once; unknown coverage never forces.
+
+    Each of at most 23 queries requests one instrument/source over the normal
+    45-day collection window and at most one returned observation. After a long
+    outage the daily run is already due and is not duplicated by this selection.
+    This is presence evidence, not a claim that an observation is still fresh.
+    """
+
+    loader = getattr(repository, "load_observation_page", None)
+    if not callable(loader):
+        return frozenset()
+    missing: set[tuple[str, str]] = set()
+    for key, instruments in _STARTUP_NYFED_INSTRUMENTS.items():
+        try:
+            for instrument in instruments:
+                rows, _ = loader(
+                    key[0],
+                    now,
+                    event_time=now,
+                    event_time_from=now - timedelta(days=45),
+                    instrument_ids=(instrument,),
+                    sources=(key[1],),
+                    limit=1,
+                )
+                if (
+                    len(rows) > 1
+                    or rows
+                    and not (
+                        rows[0].market_id == key[0]
+                        and rows[0].instrument_id == instrument
+                        and rows[0].source == key[1]
+                    )
+                ):
+                    raise ValueError("startup coverage page exceeds its source scope")
+                if (
+                    not rows
+                    or rows[0].value is None
+                    or rows[0].quality
+                    in (
+                        QualityState.UNAVAILABLE,
+                        QualityState.REJECTED,
+                    )
+                ):
+                    missing.add(key)
+                    break
+        except Exception as exc:  # noqa: BLE001 - preserve normal polling
+            LOGGER.error(
+                "NY Fed startup coverage unavailable adapter_id=%s fault_type=%s",
+                key[1],
+                type(exc).__name__,
+            )
+    return frozenset(missing)
 
 
 def _storage_root(variable: str, fallback: str) -> Path:
@@ -613,10 +692,22 @@ async def run_worker(
         )
     _systemd_notify("READY=1")
     try:
+        startup_due = await asyncio.to_thread(
+            _startup_nyfed_refresh_keys, repo, now=datetime.now(UTC)
+        )
         while True:
             published_snapshots.clear()
             schedule_time = datetime.now(UTC).replace(microsecond=0)
-            runs = await supervisor.run_due(now=schedule_time)
+            # Consume this selection before awaiting acquisition. Incomplete
+            # initialization may retry on a later process startup, never every
+            # poll. A normal due task and a startup task are one registered run.
+            initialize = startup_due
+            startup_due = frozenset()
+            runs = (
+                await supervisor.run_due(now=schedule_time, startup_due=initialize)
+                if initialize
+                else await supervisor.run_due(now=schedule_time)
+            )
             if runs:
                 cutoff = datetime.now(UTC).replace(microsecond=0)
                 previous_faults = frozenset(faulted_markets)

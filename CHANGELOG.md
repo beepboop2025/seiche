@@ -32,6 +32,9 @@ they change a public contract, methodology, or release artifact.
 - Advance official collection windows on each scheduled fetch, including NY Fed
   end dates. Keep each paginated request on one interval and historical backfill
   cutoffs fixed when a worker crosses a day, month or year boundary.
+- Initialize missing added NY Fed fields within the supervised worker's first
+  collection pass. Preserve normal due times and circuit protections; persisted
+  observation coverage prevents completed groups from refreshing on every restart.
 
 ### Changed
 

@@ -690,8 +690,8 @@ async def test_worker_carries_materialization_fault_until_retry_recovers(
     ]
 
     class _Supervisor:
-        async def run_due(self, *, now):
-            del now
+        async def run_due(self, *, now, startup_due=frozenset()):
+            del now, startup_due
             return cycles.pop(0)
 
     market_attempts = []
