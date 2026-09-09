@@ -926,7 +926,8 @@ def test_api_discovery_and_openapi_publish_world_markets() -> None:
     spec = api._public_openapi_document()
 
     assert discovery["rest"]["world_markets_v2"] == "/api/v2/world-markets"
-    assert discovery["mcp"]["authentication"] == "none for the thirteen public tools"
+    assert discovery["mcp"]["authentication"] == "none for the fourteen public tools"
+    assert discovery["rest"]["market_workbench"] == "/api/v2/market-workbench"
     route = spec["paths"]["/api/v2/world-markets"]["get"]
     assert set(route["responses"]) == {"200", "503"}
     assert route["parameters"][0]["name"] == "section"

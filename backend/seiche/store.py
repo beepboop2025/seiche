@@ -314,16 +314,38 @@ def _save_series_in_transaction(conn: sqlite3.Connection, s: Series) -> None:
                  (s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at))
 
 
-def save_series_batch(series: Iterable[Series], *, blobs: dict[str, object]) -> None:
-    """Publish one complete provider capture and its manifest atomically."""
+class SeriesBatchConflictError(RuntimeError):
+    """A competing capture changed a manifest before this batch could publish."""
+
+
+def save_series_batch(
+    series: Iterable[Series], *, blobs: dict[str, object],
+    expected_blobs: dict[str, object] | None = None,
+) -> None:
+    """Publish a provider capture atomically, optionally checking 1..2 prior manifests.
+
+    An expected value of None requires that the manifest key does not exist.
+    """
     selected = tuple(series)
     if not selected or len(selected) > 64 or len({s.mnemonic for s in selected}) != len(selected):
         raise ValueError("expected 1..64 distinct series")
     if not blobs or any(type(key) is not str or not key for key in blobs):
         raise ValueError("capture manifests require nonempty string keys")
+    if expected_blobs is not None and (
+        not 1 <= len(expected_blobs) <= 2 or not expected_blobs.keys() <= blobs.keys()
+    ):
+        raise ValueError("expected manifests require 1..2 keys from the capture manifests")
     timestamp = datetime.now(UTC).isoformat(timespec="seconds")
     manifests = [(key, timestamp, json.dumps(value, allow_nan=False)) for key, value in blobs.items()]
     with _lock, _conn() as conn:
+        # Acquire the SQLite writer lock before reading the expected pointers.
+        # The process-local lock alone cannot exclude another collector process.
+        conn.execute("BEGIN IMMEDIATE")
+        for key, expected in (expected_blobs or {}).items():
+            row = conn.execute("SELECT payload FROM blobs WHERE key = ?", (key,)).fetchone()
+            matches = row is None if expected is None else row is not None and json.loads(row[0]) == expected
+            if not matches:
+                raise SeriesBatchConflictError(f"capture manifest changed before publication: {key}")
         for item in selected:
             _save_series_in_transaction(conn, item)
         conn.executemany("INSERT OR REPLACE INTO blobs VALUES (?,?,?)", manifests)

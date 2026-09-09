@@ -517,6 +517,7 @@ def read(args: object = None) -> dict:
                     key: value
                     for key, value in cached.items()
                     if _clock(value.fetched_at) == _clock(latest["fetched_at"])
+                    and value.asof == latest["last_observation_date"]
                 }
         else:
             cached = store.load_series_window(tuple(mnemonics.values()), **window)

@@ -127,6 +127,9 @@ The source sweep collects ECB FX through the existing scheduled ingestion
 runtime. One transaction commits every currency, its vintage records and the
 capture manifest. Parsing/rights/date failures retain explicit unavailability
 or the original stale cache; they do not create zero rates or advance clocks.
+Older upstream observation dates and overlapping refreshes cannot replace a
+newer accepted capture. The reader independently checks that the series' latest
+observation date and collection clock agree with its capture manifest.
 
 Publish this runtime change using a new release version and the existing
 exact-SHA Railway application/recovery procedure. Preserve the active controller

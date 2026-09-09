@@ -251,7 +251,8 @@ def _mode(mode: Mode, now: datetime) -> str:
 
 
 def _persist(
-    series: dict[str, Series], capture: RawCapture, mode: str, raw_root: Path | None
+    series: dict[str, Series], capture: RawCapture, mode: str, raw_root: Path | None,
+    prior_latest: object,
 ) -> None:
     raw_path = FileRawCaptureSink(raw_root or store.DATA_DIR / "raw").write(capture)
     latest_day = max(s.asof for s in series.values())
@@ -287,7 +288,9 @@ def _persist(
         manifests[FULL_CAPTURE_KEY] = metadata
     # All observations, vintages, and completed manifests form one generation.
     # A failed transaction may leave an unreferenced immutable raw archive.
-    store.save_series_batch(series.values(), blobs=manifests)
+    store.save_series_batch(
+        series.values(), blobs=manifests, expected_blobs={LATEST_CAPTURE_KEY: prior_latest},
+    )
 
 
 async def fetch(
@@ -310,6 +313,7 @@ async def fetch(
     if not force and mode == "auto" and cached:
         if all(store.is_fresh(name, TTL_MINUTES) for name in cached):
             return cached
+    prior_latest = await asyncio.to_thread(store.load_blob, LATEST_CAPTURE_KEY)
     selected_mode = _mode(mode, datetime.fromisoformat(utcnow_iso()))
     try:
         url = SOURCE_URLS[selected_mode]
@@ -324,13 +328,17 @@ async def fetch(
             for currency in CURRENCIES
         ):
             raise ValueError("ECB FX latest date lacks registered current currency coverage")
+        if isinstance(prior_latest, dict):
+            prior_day = prior_latest.get("last_observation_date")
+            if isinstance(prior_day, str) and date.fromisoformat(latest_day) < date.fromisoformat(prior_day):
+                raise ValueError(f"ECB FX latest observation date regressed from {prior_day} to {latest_day}")
         capture = RawCapture(
             market_id="GLOBAL-FX", adapter_id=SOURCE,
             captured_at=datetime.fromisoformat(fetched_at), source_uri=url,
             media_type="application/xml", payload=payload,
             evidence_hash=hashlib.sha256(payload).hexdigest(),
         )
-        await asyncio.to_thread(_persist, parsed, capture, selected_mode, raw_root)
+        await asyncio.to_thread(_persist, parsed, capture, selected_mode, raw_root, prior_latest)
         # Store merges rolling windows with the existing full history.
         completed = await asyncio.to_thread(_load_cache)
         if not completed:
@@ -340,6 +348,9 @@ async def fetch(
         detail = f"{selected_mode}: {type(exc).__name__}: {exc}"
         if faults is not None:
             faults.append({"source": SOURCE, "detail": detail})
-            if cached:
-                return cached
+            # Another collector may have committed while this request was in
+            # flight. Return only the currently validated persisted generation.
+            current = await asyncio.to_thread(_load_cache)
+            if current:
+                return current
         raise SourceFault(SOURCE, detail) from exc
