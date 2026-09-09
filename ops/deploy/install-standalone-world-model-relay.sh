@@ -43,4 +43,28 @@ systemctl daemon-reload
 systemctl enable "$UNIT"
 systemctl restart "$UNIT"
 systemctl is-active --quiet "$UNIT" || fail 'relay did not start'
+if ! /usr/bin/python3 -I - <<'PY'
+import time
+import urllib.error
+import urllib.request
+
+deadline = time.monotonic() + 10
+while time.monotonic() < deadline:
+    try:
+        urllib.request.urlopen(
+            "http://127.0.0.1:8788/api/internal/v1/world-model/us-usd-funding-core-v2",
+            timeout=1,
+        ).close()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            raise SystemExit(0)
+    except OSError:
+        pass
+    time.sleep(0.2)
+raise SystemExit(1)
+PY
+then
+    systemctl stop "$UNIT"
+    fail 'relay did not become ready with authentication required'
+fi
 printf 'standalone world-model relay: installed source digest=%s on loopback:8788; Caddy routing is a separate scoped change\n' "$digest"
