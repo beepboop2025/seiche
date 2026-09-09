@@ -145,8 +145,13 @@ async def test_mas_same_adapter_advances_requested_month_and_year(
     await adapter.fetcher(None)
     current = datetime(2027, 1, 1, 1, tzinfo=UTC)
     await adapter.fetcher(None)
+    # Late-December publications/revisions remain in January's 45-day window.
+    if not backfill:
+        assert requests[-1] == (2026, 2027, 1)
+    current = datetime(2027, 3, 1, 1, tzinfo=UTC)
+    await adapter.fetcher(None)
     assert requests == (
-        [(2018, 2026, 12), (2018, 2026, 12)]
+        [(2018, 2026, 12)] * 3
         if backfill
-        else [(2026, 2026, 12), (2027, 2027, 1)]
+        else [(2026, 2026, 12), (2026, 2027, 1), (2027, 2027, 3)]
     )

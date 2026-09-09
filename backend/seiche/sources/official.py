@@ -2741,23 +2741,23 @@ def build_official_adapters(
     )
 
     async def fetch_mas_sora(client):
-        _, end = request_window()
+        start, end = request_window()
         return await _mas_documents(
             client,
             label="mas_sora",
             columns=(13, 18),
-            start_year=configured_start.year if backfill else end.year,
+            start_year=start.year,
             end_year=end.year,
             end_month=end.month,
         )
 
     async def fetch_mas_rates(client):
-        _, end = request_window()
+        start, end = request_window()
         return await _mas_documents(
             client,
             label="mas_rates",
             columns=(10, 11),
-            start_year=configured_start.year if backfill else end.year,
+            start_year=start.year,
             end_year=end.year,
             end_month=end.month,
         )
