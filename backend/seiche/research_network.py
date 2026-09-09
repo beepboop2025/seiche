@@ -132,7 +132,7 @@ def research_steps(topic: str) -> list[dict]:
     steps = [
         _step("Palimpsest", "What is measured, revised, missing or restricted in the original record?",
               "https://palimpsest.info/china/evidence/" if topic in {"china", "funding", "institutions", "liquidity"} else "https://palimpsest.info/data.html",
-              CATALOG_URL, "https://api.seiche.info/palimpsest/mcp", "research_catalog", bot="https://t.me/palimpsest_watch_bot"),
+              CATALOG_URL, bot="https://t.me/palimpsest_watch_bot"),
         _step("Seiche", "How do funding, currencies and capital-market conditions relate to this research?",
               "https://seiche.info/#MONEY%20MARKETS", "https://api.seiche.info/api/v2/world-markets?section=summary",
               "https://api.seiche.info/mcp", "world_markets_context", {"section": "summary"}, "https://t.me/seiche_desk_bot"),

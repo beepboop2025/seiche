@@ -27,6 +27,8 @@ they change a public contract, methodology, or release artifact.
 - Run synchronous health validation outside the shared API request loop and
   bound PostgreSQL heartbeat connection and query waits. Preserve the existing
   readiness checks, publication-rights audit and sanitized unknown worker state.
+- Use Palimpsest's published JSON registry for catalog handoffs while its native
+  catalog MCP addition awaits production approval.
 
 ## [0.12.4] - 2026-09-05
 

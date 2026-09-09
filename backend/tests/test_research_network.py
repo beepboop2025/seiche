@@ -31,6 +31,12 @@ def test_all_datasets_are_reachable_without_copying_values_or_mutating_source():
     assert raw == prior
 
 
+def test_palimpsest_handoff_uses_the_live_catalog_before_native_mcp_activation():
+    step = network.research_steps("all")[0]
+    assert step["product"] == "Palimpsest" and step["api"] == network.CATALOG_URL
+    assert step["mcp"] is None and step["tool"] is None
+
+
 @pytest.mark.parametrize("state", ["gated", "private-node", "disabled", "warming", "stale"])
 def test_restricted_and_missing_states_are_never_upgraded(state):
     raw = catalog(1); raw["datasets"][0]["artifacts"]["evidence_state"] = state
