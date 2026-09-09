@@ -67,7 +67,7 @@ Then make the toolset available to your platform (`platform_toolsets:` in
 the same file) and confirm with `hermes tools` that the seiche tools
 appear.
 
-The hosted anonymous surface is exactly thirteen tools: `latest_article`,
+The hosted anonymous surface is exactly fourteen tools: `latest_article`,
 `funding_stress_now`, `historical_analogs`, `proof_backtest`, `data_health`,
 `crypto_stress_record`, `institutional_flows`, `money_market_context`,
 `world_markets_context`, `trade_safety_risk_context`, `oil_funding_context`, and
@@ -139,3 +139,5 @@ local model, or Nous Portal.
   for itself as the learning loop runs.
 - The bot token and any subscriber token live in `~/.hermes/.env`, never in
   config committed anywhere.
+
+The public `market_workbench` tool accepts `provider` (`h10` or `ecb`), `base`, `quote`, `days` (30–3650), and optional `china_series`. It reads cached, dated reference FX and owner-accepted annual Palimpsest China evidence; the WORKBENCH tab and `/api/v2/market-workbench` use the same contract. It never collects during a request or creates executable quotes.

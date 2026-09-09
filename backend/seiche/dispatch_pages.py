@@ -720,7 +720,7 @@ latest_article, funding_stress_now, trade_safety_risk_context, historical_analog
 crypto_stress_record, institutional_flows, oil_funding_context,
 fx_materials_passage, the section-selectable money_market_context and the
 money/forex/capital section-selectable world_markets_context, and the paginated
-Palimpsest-to-Seiche research_network, metered
+Palimpsest-to-Seiche research_network, structured FX and China market_workbench, metered
 per IP per day. Five more
 read the derived engines and want a bearer token: funding_stress_forecast,
 replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
@@ -817,6 +817,7 @@ same product; the callable contract remains the MCP server above.
 - [Money-market research workflow]({SITE}/use-cases/money-market-research/): move from an exact benchmark through rights, native clocks and system cash before routing institution and exit questions
 - [Capital-market transmission workflow]({SITE}/use-cases/capital-market-transmission/): trace price, position, intermediary and funding links without treating co-movement as causality
 - [China economy evidence workflow]({SITE}/use-cases/china-economy-evidence/): use Palimpsest for revision-safe public observations and Seiche for structural macro identity, rights and transmission context
+- [Structured market workbench]({SITE}/#WORKBENCH): official FX providers, same-date currency crosses, dated histories and accepted Palimpsest China economic evidence; MCP `market_workbench`, REST `https://api.seiche.info/api/v2/market-workbench`
 - [Connected research desk]({SITE}/#RESEARCH): browse the complete Palimpsest source registry beside Seiche funding context, with explicit routes into LiquiLens, Undertow and NarcoScope; MCP `research_network`, REST `https://api.seiche.info/api/v2/research-network`
 - [Financial-evidence Agent Skill](https://github.com/beepboop2025/financial-evidence-skills/tree/main/financial-evidence): route research across Seiche, LiquiLens, Undertow and Palimpsest and fetch bounded no-auth JSON with explicit source errors
 - [World markets evidence atlas]({SITE}/markets/): money, forex and capital markets joined by one provenance, clock, rights and evidence-status contract

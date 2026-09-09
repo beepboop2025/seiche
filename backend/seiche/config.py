@@ -58,6 +58,20 @@ ECB_SERIES = [
     SeriesSpec("ESTR", "ecb", "EST/B.EU000A2X2A25.WT", "Euro short-term rate (€STR)", "%", "D", 360),
 ]
 
+# ECB's current EUR-base reference panel. Discontinued legacy currencies in
+# the historical file are not represented as currently collected series.
+ECB_FX_CURRENCIES = (
+    "USD", "JPY", "CZK", "DKK", "GBP", "HUF", "PLN", "RON", "SEK", "CHF",
+    "ISK", "NOK", "TRY", "AUD", "BRL", "CAD", "CNY", "HKD", "IDR", "ILS",
+    "INR", "KRW", "MXN", "MYR", "NZD", "PHP", "SGD", "THB", "ZAR",
+)
+ECB_FX_SERIES = [
+    SeriesSpec(f"ECBFX_{currency}", "ecb_fx", f"EXR/D.{currency}.EUR.SP00.A",
+               f"ECB {currency} per euro reference rate", f"{currency}/EUR", "D", 360,
+               start="1999-01-04")
+    for currency in ECB_FX_CURRENCIES
+]
+
 GLOBAL_FRED_SERIES = [
     SeriesSpec("ECB_DFR", "fred", "ECBDFR", "ECB deposit facility rate", "%", "D", 720),
     SeriesSpec("SONIA", "fred", "IUDSOIA", "SONIA (UK overnight rate)", "%", "D", 360),
@@ -579,7 +593,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     + EIA_INVENTORY_SERIES
     + ESTUARY_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + BOJ_SERIES
-    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
+    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + ECB_FX_SERIES + CRYPTO_SERIES + BIS_SERIES
     + REFEREE_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below

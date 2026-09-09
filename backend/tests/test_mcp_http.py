@@ -173,7 +173,7 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
     assert server["url"] == "https://api.seiche.info/mcp"
     assert server["authentication"] == {
         "type": "none",
-        "scope": "thirteen anonymous public evidence tools",
+        "scope": "fourteen anonymous public evidence tools",
     }
     assert "tools" not in server
     corpus = document["servers"][1]
@@ -254,7 +254,7 @@ def test_public_api_discovery_is_curated(client):
     assert r.status_code == 200
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "latest_article"
-    assert payload["mcp"]["authentication"] == "none for the thirteen public tools"
+    assert payload["mcp"]["authentication"] == "none for the fourteen public tools"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
     assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
@@ -549,6 +549,7 @@ def test_anonymous_sees_only_public_tools(client):
     r = client.post("/mcp", json=_rpc("tools/list"))
     names = {t["name"] for t in r.json()["result"]["tools"]}
     assert names == {
+        "market_workbench",
         "research_network",
         "latest_article",
         "funding_stress_now",
@@ -579,7 +580,7 @@ def test_anonymous_tool_descriptors_are_openai_plugin_ready(client):
     tools = response.json()["result"]["tools"]
 
     assert response.status_code == 200
-    assert len(tools) == 13
+    assert len(tools) == 14
     for tool in tools:
         assert tool["outputSchema"]["type"] == "object"
         assert tool["annotations"] == {

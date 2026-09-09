@@ -23,7 +23,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from seiche.config import ALL_SERIES, COMPOSITE_WEIGHTS, DB_PATH, REGIMES
+from seiche.config import ALL_SERIES, COMPOSITE_WEIGHTS, DB_PATH, REGIMES, ECB_FX_SERIES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENGINES_DIR = Path(__file__).resolve().parent / "engines"
@@ -109,6 +109,10 @@ def csv_restriction(mnemonic: str) -> str | None:
     """Reason string when a series cannot be bulk-exported; None when it can."""
     spec = ALL_SERIES.get(mnemonic)
     label = spec.label if spec else mnemonic
+    if spec is not None and spec in ECB_FX_SERIES:
+        # This exact ECB-produced FX reference panel has a reviewed reuse
+        # contract. It does not grant rights to unrelated ECB/third-party data.
+        return None
     if mnemonic in CSV_RESTRICTED:
         return (f"{label} is third-party licensed data mirrored on FRED; "
                 f"bulk redistribution is not ours to grant. Pull the raw "
@@ -143,6 +147,8 @@ def render_series_csv(s) -> str:
         f"to the source above",
         "date,value",
     ]
+    if spec in ECB_FX_SERIES:
+        lines.insert(-1, "# Source: European Central Bank. Reference data is freely available from the ECB; not executable quotes. https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html")
     for idx, v in s.points.dropna().items():
         lines.append(f"{idx.date().isoformat()},{_plain(v)}")
     return "\n".join(lines) + "\n"

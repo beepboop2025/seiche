@@ -230,7 +230,7 @@
     "public_trade_safety_mcp_tool": "trade_safety_risk_context",
     "telegram_bot": "https://t.me/seiche_desk_bot",
     "telegram_channel": "https://t.me/LiquidityLabDesk",
-    "authentication": "Thirteen public MCP tools require no token; a bearer token adds five analysis tools and five private Agent Room preview tools. Agent Room is signed discussion only and never execution authority."
+    "authentication": "Fourteen public MCP tools require no token; a bearer token adds five analysis tools and five private Agent Room preview tools. Agent Room is signed discussion only and never execution authority."
   },
   "siblings": [
     {

@@ -5,22 +5,22 @@ from typing import Literal
 AccessMode = Literal["subscriber", "invite_or_grant", "operator_cost"]
 
 PUBLIC_COMMITMENT = (
-    "Thirteen public evidence tools remain anonymous and free: no account, "
+    "Fourteen public evidence tools remain anonymous and free: no account, "
     "email address, or payment is required."
 )
 
 _GATED_STATEMENTS: dict[AccessMode, str] = {
     "subscriber": (
         "A subscriber bearer token unlocks the five compute-heavy tools; the "
-        "thirteen public evidence tools remain anonymous and free."
+        "fourteen public evidence tools remain anonymous and free."
     ),
     "invite_or_grant": (
         "An operator-issued invite or grant unlocks the five compute-heavy tools; "
-        "the thirteen public evidence tools remain anonymous and free."
+        "the fourteen public evidence tools remain anonymous and free."
     ),
     "operator_cost": (
         "A provisioned bearer token or an operator-enabled posted per-call rail "
-        "unlocks the five compute-heavy tools; the thirteen public evidence tools "
+        "unlocks the five compute-heavy tools; the fourteen public evidence tools "
         "remain anonymous and free."
     ),
 }

@@ -42,6 +42,7 @@ const Dispatches = lazy(() => import("./tabs/Dispatches"));
 const Today = lazy(() => import("./tabs/Today"));
 const Board = lazy(() => import("./tabs/Board"));
 const MoneyMarkets = lazy(() => import("./tabs/MoneyMarkets"));
+const MarketWorkbench = lazy(() => import("./tabs/MarketWorkbench"));
 const Corpus = lazy(() => import("./tabs/Corpus"));
 const Research = lazy(() => import("./tabs/Research"));
 const Forecast = lazy(() => import("./tabs/Forecast"));
@@ -77,7 +78,7 @@ const Account = lazy(() => import("./tabs/Account"));
 // inputs. SCARCITY and SUPPLY carry the two forward-looking Fed plumbing views.
 // Digit shortcuts index TABS positionally; hash routes remain name-based.
 const TABS = [
-  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "CORPUS", "RESEARCH", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "WORKBENCH", "CORPUS", "RESEARCH", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
   "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -306,6 +307,10 @@ function AppInner() {
 
   // Fully open: the whole terminal renders for everyone, no sign in.
   // Accounts exist only for optional email alerts (ACCOUNT tab).
+  if (tab === "WORKBENCH" && (!snap || err)) {
+    return <main className="app"><div className="masthead"><a className="wordmark" href="#TODAY">SEICHE</a></div>
+      <Suspense fallback={<TabSkeleton />}><MarketWorkbench /></Suspense></main>;
+  }
   if (tab === "RESEARCH" && (!snap || err)) {
     return <main className="app"><div className="masthead"><a className="wordmark" href="#TODAY">SEICHE</a></div>
       <Suspense fallback={<TabSkeleton />}><Research /></Suspense></main>;
@@ -468,6 +473,7 @@ function AppInner() {
           {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}
           {tab === "MONEY MARKETS" && <MoneyMarkets snap={snap} />}
+          {tab === "WORKBENCH" && <MarketWorkbench />}
           {tab === "CORPUS" && <Corpus />}
           {tab === "RESEARCH" && <Research />}
           {tab === "SCARCITY" && <Scarcity snap={snap} />}

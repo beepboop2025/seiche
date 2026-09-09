@@ -12,7 +12,7 @@ class AccessPolicyContracts(unittest.TestCase):
             statement = gated_access_statement(cast(AccessMode, mode))
             with self.subTest(mode=mode):
                 self.assertIn("five compute-heavy tools", statement)
-                self.assertIn("thirteen public evidence tools", statement)
+                self.assertIn("fourteen public evidence tools", statement)
                 self.assertIn("remain anonymous and free", statement)
                 self.assertEqual(statement.count("."), 1)
 

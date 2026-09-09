@@ -129,6 +129,48 @@ _INDEX = CanonicalUnit.INDEX_POINTS
 _LCY_M = CanonicalUnit.LOCAL_CURRENCY_MILLIONS
 
 
+def _nyfed_distribution(
+    benchmark: str, *, unsecured: bool = False
+) -> tuple[InstrumentSpec, ...]:
+    """Declare the published distribution without conflating funding markets."""
+
+    adapter = "nyfed_unsecured_rates" if unsecured else "nyfed_rates"
+    rates = tuple(
+        InstrumentSpec(
+            f"US.NYFED.{benchmark}_{suffix}",
+            f"{benchmark}_{suffix}",
+            role,
+            adapter,
+            "percent",
+            _BP,
+            100,
+            _SIMPLE,
+            _ACT_360,
+        )
+        for suffix, role in (
+            ("MEDIAN", SemanticRole.RATE_MEDIAN),
+            ("P01", SemanticRole.RATE_P01),
+            ("P25", SemanticRole.RATE_P25),
+            ("P75", SemanticRole.RATE_P75),
+            ("P99", SemanticRole.RATE_P99),
+        )
+    )
+    return (
+        *rates,
+        InstrumentSpec(
+            f"US.NYFED.{benchmark}_VOLUME",
+            f"{benchmark}_VOLUME",
+            SemanticRole.UNSECURED_FUNDING_VOLUME
+            if unsecured
+            else SemanticRole.REPO_VOLUME,
+            adapter,
+            "USD billions",
+            _LCY_M,
+            1000,
+        ),
+    )
+
+
 PACK = MarketPack(
     market_id="US-USD",
     monetary_area_id="US",
@@ -254,37 +296,7 @@ PACK = MarketPack(
             _LCY_M,
             1000,
         ),
-        InstrumentSpec(
-            "US.NYFED.SOFR_MEDIAN",
-            "SOFR_MEDIAN",
-            SemanticRole.RATE_MEDIAN,
-            "nyfed_rates",
-            "percent",
-            _BP,
-            100,
-            _SIMPLE,
-            _ACT_360,
-        ),
-        InstrumentSpec(
-            "US.NYFED.SOFR_P99",
-            "SOFR_P99",
-            SemanticRole.RATE_P99,
-            "nyfed_rates",
-            "percent",
-            _BP,
-            100,
-            _SIMPLE,
-            _ACT_360,
-        ),
-        InstrumentSpec(
-            "US.NYFED.SOFR_VOLUME",
-            "SOFR_VOLUME",
-            SemanticRole.REPO_VOLUME,
-            "nyfed_rates",
-            "USD billions",
-            _LCY_M,
-            1000,
-        ),
+        *_nyfed_distribution("SOFR"),
         InstrumentSpec(
             "US.NYFED.SOFR_AVERAGE_30D",
             "SOFR_AVERAGE_30D",
@@ -326,50 +338,10 @@ PACK = MarketPack(
             "index points",
             _INDEX,
         ),
-        InstrumentSpec(
-            "US.NYFED.EFFR_MEDIAN",
-            "EFFR_MEDIAN",
-            SemanticRole.RATE_MEDIAN,
-            "nyfed_unsecured_rates",
-            "percent",
-            _BP,
-            100,
-            _SIMPLE,
-            _ACT_360,
-        ),
-        InstrumentSpec(
-            "US.NYFED.EFFR_P99",
-            "EFFR_P99",
-            SemanticRole.RATE_P99,
-            "nyfed_unsecured_rates",
-            "percent",
-            _BP,
-            100,
-            _SIMPLE,
-            _ACT_360,
-        ),
-        InstrumentSpec(
-            "US.NYFED.OBFR_MEDIAN",
-            "OBFR_MEDIAN",
-            SemanticRole.RATE_MEDIAN,
-            "nyfed_unsecured_rates",
-            "percent",
-            _BP,
-            100,
-            _SIMPLE,
-            _ACT_360,
-        ),
-        InstrumentSpec(
-            "US.NYFED.OBFR_P99",
-            "OBFR_P99",
-            SemanticRole.RATE_P99,
-            "nyfed_unsecured_rates",
-            "percent",
-            _BP,
-            100,
-            _SIMPLE,
-            _ACT_360,
-        ),
+        *_nyfed_distribution("EFFR", unsecured=True),
+        *_nyfed_distribution("OBFR", unsecured=True),
+        *_nyfed_distribution("TGCR"),
+        *_nyfed_distribution("BGCR"),
     ),
     capabilities=(
         Capability(

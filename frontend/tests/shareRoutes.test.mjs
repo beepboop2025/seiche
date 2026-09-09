@@ -74,7 +74,7 @@ test("every finite public tab has a stable fallback and excluded tabs have no sh
     assert.doesNotMatch(routes.stableShareUrl(path, "https://seiche.info/#old"), /\/#/);
   }
 
-  for (const tab of ["CORPUS", "TIME MACHINE", "ACCOUNT"]) {
+  for (const tab of ["WORKBENCH", "CORPUS", "TIME MACHINE", "ACCOUNT"]) {
     assert.equal(routes.tabSharePath(tab), null);
     assert.ok(routes.UNSHAREABLE_UI_TABS[tab]);
   }
