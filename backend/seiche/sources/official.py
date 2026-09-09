@@ -2204,6 +2204,16 @@ def build_official_adapters(
     start = configured_start if backfill else recent_start
     adapters: list[FunctionalCanonicalAdapter] = []
 
+    def request_window(*, timezone_name: str = "UTC") -> tuple[date, date]:
+        # A worker keeps these adapters across many scheduled runs. Sample the
+        # clock once per fetch so rolling bounds advance while pagination stays
+        # on one interval. An explicit backfill retains its construction cutoff.
+        current = now if backfill else (
+            clock() if clock is not None else datetime.now(UTC)
+        ).astimezone(UTC)
+        end = current.astimezone(ZoneInfo(timezone_name)).date()
+        return (configured_start if backfill else end - timedelta(days=45), end)
+
     def add(
         market_id: str,
         adapter_id: str,
@@ -2239,6 +2249,7 @@ def build_official_adapters(
     }
 
     async def fetch_fred_daily(client):
+        start, _ = request_window()
         return await get_documents(
             client,
             (
@@ -2252,6 +2263,7 @@ def build_official_adapters(
         )
 
     async def fetch_fred_weekly(client):
+        start, _ = request_window()
         return await get_documents(
             client,
             (
@@ -2267,27 +2279,27 @@ def build_official_adapters(
     add("US-USD", "fred_weekly", "fred", fetch_fred_weekly, parse_fred_csv)
 
     async def fetch_nyfed_rates(client):
-        end = now.date().isoformat()
+        start, end = request_window()
         return await get_documents(
             client,
             (
                 (
                     "nyfed_secured_rates",
                     "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
-                    {"startDate": start.isoformat(), "endDate": end},
+                    {"startDate": start.isoformat(), "endDate": end.isoformat()},
                 ),
             ),
         )
 
     async def fetch_nyfed_unsecured_rates(client):
-        end = now.date().isoformat()
+        start, end = request_window()
         return await get_documents(
             client,
             (
                 (
                     "nyfed_unsecured_rates",
                     "https://markets.newyorkfed.org/api/rates/unsecured/all/search.json",
-                    {"startDate": start.isoformat(), "endDate": end},
+                    {"startDate": start.isoformat(), "endDate": end.isoformat()},
                 ),
             ),
         )
@@ -2326,6 +2338,7 @@ def build_official_adapters(
     )
 
     async def fetch_fiscaldata(client):
+        start, _ = request_window()
         uri = (
             "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
             "v1/accounting/dts/operating_cash_balance"
@@ -2367,6 +2380,7 @@ def build_official_adapters(
 
     def ecb_fetcher(series: dict[str, str]):
         async def fetch(client):
+            start, _ = request_window()
             return await get_documents(
                 client,
                 (
@@ -2420,6 +2434,7 @@ def build_official_adapters(
 
     def boe_fetcher(instrument: str, code: str):
         async def fetch(client):
+            start, _ = request_window()
             return await get_documents(
                 client,
                 (
@@ -2492,11 +2507,9 @@ def build_official_adapters(
     add("JP-JPY", "boj_rates", "boj_rates", fetch_boj_rates, parse_boj_csv)
     add("JP-JPY", "boj_accounts", "boj_accounts", fetch_boj_accounts, parse_boj_csv)
 
-    bok_end = now.astimezone(ZoneInfo("Asia/Seoul")).date()
-    bok_start = configured_start if backfill else bok_end - timedelta(days=45)
-
     def bok_ecos_fetcher(series: dict[str, tuple[str, str]]):
         async def fetch(client):
+            bok_start, bok_end = request_window(timezone_name="Asia/Seoul")
             api_key = _bok_ecos_api_key()
             documents: list[FetchedDocument] = []
             for instrument, (stat_code, item_code) in series.items():
@@ -2727,26 +2740,26 @@ def build_official_adapters(
         availability_check=_require_rbnz_access_approval,
     )
 
-    mas_start_year = configured_start.year if backfill else now.year
-
     async def fetch_mas_sora(client):
+        _, end = request_window()
         return await _mas_documents(
             client,
             label="mas_sora",
             columns=(13, 18),
-            start_year=mas_start_year,
-            end_year=now.year,
-            end_month=now.month,
+            start_year=configured_start.year if backfill else end.year,
+            end_year=end.year,
+            end_month=end.month,
         )
 
     async def fetch_mas_rates(client):
+        _, end = request_window()
         return await _mas_documents(
             client,
             label="mas_rates",
             columns=(10, 11),
-            start_year=mas_start_year,
-            end_year=now.year,
-            end_month=now.month,
+            start_year=configured_start.year if backfill else end.year,
+            end_year=end.year,
+            end_month=end.month,
         )
 
     add("SG-SGD", "mas_sora", "mas_sora", fetch_mas_sora, parse_mas_sora, 120)

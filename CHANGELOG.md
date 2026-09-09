@@ -29,6 +29,9 @@ they change a public contract, methodology, or release artifact.
   dates and conflicting refreshes; read values and manifests as one generation.
 - Keep exact-date currency crosses, missing legs, stale observations and revoked
   export rights explicit. Expose document-specific capture hashes and coverage.
+- Advance official collection windows on each scheduled fetch, including NY Fed
+  end dates. Keep each paginated request on one interval and historical backfill
+  cutoffs fixed when a worker crosses a day, month or year boundary.
 
 ### Changed
 

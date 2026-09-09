@@ -26,8 +26,11 @@ The collectors use the NY Fed's official
 and [unsecured search endpoint](https://markets.newyorkfed.org/api/rates/unsecured/all/search.json),
 with explicit `startDate` and `endDate` bounds. The scheduled calls already
 download these fields, so the expansion requires no additional source request
-or scheduler. Existing daily collection fills the rolling 45-day window;
-older series need the existing historical backfill path after deployment.
+or scheduler. Existing daily collection fills the rolling 45-day window,
+recomputed for each fetch even when the worker remains running overnight.
+Each request batch uses one interval; explicit historical backfills retain
+their original cutoff. Older series require a separately validated historical
+load, including publication calendars and the pre-2016 EFFR methodology boundary.
 
 Source event dates, captured raw response bytes, row evidence hashes, revision
 indicators and per-row knowledge times remain available. Existing SOFR lineage
