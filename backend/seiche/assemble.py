@@ -140,7 +140,7 @@ from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
 from seiche import editorial
-from seiche.sources import bis, boj, cftc, crypto, ecb, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
+from seiche.sources import bis, boj, cftc, crypto, ecb, ecb_fx, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -420,6 +420,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("llama_hacks", llamahacks.fetch_all(client, faults)),
             guard("windfetch", windfetch.fetch_all(client, faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
+            guard("ecb_fx", ecb_fx.fetch(client, faults)),
             guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
             guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),

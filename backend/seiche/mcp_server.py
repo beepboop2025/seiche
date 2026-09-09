@@ -23,7 +23,7 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the thirteen tools flagged ``is_public`` in
+Surface: the *public* surface is the fourteen tools flagged ``is_public`` in
 ``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
@@ -70,6 +70,7 @@ from typing import Any
 from seiche import agent_room
 from seiche.config import DATA_DIR
 from seiche import research_network
+from seiche import market_workbench
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
 from seiche.engines import money_market as money_market_engine
 from seiche.markets.world import (
@@ -1314,6 +1315,14 @@ def tool_money_market(args: dict, _public: bool) -> Any:
     return out
 
 
+def tool_market_workbench(args: dict, _public: bool) -> Any:
+    """Read dated FX crosses and accepted China context without collection."""
+    try:
+        return market_workbench.read(args)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
 def tool_research_network(args: dict, _public: bool) -> Any:
     """Read the published source catalog and attach completed funding context."""
     try:
@@ -1562,6 +1571,15 @@ _AGENT_ROOM_EVENT_INPUT_SCHEMA = {
 
 # name -> (title, description, input JSON Schema, handler, is_public)
 TOOLS: dict[str, tuple] = {
+    "market_workbench": (
+        "Structured money-market, forex and China research",
+        "Read cached official FX reference histories and same-date currency crosses, "
+        "with native units, provenance, age and observed-interval changes. Inspect "
+        "owner-accepted Palimpsest China annual economic series and revision-aware "
+        "history beside the CNY reference. Daily fixings, annual context and licensed "
+        "gaps remain distinct. No collection, model fitting, executable quotes or scoring.",
+        market_workbench.INPUT_SCHEMA, tool_market_workbench, True,
+    ),
     "research_network": (
         "Connected evidence across Palimpsest, Seiche and the product family",
         "Explore every Palimpsest dataset by topic, with source clocks, rights, "
@@ -2976,6 +2994,15 @@ OUTPUT_SCHEMAS["research_network"] = _output_schema(
     },
     (("schema", "status", "context_only", "selection", "datasets", "source", "next_steps", "funding_context"),
      {"schema": research_network.SCHEMA, "context_only": True}),
+)
+OUTPUT_SCHEMAS["market_workbench"] = _output_schema(
+    "Dated reference FX history and accepted annual China structural evidence.",
+    {"schema": {"type": "string"}, "status": {"type": "string"},
+     "generated_at": {"type": "string"}, "context_only": {"type": "boolean"},
+     "selection": {"type": "object"}, "forex": {"type": "object"},
+     "china": {"type": "object"}, "money_markets": {"type": "object"}, "eligibility": {"type": "object"}},
+    (("schema", "status", "generated_at", "context_only", "selection", "forex", "china", "money_markets", "eligibility"),
+     {"schema": market_workbench.SCHEMA, "context_only": True}),
 )
 STRUCTURED_OUTPUT_TOOLS = frozenset(OUTPUT_SCHEMAS)
 

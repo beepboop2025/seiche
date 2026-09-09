@@ -1668,6 +1668,7 @@ def build(site_dir: Path) -> dict[str, Any]:
             "non_shareable_surfaces": {
                 "CORPUS": "unbounded rights-aware dataset registry",
                 "TIME MACHINE": "arbitrary request-time historical reconstruction",
+                "WORKBENCH": "arbitrary query-selected reference histories and structural evidence",
                 "ACCOUNT": "private viewer and credential state",
             },
             "reason": (

@@ -68,3 +68,5 @@ Useful things to say to it later:
 - "What did you learn this week?" (it reviews and extends its skills; the
   learning loop is the point of running Seiche under Hermes rather than a
   plain script).
+
+The public `market_workbench` tool accepts `provider` (`h10` or `ecb`), `base`, `quote`, `days` (30–3650), and optional `china_series`. It reads cached, dated reference FX and owner-accepted annual Palimpsest China evidence; the WORKBENCH tab and `/api/v2/market-workbench` use the same contract. It never collects during a request or creates executable quotes.

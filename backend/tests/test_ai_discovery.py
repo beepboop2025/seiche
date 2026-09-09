@@ -72,7 +72,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
-    assert len(mcp["capabilities"]) == 13
+    assert len(mcp["capabilities"]) == 14
     assert mcp["prompts"] == [
         "is_now_dangerous",
         "money_market_deep_dive",

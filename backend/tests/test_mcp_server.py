@@ -598,6 +598,7 @@ def test_money_market_tool_publishes_the_exact_bounded_selector_contract():
 
 
 PUBLIC_TOOLS = {
+    "market_workbench",
     "research_network",
     "latest_article",
     "funding_stress_now",

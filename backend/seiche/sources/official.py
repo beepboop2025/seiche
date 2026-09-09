@@ -780,18 +780,22 @@ def parse_cfets_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     return tuple(points)
 
 
+_NYFED_DISTRIBUTION_FIELDS = {
+    # The benchmark is the transaction-volume-weighted median, not P25.
+    "percentRate": "MEDIAN",
+    "percentPercentile1": "P01",
+    "percentPercentile25": "P25",
+    "percentPercentile75": "P75",
+    "percentPercentile99": "P99",
+    "volumeInBillions": "VOLUME",
+}
+
+
 def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     payload = json.loads(document.payload)
     rows = payload.get("refRates")
     if not isinstance(rows, list):
         raise ValueError("NY Fed response has no refRates list")
-    sofr_mapping = {
-        # ``percentRate`` is the published transaction-weighted median.  P25
-        # is a different distribution point and must never stand in for it.
-        "percentRate": "US.NYFED.SOFR_MEDIAN",
-        "percentPercentile99": "US.NYFED.SOFR_P99",
-        "volumeInBillions": "US.NYFED.SOFR_VOLUME",
-    }
     sofrai_mapping = {
         "average30day": "US.NYFED.SOFR_AVERAGE_30D",
         "average90day": "US.NYFED.SOFR_AVERAGE_90D",
@@ -799,7 +803,7 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         "index": "US.NYFED.SOFR_INDEX",
     }
     points: list[ParsedPoint] = []
-    sofrai_seen: set[tuple[date, str]] = set()
+    seen: set[tuple[str, date, str]] = set()
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -811,10 +815,15 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         revision_token = re.sub(
             r"[^A-Za-z0-9._-]+", "-", revision or "unrevised"
         ).strip("-")
-        if rate_type == "SOFR":
-            mapping = sofr_mapping
+        if rate_type in {"SOFR", "TGCR", "BGCR"}:
+            mapping = {
+                field: f"US.NYFED.{rate_type}_{suffix}"
+                for field, suffix in _NYFED_DISTRIBUTION_FIELDS.items()
+            }
             publication_time = None
-            lineage_prefix = "nyfed"
+            # Keep existing SOFR evidence/revision identities stable when
+            # exposing additional fields from the same captured source row.
+            lineage_prefix = "nyfed" if rate_type == "SOFR" else f"nyfed:{rate_type}"
         elif rate_type == "SOFRAI":
             mapping = sofrai_mapping
             # SOFR itself is labelled with the prior business day's effective
@@ -834,15 +843,17 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
             if value is None:
                 # Missing is unknown: never copy another horizon or emit zero.
                 continue
-            if rate_type == "SOFRAI":
-                identity = (event_day, field)
-                if identity in sofrai_seen:
-                    raise ValueError(
-                        "NY Fed response contains duplicate SOFRAI "
-                        f"{field} for {event_day.isoformat()}"
-                    )
-                sofrai_seen.add(identity)
-            row_evidence = _row_evidence(field, row)
+            identity = (rate_type, event_day, field)
+            if identity in seen:
+                raise ValueError(
+                    f"NY Fed response contains duplicate {rate_type} "
+                    f"{field} for {event_day.isoformat()}"
+                )
+            seen.add(identity)
+            evidence_label = (
+                field if rate_type in {"SOFR", "SOFRAI"} else f"{rate_type}.{field}"
+            )
+            row_evidence = _row_evidence(evidence_label, row)
             content_token = hashlib.sha256(row_evidence).hexdigest()[:16]
             points.append(
                 ParsedPoint(
@@ -864,7 +875,7 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
             )
     if not points:
         raise ValueError(
-            "NY Fed response contains no SOFR distribution or averages/index rows"
+            "NY Fed response contains no secured distribution or averages/index rows"
         )
     return tuple(
         sorted(
@@ -877,27 +888,18 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
 def parse_nyfed_unsecured_rates(
     document: FetchedDocument,
 ) -> tuple[ParsedPoint, ...]:
-    """Parse the canonical EFFR and OBFR distribution fields we can name.
-
-    The NY Fed also publishes the 1st, 25th, and 75th percentiles and volumes.
-    The canonical observation vocabulary does not yet have honest semantic
-    roles for those fields, so they remain in the immutable raw capture rather
-    than being mislabeled or coerced into a repo-volume series.
-    """
+    """Parse published EFFR/OBFR percentiles and unsecured funding volumes."""
 
     payload = json.loads(document.payload)
     rows = payload.get("refRates")
     if not isinstance(rows, list):
         raise ValueError("NY Fed unsecured response has no refRates list")
     mappings = {
-        "EFFR": {
-            "percentRate": "US.NYFED.EFFR_MEDIAN",
-            "percentPercentile99": "US.NYFED.EFFR_P99",
-        },
-        "OBFR": {
-            "percentRate": "US.NYFED.OBFR_MEDIAN",
-            "percentPercentile99": "US.NYFED.OBFR_P99",
-        },
+        rate_type: {
+            field: f"US.NYFED.{rate_type}_{suffix}"
+            for field, suffix in _NYFED_DISTRIBUTION_FIELDS.items()
+        }
+        for rate_type in ("EFFR", "OBFR")
     }
     points: list[ParsedPoint] = []
     seen: set[tuple[str, date, str]] = set()

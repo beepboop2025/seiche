@@ -10,7 +10,7 @@ Seiche's universal production endpoint is:
 https://api.seiche.info/mcp
 ```
 
-An anonymous scan sees thirteen read-only public tools: `latest_article`,
+An anonymous scan sees fourteen read-only public tools: `latest_article`,
 `funding_stress_now`, `trade_safety_risk_context`, `historical_analogs`,
 `proof_backtest`, `data_health`, `crypto_stress_record`,
 `institutional_flows`, `oil_funding_context`, `fx_materials_passage`,
@@ -60,3 +60,5 @@ submissions to supply listing details, accurate annotations, starter prompts,
 five positive tests, three negative tests, domain verification, an eligible
 verified publisher, and policy attestations. The owner-only and portal-only
 steps are recorded honestly in `SUBMISSION.md`.
+
+The public `market_workbench` tool accepts `provider` (`h10` or `ecb`), `base`, `quote`, `days` (30–3650), and optional `china_series`. It reads cached, dated reference FX and owner-accepted annual Palimpsest China evidence; the WORKBENCH tab and `/api/v2/market-workbench` use the same contract. It never collects during a request or creates executable quotes.

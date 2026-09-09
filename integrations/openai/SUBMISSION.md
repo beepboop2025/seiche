@@ -18,7 +18,7 @@ MCP URL type: **Universal**
 | Logo candidate | https://seiche.info/icons/pwa-512.png |
 | Source | https://github.com/beepboop2025/seiche |
 | MCP server | https://api.seiche.info/mcp |
-| Authentication | None for the thirteen-tool public surface; 200 calls per IP per UTC day |
+| Authentication | None for the fourteen-tool public surface; 200 calls per IP per UTC day |
 | Custom UI | None |
 | Category | Owner must select the closest current portal category; do not guess outside the portal |
 | Country availability | Owner must choose only jurisdictions where they are prepared to offer the service |
@@ -41,10 +41,10 @@ requests.
 
 - Universal MCP Server URL: `https://api.seiche.info/mcp`
 - Authentication: no authentication for the submitted public surface.
-- Reviewer credentials: none required for the thirteen public tools.
+- Reviewer credentials: none required for the fourteen public tools.
 - Content security policy: no custom UI is included and no browser component
   fetches external domains. Confirm the portal accepts an empty CSP allowlist.
-- Tool scan expectation: exactly thirteen tools, each with `inputSchema`,
+- Tool scan expectation: exactly fourteen tools, each with `inputSchema`,
   `outputSchema`, title, description, and accurate annotations.
 - Annotations for every submitted tool:
   - `readOnlyHint: true`
@@ -64,7 +64,7 @@ depend on subscriber-only tools or credentials.
 
 Suggested release notes:
 
-> Initial MCP-only Seiche plugin submission. Thirteen anonymous read-only tools
+> Initial MCP-only Seiche plugin submission. Fourteen anonymous read-only tools
 > provide live dollar-funding conclusions, granular USD and global money-market
 > context, a money/FX/capital world-markets view, historical analogs, diagnostic
 > evidence, freshness, and bounded cross-market context. This version adds
@@ -115,7 +115,7 @@ curl -fsS https://api.seiche.info/mcp \
 Pass conditions:
 
 - HTTPS succeeds without reviewer credentials;
-- `tools/list` returns exactly thirteen anonymous tools;
+- `tools/list` returns exactly fourteen anonymous tools;
 - every tool has an object `inputSchema`, object `outputSchema`, title,
   description, and the four annotations above;
 - each successful structured result conforms to its advertised schema;
