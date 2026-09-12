@@ -24,6 +24,12 @@ manifest and the reviewed storage destination. The 15 original bundle members,
 receipt version, sizes and hashes are pinned by the original attested receipt.
 Original SSE-C, COMPLIANCE retention and downloaded-content checks remain active.
 
+The historical case does not expire after 26 hours: it is checked with
+`require_fresh=False`. It still rejects future or inverted sealing times and
+insufficient retention. Each actual object must retain at least 29 days of
+COMPLIANCE protection at verification time. Current execution indexes and the
+daily monitor retain their original 26-hour freshness requirement.
+
 The root controller alone receives the seven `RECOVERY_S3_*` variables. The
 restore process runs as UID 65532 with a fresh environment, closed inherited file
 descriptors, no supplementary groups, no new privileges and no core dumps. It

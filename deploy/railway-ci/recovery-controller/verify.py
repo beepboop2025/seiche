@@ -109,7 +109,11 @@ def validate_case(policy, env, recovery, storage):
         raise ValueError("pinned recovery identity differs")
     if original["railway"]["deployment_id"] != policy["application_deployment"]:
         raise ValueError("pinned recovery deployment differs")
-    recovery.validate_offsite_receipt(offsite, recovery_receipt=original, now=datetime.now(timezone.utc))
+    # This is the immutable historical restore case. Current execution indexes
+    # still require fresh receipts in validate_index_receipts below.
+    recovery.validate_offsite_receipt(
+        offsite, recovery_receipt=original, now=datetime.now(timezone.utc), require_fresh=False
+    )
     if set(offsite["objects"]) != storage.OBJECT_NAMES:
         raise ValueError("pinned object set differs from the original recovery contract")
     if offsite["bucket"] != env["S3_BUCKET"] or offsite["prefix"] != env["S3_PREFIX"]:

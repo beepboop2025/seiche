@@ -50,6 +50,33 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify.validate_case(self.policy, {**self.env, "S3_BUCKET": "other-bucket"}, self.recovery, self.storage)
 
+    def test_historical_case_accepts_retained_receipt_older_than_26h(self):
+        offsite = json.loads((verify.ROOT / "case/offsite-receipt.json").read_bytes())
+        original = json.loads((verify.ROOT / "case/recovery-receipt.json").read_bytes())
+        sealed = datetime.fromisoformat(offsite["sealed_at"].replace("Z", "+00:00"))
+        now = sealed + timedelta(hours=27)
+        with mock.patch.object(verify, "datetime") as clock:
+            clock.now.return_value = now
+            receipt, _ = verify.validate_case(self.policy, self.env, self.recovery, self.storage)
+        self.assertEqual(receipt, offsite)
+        with self.assertRaises(self.recovery.RecoveryContractError):
+            self.recovery.validate_offsite_receipt(
+                offsite, recovery_receipt=original, now=now, require_fresh=True
+            )
+
+    def test_future_and_inverted_sealing_times_fail_in_historical_mode(self):
+        offsite = json.loads((verify.ROOT / "case/offsite-receipt.json").read_bytes())
+        original = json.loads((verify.ROOT / "case/recovery-receipt.json").read_bytes())
+        sealed = datetime.fromisoformat(offsite["sealed_at"].replace("Z", "+00:00"))
+        restarted = datetime.fromisoformat(original["timing"]["writers_restarted_at"].replace("Z", "+00:00"))
+        now = sealed + timedelta(hours=27)
+        for invalid_time in (now + timedelta(minutes=6), restarted - timedelta(seconds=1)):
+            invalid = {**offsite, "sealed_at": invalid_time.strftime("%Y-%m-%dT%H:%M:%SZ")}
+            with self.assertRaises(self.recovery.RecoveryContractError):
+                self.recovery.validate_offsite_receipt(
+                    invalid, recovery_receipt=original, now=now, require_fresh=False
+                )
+
     def test_offsite_receipt_version_and_digest_are_bounded(self):
         for key, value in (("version_id", "null"), ("sha256", "0" * 64), ("size", 512 * 1024 + 1), ("key", "other/prefix")):
             policy = copy.deepcopy(self.policy)
@@ -423,6 +450,7 @@ class ExecutionIndexTests(unittest.TestCase):
                                                   recovery=original_validator, policy=self.policy, now=self.now)
         check(payload)
         self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0][1].get("require_fresh", True))
         with self.assertRaises(ValueError):
             check({**payload, "postgres_counts": [0] * 4, "postgres_count_floor": [0] * 4})
         bad = copy.deepcopy(payload)
