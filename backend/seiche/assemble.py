@@ -2066,8 +2066,24 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     that happens to discuss a benchmark.
     """
 
+    # Health and public reads must inspect the current structure on every call.
+    # Reuse only pure classifications of short, immutable strings within this
+    # invocation; never retain an approval for a mutable payload between reads.
+    folded_cache: dict[str, str] = {}
+    identifier_cache: dict[tuple[str, bool, bool], bool] = {}
+    mirror_cache: dict[str, bool] = {}
+    cache_limit = 4096
+    cache_string_limit = 256
+
     def folded_text(value: str) -> str:
-        return unicodedata.normalize("NFKC", value).strip().casefold()
+        if len(value) <= cache_string_limit:
+            cached = folded_cache.get(value)
+            if cached is not None:
+                return cached
+        folded = unicodedata.normalize("NFKC", value).strip().casefold()
+        if len(value) <= cache_string_limit and len(folded_cache) < cache_limit:
+            folded_cache[value] = folded
+        return folded
 
     normalized_identifiers = {
         re.sub(r"[^a-z0-9]+", "_", folded_text(value)).strip("_")
@@ -2116,6 +2132,17 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     ) -> bool:
         if not isinstance(value, str):
             return False
+        if len(value) > cache_string_limit:
+            return classify_identifier(value, typed=typed, strict=strict)
+        key = (value, typed, strict)
+        if key in identifier_cache:
+            return identifier_cache[key]
+        result = classify_identifier(value, typed=typed, strict=strict)
+        if len(identifier_cache) < cache_limit:
+            identifier_cache[key] = result
+        return result
+
+    def classify_identifier(value: str, *, typed: bool, strict: bool) -> bool:
         folded = folded_text(value)
         normalized = re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
         compact = re.sub(r"[^a-z0-9]+", "", folded)
@@ -2140,6 +2167,16 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     def restricted_mirror_url(value: object) -> bool:
         if not isinstance(value, str):
             return False
+        if len(value) > cache_string_limit:
+            return classify_mirror_url(value)
+        if value in mirror_cache:
+            return mirror_cache[value]
+        result = classify_mirror_url(value)
+        if len(mirror_cache) < cache_limit:
+            mirror_cache[value] = result
+        return result
+
+    def classify_mirror_url(value: str) -> bool:
         try:
             parsed = urllib.parse.urlsplit(unicodedata.normalize("NFKC", value).strip())
         except ValueError:
