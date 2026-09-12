@@ -101,6 +101,13 @@ PUBLICATION_CONTROLLER_SUBJECT = b"publication-controller: "
 # owner signatures, linear ancestry, exact paths and regular file modes. This
 # is not a general exception for future operations commits.
 REVIEWED_RECOVERY_COMMITS = {
+    "45297f3c378216042b75cd53f03a46357e782e0f": frozenset(
+        {
+            "ops/railway-automation/publisher/README.md",
+            "ops/railway-automation/publisher/publish.py",
+            "ops/railway-automation/publisher/test_publish.py",
+        }
+    ),
     "ff98e9d1883c7b23afd42c0e44654ba63d1364d3": frozenset(
         {
             "deploy/railway-ci/recovery-controller/README.md",
