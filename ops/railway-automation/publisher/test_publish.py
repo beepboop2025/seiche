@@ -169,20 +169,38 @@ class PublisherBoundaryTests(unittest.TestCase):
                 ["checkout", "--quiet", "--detach", ancestor], Path("/trusted")
             )
 
-    def test_absent_pinned_receipt_does_not_search_other_tags(self):
+    def test_application_desk_descendant_keeps_current_source_and_full_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             controller = Path(directory)
+            ancestor, current = "a" * 40, "b" * 40
             (controller / "controller-source.json").write_text(
-                json.dumps({"sha": "a" * 40})
+                json.dumps({"sha": ancestor})
             )
+            admission = {
+                "schema": "seiche.application-desk-descendant.v1",
+                "controllerSourceSha": ancestor,
+                "currentSourceSha": current,
+                "purpose": "complete_application_publication",
+            }
             with (
                 patch.object(publisher, "CONTROLLER", controller),
                 patch.object(publisher, "git", return_value="") as git_mock,
+                patch.object(
+                    publisher, "run", return_value=json.dumps(admission)
+                ) as run_mock,
             ):
-                with self.assertRaisesRegex(
-                    RuntimeError, "no receipt or pinned frontend ancestor"
-                ):
-                    publisher.select_publication_source(Path("/trusted"), "b" * 40, "")
+                result = publisher.select_publication_source(
+                    Path("/trusted"), current, ""
+                )
+            self.assertEqual(result, (current, "", admission))
+            command = run_mock.call_args.args[0]
+            self.assertEqual(command[:3], ["python", "-I", "-S"])
+            self.assertIn(
+                "module._verify_generated_content_descendants(root,release=sys.argv[2],head=sys.argv[3])",
+                command[4],
+            )
+            self.assertNotIn("signer_fingerprint", command[4])
+            self.assertEqual(command[5:8], ["/trusted", ancestor, current])
             self.assertEqual(git_mock.call_count, 2)
             self.assertTrue(
                 all(
@@ -190,6 +208,40 @@ class PublisherBoundaryTests(unittest.TestCase):
                     for call in git_mock.call_args_list
                 )
             )
+
+    def test_invalid_application_desk_history_never_selects_a_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller = Path(directory)
+            (controller / "controller-source.json").write_text(
+                json.dumps({"sha": "a" * 40})
+            )
+            for outcome in (
+                "{}",
+                RuntimeError(
+                    "generated-content controller commit requires a pinned signer"
+                ),
+                RuntimeError("forbidden generated-content path"),
+            ):
+                with (
+                    patch.object(publisher, "CONTROLLER", controller),
+                    patch.object(publisher, "git", return_value="") as git_mock,
+                    patch.object(
+                        publisher,
+                        "run",
+                        side_effect=outcome if isinstance(outcome, Exception) else None,
+                        return_value=outcome,
+                    ),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        publisher.select_publication_source(
+                            Path("/trusted"), "b" * 40, ""
+                        )
+                self.assertFalse(
+                    any(
+                        call.args[0][0] == "checkout"
+                        for call in git_mock.call_args_list
+                    )
+                )
 
     def test_wrong_or_failed_desk_admission_never_selects_ancestor(self):
         with tempfile.TemporaryDirectory() as directory:

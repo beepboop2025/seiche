@@ -125,7 +125,44 @@ def select_publication_source(trusted, current_sha, explicit_receipt):
         return current_sha, "", None  # Preserve the original full-release gate.
     ancestor_tag = "frontend-publication-" + ancestor
     if git(["tag", "--list", ancestor_tag], trusted) != ancestor_tag:
-        raise RuntimeError("Current main has no receipt or pinned frontend ancestor")
+        # An application publisher may follow only the existing linear desk
+        # lane. This is source selection, not release acceptance: the complete
+        # signed application, runtime, package and corpus gates still run below.
+        expected = {
+            "schema": "seiche.application-desk-descendant.v1",
+            "controllerSourceSha": ancestor,
+            "currentSourceSha": current_sha,
+            "purpose": "complete_application_publication",
+        }
+        code = (
+            "import importlib.util,json,pathlib,sys; "
+            "root=pathlib.Path(sys.argv[1]); "
+            "spec=importlib.util.spec_from_file_location('catalog_gate',root/'ops/release/verify_catalog_publication.py'); "
+            "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+            "module._verify_generated_content_descendants(root,release=sys.argv[2],head=sys.argv[3]); "
+            "print(sys.argv[4])"
+        )
+        admission = json.loads(
+            run(
+                [
+                    "python",
+                    "-I",
+                    "-S",
+                    "-c",
+                    code,
+                    str(trusted),
+                    ancestor,
+                    current_sha,
+                    json.dumps(expected, sort_keys=True),
+                ],
+                trusted,
+                clean_env(),
+                capture=True,
+            )
+        )
+        if admission != expected:
+            raise RuntimeError("Application desk admission differs from current source")
+        return current_sha, "", admission
     # This verifier was checked against the controller manifest before selection.
     code = (
         "import importlib.util,json,pathlib,sys; "

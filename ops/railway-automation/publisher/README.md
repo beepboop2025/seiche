@@ -22,6 +22,15 @@ requires a reviewed controller update.
 This adapts publish-static only. It does not replace full evidence collection,
 daily articles, Telegram announcements, or package/release attestations.
 
+An application publisher without a frontend receipt may follow daily/weekly
+desk descendants of its immutable controller source. Source selection uses the
+existing linear desk author, subject, path and mode checks without the optional
+controller-signature exception. It keeps current main as the publication source
+and runs the complete signed application, live runtime, package and corpus gates
+before building or publishing. It never substitutes another tag or approves a
+controller, UI or runtime change through the desk lane. Its retained source
+admission names both the controller revision and the current desk revision.
+
 After a lawful daily/weekly desk commit, the controller may retain its signed
 frontend source while admitting current main separately. Its only automatic
 ancestor candidate is the immutable controller-source SHA, with an exact signed
