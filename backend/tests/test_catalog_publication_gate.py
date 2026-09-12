@@ -411,13 +411,20 @@ def _content_git(root, *args):
     return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
 
 
-def test_independent_corpus_receipt_retains_complete_application_history_checks(monkeypatch):
+def test_independent_corpus_receipt_retains_complete_application_history_checks(
+    monkeypatch,
+):
     current = json.loads((ROOT / gate.AI_CATALOG_PATH).read_text())
     application, receipt, head = "a" * 40, "b" * 40, "c" * 40
     monkeypatch.setattr(gate, "_signing_git_config", lambda *_: "trusted=true")
     monkeypatch.setattr(gate, "_read_tagged_json", lambda *_: current)
-    monkeypatch.setattr(gate, "_verify_annotated_signed_tag", lambda _root, **kwargs:
-                        application if kwargs["tag"] == "market-corpus-v1.0.0" else receipt)
+    monkeypatch.setattr(
+        gate,
+        "_verify_annotated_signed_tag",
+        lambda _root, **kwargs: (
+            application if kwargs["tag"] == "market-corpus-v1.0.0" else receipt
+        ),
+    )
     monkeypatch.setattr(gate, "verify_signed_release", lambda *_a, **_k: "v0.13.1")
     queries = []
 
@@ -427,21 +434,33 @@ def test_independent_corpus_receipt_retains_complete_application_history_checks(
 
     monkeypatch.setattr(gate, "_run_git", git)
     histories = []
-    monkeypatch.setattr(gate, "_verify_generated_content_descendants",
-                        lambda _root, **kwargs: histories.append(kwargs))
-    gate.verify_market_corpus_release(ROOT, expected_sha=head,
-                                     signer_fingerprint="SHA256:" + "A" * 43)
+    monkeypatch.setattr(
+        gate,
+        "_verify_generated_content_descendants",
+        lambda _root, **kwargs: histories.append(kwargs),
+    )
+    gate.verify_market_corpus_release(
+        ROOT, expected_sha=head, signer_fingerprint="SHA256:" + "A" * 43
+    )
     assert ("merge-base", "--is-ancestor", application, receipt) in queries
-    assert histories == [{"release": application, "head": head,
-                          "signer_fingerprint": "SHA256:" + "A" * 43}]
+    assert histories == [
+        {
+            "release": application,
+            "head": head,
+            "signer_fingerprint": "SHA256:" + "A" * 43,
+        }
+    ]
 
     def reject_changed_history(*_args, **_kwargs):
         raise gate.PublicationGateError("forbidden runtime path")
 
-    monkeypatch.setattr(gate, "_verify_generated_content_descendants", reject_changed_history)
+    monkeypatch.setattr(
+        gate, "_verify_generated_content_descendants", reject_changed_history
+    )
     with pytest.raises(gate.PublicationGateError, match="forbidden runtime path"):
-        gate.verify_market_corpus_release(ROOT, expected_sha=head,
-                                         signer_fingerprint="SHA256:" + "A" * 43)
+        gate.verify_market_corpus_release(
+            ROOT, expected_sha=head, signer_fingerprint="SHA256:" + "A" * 43
+        )
 
 
 @pytest.fixture

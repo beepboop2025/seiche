@@ -756,10 +756,17 @@ def verify_market_corpus_release(
         release_target = _run_git(
             root, "rev-parse", f"{release_tag}^{{commit}}"
         ).stdout.strip()
-        if receipt_target != release_target and _run_git(
-            root, "merge-base", "--is-ancestor", release_target, receipt_target,
-            check=False,
-        ).returncode:
+        if (
+            receipt_target != release_target
+            and _run_git(
+                root,
+                "merge-base",
+                "--is-ancestor",
+                release_target,
+                receipt_target,
+                check=False,
+            ).returncode
+        ):
             raise PublicationGateError(
                 "Market Atlas publication receipt tag does not target the workflow "
                 "SHA, the signed Seiche release, or its reviewed descendant"
