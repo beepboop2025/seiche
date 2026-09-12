@@ -1816,6 +1816,21 @@ def test_frontend_receipt_accepts_reviewed_editorial_and_market_ci_paths(
     )
 
 
+def test_unchanged_frontend_receipt_can_classify_isolated_recovery_changes(frontend_repo):
+    root, release, _ = frontend_repo
+    relative = "deploy/railway-ci/recovery-bootstrap/verify.py"
+    source = _frontend_change(root, {relative: "# reviewed isolated recovery reader\n"})
+    changes = front.compatibility_changes(root, release, source)
+    assert {row["kind"] for row in changes} == {"excluded_monitor"}
+    assert {row["path"] for row in changes} == {relative}
+
+
+def test_frontend_receipt_still_rejects_an_unchanged_source(frontend_repo):
+    root, release, _ = frontend_repo
+    with pytest.raises(front.Error, match="no frontend or isolated operations changes"):
+        front.compatibility_changes(root, release, release)
+
+
 def test_frontend_desk_descendant_keeps_receipt_subject_separate(frontend_repo):
     root, _, fingerprint = frontend_repo
     ancestor = _frontend_change(root)

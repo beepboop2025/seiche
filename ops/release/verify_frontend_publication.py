@@ -338,8 +338,10 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
         desk_origins[commit] = origins | (
             {commit} if len(parent_list) == 1 and has_desk_change else set()
         )
-    if not any(change["kind"] == "frontend" for change in changes):
-        raise Error("frontend publication contains no frontend changes")
+    if not any(
+        change["kind"] in {"frontend", "excluded_monitor"} for change in changes
+    ):
+        raise Error("frontend publication contains no frontend or isolated operations changes")
     return changes
 
 

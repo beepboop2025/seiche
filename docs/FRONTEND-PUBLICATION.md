@@ -31,6 +31,13 @@ branches, merges and reverted edits. This bounded contract permits:
 - exact monitoring, isolated CI and separately deployed controller paths listed in `EXCLUDED_MONITOR_PATHS`, reported as
   excluded and never used as renderer or runtime build input.
 
+A receipt may also bind an unchanged frontend after changes only to those
+isolated operations paths and the other permitted review/controller files.
+It still requires a new exact-source owner signature and all live release gates.
+The compatibility inventory records that no frontend bytes changed; the receipt
+does not activate the separately deployed operations code. An unchanged source,
+or a history containing only review/controller files, is insufficient.
+
 Backend runtime/package code, frontend dependencies and build configuration,
 catalog metadata, public data, other workflows, trust files, symlinks,
 executables, submodules and unrelated ancestry fail closed. Reverting an
