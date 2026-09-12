@@ -101,6 +101,15 @@ PUBLICATION_CONTROLLER_SUBJECT = b"publication-controller: "
 # immutable commits, checking owner signatures, linear ancestry, exact paths and
 # regular file modes; future operations commits get no general exception.
 REVIEWED_RECOVERY_COMMITS = {
+    "d75a21ebfb3a18588a2e9fa254431f61abbf4ea6": frozenset(
+        {
+            "deploy/railway-ci/recovery-controller/Dockerfile",
+            "deploy/railway-ci/recovery-controller/README.md",
+            "deploy/railway-ci/recovery-controller/health_probe.py",
+            "deploy/railway-ci/recovery-controller/prepare.py",
+            "deploy/railway-ci/recovery-controller/test_health_probe.py",
+        }
+    ),
     "a6d37ddaaaf7fc7f895dfbca4f961ca923a240e1": frozenset(
         {
             "backend/tests/test_catalog_publication_gate.py",
