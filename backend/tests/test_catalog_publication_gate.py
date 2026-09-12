@@ -700,6 +700,64 @@ def _controller_commit(root, changes, *, sign=True, author=None, subject=None):
     return head
 
 
+def test_exact_reviewed_recovery_commit_preserves_corpus_and_desk_lineage(
+    content_repo, monkeypatch
+):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    path = "deploy/railway-ci/recovery-bootstrap/verify.py"
+    repair = _controller_commit(
+        root,
+        {path: "# isolated recovery verification\n"},
+        subject="fix: recover the bounded backup workflow",
+    )
+    monkeypatch.setattr(gate, "REVIEWED_RECOVERY_COMMITS", {repair: frozenset({path})})
+    receipt, _ = gate.verify_market_corpus_release(
+        root, expected_sha=repair, signer_fingerprint=fingerprint
+    )
+    assert _content_git(root, "rev-parse", f"{receipt}^{{commit}}") == release
+    desk = _content_commit(root, {"frontend/public/articles/cash.md": "daily"})
+    gate.verify_market_corpus_release(
+        root, expected_sha=desk, signer_fingerprint=fingerprint
+    )
+    unreviewed = _controller_commit(
+        root, {path: "# subsequent unreviewed change\n"}, subject="fix: another change"
+    )
+    with pytest.raises(gate.PublicationGateError, match="daily/weekly"):
+        gate.verify_market_corpus_release(
+            root, expected_sha=unreviewed, signer_fingerprint=fingerprint
+        )
+
+
+@pytest.mark.parametrize("failure", ["signature", "author", "path", "mode"])
+def test_reviewed_recovery_commit_keeps_signature_path_and_mode_checks(
+    content_repo, monkeypatch, failure
+):
+    root = content_repo
+    _, fingerprint = _signed_controller_fixture(root)
+    path = "deploy/railway-ci/recovery-bootstrap/verify.py"
+    target = root / path
+    target.parent.mkdir(parents=True)
+    target.write_text("# placeholder\n")
+    if failure == "mode":
+        target.chmod(0o755)
+    repair = _controller_commit(
+        root,
+        {path: "# isolated repair\n"},
+        sign=failure != "signature",
+        author="foreign@example.com" if failure == "author" else None,
+        subject="fix: recover the bounded backup workflow",
+    )
+    allowed = path + ".unreviewed" if failure == "path" else path
+    monkeypatch.setattr(
+        gate, "REVIEWED_RECOVERY_COMMITS", {repair: frozenset({allowed})}
+    )
+    with pytest.raises(gate.PublicationGateError):
+        gate.verify_market_corpus_release(
+            root, expected_sha=repair, signer_fingerprint=fingerprint
+        )
+
+
 def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
     content_repo, monkeypatch, capsys
 ):

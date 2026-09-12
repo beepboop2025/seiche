@@ -96,6 +96,52 @@ PUBLICATION_CONTROLLER_PATHS = frozenset(
 PUBLICATION_CONTROLLER_AUTHOR = b"beepboop2025@users.noreply.github.com"
 PUBLICATION_CONTROLLER_SUBJECT = b"publication-controller: "
 
+# The reviewed 0.13.1 recovery repair advanced main without changing application
+# or catalog bytes. Admit only those immutable commits, still checking their
+# owner signatures, linear ancestry, exact paths and regular file modes. This
+# is not a general exception for future operations commits.
+REVIEWED_RECOVERY_COMMITS = {
+    "ff98e9d1883c7b23afd42c0e44654ba63d1364d3": frozenset(
+        {
+            "deploy/railway-ci/recovery-controller/README.md",
+            "deploy/railway-ci/recovery-controller/test_verify.py",
+            "deploy/railway-ci/recovery-controller/verify.py",
+        }
+    ),
+    "2f5a9e026b708fde293c4a049d3d7d3da2888f18": frozenset(
+        {
+            ".github/workflows/railway-stateful-recovery.yml",
+            "deploy/railway-ci/recovery-bootstrap/README.md",
+            "deploy/railway-ci/recovery-bootstrap/test_verify.py",
+            "deploy/railway-ci/recovery-bootstrap/verify.py",
+        }
+    ),
+    "a0ac53afa5f1ddb7a7ba839c4daf7c96dc6ba907": frozenset(
+        {
+            "backend/tests/test_railway_stateful_recovery.py",
+        }
+    ),
+    "9382f55470e5b4c60be0098f1b702da6f54027df": frozenset(
+        {
+            "backend/tests/test_catalog_publication_gate.py",
+            "ops/release/verify_frontend_publication.py",
+        }
+    ),
+    "e06d52152db4409eb6e60d9191007f4b5d469086": frozenset(
+        {
+            "backend/tests/test_catalog_publication_gate.py",
+            "docs/FRONTEND-PUBLICATION.md",
+            "ops/release/verify_frontend_publication.py",
+        }
+    ),
+    "cbb7a466f232420c1d62dc3f2ba02c2f38be7895": frozenset(
+        {
+            "backend/tests/test_catalog_publication_gate.py",
+            "ops/release/verify_frontend_publication.py",
+        }
+    ),
+}
+
 
 class PublicationGateError(RuntimeError):
     """The catalog cannot yet be published truthfully."""
@@ -744,9 +790,11 @@ def _verify_generated_content_descendants(
             raise PublicationGateError(
                 "generated-content commit is not a single-parent release descendant"
             )
-        controller = identity[1] == PUBLICATION_CONTROLLER_AUTHOR and identity[
-            2
-        ].startswith(PUBLICATION_CONTROLLER_SUBJECT)
+        reviewed_paths = REVIEWED_RECOVERY_COMMITS.get(commit)
+        controller = identity[1] == PUBLICATION_CONTROLLER_AUTHOR and (
+            identity[2].startswith(PUBLICATION_CONTROLLER_SUBJECT)
+            or reviewed_paths is not None
+        )
         if controller:
             if signer_fingerprint is None:
                 raise PublicationGateError(
@@ -798,10 +846,19 @@ def _verify_generated_content_descendants(
             )
         for metadata, path in zip(changes[:-1:2], changes[1:-1:2]):
             if controller:
-                if re.fullmatch(
-                    rb":100644 100644 [0-9a-f]{40} [0-9a-f]{40} M", metadata
-                ) is None or path not in {
-                    name.encode("ascii") for name in PUBLICATION_CONTROLLER_PATHS
+                modes = (
+                    rb":(?:100644 100644 [0-9a-f]{40} [0-9a-f]{40} M"
+                    rb"|000000 100644 0{40} [0-9a-f]{40} A)"
+                    if reviewed_paths is not None
+                    else rb":100644 100644 [0-9a-f]{40} [0-9a-f]{40} M"
+                )
+                allowed = (
+                    reviewed_paths
+                    if reviewed_paths is not None
+                    else PUBLICATION_CONTROLLER_PATHS
+                )
+                if re.fullmatch(modes, metadata) is None or path not in {
+                    name.encode("ascii") for name in allowed
                 }:
                     raise PublicationGateError(
                         "generated-content controller commit changes a forbidden path or file mode"
