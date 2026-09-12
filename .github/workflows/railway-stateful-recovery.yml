@@ -36,6 +36,10 @@ on:
         description: "Exact operation-specific confirmation"
         required: false
         type: string
+      durable_bootstrap_sha256:
+        description: "export-recovery only: digest of the protected, time-bounded historical activation manifest"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -1433,6 +1437,16 @@ jobs:
       - name: Request and download an activation-bound portable export
         id: export
         env:
+          GH_TOKEN: ${{ github.token }}
+          DURABLE_BOOTSTRAP_SHA256: ${{ inputs.durable_bootstrap_sha256 }}
+          DURABLE_BOOTSTRAP_ZLIB_BASE64: ${{ secrets.RECOVERY_DURABLE_BOOTSTRAP_ZLIB_BASE64 }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
+          S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
+          S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          S3_SSE_C_KEY_B64: ${{ secrets.SEICHE_OFFSITE_S3_SSE_C_KEY_B64 }}
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
@@ -1504,6 +1518,9 @@ jobs:
           PY
           }
           replica_id=$(current_replica proof/runtime.json)
+          if [ -n "$DURABLE_BOOTSTRAP_SHA256" ]; then
+            python -B "$GITHUB_WORKSPACE/deploy/railway-ci/recovery-bootstrap/verify.py"
+          else
           bootstrap_args=()
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             bootstrap_args+=(--bootstrap)
@@ -1586,6 +1603,11 @@ jobs:
               os.environ["REPLICA_ID"] + "\n"
           )
           PY
+          fi
+          # Both bootstrap routes bind the freshly observed replica before the
+          # original signed request and all export/restore/sealing gates run.
+          printf '%s\n' "$replica_id" >proof/replica-id.txt
+          printf '%s\n' "$replica_id" >proof/submission-replica-id.txt
           snapshot_id=$(date -u +%Y%m%dT%H%M%SZ)
           requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           download_expires_at=$(date -u -d '+110 minutes' +%Y-%m-%dT%H:%M:%SZ)
