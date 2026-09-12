@@ -1,7 +1,6 @@
 """Dry production-stage admission and real Linux restore-wrapper boundaries."""
 
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import stat
@@ -217,6 +216,48 @@ class NativeAdmissionTests(unittest.TestCase):
             recurring.main()
         self.stage.assert_not_called()
         self.events.assert_not_called()
+
+
+class FinalHealthTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = {"deployment_id": "application", "source": "release", "replica_id": "replica"}
+        self.elapsed = 0
+
+    def sleep(self, seconds):
+        self.elapsed += seconds
+
+    def call(self, responses):
+        with mock.patch.object(attest, "live_runtime", side_effect=responses) as live, \
+                mock.patch.object(recurring.time, "monotonic", side_effect=lambda: self.elapsed), \
+                mock.patch.object(recurring.time, "sleep", side_effect=self.sleep), \
+                mock.patch.object(verify, "event"):
+            value = recurring.healthy_runtime_after_export({}, {}, self.runtime, 30)
+            return value, live.call_count
+
+    def test_resumed_collector_can_recover_before_sealing(self):
+        (actual, observed), reads = self.call([
+            ValueError("production API evidence is unhealthy"), dict(self.runtime)
+        ])
+        self.assertEqual(actual, self.runtime)
+        self.assertEqual(reads, 2)
+        self.assertEqual(self.elapsed, 15)
+        self.assertIsNotNone(observed.tzinfo)
+
+    def test_persistent_fault_exhausts_bound_without_acceptance(self):
+        with self.assertRaisesRegex(ValueError, "remained unhealthy"):
+            self.call([ValueError("production API evidence is unhealthy")] * 3)
+        self.assertEqual(self.elapsed, 30)
+
+    def test_recovered_health_cannot_conceal_changed_replica(self):
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            self.call([ValueError("production API evidence is unhealthy"),
+                       {**self.runtime, "replica_id": "different"}])
+
+    def test_identity_and_freshness_errors_are_not_retried(self):
+        for error in ("public and origin identities differ", "production API evidence is stale or future dated"):
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                self.call([ValueError(error)])
+            self.assertEqual(self.elapsed, 0)
 
 
 class RestoreWrapperTests(unittest.TestCase):

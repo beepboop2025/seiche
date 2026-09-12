@@ -299,7 +299,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
 
     assert receipt == {
         "schemaVersion": "1.0.0",
-        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r11",
+        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r12",
         "releaseId": "corpus-7cb1695c6affa707",
         "indexSha256": (
             "29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36"
@@ -315,7 +315,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
         "bisBulkFlat": 27,
         "bisApiOnly": 1,
         "bisRegistryOnly": 1,
-        "bisAggregateRows": 76_344_667,
+        "bisAggregateRows": 76_346_103,
         "engineDatasets": 1122,
         "engineVerifiedObjects": 1110,
         "engineAttempts": 1118,
@@ -379,7 +379,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         expected_sha=expected_sha,
         signer_fingerprint="SHA256:" + "A" * 43,
     )
-    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r11"
+    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r12"
     assert gate._market_corpus_publication_receipt(entry)["releaseId"] == (
         "corpus-7cb1695c6affa707"
     )
@@ -396,7 +396,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         gate,
         "_run_git",
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            [], 0, stdout=expected_sha + "\n"
+            [], 1 if "merge-base" in _args else 0, stdout=expected_sha + "\n"
         ),
     )
     with pytest.raises(gate.PublicationGateError, match="does not target"):
@@ -409,6 +409,39 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
 
 def _content_git(root, *args):
     return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
+
+
+def test_independent_corpus_receipt_retains_complete_application_history_checks(monkeypatch):
+    current = json.loads((ROOT / gate.AI_CATALOG_PATH).read_text())
+    application, receipt, head = "a" * 40, "b" * 40, "c" * 40
+    monkeypatch.setattr(gate, "_signing_git_config", lambda *_: "trusted=true")
+    monkeypatch.setattr(gate, "_read_tagged_json", lambda *_: current)
+    monkeypatch.setattr(gate, "_verify_annotated_signed_tag", lambda _root, **kwargs:
+                        application if kwargs["tag"] == "market-corpus-v1.0.0" else receipt)
+    monkeypatch.setattr(gate, "verify_signed_release", lambda *_a, **_k: "v0.13.1")
+    queries = []
+
+    def git(_root, *args, **kwargs):
+        queries.append(args)
+        return subprocess.CompletedProcess([], 0, stdout=application + "\n")
+
+    monkeypatch.setattr(gate, "_run_git", git)
+    histories = []
+    monkeypatch.setattr(gate, "_verify_generated_content_descendants",
+                        lambda _root, **kwargs: histories.append(kwargs))
+    gate.verify_market_corpus_release(ROOT, expected_sha=head,
+                                     signer_fingerprint="SHA256:" + "A" * 43)
+    assert ("merge-base", "--is-ancestor", application, receipt) in queries
+    assert histories == [{"release": application, "head": head,
+                          "signer_fingerprint": "SHA256:" + "A" * 43}]
+
+    def reject_changed_history(*_args, **_kwargs):
+        raise gate.PublicationGateError("forbidden runtime path")
+
+    monkeypatch.setattr(gate, "_verify_generated_content_descendants", reject_changed_history)
+    with pytest.raises(gate.PublicationGateError, match="forbidden runtime path"):
+        gate.verify_market_corpus_release(ROOT, expected_sha=head,
+                                         signer_fingerprint="SHA256:" + "A" * 43)
 
 
 @pytest.fixture
@@ -1099,7 +1132,7 @@ def test_market_corpus_receipts_bind_deep_health_catalog_and_tools():
     receipt = _verify_market(*_market_receipts())
 
     assert receipt["releaseId"] == "corpus-7cb1695c6affa707"
-    assert receipt["bisRows"] == 76_344_667
+    assert receipt["bisRows"] == 76_346_103
     assert receipt["tools"] == list(gate.MARKET_CORPUS_TOOLS)
 
 

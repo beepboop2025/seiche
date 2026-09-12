@@ -1,13 +1,12 @@
 """Run the original governed recovery stages from an isolated native controller."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import fcntl
 import os
 from pathlib import Path
 import re
 import resource
-import shutil
 import stat
 import subprocess
 import tempfile
@@ -165,8 +164,33 @@ def stage_budget(deadline, maximum):
     return min(maximum, seconds)
 
 
-def main():
+def healthy_runtime_after_export(policy, environment, expected, deadline):
+    """Allow resumed collectors to converge without relaxing final evidence."""
     import attest
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        observed = datetime.now(timezone.utc)
+        try:
+            current = attest.live_runtime(policy, environment, observed)
+        except ValueError as error:
+            if str(error) != "production API evidence is unhealthy":
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            verify.event("native_recovery_health_wait", attempt=attempt)
+            time.sleep(min(15, remaining))
+            continue
+        if time.monotonic() >= deadline:
+            raise ValueError("production API evidence exceeded the final health deadline")
+        if any(expected[field] != current[field] for field in ("deployment_id", "source", "replica_id")):
+            raise ValueError("production identity changed before native execution sealing")
+        return current, observed
+    raise ValueError("production API evidence remained unhealthy after export")
+
+
+def main():
     if os.geteuid() != 0 or os.environ.get("RECOVERY_OPERATION") != "export-recurring":
         raise RuntimeError("native recurring recovery is not explicitly armed")
     if os.environ.get("RECOVERY_CONFIRMATION") != "EXPORT_WITHOUT_AUTHORITY_CHANGE":
@@ -285,10 +309,9 @@ def run_locked():
         offsite_body = (work / "offsite-receipt.json").read_bytes()
         offsite = json.loads(offsite_body)
         offsite_head = json.loads((work / "proof/offsite-receipt.head.json").read_bytes())
-        observed = datetime.now(timezone.utc)
-        current_runtime = attest.live_runtime(flat, production, observed)
-        if any(runtime[field] != current_runtime[field] for field in ("deployment_id", "source", "replica_id")):
-            raise ValueError("production identity changed before native execution sealing")
+        current_runtime, observed = healthy_runtime_after_export(
+            flat, production, runtime, min(export_deadline, time.monotonic() + 180)
+        )
         payload = {name: flat[name] for name in verify.INDEX_FIELDS if name in flat}
         payload.update(schema=verify.INDEX_SCHEMA, execution_platform="railway", date=observed.date().isoformat(),
                        observed_at=observed.isoformat(), repository="beepboop2025/seiche",

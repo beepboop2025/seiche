@@ -38,12 +38,12 @@ MARKET_CORPUS_HEALTH_URL = "https://api.seiche.info/api/v2/corpus/healthz?deep=t
 MARKET_CORPUS_DISCOVERY_URL = "https://api.seiche.info/.well-known/mcp.json"
 MARKET_CORPUS_TAG_PREFIX = "market-corpus-v"
 MARKET_CORPUS_RECEIPT_TAG_PREFIX = "market-corpus-receipt-"
-MARKET_CORPUS_RECEIPT_REVISION = "r11"
+MARKET_CORPUS_RECEIPT_REVISION = "r12"
 MARKET_CORPUS_EXPECTED_FLOWS = 29
 MARKET_CORPUS_EXPECTED_BULK_FLAT_FLOWS = 27
 MARKET_CORPUS_EXPECTED_API_ONLY_FLOWS = 1
 MARKET_CORPUS_EXPECTED_REGISTRY_ONLY_FLOWS = 1
-MARKET_CORPUS_EXPECTED_AGGREGATE_ROWS = 76_344_667
+MARKET_CORPUS_EXPECTED_AGGREGATE_ROWS = 76_346_103
 MARKET_CORPUS_EXPECTED_ENGINE_DATASETS = 1_122
 MARKET_CORPUS_EXPECTED_ENGINE_VERIFIED_OBJECTS = 1_110
 MARKET_CORPUS_EXPECTED_ENGINE_ATTEMPTS = 1_118
@@ -746,11 +746,17 @@ def verify_market_corpus_release(
         release_target = _run_git(
             root, "rev-parse", f"{release_tag}^{{commit}}"
         ).stdout.strip()
-        if receipt_target != release_target:
+        if receipt_target != release_target and _run_git(
+            root, "merge-base", "--is-ancestor", release_target, receipt_target,
+            check=False,
+        ).returncode:
             raise PublicationGateError(
                 "Market Atlas publication receipt tag does not target the workflow "
-                "SHA or the signed Seiche release"
+                "SHA, the signed Seiche release, or its reviewed descendant"
             )
+        # An independently signed corpus refresh may follow the application.
+        # Every intervening commit still needs the original exact path, signer
+        # and linear-history checks; the new receipt is not a history bypass.
         _verify_generated_content_descendants(
             root,
             release=release_target,

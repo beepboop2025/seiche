@@ -1,5 +1,12 @@
 # Railway recovery execution
 
+After an export resumes collection, the final runtime check may wait up to
+three minutes within the existing aggregate export deadline for a faulted
+snapshot to recover. Each attempt uses the original origin and public health
+validator. The accepted deployment, source and replica must still match the
+pre-export identity. Persistent faults, stale evidence and identity errors
+prevent execution sealing; this wait never repeats the export or upload.
+
 The first reviewed operation, `verify-existing`, downloads the exact immutable
 versions of the recovery successfully exported and attested by GitHub run
 34241275921. It repeats the original filesystem, Palimpsest China and PostgreSQL
