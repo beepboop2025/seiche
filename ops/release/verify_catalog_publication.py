@@ -96,11 +96,21 @@ PUBLICATION_CONTROLLER_PATHS = frozenset(
 PUBLICATION_CONTROLLER_AUTHOR = b"beepboop2025@users.noreply.github.com"
 PUBLICATION_CONTROLLER_SUBJECT = b"publication-controller: "
 
-# The reviewed 0.13.1 recovery repair advanced main without changing application
-# or catalog bytes. Admit only those immutable commits, still checking their
-# owner signatures, linear ancestry, exact paths and regular file modes. This
-# is not a general exception for future operations commits.
+# These reviewed repairs preserve the signed application identity. The corpus
+# refresh has its own independently signed exact receipt. Admit only these
+# immutable commits, checking owner signatures, linear ancestry, exact paths and
+# regular file modes; future operations commits get no general exception.
 REVIEWED_RECOVERY_COMMITS = {
+    "a6d37ddaaaf7fc7f895dfbca4f961ca923a240e1": frozenset(
+        {
+            "backend/tests/test_catalog_publication_gate.py",
+            "deploy/railway-ci/recovery-controller/README.md",
+            "deploy/railway-ci/recovery-controller/recurring.py",
+            "deploy/railway-ci/recovery-controller/test_recurring.py",
+            "frontend/public/.well-known/ai-catalog.json",
+            "ops/release/verify_catalog_publication.py",
+        }
+    ),
     "45297f3c378216042b75cd53f03a46357e782e0f": frozenset(
         {
             "ops/railway-automation/publisher/README.md",
