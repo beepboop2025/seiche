@@ -1816,7 +1816,9 @@ def test_frontend_receipt_accepts_reviewed_editorial_and_market_ci_paths(
     )
 
 
-def test_unchanged_frontend_receipt_can_classify_isolated_recovery_changes(frontend_repo):
+def test_unchanged_frontend_receipt_can_classify_isolated_recovery_changes(
+    frontend_repo,
+):
     root, release, _ = frontend_repo
     relative = "deploy/railway-ci/recovery-bootstrap/verify.py"
     source = _frontend_change(root, {relative: "# reviewed isolated recovery reader\n"})
