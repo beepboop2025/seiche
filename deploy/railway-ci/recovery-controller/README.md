@@ -1,8 +1,10 @@
 # Railway recovery execution
 
 Native continuity probes retain the original 15-second total deadline per
-endpoint. Unanswered connections may use up to three attempts of at most five
-seconds within that deadline. HTTP failures, redirects, TLS errors, malformed
+endpoint. Connection setup has a three-second limit and may be attempted up to
+three times. Each response can use the remaining part of the original deadline;
+an established connection is not abandoned at five seconds. HTTP failures,
+redirects, TLS errors, malformed
 responses and responses arriving after the deadline fail immediately. The
 original continuity failure marker still prevents acceptance. Retry/failure
 diagnostics identify the endpoint, timings and curl status without credentials.

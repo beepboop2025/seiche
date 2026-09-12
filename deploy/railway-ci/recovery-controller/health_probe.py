@@ -14,7 +14,7 @@ import time
 ORIGIN = "https://seiche-stateful-core-production.up.railway.app"
 PUBLIC = "https://api.seiche.info"
 BUDGET = 15.0
-ATTEMPT_BUDGET = 5.0
+CONNECT_TIMEOUT = 3.0
 MAX_ATTEMPTS = 3
 RETRYABLE = frozenset({7, 28, 52, 56})
 
@@ -47,10 +47,9 @@ def probe(url, header=None, *, clock=time.monotonic, run=subprocess.run):
         remaining = deadline - clock()
         if remaining <= 0:
             break
-        allowance = min(ATTEMPT_BUDGET, remaining)
         arguments = ["/usr/bin/curl", "--disable", "--silent", "--proto", "=https",
-                     "--tlsv1.2", "--connect-timeout", str(min(3.0, allowance)),
-                     "--max-time", str(allowance), "--output", "/dev/null", "--write-out", "%{http_code}"]
+                     "--tlsv1.2", "--connect-timeout", str(min(CONNECT_TIMEOUT, remaining)),
+                     "--max-time", str(remaining), "--output", "/dev/null", "--write-out", "%{http_code}"]
         if header is not None:
             arguments += ["--header", "@" + str(header)]
         arguments.append(url + "/api/health")

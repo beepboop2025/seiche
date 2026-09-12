@@ -19,7 +19,8 @@ class ProbeTests(unittest.TestCase):
         def run(arguments, **kwargs):
             elapsed, code, status = responses[len(calls)]
             calls.append((arguments, kwargs))
-            self.assertLessEqual(float(arguments[arguments.index("--max-time") + 1]), 5.0)
+            self.assertEqual(float(arguments[arguments.index("--max-time") + 1]), 15.0 - now[0])
+            self.assertEqual(float(arguments[arguments.index("--connect-timeout") + 1]), min(3.0, 15.0 - now[0]))
             self.assertLessEqual(kwargs["timeout"], 15.0 - now[0])
             now[0] += elapsed
             if code == "timeout":
@@ -33,6 +34,30 @@ class ProbeTests(unittest.TestCase):
         result, calls = self.exercise([(5.0, 28, "000"), (0.4, 0, "200")])
         self.assertEqual(result["status"], "200")
         self.assertEqual(result["elapsed_seconds"], 5.4)
+        self.assertEqual(len(calls), 2)
+
+    def test_healthy_response_can_use_more_than_five_seconds(self):
+        result, calls = self.exercise([(6.5, 0, "200")])
+        self.assertEqual(result["status"], "200")
+        self.assertEqual(result["elapsed_seconds"], 6.5)
+        self.assertEqual(len(calls), 1)
+
+    def test_connection_retry_preserves_time_for_the_response(self):
+        result, calls = self.exercise([(3.0, 28, "000"), (8.0, 0, "200")])
+        self.assertEqual(result["status"], "200")
+        self.assertEqual(result["elapsed_seconds"], 11.0)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][1]["timeout"], 12.0)
+
+    def test_repeated_connection_failures_keep_the_attempt_cap(self):
+        result, calls = self.exercise([(3.0, 28, "000")] * 3)
+        self.assertEqual(result["status"], "000")
+        self.assertEqual(result["elapsed_seconds"], 9.0)
+        self.assertEqual(len(calls), 3)
+
+    def test_response_at_the_deadline_after_connection_retry_is_rejected(self):
+        result, calls = self.exercise([(3.0, 7, "000"), (12.0, 0, "200")])
+        self.assertEqual(result["status"], "000")
         self.assertEqual(len(calls), 2)
 
     def test_repeated_timeouts_exhaust_one_budget_without_extending_it(self):
