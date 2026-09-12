@@ -1,5 +1,18 @@
 # Railway recovery execution
 
+Native continuity probes retain the original 15-second total deadline per
+endpoint. Unanswered connections may use up to three attempts of at most five
+seconds within that deadline. HTTP failures, redirects, TLS errors, malformed
+responses and responses arriving after the deadline fail immediately. The
+original continuity failure marker still prevents acceptance. Retry/failure
+diagnostics identify the endpoint, timings and curl status without credentials.
+The assembler requires the exact original probe commands before substituting
+this transport; upstream workflow drift is rejected.
+
+The existing pinned Python and PostgreSQL image manifests are fetched from
+Docker's ECR Public publisher. Their manifest bytes were verified against the
+same Docker Hub digests; base versions and restore behavior are unchanged.
+
 After an export resumes collection, the final runtime check may wait up to
 three minutes within the existing aggregate export deadline for a faulted
 snapshot to recover. Each attempt uses the original origin and public health

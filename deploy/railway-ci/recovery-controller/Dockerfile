@@ -1,5 +1,5 @@
-FROM python:3.12.12-slim-bookworm@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301 AS python
-FROM postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+FROM public.ecr.aws/docker/library/python:3.12.12-slim-bookworm@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301 AS python
+FROM public.ecr.aws/docker/library/postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
 COPY --from=python /usr/local /usr/local
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git libgomp1 openssh-client openssl procps tini unzip \
@@ -21,7 +21,7 @@ RUN mkdir /controller/native-bin && cp /controller/native_docker.py /controller/
     && if test -f /controller/trusted/ops/railway/retry_read.py; then cp /controller/trusted/ops/railway/retry_read.py /usr/local/bin/railway; chmod 0755 /usr/local/bin/railway; fi \
     && chmod -R u=rwX,go=rX /controller \
     && cd /controller && python -c 'import verify; verify.modules()' \
-    && /usr/bin/tini -s -- python -m unittest -v test_verify test_attest test_recurring
+    && /usr/bin/tini -s -- python -m unittest -v test_verify test_attest test_recurring test_health_probe
 WORKDIR /controller
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["timeout", "--signal=TERM", "--kill-after=30", "5400", "python", "-u", "/controller/verify.py"]

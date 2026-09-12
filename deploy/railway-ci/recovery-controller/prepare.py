@@ -18,7 +18,7 @@ FINGERPRINT = "SHA256:yhoa/PIDMM6M/ZennILp8jtRJy5pArncJRARbQssTMI"
 RECOVERY_HASH = "f10919a2dc77d6a73cff45ecfc00941a7aff529b115a9588474811e185d930a2"
 OFFSITE_HASH = "0c0093b0afcc5c8e7233fdbb6f8e916d3d4600160286e21bfacca1ac86bdda68"
 METADATA = ("activation-receipt.json", "candidate-receipt.json", "shadow-receipt.json", "request.json", "recovery-receipt.json", "offsite-receipt.json")
-FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md", "recurring.py", "attest.py", "test_attest.py", "test_recurring.py")
+FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md", "recurring.py", "attest.py", "test_attest.py", "test_recurring.py", "health_probe.py", "test_health_probe.py")
 
 
 def digest(body):
@@ -48,8 +48,30 @@ def private_download_transport(body):
     return body.replace(header, '--header "@$PRIVATE_TEMP/download-header"')
 
 
+def continuity_transport(body):
+    """Keep the original endpoint, status and deadline gates with bounded retries."""
+    replacements = {
+        r'''origin_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+      --connect-timeout 5 --max-time 15 \
+      --header "@$PRIVATE_TEMP/edge-header" \
+      --output /dev/null --write-out '%{http_code}' \
+      "$RAILWAY_ORIGIN/api/health" || true)''':
+        'origin_status=$(python -I -B /controller/health_probe.py --origin "$RAILWAY_ORIGIN" --header-file "$PRIVATE_TEMP/edge-header" || true)',
+        r'''public_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+      --connect-timeout 5 --max-time 15 \
+      --output /dev/null --write-out '%{http_code}' \
+      'https://api.seiche.info/api/health' || true)''':
+        'public_status=$(python -I -B /controller/health_probe.py --public || true)',
+    }
+    for original, native in replacements.items():
+        if body.count(original) != 1:
+            raise ValueError("original continuity probe transport changed")
+        body = body.replace(original, native)
+    return body
+
+
 def recurring_scripts(document):
-    """Only transport names and private curl-header files differ from original scripts."""
+    """Adapt execution names, private headers and continuity transport only."""
     steps = {step["name"]: step["run"] for step in document["jobs"]["export-recovery"]["steps"] if "run" in step}
     result = {}
     for filename, title in RECURRING_STEPS.items():
@@ -63,6 +85,7 @@ def recurring_scripts(document):
             body = body.replace(header, '--header "@$PRIVATE_TEMP/edge-header"')
         if filename == "export-native.sh":
             body = private_download_transport(body)
+            body = continuity_transport(body)
         if "GITHUB_" in body or "${{" in body:
             raise ValueError("unmapped GitHub execution input in the native recovery body")
         result[filename] = body
