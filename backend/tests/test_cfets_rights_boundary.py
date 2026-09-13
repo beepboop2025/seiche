@@ -1486,3 +1486,29 @@ def test_clean_cny_fx_snapshot_reaches_overview_estuary_static_and_mcp(
     assert mcp_estuary["leaders"]["fx"][-1]["key"] == "CNY"
     for public_projection in (overview.json(), estuary.json(), mcp_estuary):
         assert not assemble._snapshot_contains_restricted_cfets(public_projection)
+
+
+def test_repeated_string_scan_rechecks_mutated_payload():
+    payload = {"observations": [{"source": "FRED", "value": 1.0} for _ in range(600)]}
+    assert not assemble._snapshot_contains_restricted_cfets(payload)
+    payload["observations"][-1]["source"] = "SHIBOR"
+    assert assemble._snapshot_contains_restricted_cfets(payload)
+    payload["observations"][-1]["source"] = "FRED"
+    assert not assemble._snapshot_contains_restricted_cfets(payload)
+
+
+@pytest.mark.parametrize("identity_first", [False, True])
+def test_repeated_string_classification_preserves_semantic_role(identity_first):
+    text = "Policy review of SHIBOR"
+    prose = {"text": text, "count": 1}
+    identity = {"source": text, "value": 2}
+    assert not assemble._snapshot_contains_restricted_cfets(prose)
+    rows = [identity, prose] if identity_first else [prose, identity]
+    assert assemble._snapshot_contains_restricted_cfets({"rows": rows})
+
+
+def test_string_cache_saturation_and_long_identity_do_not_admit_restricted_data():
+    payload = {"rows": [{"source": f"lawful-provider-{index}", "value": 1} for index in range(5000)]}
+    assert not assemble._snapshot_contains_restricted_cfets(payload)
+    payload["rows"].append({"source": "x" * 300 + "SHIBOR", "value": 1})
+    assert assemble._snapshot_contains_restricted_cfets(payload)
