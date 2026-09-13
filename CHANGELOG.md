@@ -11,6 +11,26 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-13
+
+### Fixed
+
+- Avoid repeated source-rights classification during a single snapshot scan.
+  The bounded cache retains full traversal and checks current export permission
+  for every request.
+- Describe a level anomaly as a level when its observed change rounds to zero.
+  Preserve Sonar's observed `last` values in analytical stories while retaining
+  explicit zero values and each observation's date.
+- Preserve the recovery probe's total deadline while allowing healthy responses
+  that take more than five seconds after a bounded connection attempt.
+
+### Changed
+
+- Align software, package and discovery metadata with `0.13.2`. Corpus receipt
+  `r13` records the same evidence generation; dataset values, hashes and original
+  source clocks remain unchanged. Activation and publication require fresh
+  exact-source recovery and distribution proof.
+
 ## [0.13.1] - 2026-09-09
 
 ### Added

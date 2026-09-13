@@ -62,10 +62,15 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.1; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.2; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.13.1 estuary** adds a verified NY Fed historical importer for the
-34 canonical instruments. Archived observations retain unknown publication
+Version **0.13.2 estuary** reduces repeated snapshot rights-classification work,
+keeps zero-change observations out of movement headlines, and preserves Sonar's
+observed values in analytical stories. Its recovery probe retains the original
+total deadline while allowing more of that budget for the response.
+
+The verified NY Fed historical importer covers 34 canonical instruments.
+Archived observations retain unknown publication
 clocks and actual ingestion times, preserve existing live vintages, and remain
 excluded from forecast inputs that require known publication clocks. The
 structured funding, forex and China workbench retains exact source dates, units,
