@@ -26,9 +26,14 @@ RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     && git reset --hard "$RAILWAY_GIT_COMMIT_SHA" && git clean -ffdx \
     && git merge-base --is-ancestor refs/remotes/origin/main HEAD \
     && printf 'RAILWAY_MARKET_SOURCE_ADMITTED source=%s base=%s\n' \
-       "$RAILWAY_GIT_COMMIT_SHA" "$(git rev-parse refs/remotes/origin/main)"
+       "$RAILWAY_GIT_COMMIT_SHA" "$(git rev-parse refs/remotes/origin/main)" > /ci-source-admission \
+    && cat /ci-source-admission
 RUN python -m pip install --no-cache-dir -e './backend[dev,collectors,postgres]' PyYAML==6.0.3 \
     && python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt
-RUN /usr/bin/tini -s -- timeout --signal=TERM --kill-after=30 1500 bash ops/railway-automation/market-contracts/run.sh
+RUN python -m unittest discover -s ops/railway-automation/market-contracts -p test_report.py \
+    && (/usr/bin/tini -s -- timeout --signal=TERM --kill-after=30 1500 bash ops/railway-automation/market-contracts/run.sh > /ci-market.log 2>&1 \
+        || { cat /ci-market.log; exit 1; }) \
+    && cat /ci-market.log \
+    && cat /ci-source-admission
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["python", "-c", "import os; print('RAILWAY_MARKET_CONTRACTS_PASS source='+os.environ.get('RAILWAY_GIT_COMMIT_SHA','unavailable')+' deployment='+os.environ.get('RAILWAY_DEPLOYMENT_ID','unavailable'),flush=True)"]
+CMD ["python", "ops/railway-automation/market-contracts/report.py"]
