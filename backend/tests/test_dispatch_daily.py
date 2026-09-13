@@ -425,7 +425,7 @@ def test_odds_ledger_appends_once(fake_snap, tmp_path):
     write_dispatch(d, repo_root=tmp_path)
     write_dispatch(d, repo_root=tmp_path)   # same-day rebuild must not double-append
     ledger = (tmp_path / "backend" / "seiche" / "dispatches" / "odds_ledger.jsonl").read_text()
-    rows = [json.loads(l) for l in ledger.splitlines()]
+    rows = [json.loads(line) for line in ledger.splitlines()]
     assert len([r for r in rows if r["date"] == "2026-07-10"]) == len(d["odds"])
 
 
@@ -1408,3 +1408,18 @@ def test_tell_paragraph_never_emits_a_malformed_ordinal():
         assert lines, d
         for ln in lines:
             assert lint_letter(ln) == [], (d, ln, lint_letter(ln))
+# A flagged level with no measurable change must not produce a movement claim.
+@pytest.mark.parametrize("change", [0.0, -0.0, 0.001, -0.001])
+def test_zero_at_headline_precision_is_not_reported_as_a_move(change):
+    from seiche.dispatch_daily import _mover_titles
+
+    mover = {
+        "label": "Newly censor-targeted terms", "unit": "terms",
+        "freq": "D", "cadence_d": 1.0, "last": 100.0,
+        "chg_1d": change, "level_z": 3.37, "change_z": None,
+        "max_abs_z": 3.37, "age_d": 1, "asof": "2026-09-12",
+    }
+    titles = _mover_titles(mover, "EROSION", 44.0)
+    assert titles
+    assert all(" moves " not in title for title in titles)
+    assert "a level, not a move" in titles[0]
