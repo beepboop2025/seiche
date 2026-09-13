@@ -1,8 +1,8 @@
 """Bind scheduled recovery executions to the owner-approved image and live provider.
 
-The original installation ID remains historical approval evidence. Railway cron
-creates a new deployment ID; that execution must independently match the exact
-approved image and project/environment/service before its subjects are released.
+The original installation ID remains historical approval evidence. An execution
+under a different deployment ID must independently match the exact approved image
+and project/environment/service before its subjects are released.
 The sealed native executor and its original verifier are unchanged.
 """
 
