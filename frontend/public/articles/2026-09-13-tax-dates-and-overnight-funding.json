@@ -1,0 +1,108 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-09-13-tax-dates-and-overnight-funding",
+  "product": "seiche",
+  "slug": "2026-09-13-tax-dates-and-overnight-funding",
+  "date": "2026-09-13",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "Tax dates approach; overnight funding still shows little strain",
+  "dek": "The board reads 44 out of 100, EROSION; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.1%; plumbing leads market pricing by +20 percentile points.",
+  "canonical_url": "https://seiche.info/articles/2026-09-13-tax-dates-and-overnight-funding/",
+  "published_at": "2026-09-13T01:41:27Z",
+  "evidence_as_of": "2026-09-11",
+  "related_dispatch": "https://seiche.info/dispatches/2026-09-13-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1112,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:45c951cf48e8c9ac6267579a90a7e85c3aabdaa7dd3d2433ff0ae4b22358a8c5",
+    "memory_fingerprint": "sha256:db1fa3707d52317e97fb485372245c4a5cf5e4c568f3c03ee11da99bd075971a",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "deterministic_fallback",
+    "model": null,
+    "passes": 0,
+    "dossier_sha256": "fe6d7ed733c9579a83b41d1000fc08b043cb203d0f9725ad9e602ed46b80818d",
+    "fallback_reason": "editorial model is not configured",
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:45c951cf48e8c9ac6267579a90a7e85c3aabdaa7dd3d2433ff0ae4b22358a8c5",
+      "memory_fingerprint": "sha256:db1fa3707d52317e97fb485372245c4a5cf5e4c568f3c03ee11da99bd075971a",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  },
+  "editorial_review": {
+    "type": "agent_content_review",
+    "reviewer": "Codex",
+    "reviewed_at": "2026-09-13T01:49:22.504507+00:00",
+    "changes": [
+      "Use the dated funding argument instead of a zero-change mover headline",
+      "Copy observed mover values from the retained source rows and preserve their as-of dates",
+      "Attach the exact board snapshot used for the edition",
+      "Clarify the article lede without altering numerical claims"
+    ],
+    "snapshot_url": "https://seiche.info/articles/2026-09-13-overview-evidence.json",
+    "snapshot_sha256": "bdd6f94a7faea1bdb8de53c2aa3d9522a59336760e5d8f11de3dc0d6b8a30cc3",
+    "human_review_claimed": false
+  }
+}

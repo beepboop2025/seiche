@@ -1,0 +1,182 @@
+{
+  "schema": "seiche.analytical-story.v1",
+  "evidence_contract": "lab-evidence-envelope/v1",
+  "id": "seiche:2026-09-13-daily",
+  "product": "seiche",
+  "slug": "2026-09-13-daily",
+  "canonical_url": "https://seiche.info/dispatches/2026-09-13-daily",
+  "headline": "Tax dates approach; overnight funding still shows little strain",
+  "dek": "The board reads 44 out of 100, EROSION; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.1%; plumbing leads market pricing by +20 percentile points. The index is +0.0 against the last published letter.",
+  "beat": "dollar-funding-plumbing",
+  "editorial_class": "full_story",
+  "publication_status": "PUBLISHED",
+  "published_at": "2026-09-13T01:41:27Z",
+  "clocks": {
+    "event_time": "2026-09-12T00:00:00Z",
+    "source_publication_time": null,
+    "knowledge_time": "2026-09-13T01:41:27Z",
+    "publication_time": "2026-09-13T01:41:27Z",
+    "source_publication_status": "NOT_UNIFORMLY_COLLECTED"
+  },
+  "original_contribution": {
+    "kinds": [
+      "fresh_longitudinal_delta",
+      "cross_signal_divergence",
+      "dated_forward_test"
+    ],
+    "statement": "Seiche's contribution is the change against its accrued point-in-time record, its funding-system attribution and the dated test that follows; raw public prints are evidence, not the finished analysis.",
+    "exclusive_fact_claimed": false
+  },
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "claims": [
+    {
+      "evidence_status": "DERIVED",
+      "statement": "Seiche's composite reads 44 in EROSION.",
+      "metric": {
+        "label": "Seiche composite",
+        "value": 44.0,
+        "unit": "index points",
+        "coverage_pct": 100.0
+      },
+      "method_url": "https://seiche.info/methodology"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "The latest retained Newly censor-targeted terms observation is 100.0 terms, dated 2026-09-12. This is related-product context; its one-observation change is zero.",
+      "metric": {
+        "label": "Newly censor-targeted terms",
+        "value": 100.0,
+        "unit": "terms",
+        "robust_z": 3.37,
+        "as_of": "2026-09-12"
+      },
+      "source_url": "https://seiche.info/articles/2026-09-13-overview-evidence.json",
+      "context_only": true,
+      "used_in_score": false
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "The latest retained 4-week T-bill secondary market rate observation is 3.78 %, dated 2026-09-10.",
+      "metric": {
+        "label": "4-week T-bill secondary market rate",
+        "value": 3.78,
+        "unit": "%",
+        "robust_z": 8.09,
+        "as_of": "2026-09-10"
+      },
+      "source_url": "https://seiche.info/articles/2026-09-13-overview-evidence.json"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "The latest retained 3-month T-bill secondary market rate observation is 3.86 %, dated 2026-09-10.",
+      "metric": {
+        "label": "3-month T-bill secondary market rate",
+        "value": 3.86,
+        "unit": "%",
+        "robust_z": 3.37,
+        "as_of": "2026-09-10"
+      },
+      "source_url": "https://seiche.info/articles/2026-09-13-overview-evidence.json"
+    }
+  ],
+  "evidence_braid": {
+    "primary_product": "seiche",
+    "relationships": [
+      {
+        "product": "palimpsest",
+        "relation": "topic-surface-only",
+        "context_only": true,
+        "used_in_score": false,
+        "source_url": "https://palimpsest.info/readings/newsroom-latest.json",
+        "as_of": "2026-09-12",
+        "backtestable": false,
+        "status_note": "ACCRUING — 67/250 daily obs; context only until then (never in the composite, never a model feature)",
+        "readings": [
+          {
+            "signal": "fear",
+            "label": "Deletion-threat (top-term score)",
+            "value": 2.59,
+            "unit": "score",
+            "as_of": "2026-09-12",
+            "observations": 67,
+            "change_vs_prior_10_median": -0.89
+          },
+          {
+            "signal": "n_new",
+            "label": "Newly censor-targeted terms",
+            "value": 100.0,
+            "unit": "terms/day",
+            "as_of": "2026-09-12",
+            "observations": 67,
+            "change_vs_prior_10_median": 2.0
+          },
+          {
+            "signal": "gfi",
+            "label": "Generative Firewall Index",
+            "value": 25.0,
+            "unit": "0-100",
+            "as_of": "2026-08-23",
+            "observations": 46,
+            "change_vs_prior_10_median": 4.0
+          }
+        ]
+      }
+    ],
+    "cross_product_score": null
+  },
+  "countercase": [
+    {
+      "claim": "SOFR is 0.4bp below IORB, a current abundance signal rather than a scarcity print.",
+      "asof": "2026-09-09",
+      "source": "NY Fed secured rates and Federal Reserve IORB"
+    },
+    {
+      "claim": "Standing Repo Facility take-up is $0.00B; the backstop is not being tested in size.",
+      "asof": "2026-09-11",
+      "source": "New York Fed operations"
+    },
+    {
+      "claim": "Market stress sits at only the 35th percentile of its own history.",
+      "asof": "2026-09-10",
+      "source": "VIX, credit spreads and rates volatility"
+    }
+  ],
+  "sealed_call": null,
+  "adjudication": {
+    "status": "NOT_APPLICABLE_TO_THIS_STORY"
+  },
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "claim_fingerprint": "8ab4dee6817e981ca508d8b7fbe77caf1b891d45ffa75044a4c4d639747ca799",
+  "editorial_review": {
+    "type": "agent_content_review",
+    "reviewer": "Codex",
+    "reviewed_at": "2026-09-13T01:49:22.504507+00:00",
+    "changes": [
+      "Use the dated funding argument instead of a zero-change mover headline",
+      "Copy observed mover values from the retained source rows and preserve their as-of dates",
+      "Attach the exact board snapshot used for the edition",
+      "Clarify the article lede without altering numerical claims"
+    ],
+    "snapshot_url": "https://seiche.info/articles/2026-09-13-overview-evidence.json",
+    "snapshot_sha256": "bdd6f94a7faea1bdb8de53c2aa3d9522a59336760e5d8f11de3dc0d6b8a30cc3",
+    "human_review_claimed": false
+  }
+}
