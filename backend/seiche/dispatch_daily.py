@@ -471,11 +471,14 @@ def _mover_titles(m: dict, regime: str, v) -> list[str]:
         # the dollars do not support would be undone by its own paragraph.
         out.append(f"{label} wakes to {qty} {arrival}: "
                    f"{_fmt(absz, 1)} sigma on a near-zero base, not a large flow")
-    czf = _f(cz)
-    if czf is not None and abs(czf) < 1.0:
+    czf, chgf = _f(cz), _f(chg)
+    if (czf is not None and abs(czf) < 1.0) or (
+        chgf is not None and round(chgf, 2) == 0.0
+    ):
         # Flagged on LEVEL alone. Calling that a move is the category error
         # the "what moved" section exists to avoid, so the headline says which
-        # kind of flag it is holding.
+        # kind of flag it is holding. A missing change z-score does not turn
+        # a zero change (at the headline's two-decimal precision) into a move.
         out.append(f"{label} sits at {qty}, {_signed(lz, 1)} sigma from its own median: "
                    "a level, not a move")
     elif _f(chg) is not None:

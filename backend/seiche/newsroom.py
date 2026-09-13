@@ -203,7 +203,10 @@ def build_story(dispatch: dict, snap: dict, *, novel_movers: list[dict] | None =
             "statement": f"A fresh {mover.get('label', 'series')} print entered the mover set.",
             "metric": {
                 "label": mover.get("label"),
-                "value": mover.get("value"),
+                "value": (
+                    mover["value"] if mover.get("value") is not None
+                    else mover.get("last")
+                ),
                 "unit": mover.get("unit"),
                 "robust_z": mover.get("max_abs_z"),
                 "as_of": mover.get("asof"),

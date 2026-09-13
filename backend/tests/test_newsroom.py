@@ -2,6 +2,8 @@
 
 import copy
 
+import pytest
+
 from seiche.newsroom import build_story
 
 
@@ -61,3 +63,27 @@ def test_palimpsest_reading_is_context_only_and_never_scored(fake_snap):
     assert relation["context_only"] is True
     assert relation["used_in_score"] is False
     assert story["evidence_braid"]["cross_product_score"] is None
+
+
+@pytest.mark.parametrize("reading", [0.0, 3.78, 100.0])
+def test_sonar_latest_reading_survives_in_the_structured_claim(fake_snap, reading):
+    mover = {
+        "label": "Retained Sonar observation", "last": reading,
+        "unit": "%", "max_abs_z": 3.37, "asof": "2026-07-10",
+        "flag": True,
+    }
+    story = build_story(_dispatch(), fake_snap, novel_movers=[mover])
+    observed = next(c for c in story["claims"] if c["evidence_status"] == "OBSERVED")
+    assert observed["metric"]["value"] == reading
+    assert observed["metric"]["as_of"] == mover["asof"]
+
+
+def test_explicit_zero_value_is_preserved_when_legacy_last_is_also_present(fake_snap):
+    mover = {
+        "label": "Observed zero", "value": 0.0, "last": 3.78,
+        "unit": "%", "max_abs_z": 3.37, "asof": "2026-07-10",
+        "flag": True,
+    }
+    story = build_story(_dispatch(), fake_snap, novel_movers=[mover])
+    observed = next(c for c in story["claims"] if c["evidence_status"] == "OBSERVED")
+    assert observed["metric"]["value"] == 0.0
