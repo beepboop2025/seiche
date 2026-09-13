@@ -143,6 +143,12 @@ REVIEWED_RECOVERY_COMMITS = {
             "deploy/railway-ci/recovery-controller/test_attest_live.py",
         }
     ),
+    "6819c49afe7b647c6af7870629336e1dac1af52a": frozenset(
+        {
+            "deploy/railway-ci/recovery-controller/ATTESTATION-IDENTITY.md",
+            "deploy/railway-ci/recovery-controller/attest_live.py",
+        }
+    ),
     "ff98e9d1883c7b23afd42c0e44654ba63d1364d3": frozenset(
         {
             "deploy/railway-ci/recovery-controller/README.md",
