@@ -2564,7 +2564,8 @@ def publication_clock(monkeypatch):
         clock.now += seconds
 
     monkeypatch.setattr(
-        site_proof, "time",
+        site_proof,
+        "time",
         SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep),
         raising=False,
     )
@@ -2592,7 +2593,9 @@ def test_frontend_public_probe_waits_for_temporary_asset_propagation(
             raise error
         return (root / relative).read_bytes()
 
-    result = site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+    result = site_proof.verify_public(
+        root, manifest, cache_key="synthetic", fetch=fetch
+    )
     assert result["status"] == "verified"
     assert attempts["assets/new.js"] == 3
     assert publication_clock.sleeps == [1, 2]
@@ -2666,7 +2669,9 @@ def test_frontend_public_probe_recovers_from_temporary_http_failures(
         relative = urlsplit(url).path.lstrip("/") or "index.html"
         return (root / relative).read_bytes()
 
-    result = site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+    result = site_proof.verify_public(
+        root, manifest, cache_key="synthetic", fetch=fetch
+    )
     assert result["status"] == "verified"
     assert publication_clock.sleeps == [1]
 
@@ -2692,7 +2697,9 @@ def test_frontend_public_probe_retries_connection_timeouts_but_not_tls_identity_
         return (root / relative).read_bytes()
 
     if temporary:
-        result = site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+        result = site_proof.verify_public(
+            root, manifest, cache_key="synthetic", fetch=fetch
+        )
         assert result["status"] == "verified"
         assert publication_clock.sleeps == [1]
     else:

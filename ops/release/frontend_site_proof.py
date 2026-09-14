@@ -173,7 +173,9 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ProofError("frontend public verification deadline exceeded")
-            with urllib.request.urlopen(request, timeout=min(20, remaining)) as response:
+            with urllib.request.urlopen(
+                request, timeout=min(20, remaining)
+            ) as response:
                 if urllib.parse.urlsplit(response.url).hostname != "seiche.info":
                     raise ProofError("frontend public probe left its canonical host")
                 body = response.read(16 * 1024 * 1024 + 1)
@@ -211,16 +213,22 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
                     if temporary:
                         error.close()
                 elif isinstance(error, urllib.error.URLError):
-                    temporary = isinstance(error.reason, (TimeoutError, ConnectionError))
+                    temporary = isinstance(
+                        error.reason, (TimeoutError, ConnectionError)
+                    )
                 else:
                     temporary = True
                 if not temporary:
                     raise
                 if retries >= PUBLIC_MAX_RETRIES:
-                    raise ProofError("frontend public temporary retry limit exceeded") from error
-                delay = min(2 ** retries, 8)
+                    raise ProofError(
+                        "frontend public temporary retry limit exceeded"
+                    ) from error
+                delay = min(2**retries, 8)
                 if time.monotonic() + delay >= deadline:
-                    raise ProofError("frontend public verification deadline exceeded") from error
+                    raise ProofError(
+                        "frontend public verification deadline exceeded"
+                    ) from error
                 time.sleep(delay)
                 retries += 1
         if hashlib.sha256(body).hexdigest() != digest:
