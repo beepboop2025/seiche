@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -17,6 +19,9 @@ SCHEMA = "seiche.frontend-site-proof.v1"
 ASSET = re.compile(r"assets/[A-Za-z0-9_.-]+\.(?:js|css|woff2?|ttf|svg|png|webp|jpg)")
 ROOT_CARD = re.compile(r"share/cards/board/home\.([0-9a-f]{16})\.png")
 SAFE_PATH = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+")
+PUBLIC_VERIFY_SECONDS = 60
+PUBLIC_MAX_RETRIES = 5
+TEMPORARY_HTTP_STATUS = frozenset({404, 429, 502, 503, 504})
 
 
 class ProofError(RuntimeError):
@@ -149,6 +154,11 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
         manifest.get("publicFiles"), dict
     ):
         raise ProofError("invalid frontend public manifest")
+    # One budget covers the entire file inventory, including backoff. A fresh
+    # Pages upload may briefly return 404 for a new asset, but a large manifest
+    # must not multiply the retry window or permit a mismatching 200 response.
+    deadline = time.monotonic() + PUBLIC_VERIFY_SECONDS
+    retries = 0
     if fetch is None:
 
         def fetch(url):
@@ -160,7 +170,10 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
                     "User-Agent": "seiche-frontend-publication-proof/1",
                 },
             )
-            with urllib.request.urlopen(request, timeout=20) as response:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ProofError("frontend public verification deadline exceeded")
+            with urllib.request.urlopen(request, timeout=min(20, remaining)) as response:
                 if urllib.parse.urlsplit(response.url).hostname != "seiche.info":
                     raise ProofError("frontend public probe left its canonical host")
                 body = response.read(16 * 1024 * 1024 + 1)
@@ -186,8 +199,34 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
             + "?"
             + urllib.parse.urlencode({"deployment": cache_key})
         )
-        if hashlib.sha256(fetch(url)).hexdigest() != digest:
+        while True:
+            if time.monotonic() >= deadline:
+                raise ProofError("frontend public verification deadline exceeded")
+            try:
+                body = fetch(url)
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if isinstance(error, urllib.error.HTTPError):
+                    temporary = error.code in TEMPORARY_HTTP_STATUS
+                    if temporary:
+                        error.close()
+                elif isinstance(error, urllib.error.URLError):
+                    temporary = isinstance(error.reason, (TimeoutError, ConnectionError))
+                else:
+                    temporary = True
+                if not temporary:
+                    raise
+                if retries >= PUBLIC_MAX_RETRIES:
+                    raise ProofError("frontend public temporary retry limit exceeded") from error
+                delay = min(2 ** retries, 8)
+                if time.monotonic() + delay >= deadline:
+                    raise ProofError("frontend public verification deadline exceeded") from error
+                time.sleep(delay)
+                retries += 1
+        if hashlib.sha256(body).hexdigest() != digest:
             raise ProofError(f"frontend public bytes differ: {relative}")
+        if time.monotonic() >= deadline:
+            raise ProofError("frontend public verification deadline exceeded")
         checked.append(relative)
     return {
         "schema": SCHEMA,
