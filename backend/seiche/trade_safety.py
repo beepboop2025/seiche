@@ -17,6 +17,8 @@ from datetime import UTC, date, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from seiche.sources.publication import publication_freshness
+
 
 RISK_CONTEXT_SCHEMA = "seiche.risk-context.v1"
 RISK_CONTEXT_URL = "https://api.seiche.info/api/trade-safety/risk-context"
@@ -153,6 +155,13 @@ def _staleness(
     for row in rows:
         if row.get("asof") is None:
             counts["unknown"] += 1
+            continue
+        policy = publication_freshness(
+            row.get("source"), row.get("remote_id"), row.get("freq"), row.get("asof"),
+            now=evaluation_at,
+        )
+        if policy is not None:
+            counts[policy["staleness"]] += 1
             continue
         observation_at = _utc(row.get("asof"))
         grace = row.get("freshness_grace_days")

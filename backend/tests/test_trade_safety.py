@@ -395,6 +395,48 @@ def test_cached_fresh_label_without_cadence_is_never_trusted() -> None:
     assert payload["staleness"]["unknown"] == 3
 
 
+@pytest.mark.parametrize(("at", "state"), [
+    ("2026-09-14T20:14:59+00:00", "fresh"),
+    ("2026-09-14T16:15:00-04:00", "aging"),
+    ("2026-09-21T20:15:00+00:00", "stale"),
+])
+def test_h10_cache_recomputes_schedule_without_acquiring_authority(at, state) -> None:
+    snapshot = _snapshot()
+    snapshot["generated_at"] = "2026-09-14T07:00:00Z"
+    # Deliberately stale cached labels/grace/schedule must never choose the policy.
+    snapshot["provenance"] = [{
+        "mnemonic": "INR", "source": "fred", "remote_id": "DEXINUS", "freq": "D",
+        "asof": "2026-09-04", "fetched_at": "2026-09-14T07:00:00Z",
+        "staleness": "fresh", "freshness_grace_days": 99999,
+        "publication_schedule": {"latest_due_at": "2099-01-01T00:00:00Z"},
+    }]
+    before = copy.deepcopy(snapshot)
+    result = trade_safety.project(snapshot, evaluation_at=datetime.fromisoformat(at))
+    assert snapshot == before
+    assert result["status"] == "available"
+    assert result["staleness"][state] == 1
+    assert result["rights_status"] == "metadata_only"
+    assert result["state"] == "context_only"
+    assert result["attestation_state"] == "not_evaluated"
+    for key in (
+        "executable", "executable_quote", "real_money_eligible", "can_authorize_order",
+        "request_time_collection", "request_time_model_fitting", "request_time_network",
+        "request_time_notary", "request_time_broker",
+    ):
+        assert result[key] is False
+    assert result["clocks"]["evidence_as_of"] == "2026-09-04T00:00:00Z"
+    assert result["clocks"]["snapshot_generated_at"] == snapshot["generated_at"]
+
+
+@pytest.mark.parametrize("asof", ["2026-09-15", "NaT"])
+def test_h10_cache_invalid_and_future_dates_do_not_become_fresh(asof) -> None:
+    counts = trade_safety._staleness([
+        {"source": "fred", "remote_id": "DEXINUS", "freq": "D", "asof": asof}
+    ], evaluation_at=datetime(2026, 9, 14, 7, tzinfo=UTC))
+    assert counts["unknown"] == 1
+    assert counts["fresh"] == 0
+
+
 def test_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
     snapshot = _snapshot()
     reads = []

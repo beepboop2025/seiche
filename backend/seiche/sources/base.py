@@ -15,6 +15,7 @@ import pandas as pd
 
 from seiche.config import STALENESS_GRACE_DAYS
 from seiche.domain.observation import Observation, evidence_sha256
+from seiche.sources.publication import publication_freshness
 
 
 @dataclass
@@ -39,6 +40,12 @@ class Series:
         """fresh | aging | stale | dead — measured against expected cadence."""
         if self.points.empty:
             return "dead"
+        policy = publication_freshness(
+            self.source, self.remote_id, self.freq, self.asof,
+            now=datetime.now(timezone.utc),
+        )
+        if policy is not None:
+            return policy["staleness"]
         grace = STALENESS_GRACE_DAYS.get(self.freq, 7)
         age = (datetime.now(timezone.utc).date() - self.points.index[-1].date()).days
         if age <= grace:
@@ -50,9 +57,13 @@ class Series:
         return "dead"
 
     def provenance(self) -> dict:
+        policy = publication_freshness(
+            self.source, self.remote_id, self.freq, self.asof,
+            now=datetime.now(timezone.utc),
+        )
         grace = STALENESS_GRACE_DAYS.get(self.freq, 7)
         age_days = None
-        if self.asof is not None:
+        if self.asof is not None and not pd.isna(self.points.index[-1]):
             age_days = max(
                 0,
                 (datetime.now(timezone.utc).date() - self.points.index[-1].date()).days,
@@ -66,11 +77,12 @@ class Series:
             "freq": self.freq,
             "asof": self.asof,
             "fetched_at": self.fetched_at,
-            "staleness": self.staleness,
+            "staleness": policy["staleness"] if policy is not None else self.staleness,
             "age_days": age_days,
             "freshness_grace_days": grace,
             "freshness_basis": "age of latest observation versus this series' native publication cadence",
             "n_obs": int(len(self.points)),
+            **(policy or {}),
         }
 
     def tail_records(self, n: int = 500) -> list[list]:

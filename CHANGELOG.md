@@ -19,6 +19,11 @@ they change a public contract, methodology, or release artifact.
   record counts. PostgreSQL uses four read connections instead of one set per
   market; source clocks, private snapshot suppression, per-market faults and
   records outside the current market registry retain their existing meanings.
+- Evaluate the explicitly identified FRED H.10 daily FX and dollar-index series
+  against their weekly publication schedule, including Monday federal holidays.
+  Preserve observation/fetch dates and daily frequency; expose scheduled release
+  metadata separately from actual publication evidence. Cached trade-safety
+  context reevaluates this policy without granting execution authority.
 
 ### Changed
 

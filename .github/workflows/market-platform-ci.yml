@@ -72,6 +72,9 @@ jobs:
         run: >-
           umask 0077 &&
           python -m pytest -q
+          backend/tests/test_coverage_batch.py
+          backend/tests/test_h10_publication_cadence.py
+          backend/tests/test_trade_safety.py
           backend/tests/test_market_packs.py
           backend/tests/test_global_money_market_atlas.py
           backend/tests/test_money_market.py
