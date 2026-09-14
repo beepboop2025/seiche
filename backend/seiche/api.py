@@ -2706,9 +2706,26 @@ def agent_room_verify(
 def coverage_v2(response: Response):
     response.headers["Cache-Control"] = "public, max-age=300"
     markets = []
-    for pack in default_registry().list():
+    packs = default_registry().list()
+    repository = get_repository()
+    batch_reader = getattr(repository, "load_latest_market_snapshots", None)
+    latest_by_market = (
+        batch_reader((pack.market_id for pack in packs), "gauge")
+        if callable(batch_reader) else None
+    )
+    # Reuse one collection read when the repository supports batched snapshots.
+    # Keep per-market compatibility for SQLite and small embedded repositories.
+    collector_runs = (
+        repository.latest_collector_runs() if latest_by_market is not None else None
+    )
+    count_reader = getattr(repository, "forward_record_counts", None)
+    counts = count_reader() if callable(count_reader) else None
+    for pack in packs:
         capabilities, missing = _v2_capabilities(pack)
-        latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+        latest = (
+            latest_by_market.get(pack.market_id) if latest_by_market is not None
+            else repository.load_latest_market_snapshot(pack.market_id, "gauge")
+        )
         payload = _public_snapshot_payload(latest) or {}
         latest = latest if payload else None
         public_adapters = _public_adapter_ids(pack)
@@ -2740,10 +2757,11 @@ def coverage_v2(response: Response):
                 ),
                 "event_cutoff": payload.get("event_cutoff"),
                 "knowledge_cutoff": payload.get("knowledge_cutoff"),
-                "faults": payload.get("faults") or _v2_collector_faults(pack),
+                "faults": payload.get("faults") or _v2_collector_faults(pack, runs=collector_runs),
                 "stale_inputs": payload.get("stale_inputs") or [],
-                "forward_validation_records": get_repository().forward_record_count(
-                    pack.market_id
+                "forward_validation_records": (
+                    counts.get(pack.market_id, 0) if counts is not None
+                    else repository.forward_record_count(pack.market_id)
                 ),
                 "connectors": [
                     {
@@ -2757,7 +2775,7 @@ def coverage_v2(response: Response):
                 ],
             }
         )
-    global_snapshot = get_repository().load_latest_market_snapshot("GLOBAL", "tide")
+    global_snapshot = repository.load_latest_market_snapshot("GLOBAL", "tide")
     global_payload = _public_snapshot_payload(global_snapshot)
     global_snapshot = global_snapshot if global_payload is not None else None
     return {
@@ -2779,7 +2797,9 @@ def coverage_v2(response: Response):
             if global_payload
             else None
         ),
-        "forward_validation_records": get_repository().forward_record_count(),
+        "forward_validation_records": (
+            sum(counts.values()) if counts is not None else repository.forward_record_count()
+        ),
     }
 
 

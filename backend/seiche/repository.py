@@ -1961,6 +1961,17 @@ class PostgresMarketRepository:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    def forward_record_counts(self) -> dict[str, int]:
+        """Count every market in one read, including markets outside the registry."""
+
+        self._ensure_schema()
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT market_id, COUNT(*) FROM forward_validation_records "
+                "GROUP BY market_id"
+            ).fetchall()
+        return {market: int(count) for market, count in rows}
+
 
 @lru_cache(maxsize=1)
 def get_repository() -> MarketRepository:

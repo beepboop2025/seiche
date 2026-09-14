@@ -62,12 +62,12 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.2; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.3; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.13.2 estuary** reduces repeated snapshot rights-classification work,
-keeps zero-change observations out of movement headlines, and preserves Sonar's
-observed values in analytical stories. Its recovery probe retains the original
-total deadline while allowing more of that budget for the response.
+Version **0.13.3 estuary** batches coverage reads to reduce database connection
+overhead. Sealed source clocks, unavailable and restricted states, per-market
+faults and historical record counts retain their existing meanings. Deployment
+and immutable package publication remain subject to the signed release gates.
 
 The verified NY Fed historical importer covers 34 canonical instruments.
 Archived observations retain unknown publication

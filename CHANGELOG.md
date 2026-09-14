@@ -11,6 +11,22 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-09-14
+
+### Fixed
+
+- Batch the coverage endpoint's sealed snapshots, collector states and historical
+  record counts. PostgreSQL uses four read connections instead of one set per
+  market; source clocks, private snapshot suppression, per-market faults and
+  records outside the current market registry retain their existing meanings.
+
+### Changed
+
+- Prepare software, package and discovery metadata for `0.13.3`. The independent
+  corpus receipt and direct-OFR observations, source identities and clocks stay
+  unchanged. Dataset documentation follows the software tag. Activation and
+  publication require fresh exact-source recovery and distribution proof.
+
 ## [0.13.2] - 2026-09-13
 
 ### Fixed
