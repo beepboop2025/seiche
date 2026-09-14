@@ -2553,6 +2553,221 @@ def test_frontend_site_retains_recovery_and_proves_exact_public_bytes(frontend_s
         )
 
 
+@pytest.fixture
+def publication_clock(monkeypatch):
+    from types import SimpleNamespace
+
+    clock = SimpleNamespace(now=0.0, sleeps=[])
+
+    def sleep(seconds):
+        clock.sleeps.append(seconds)
+        clock.now += seconds
+
+    monkeypatch.setattr(
+        site_proof,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep),
+        raising=False,
+    )
+    return clock
+
+
+def test_frontend_public_probe_waits_for_temporary_asset_propagation(
+    frontend_site, publication_clock
+):
+    import io
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    attempts = {}
+    failed_responses = []
+
+    def fetch(url):
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        attempts[relative] = attempts.get(relative, 0) + 1
+        if relative == "assets/new.js" and attempts[relative] < 3:
+            error = HTTPError(url, 404, "not propagated", {}, io.BytesIO(b"not ready"))
+            failed_responses.append(error)
+            raise error
+        return (root / relative).read_bytes()
+
+    result = site_proof.verify_public(
+        root, manifest, cache_key="synthetic", fetch=fetch
+    )
+    assert result["status"] == "verified"
+    assert attempts["assets/new.js"] == 3
+    assert publication_clock.sleeps == [1, 2]
+    assert all(error.closed for error in failed_responses)
+    assert set(result["paths"]) == set(manifest["publicFiles"])
+
+
+def test_frontend_public_probe_shares_one_deadline_across_all_paths(
+    frontend_site, publication_clock
+):
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    attempts = []
+
+    def fetch(url):
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        attempts.append(relative)
+        if len(attempts) == 1:
+            publication_clock.now = 59
+            return (root / relative).read_bytes()
+        raise HTTPError(url, 404, "still absent", {}, None)
+
+    with pytest.raises(site_proof.ProofError, match="verification deadline"):
+        site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+    assert len(attempts) == 2
+    assert not publication_clock.sleeps
+
+
+def test_frontend_public_probe_shares_retry_count_across_all_paths(
+    frontend_site, publication_clock
+):
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    calls = []
+
+    def fetch(url):
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        calls.append(relative)
+        if len(calls) == 3:
+            return (root / relative).read_bytes()
+        raise HTTPError(url, 404, "not propagated", {}, None)
+
+    with pytest.raises(site_proof.ProofError, match="temporary retry limit"):
+        site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+    assert len(calls) == 7
+    assert len(set(calls)) == 2
+    assert publication_clock.sleeps == [1, 2, 4, 8, 8]
+
+
+@pytest.mark.parametrize("status", [429, 502, 503, 504])
+def test_frontend_public_probe_recovers_from_temporary_http_failures(
+    frontend_site, publication_clock, status
+):
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if len(calls) == 1:
+            raise HTTPError(url, status, "temporary failure", {}, None)
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        return (root / relative).read_bytes()
+
+    result = site_proof.verify_public(
+        root, manifest, cache_key="synthetic", fetch=fetch
+    )
+    assert result["status"] == "verified"
+    assert publication_clock.sleeps == [1]
+
+
+@pytest.mark.parametrize("temporary", [True, False])
+def test_frontend_public_probe_retries_connection_timeouts_but_not_tls_identity_errors(
+    frontend_site, publication_clock, temporary
+):
+    import ssl
+    from urllib.error import URLError
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if len(calls) == 1:
+            reason = TimeoutError() if temporary else ssl.SSLCertVerificationError()
+            raise URLError(reason)
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        return (root / relative).read_bytes()
+
+    if temporary:
+        result = site_proof.verify_public(
+            root, manifest, cache_key="synthetic", fetch=fetch
+        )
+        assert result["status"] == "verified"
+        assert publication_clock.sleeps == [1]
+    else:
+        with pytest.raises(URLError):
+            site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+        assert len(calls) == 1
+        assert not publication_clock.sleeps
+
+
+@pytest.mark.parametrize("status", [401, 403, 410])
+def test_frontend_public_probe_does_not_retry_permanent_http_failures(
+    frontend_site, publication_clock, status
+):
+    from urllib.error import HTTPError
+
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        raise HTTPError(url, status, "permanent failure", {}, None)
+
+    with pytest.raises(HTTPError):
+        site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+    assert len(calls) == 1
+    assert not publication_clock.sleeps
+
+
+def test_frontend_public_probe_never_retries_a_successful_wrong_body(
+    frontend_site, publication_clock
+):
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        return b"incorrect immutable bytes"
+
+    with pytest.raises(site_proof.ProofError, match="public bytes differ"):
+        site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)
+    assert len(calls) == 1
+    assert not publication_clock.sleeps
+
+
+def test_frontend_public_probe_limits_default_request_timeout_to_remaining_budget(
+    frontend_site, publication_clock, monkeypatch
+):
+    from urllib.error import HTTPError
+
+    root, before = frontend_site
+    manifest = site_proof.seal(root, before, source_sha="a" * 40)
+    timeouts = []
+
+    def urlopen(request, *, timeout):
+        timeouts.append(timeout)
+        publication_clock.now += timeout
+        raise HTTPError(request.full_url, 503, "temporarily unavailable", {}, None)
+
+    monkeypatch.setattr(site_proof.urllib.request, "urlopen", urlopen)
+    with pytest.raises(site_proof.ProofError, match="verification deadline"):
+        site_proof.verify_public(root, manifest, cache_key="synthetic")
+    assert timeouts == [20, 20, 17]
+    assert publication_clock.sleeps == [1, 2]
+    assert publication_clock.now == 60
+
+
 @pytest.mark.parametrize(
     "relative",
     [
