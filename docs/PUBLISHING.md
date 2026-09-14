@@ -102,17 +102,19 @@ below remains required for runtime, package, catalog or data-contract changes.
    been verified against that deployment, create the catalog-declared receipt
    tag on that exact commit. This receipt is independent of the corpus version
    tag: it binds the current catalog bytes and live release evidence to the
-   workflow SHA. The `r11` receipt does not change corpus version
+   workflow SHA. The `r14` receipt does not change corpus version
    `1.0.0`, its release ID, counts or content hashes. Never move or reuse an
    existing receipt tag.
+   Keep the previous `r13` receipt on its original 0.13.2 source; `r14` binds
+   this new application source to the same independently versioned corpus.
    ```bash
    release_sha="$(git rev-parse HEAD)"
    test "$release_sha" = "$(git rev-parse origin/main)"
-   receipt_tag=market-corpus-receipt-corpus-7cb1695c6affa707-r11
+   receipt_tag=market-corpus-receipt-corpus-7cb1695c6affa707-r14
    test "$(jq -r '.entries[] | select(.identifier == "urn:air:seiche.info:mcp:market-corpus") | .metadata.publicationReceipt | fromjson | .tag' frontend/public/.well-known/ai-catalog.json)" = "$receipt_tag"
    ! git rev-parse --verify --quiet "refs/tags/$receipt_tag"
    ! git ls-remote --exit-code --tags origin "refs/tags/$receipt_tag"
-   git tag -s -m "Seiche exact-SHA market corpus receipt r11" \
+   git tag -s -m "Seiche exact-SHA market corpus receipt r14" \
      "$receipt_tag" "$release_sha"
    git -c gpg.format=ssh \
      -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \

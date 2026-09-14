@@ -299,7 +299,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
 
     assert receipt == {
         "schemaVersion": "1.0.0",
-        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r13",
+        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r14",
         "releaseId": "corpus-7cb1695c6affa707",
         "indexSha256": (
             "29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36"
@@ -327,6 +327,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
     ("field", "value"),
     [
         ("tag", "market-corpus-receipt-corpus-0000000000000000"),
+        ("tag", "market-corpus-receipt-corpus-7cb1695c6affa707-r13"),
         ("bisBulkFlat", 1),
         ("bisApiOnly", 0),
         ("engineAttempts", 999),
@@ -379,7 +380,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         expected_sha=expected_sha,
         signer_fingerprint="SHA256:" + "A" * 43,
     )
-    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r13"
+    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r14"
     assert gate._market_corpus_publication_receipt(entry)["releaseId"] == (
         "corpus-7cb1695c6affa707"
     )
