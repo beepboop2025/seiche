@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
 import json
@@ -23,7 +24,7 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
 
-def _receipts(version: str = "0.13.3"):
+def _receipts(version: str = "0.13.4"):
     wheel_url = f"https://files.pythonhosted.org/packages/seiche-{version}.whl"
     sdist_url = f"https://files.pythonhosted.org/packages/seiche-{version}.tar.gz"
     bodies = {wheel_url: b"canonical wheel", sdist_url: b"canonical sdist"}
@@ -77,7 +78,7 @@ def _verify(pypi, health, discovery, bodies):
         return bodies[url]
 
     return gate.verify_public_receipts(
-        "0.13.3", fetch_json=fetch_json, fetch_bytes=fetch_bytes
+        "0.13.4", fetch_json=fetch_json, fetch_bytes=fetch_bytes
     )
 
 
@@ -88,6 +89,42 @@ def _market_entry():
         for entry in catalog["entries"]
         if entry["identifier"] == gate.MARKET_CORPUS_ENTRY
     )
+
+
+def _bind_materialization(health, catalog, row_count, *, age=timedelta(0)):
+    signed = gate._market_corpus_publication_receipt(_market_entry())
+    rows = [
+        {
+            "flow_id": flow_id,
+            "capture_id": index + 1,
+            "row_count": row_count - len(gate.MARKET_CORPUS_BULK_FLOW_IDS) + 1
+            if index == 0
+            else 1,
+            "normalized_sha256": "c" * 64,
+            "manifest_sha256": "d" * 64,
+        }
+        for index, flow_id in enumerate(gate.MARKET_CORPUS_BULK_FLOW_IDS)
+    ]
+    proof = {
+        "schema": "liquilens-bis-live-materialization-v1",
+        "scope": "live_materialization",
+        "release_id": signed["releaseId"],
+        "inventory_sha256": signed["inventorySha256"],
+        "receipt_sha256": health["checks"]["deep"]["bis_all_flow_receipt"]["sha256"],
+        "generated_at": (datetime.now(timezone.utc) - age)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "expected_flow_ids": list(gate.MARKET_CORPUS_BULK_FLOW_IDS),
+        "expected_count": signed["bisBulkFlat"],
+        "materialized_count": signed["bisBulkFlat"],
+        "error_count": 0,
+        "aggregate_row_count": row_count,
+        "flows": rows,
+    }
+    proof["sha256"] = hashlib.sha256(gate._json_identity(proof)).hexdigest()
+    health["checks"]["deep"]["bis_all_flow_receipt"]["aggregate_row_count"] = row_count
+    health["checks"]["deep"]["bis_materialization"] = proof
+    catalog["corpora"]["bis"]["materialization"] = copy.deepcopy(proof)
 
 
 def _market_receipts():
@@ -169,6 +206,7 @@ def _market_receipts():
         "id": "market-corpus-publication-proof",
         "result": {"tools": [{"name": name} for name in gate.MARKET_CORPUS_TOOLS]},
     }
+    _bind_materialization(health, catalog, signed["bisAggregateRows"])
     return health, catalog, discovery, tools
 
 
@@ -195,7 +233,7 @@ def _verify_market(health, catalog, discovery, tools, *, entry=None):
 def test_local_catalog_release_identity_is_internally_exact():
     version, entry = gate.verify_local_identity(ROOT)
 
-    assert version == "0.13.3"
+    assert version == "0.13.4"
     assert len(entry["capabilities"]) == 14
     assert "trade_safety_risk_context" in entry["capabilities"]
     assert entry["prompts"] == [
@@ -299,7 +337,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
 
     assert receipt == {
         "schemaVersion": "1.0.0",
-        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r14",
+        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r15",
         "releaseId": "corpus-7cb1695c6affa707",
         "indexSha256": (
             "29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36"
@@ -380,7 +418,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         expected_sha=expected_sha,
         signer_fingerprint="SHA256:" + "A" * 43,
     )
-    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r14"
+    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r15"
     assert gate._market_corpus_publication_receipt(entry)["releaseId"] == (
         "corpus-7cb1695c6affa707"
     )
@@ -391,7 +429,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
 
     monkeypatch.setattr(gate, "_verify_annotated_signed_tag", stale_receipt_tag)
     monkeypatch.setattr(
-        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.13.3"
+        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.13.4"
     )
     monkeypatch.setattr(
         gate,
@@ -426,7 +464,7 @@ def test_independent_corpus_receipt_retains_complete_application_history_checks(
             application if kwargs["tag"] == "market-corpus-v1.0.0" else receipt
         ),
     )
-    monkeypatch.setattr(gate, "verify_signed_release", lambda *_a, **_k: "v0.13.3")
+    monkeypatch.setattr(gate, "verify_signed_release", lambda *_a, **_k: "v0.13.4")
     queries = []
 
     def git(_root, *args, **kwargs):
@@ -520,7 +558,7 @@ def _sign_content_release(root, *, receipt=True):
     _content_git(root, "config", "user.signingkey", str(key))
     _content_git(root, "add", ".")
     _content_git(root, "commit", "-q", "--amend", "--no-edit", "-S")
-    tags = ["v0.13.3", "market-corpus-v1.0.0"]
+    tags = ["v0.13.4", "market-corpus-v1.0.0"]
     if receipt:
         tags.append(gate._market_corpus_publication_receipt(_market_entry())["tag"])
     for tag in tags:
@@ -580,9 +618,9 @@ def test_fresh_exact_head_corpus_receipt_keeps_existing_independent_release_path
     _content_git(root, "tag", "-s", "-m", "fresh exact-head receipt", tag)
     assert (
         gate.verify_signed_release(
-            root, version="0.13.3", expected_sha=head, signer_fingerprint=fingerprint
+            root, version="0.13.4", expected_sha=head, signer_fingerprint=fingerprint
         )
-        == "v0.13.3"
+        == "v0.13.4"
     )
     assert (
         gate.verify_market_corpus_release(
@@ -617,7 +655,7 @@ def test_generated_content_rejects_even_reverted_release_or_code_drift(
     head = _content_commit(root, {}, subject="week ahead: reverted drift")
     # The old endpoint-only release identity comparison still passes.
     gate.verify_signed_release(
-        root, version="0.13.3", expected_sha=head, signer_fingerprint=fingerprint
+        root, version="0.13.4", expected_sha=head, signer_fingerprint=fingerprint
     )
     with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
         gate.verify_market_corpus_release(
@@ -838,17 +876,17 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
         assert (
             gate.verify_signed_release(
                 root,
-                version="0.13.3",
+                version="0.13.4",
                 expected_sha=head,
                 signer_fingerprint=fingerprint,
             )
-            == "v0.13.3"
+            == "v0.13.4"
         )
         receipt, _ = gate.verify_market_corpus_release(
             root, expected_sha=head, signer_fingerprint=fingerprint
         )
         assert _content_git(root, "rev-parse", f"{receipt}^{{commit}}") == release
-        assert _content_git(root, "rev-parse", "v0.13.3^{commit}") == release
+        assert _content_git(root, "rev-parse", "v0.13.4^{commit}") == release
         _content_git(root, "checkout", "-q", "--detach", current)
     # Exercise the real CLI identity output; public network receipt collection
     # is a separate concern and is intentionally stubbed in this offline test.
@@ -871,7 +909,7 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
     assert report["revision"] == head
     assert report["releaseRevision"] == release
     assert report["releaseRevision"] != report["revision"]
-    assert report["releaseTag"] == "v0.13.3"
+    assert report["releaseTag"] == "v0.13.4"
 
 
 @pytest.mark.parametrize("failure", ["unsigned", "wrong-key", "missing-pin"])
@@ -1186,7 +1224,7 @@ def test_market_corpus_real_schema_separates_dataset_and_verified_counts():
         ("coordinated_engine_attempts", "not deeply healthy"),
         ("coordinated_engine_recovered", "not deeply healthy"),
         ("coordinated_flow_total", "not deeply healthy"),
-        ("aggregate_rows", "not deeply healthy"),
+        ("aggregate_rows", "runtime materialization"),
         ("bis_taxonomy", "catalog differs"),
         ("catalog_release", "catalog differs"),
         ("engine_index", "catalog differs"),
@@ -1326,10 +1364,10 @@ def test_local_identity_rejects_an_unsafe_package_readme(tmp_path, unsafe_readme
 def test_public_receipts_require_both_exact_pypi_bodies_and_live_runtime():
     receipt = _verify(*_receipts())
 
-    assert receipt["version"] == "0.13.3"
+    assert receipt["version"] == "0.13.4"
     assert [item["filename"] for item in receipt["artifacts"]] == [
-        "seiche-0.13.3-py3-none-any.whl",
-        "seiche-0.13.3.tar.gz",
+        "seiche-0.13.4-py3-none-any.whl",
+        "seiche-0.13.4.tar.gz",
     ]
 
 
@@ -1508,14 +1546,14 @@ def test_signed_release_gate_rejects_malformed_external_pins_before_git_use():
     with pytest.raises(gate.PublicationGateError, match="SHA is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.13.3",
+            version="0.13.4",
             expected_sha="main",
             signer_fingerprint="SHA256:" + "A" * 43,
         )
     with pytest.raises(gate.PublicationGateError, match="fingerprint is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.13.3",
+            version="0.13.4",
             expected_sha="a" * 40,
             signer_fingerprint="untrusted",
         )
@@ -2240,12 +2278,12 @@ def test_frontend_runtime_subject_remains_the_actual_backend_receipt(mutation):
     }
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.13.3",
+        version="0.13.4",
         corpus_release_id="corpus-" + "c" * 16,
         request=lambda _request: (b'{"ok":true}', headers),
     )
     assert observed.fetch_json(
-        "https://api.seiche.info/api/health?release=0.13.3",
+        "https://api.seiche.info/api/health?release=0.13.4",
         expected_host="api.seiche.info",
     ) == {"ok": True}
     if mutation == "same-version-different-source":
@@ -2299,7 +2337,7 @@ def test_frontend_corpus_subject_uses_only_its_signed_native_release(mutation):
     headers = {"X-Corpus-Release": release_id}
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.13.3",
+        version="0.13.4",
         corpus_release_id=release_id,
         request=lambda _request: (b'{"ok":true}', headers),
     )
@@ -2369,7 +2407,7 @@ def test_frontend_runtime_route_classification_rejects_unregistered_requests(
     requests = []
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.13.3",
+        version="0.13.4",
         corpus_release_id="corpus-" + "c" * 16,
         request=lambda request: requests.append(request),
     )
@@ -2388,7 +2426,7 @@ def test_frontend_corpus_post_cannot_turn_into_an_arbitrary_tool_call(payload):
     requests = []
     observed = front.RuntimeReceipts(
         "b" * 40,
-        version="0.13.3",
+        version="0.13.4",
         corpus_release_id="corpus-" + "c" * 16,
         request=lambda request: requests.append(request),
     )
@@ -2422,8 +2460,8 @@ def test_frontend_independent_subjects_preserve_all_original_semantic_gates(
     elif mutation == "pypi-body":
         bodies[next(iter(bodies))] = b"tampered immutable package"
     responses = {
-        "https://api.seiche.info/api/health?release=0.13.3": (health, seiche_headers),
-        "https://api.seiche.info/.well-known/mcp.json?release=0.13.3": (
+        "https://api.seiche.info/api/health?release=0.13.4": (health, seiche_headers),
+        "https://api.seiche.info/.well-known/mcp.json?release=0.13.4": (
             discovery,
             seiche_headers,
         ),
@@ -2444,13 +2482,13 @@ def test_frontend_independent_subjects_preserve_all_original_semantic_gates(
         return json.dumps(body).encode(), headers
 
     observed = front.RuntimeReceipts(
-        "b" * 40, version="0.13.3", corpus_release_id=release_id, request=request
+        "b" * 40, version="0.13.4", corpus_release_id=release_id, request=request
     )
     monkeypatch.setattr(front.gate, "_fetch_json", lambda _url, **_kwargs: pypi)
 
     def verify():
         front.gate.verify_public_receipts(
-            "0.13.3",
+            "0.13.4",
             fetch_json=observed.fetch_json,
             fetch_bytes=lambda url, **_kwargs: bodies[url],
         )
@@ -2838,3 +2876,97 @@ def test_frontend_workflow_retains_subject_archive_recovery_and_compare_and_swap
     assert workflow.index(
         "Deploy static fast path to Cloudflare Pages"
     ) < workflow.index("frontend_site_proof.py public")
+
+
+@pytest.mark.parametrize("extra_rows", [0, 148_005])
+def test_live_bis_materialization_preserves_signed_baseline_and_accepts_verified_growth(
+    extra_rows,
+):
+    health, catalog, discovery, tools = _market_receipts()
+    original_entry = copy.deepcopy(_market_entry())
+    signed = gate._market_corpus_publication_receipt(original_entry)
+    _bind_materialization(health, catalog, signed["bisAggregateRows"] + extra_rows)
+    result = _verify_market(health, catalog, discovery, tools)
+    assert result["baselineBisRows"] == signed["bisAggregateRows"]
+    assert result["baselineReceiptTag"] == signed["tag"]
+    assert result["bisRows"] == signed["bisAggregateRows"] + extra_rows
+    assert result["bisRowsScope"] == "live_materialization"
+    assert (
+        result["liveMaterializationSha256"]
+        == catalog["corpora"]["bis"]["materialization"]["sha256"]
+    )
+    assert _market_entry() == original_entry
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "catalog_missing",
+        "hash",
+        "catalog_hash",
+        "receipt_hash",
+        "inventory",
+        "flow_membership",
+        "flow_duplicate",
+        "flow_hash",
+        "flow_boolean_count",
+        "sum",
+        "regression",
+        "stale",
+        "future",
+        "invalid_clock",
+        "generation_mismatch",
+    ],
+)
+def test_live_bis_materialization_rejects_unbound_or_invalid_census(mutation):
+    health, catalog, discovery, tools = _market_receipts()
+    proof = health["checks"]["deep"]["bis_materialization"]
+    if mutation == "missing":
+        del health["checks"]["deep"]["bis_materialization"]
+    elif mutation == "catalog_missing":
+        del catalog["corpora"]["bis"]["materialization"]
+    elif mutation == "hash":
+        proof["sha256"] = "f" * 64
+    elif mutation == "catalog_hash":
+        catalog["corpora"]["bis"]["materialization"]["sha256"] = "f" * 64
+    elif mutation == "regression":
+        _bind_materialization(health, catalog, proof["aggregate_row_count"] - 1)
+    elif mutation in {"stale", "future"}:
+        _bind_materialization(
+            health,
+            catalog,
+            proof["aggregate_row_count"],
+            age=timedelta(hours=49 if mutation == "stale" else -1),
+        )
+    elif mutation == "generation_mismatch":
+        catalog["corpora"]["bis"]["materialization"]["generated_at"] = (
+            "2020-01-01T00:00:00Z"
+        )
+    else:
+        if mutation == "receipt_hash":
+            proof["receipt_sha256"] = "f" * 64
+        elif mutation == "inventory":
+            proof["inventory_sha256"] = "f" * 64
+        elif mutation == "flow_membership":
+            proof["flows"][0]["flow_id"] = "WS_FOREIGN"
+        elif mutation == "flow_duplicate":
+            proof["flows"][1] = copy.deepcopy(proof["flows"][0])
+        elif mutation == "flow_hash":
+            proof["flows"][0]["manifest_sha256"] = "not-a-hash"
+        elif mutation == "flow_boolean_count":
+            proof["flows"][1]["row_count"] = True
+        elif mutation == "sum":
+            proof["flows"][0]["row_count"] += 1
+        elif mutation == "invalid_clock":
+            proof["generated_at"] = "2026-09-15T17:00:00"
+        proof["sha256"] = hashlib.sha256(
+            gate._json_identity(
+                {key: value for key, value in proof.items() if key != "sha256"}
+            )
+        ).hexdigest()
+        catalog["corpora"]["bis"]["materialization"] = copy.deepcopy(proof)
+    with pytest.raises(
+        gate.PublicationGateError, match="Market Atlas runtime materialization"
+    ):
+        _verify_market(health, catalog, discovery, tools)

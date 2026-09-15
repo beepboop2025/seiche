@@ -12,6 +12,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import AUCTIONS_START, FISCAL_TTL_MIN, TGA_START, USER_AGENT
 from seiche.sources.base import SourceFault, utcnow_iso
 
@@ -39,7 +40,7 @@ async def _get_all_pages(client: httpx.AsyncClient, path: str, params: dict, max
 async def fetch_tga_daily(client: httpx.AsyncClient, start: str = TGA_START) -> dict:
     """Daily TGA opening balance, $B."""
     key = "fiscal_tga_daily"
-    cached = store.load_blob(key, FISCAL_TTL_MIN)
+    cached = await run_store(store.load_blob, key, FISCAL_TTL_MIN)
     if cached is None:
         try:
             # Pre-2021 the DTS labels the TGA row "Federal Reserve Account"
@@ -55,9 +56,9 @@ async def fetch_tga_daily(client: httpx.AsyncClient, start: str = TGA_START) -> 
                 },
             )
             cached = {"fetched_at": utcnow_iso(), "rows": rows}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("fiscaldata", f"TGA: {exc}") from exc
     df = pd.DataFrame(cached["rows"])
@@ -86,7 +87,7 @@ async def fetch_tga_daily(client: httpx.AsyncClient, start: str = TGA_START) -> 
 async def fetch_auctions(client: httpx.AsyncClient, start: str = AUCTIONS_START) -> dict:
     """Historical auction results for notes/bonds/bills with allocation detail."""
     key = "fiscal_auctions"
-    cached = store.load_blob(key, FISCAL_TTL_MIN)
+    cached = await run_store(store.load_blob, key, FISCAL_TTL_MIN)
     if cached is None:
         try:
             rows = await _get_all_pages(
@@ -105,9 +106,9 @@ async def fetch_auctions(client: httpx.AsyncClient, start: str = AUCTIONS_START)
                 },
             )
             cached = {"fetched_at": utcnow_iso(), "rows": rows}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("fiscaldata", f"auctions: {exc}") from exc
     df = pd.DataFrame(cached["rows"])
@@ -116,16 +117,16 @@ async def fetch_auctions(client: httpx.AsyncClient, start: str = AUCTIONS_START)
 
 async def fetch_upcoming_auctions(client: httpx.AsyncClient) -> dict:
     key = "fiscal_upcoming"
-    cached = store.load_blob(key, FISCAL_TTL_MIN)
+    cached = await run_store(store.load_blob, key, FISCAL_TTL_MIN)
     if cached is None:
         try:
             rows = await _get_all_pages(
                 client, "/v1/accounting/od/upcoming_auctions", {"sort": "issue_date"}, max_pages=2
             )
             cached = {"fetched_at": utcnow_iso(), "rows": rows}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("fiscaldata", f"upcoming auctions: {exc}") from exc
     df = pd.DataFrame(cached["rows"])

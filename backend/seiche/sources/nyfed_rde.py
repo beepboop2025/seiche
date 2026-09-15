@@ -19,6 +19,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import USER_AGENT
 from seiche.sources.base import SourceFault, utcnow_iso
 
@@ -93,7 +94,7 @@ def _from_rows(rows: list[list]) -> pd.DataFrame:
 async def fetch_rde(client: httpx.AsyncClient) -> dict:
     """NY Fed RDE estimates as {'fetched_at': iso, 'rde': DataFrame}."""
     key = "nyfed_rde"
-    cached = store.load_blob(key, RDE_TTL_MIN)
+    cached = await run_store(store.load_blob, key, RDE_TTL_MIN)
     if cached is None:
         try:
             r = await client.get(
@@ -110,9 +111,9 @@ async def fetch_rde(client: httpx.AsyncClient) -> dict:
             if df.empty:
                 raise ValueError("RDE file parsed to zero rows")
             cached = {"fetched_at": utcnow_iso(), "rows": _to_rows(df)}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:  # serve stale on failure, fail-loud via staleness
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("nyfed_rde", f"{type(exc).__name__}: {exc}") from exc
     return {"fetched_at": cached["fetched_at"], "rde": _from_rows(cached["rows"])}

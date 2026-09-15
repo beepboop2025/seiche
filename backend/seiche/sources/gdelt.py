@@ -33,6 +33,7 @@ import re
 import httpx
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import (
     GDELT_CALL_SPACING_S,
     GDELT_FAIL_COOLDOWN_MIN,
@@ -304,13 +305,13 @@ async def _refresh_web_once() -> tuple[dict, str | None]:
     the shared refresh.  The optional string is a user-visible source fault;
     a recent last-known-good observation deliberately returns no top fault.
     """
-    history = _load_web_history()
+    history = await run_store(_load_web_history)
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
             sample = await _fetch_web_sample(client)
     except Exception as exc:  # noqa: BLE001 — source failures stay explicit
         detail = f"WEB-NGRAM {type(exc).__name__}: {exc}"
-        store.save_blob(WEB_COOLDOWN_KEY, {"at": utcnow_iso(), "detail": detail})
+        await run_store(store.save_blob, WEB_COOLDOWN_KEY, {"at": utcnow_iso(), "detail": detail})
         age_h = _history_age_hours(history)
         if age_h is not None and age_h <= GDELT_WEB_MAX_STALE_H:
             return _web_blob(
@@ -320,9 +321,9 @@ async def _refresh_web_once() -> tuple[dict, str | None]:
             ), None
         return _web_blob(history, stale=True, refresh_note=detail), detail
 
-    history = _merge_web_sample(history, sample)
+    history = await run_store(_merge_web_sample, history, sample)
     out = _web_blob(history)
-    store.save_blob(WEB_INDEX_KEY, out)
+    await run_store(store.save_blob, WEB_INDEX_KEY, out)
     return out, None
 
 
@@ -341,8 +342,8 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     if os.environ.get("GDELT_SOURCE_MODE", WEB_MODE).lower() == "legacy-doc":
         return await _fetch_legacy_doc(client, faults)
 
-    history = _load_web_history()
-    cached = store.load_blob(WEB_INDEX_KEY, GDELT_TTL_MIN)
+    history = await run_store(_load_web_history)
+    cached = await run_store(store.load_blob, WEB_INDEX_KEY, GDELT_TTL_MIN)
     if isinstance(cached, dict):
         rows = history.get("samples") or []
         history_asof = rows[-1].get("batch_at") if rows else None
@@ -361,7 +362,7 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
                      or str(cached_asof or "") >= str(history_asof)):
             return cached
 
-    cooldown = store.load_blob(WEB_COOLDOWN_KEY, GDELT_FAIL_COOLDOWN_MIN)
+    cooldown = await run_store(store.load_blob, WEB_COOLDOWN_KEY, GDELT_FAIL_COOLDOWN_MIN)
     if cooldown is not None:
         age_h = _history_age_hours(history)
         detail = ((cooldown.get("detail") if isinstance(cooldown, dict) else None)
@@ -386,10 +387,10 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
 async def backfill_web_history(client: httpx.AsyncClient,
                                targets: list[datetime]) -> dict:
     """Operator helper: add historical heartbeat samples, resumably."""
-    history = _load_web_history()
+    history = await run_store(_load_web_history)
     for target in targets:
         sample = await _fetch_web_sample(client, target)
-        history = _merge_web_sample(history, sample)
+        history = await run_store(_merge_web_sample, history, sample)
     return history
 
 
@@ -397,11 +398,11 @@ async def _fetch_legacy_doc(client: httpx.AsyncClient,
                             faults: list[dict]) -> dict:
     """Original twelve-call DOC sweep, retained for explicit recovery runs."""
     key = "gdelt:index"
-    cached = store.load_blob(key, 11 * 60 + 30)
+    cached = await run_store(store.load_blob, key, 11 * 60 + 30)
     if cached is not None:
         return cached
-    if store.load_blob(key + ":cooldown", GDELT_FAIL_COOLDOWN_MIN) is not None:
-        stale = store.load_blob(key)
+    if await run_store(store.load_blob, key + ":cooldown", GDELT_FAIL_COOLDOWN_MIN) is not None:
+        stale = await run_store(store.load_blob, key)
         if stale is not None:
             return stale
         faults.append({"source": "gdelt",
@@ -425,13 +426,13 @@ async def _fetch_legacy_doc(client: httpx.AsyncClient,
                                "detail": "rate-limited — sweep aborted, cooldown set"})
                 break
     if topics and len(topics) < len(SCUTTLEBUTT_TOPICS):
-        stale = store.load_blob(key)
+        stale = await run_store(store.load_blob, key)
         for tkey, topic in ((stale or {}).get("topics") or {}).items():
             if tkey not in topics:
                 topics[tkey] = {**topic, "stale": True}
     out = {"fetched_at": utcnow_iso(), "mode": "legacy-doc", "topics": topics}
     if topics:
-        store.save_blob(key, out)
+        await run_store(store.save_blob, key, out)
     else:
-        store.save_blob(key + ":cooldown", {"at": utcnow_iso()})
+        await run_store(store.save_blob, key + ":cooldown", {"at": utcnow_iso()})
     return out

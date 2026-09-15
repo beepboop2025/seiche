@@ -20,6 +20,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import (
     ALL_SERIES,
     CRYPTO_CANDLE_YEARS,
@@ -59,8 +60,8 @@ async def fetch_candles(client: httpx.AsyncClient, product: str) -> Series:
     """
     mnemonic = product.replace("-", "_")
     spec = ALL_SERIES[mnemonic]
-    if store.is_fresh(mnemonic, spec.ttl_minutes):
-        cached = store.load_series(mnemonic)
+    if await run_store(store.is_fresh, mnemonic, spec.ttl_minutes):
+        cached = await run_store(store.load_series, mnemonic)
         if cached is not None:
             return cached
     try:
@@ -83,10 +84,10 @@ async def fetch_candles(client: httpx.AsyncClient, product: str) -> Series:
         pts = pts[~pts.index.duplicated(keep="first")].sort_index()
         s = Series(mnemonic, "crypto", spec.remote_id, spec.label, spec.unit,
                    spec.freq, utcnow_iso(), pts)
-        store.save_series(s)
+        await run_store(store.save_series, s)
         return s
     except Exception as exc:
-        cached = store.load_series(mnemonic)
+        cached = await run_store(store.load_series, mnemonic)
         if cached is not None:
             return cached
         raise SourceFault("crypto", f"{product}: {type(exc).__name__}: {exc}") from exc
@@ -97,7 +98,7 @@ async def fetch_stablecoins(client: httpx.AsyncClient) -> dict:
     history (DeFiLlama, ~8y). The total also lands in the store as
     STABLE_TOTAL so SONAR and provenance see it."""
     key = "llama_stablecoins"
-    cached = store.load_blob(key, CRYPTO_TTL_MIN)
+    cached = await run_store(store.load_blob, key, CRYPTO_TTL_MIN)
     if cached is None:
         try:
             r = await client.get(f"{LLAMA}/stablecoins", params={"includePrices": "true"},
@@ -127,9 +128,9 @@ async def fetch_stablecoins(client: httpx.AsyncClient) -> dict:
                 if row.get("date")
             ]
             cached = {"fetched_at": utcnow_iso(), "board": board, "total_hist": hist_rows}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("crypto", f"defillama: {type(exc).__name__}: {exc}") from exc
 
@@ -139,7 +140,7 @@ async def fetch_stablecoins(client: httpx.AsyncClient) -> dict:
     total = pd.Series([v for _, v in cached["total_hist"]], index=idx, dtype=float)
     total = total[~total.index.duplicated(keep="last")].sort_index()
     spec = ALL_SERIES["STABLE_TOTAL"]
-    store.save_series(Series("STABLE_TOTAL", "crypto", spec.remote_id, spec.label,
+    await run_store(store.save_series, Series("STABLE_TOTAL", "crypto", spec.remote_id, spec.label,
                              spec.unit, spec.freq, cached["fetched_at"], total))
     return {"fetched_at": cached["fetched_at"], "board": cached["board"], "total": total}
 

@@ -156,3 +156,7 @@ are not imported by either runtime. The frontend receipt records their changes
 but does not deploy a controller. A controller is uploaded separately from its
 reviewed signed source; verifier/workflow updates require a matching pinned
 controller rebuild. Unlisted neighboring operation files still fail the gate.
+
+
+See [BIS materialization](BIS-MATERIALIZATION.md) for the separate immutable
+release-baseline and current live-census checks.

@@ -11,6 +11,7 @@ proves the corresponding runtimes and immutable package receipts are public.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import re
@@ -38,12 +39,43 @@ MARKET_CORPUS_HEALTH_URL = "https://api.seiche.info/api/v2/corpus/healthz?deep=t
 MARKET_CORPUS_DISCOVERY_URL = "https://api.seiche.info/.well-known/mcp.json"
 MARKET_CORPUS_TAG_PREFIX = "market-corpus-v"
 MARKET_CORPUS_RECEIPT_TAG_PREFIX = "market-corpus-receipt-"
-MARKET_CORPUS_RECEIPT_REVISION = "r14"
+MARKET_CORPUS_RECEIPT_REVISION = "r15"
 MARKET_CORPUS_EXPECTED_FLOWS = 29
 MARKET_CORPUS_EXPECTED_BULK_FLAT_FLOWS = 27
 MARKET_CORPUS_EXPECTED_API_ONLY_FLOWS = 1
 MARKET_CORPUS_EXPECTED_REGISTRY_ONLY_FLOWS = 1
 MARKET_CORPUS_EXPECTED_AGGREGATE_ROWS = 76_346_103
+# Flow membership stays pinned even when daily observations refresh.
+MARKET_CORPUS_BULK_FLOW_IDS = (
+    "WS_CBPOL",
+    "WS_CBS_PUB",
+    "WS_CBTA",
+    "WS_CPMI_CASHLESS",
+    "WS_CPMI_CT1",
+    "WS_CPMI_CT2",
+    "WS_CPMI_DEVICES",
+    "WS_CPMI_INSTITUT",
+    "WS_CPMI_MACRO",
+    "WS_CPMI_PARTICIP",
+    "WS_CPMI_SYSTEMS",
+    "WS_CPP",
+    "WS_CREDIT_GAP",
+    "WS_DEBT_SEC2_PUB",
+    "WS_DER_OTC_TOV",
+    "WS_DPP",
+    "WS_DSR",
+    "WS_EER",
+    "WS_GLI",
+    "WS_LBS_D_PUB",
+    "WS_LONG_CPI",
+    "WS_NA_SEC_DSS",
+    "WS_OTC_DERIV2",
+    "WS_SPP",
+    "WS_TC",
+    "WS_XRU",
+    "WS_XTD_DERIV",
+)
+MARKET_CORPUS_MATERIALIZATION_MAX_AGE = timedelta(hours=48)
 MARKET_CORPUS_EXPECTED_ENGINE_DATASETS = 1_122
 MARKET_CORPUS_EXPECTED_ENGINE_VERIFIED_OBJECTS = 1_110
 MARKET_CORPUS_EXPECTED_ENGINE_ATTEMPTS = 1_118
@@ -1005,6 +1037,102 @@ def _exact_int(value: Any, expected: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value == expected
 
 
+def _verify_live_bis_materialization(
+    signed: dict[str, Any], deep: dict[str, Any], bis: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind the live census independently of the immutable release baseline."""
+    proof = deep.get("bis_materialization")
+    fields = {
+        "schema",
+        "scope",
+        "release_id",
+        "inventory_sha256",
+        "receipt_sha256",
+        "generated_at",
+        "expected_flow_ids",
+        "expected_count",
+        "materialized_count",
+        "error_count",
+        "aggregate_row_count",
+        "flows",
+        "sha256",
+    }
+    if not isinstance(proof, dict) or set(proof) != fields:
+        raise PublicationGateError(
+            "Market Atlas runtime materialization proof is missing or malformed"
+        )
+    payload = {key: value for key, value in proof.items() if key != "sha256"}
+    all_flow = deep["bis_all_flow_receipt"]
+    rows = proof.get("flows")
+    if not (
+        proof.get("schema") == "liquilens-bis-live-materialization-v1"
+        and proof.get("scope") == "live_materialization"
+        and proof.get("release_id") == signed["releaseId"]
+        and proof.get("inventory_sha256") == signed["inventorySha256"]
+        and proof.get("receipt_sha256") == all_flow["sha256"]
+        and proof.get("sha256") == hashlib.sha256(_json_identity(payload)).hexdigest()
+        and _json_identity(proof) == _json_identity(bis.get("materialization"))
+        and proof.get("expected_flow_ids") == list(MARKET_CORPUS_BULK_FLOW_IDS)
+        and _exact_int(proof.get("expected_count"), signed["bisBulkFlat"])
+        and _exact_int(proof.get("materialized_count"), signed["bisBulkFlat"])
+        and _zero_int(proof.get("error_count"))
+        and isinstance(rows, list)
+        and len(rows) == signed["bisBulkFlat"]
+        and all(isinstance(row, dict) for row in rows)
+        and [row.get("flow_id") for row in rows] == list(MARKET_CORPUS_BULK_FLOW_IDS)
+        and all(
+            set(row)
+            == {
+                "flow_id",
+                "capture_id",
+                "row_count",
+                "normalized_sha256",
+                "manifest_sha256",
+            }
+            and _positive_int(row.get("capture_id"))
+            and isinstance(row.get("row_count"), int)
+            and not isinstance(row["row_count"], bool)
+            and row["row_count"] >= 0
+            and all(
+                isinstance(row.get(key), str)
+                and SHA256_RE.fullmatch(row[key]) is not None
+                for key in ("normalized_sha256", "manifest_sha256")
+            )
+            for row in rows
+        )
+        and _exact_int(
+            proof.get("aggregate_row_count"), sum(row["row_count"] for row in rows)
+        )
+        and _exact_int(
+            all_flow.get("aggregate_row_count"), proof["aggregate_row_count"]
+        )
+        and proof["aggregate_row_count"] >= signed["bisAggregateRows"]
+    ):
+        raise PublicationGateError(
+            "Market Atlas runtime materialization differs from its validated live census"
+        )
+    stamp = proof.get("generated_at")
+    try:
+        if (
+            not isinstance(stamp, str)
+            or re.fullmatch(
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z",
+                stamp,
+            )
+            is None
+        ):
+            raise ValueError("invalid materialization clock")
+        generated = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        age = datetime.now(timezone.utc) - generated
+        if not -timedelta(minutes=5) <= age <= MARKET_CORPUS_MATERIALIZATION_MAX_AGE:
+            raise ValueError("materialization clock out of range")
+    except ValueError as error:
+        raise PublicationGateError(
+            "Market Atlas runtime materialization is stale or has an invalid clock"
+        ) from error
+    return proof
+
+
 def verify_market_corpus_receipts(
     entry: dict[str, Any],
     *,
@@ -1040,7 +1168,7 @@ def verify_market_corpus_receipts(
             signed["bisBulkFlat"],
         )
         and _zero_int(all_flow.get("error_count"))
-        and _exact_int(all_flow.get("aggregate_row_count"), signed["bisAggregateRows"])
+        and _positive_int(all_flow.get("aggregate_row_count"))
         and _exact_int(
             all_flow.get("sampled_shard_count"),
             signed["bisBulkFlat"],
@@ -1114,6 +1242,8 @@ def verify_market_corpus_receipts(
             "Market Atlas catalog differs from its deep-health release"
         )
 
+    materialization = _verify_live_bis_materialization(signed, deep, bis)
+
     discovery = fetch_json(MARKET_CORPUS_DISCOVERY_URL, expected_host="api.seiche.info")
     servers = discovery.get("servers") if isinstance(discovery, dict) else None
     discovery_matches = [
@@ -1171,6 +1301,11 @@ def verify_market_corpus_receipts(
         "datasets": engine["datasets"],
         "bisFlows": bis["flows"],
         "bisRows": all_flow["aggregate_row_count"],
+        "bisRowsScope": "live_materialization",
+        "baselineBisRows": signed["bisAggregateRows"],
+        "baselineReceiptTag": signed["tag"],
+        "liveMaterializationSha256": materialization["sha256"],
+        "liveMaterializationGeneratedAt": materialization["generated_at"],
         "tools": tool_names,
     }
 

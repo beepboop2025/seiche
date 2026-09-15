@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import json
 from pathlib import Path
+import threading
 import time
 from types import SimpleNamespace
 
@@ -503,6 +504,79 @@ def test_only_a_receipted_rebuild_stages_the_durable_handoff(
     )
     asyncio.run(assemble._publish_rebuilt_snapshot(fake_snap, receipt))
     assert assemble.cached_snapshot_release_receipt() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_previous", [True, False])
+@pytest.mark.parametrize("persist_succeeds", [True, False])
+async def test_readiness_retains_complete_generation_while_handoff_is_staged(
+        clean_cache, monkeypatch, fake_snap, has_previous, persist_succeeds):
+    from fastapi.responses import Response
+    from seiche import stateful_cutover
+
+    entered = threading.Event()
+    release = threading.Event()
+    producer_sha = "f" * 40
+    old_token, new_token = "d" * 64, "e" * 64
+    new_payload = {**fake_snap, "generated_at": "2026-09-15T17:00:00+00:00"}
+    receipt = _release_receipt(new_payload)
+    if has_previous:
+        assemble._cache.update(
+            payload=fake_snap, source="rebuilt", producer_sha=producer_sha,
+            release_receipt=_release_receipt(fake_snap),
+            release_handoff_id=old_token,
+        )
+
+    def persist(payload, staged_receipt):
+        assert payload is new_payload and staged_receipt is receipt
+        entered.set()
+        assert release.wait(5), "readiness checks did not release persistence"
+        return new_token if persist_succeeds else None
+
+    monkeypatch.setattr(assemble, "_persist_pending_snapshot", persist)
+    monkeypatch.setattr(assemble, "capture_process_release_sha", lambda: producer_sha)
+    monkeypatch.setattr(mcp_server, "agent_room_release_ready", lambda: True)
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "production")
+    monkeypatch.setenv("SEICHE_COLLECTOR_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setenv("SEICHE_SOURCE_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setattr(stateful_cutover, "validate_activation_runtime", lambda _: {
+        "authority": {"source": "railway", "hetzner_writers_frozen": True,
+                      "railway_writers_started": True, "public_traffic_enabled": True},
+    })
+    publishing = asyncio.create_task(
+        assemble._publish_rebuilt_snapshot(new_payload, receipt)
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        during = await api.railway_stateful_health(Response())
+        operator_during = await api.release_health(Response())
+        if has_previous:
+            assert during["status"] == "ready"
+            assert during["generated_at"] == fake_snap["generated_at"]
+            assert operator_during["release_candidate"] == {
+                "producer_sha": producer_sha, "activation_token": old_token,
+            }
+            assert assemble.cached_snapshot() is fake_snap
+        else:
+            assert during.status_code == operator_during.status_code == 503
+            assert json.loads(during.body)["status"] == "warming_or_unavailable"
+    finally:
+        release.set()
+        await publishing
+
+    assert assemble.cached_snapshot() is new_payload
+    after = await api.railway_stateful_health(Response())
+    operator_after = await api.release_health(Response())
+    if persist_succeeds:
+        assert after["status"] == "ready"
+        assert after["generated_at"] == new_payload["generated_at"]
+        assert operator_after["release_candidate"] == {
+            "producer_sha": producer_sha, "activation_token": new_token,
+        }
+    else:
+        assert after.status_code == operator_after.status_code == 503
+        assert json.loads(after.body)["status"] == "rebuilt_without_market_evidence"
+        assert assemble.cached_snapshot_release_handoff() is None
 
 
 @pytest.mark.parametrize(

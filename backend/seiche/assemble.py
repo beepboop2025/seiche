@@ -380,7 +380,7 @@ _build_generation = 0  # completed build/lock epochs; restores do not advance it
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.13.3"
+VERSION = "0.13.4"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
@@ -3160,23 +3160,24 @@ async def _publish_rebuilt_snapshot(
     established behavior while the candidate health gate runs.
     """
     _assert_snapshot_rights(payload)
-    _cache.update(
-        at=time.time(),
-        payload=payload,
-        source="rebuilt",
-        release_receipt=None,
-        release_handoff_id=None,
-        producer_sha=None,
-    )
     handoff_id = None
     if release_receipt is not None:
         handoff_id = await asyncio.to_thread(
             _persist_pending_snapshot, payload, release_receipt
         )
-    if handoff_id is not None:
-        _cache["release_receipt"] = release_receipt
-        _cache["release_handoff_id"] = handoff_id
-        _cache["producer_sha"] = capture_process_release_sha()
+    producer_sha = capture_process_release_sha() if handoff_id is not None else None
+    # Keep the previous complete generation readable while its successor is
+    # staged. Publishing the payload before this await cleared its evidence
+    # and made an ordinary successful refresh transiently fail readiness.
+    # A failed seal/stage still publishes v1 data without release authority.
+    _cache.update(
+        at=time.time(),
+        payload=payload,
+        source="rebuilt",
+        release_receipt=release_receipt if handoff_id is not None else None,
+        release_handoff_id=handoff_id,
+        producer_sha=producer_sha,
+    )
 
 
 async def snapshot(force: bool = False) -> dict:
@@ -3350,9 +3351,9 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
         # Failure is isolated from ordinary v1 reads but makes the candidate
         # ineligible for promotion through the strict deployment health gate.
         release_receipt = await asyncio.to_thread(_seal_release_evidence, payload)
-        # Publish to memory first: a slow or locked SQLite handoff must never make
-        # an already-completed reading wait. Stage only after the evidence seal;
-        # the root deploy controller activates it after every remaining gate.
+        # Stage after the evidence seal, retaining the previous complete cache
+        # until the new payload and its authority can be published together.
+        # The root deploy controller activates a new release after every gate.
         await _publish_rebuilt_snapshot(payload, release_receipt)
         # This is the final, non-awaiting operation in the build's lock epoch. A
         # scheduler that queued during memory publication or handoff persistence

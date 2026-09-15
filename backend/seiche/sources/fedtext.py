@@ -22,6 +22,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import FEDTEXT_TTL_MIN, FOMC_STATEMENT_DATES, USER_AGENT
 from seiche.sources.base import utcnow_iso
 
@@ -41,7 +42,7 @@ def _strip_html(html: str) -> str:
 async def fetch_statement(client: httpx.AsyncClient, date: str) -> str | None:
     """One statement's text by decision date (YYYY-MM-DD), cached forever."""
     key = f"fedtext:{date}"
-    cached = store.load_blob(key)
+    cached = await run_store(store.load_blob, key)
     if cached is not None:
         return cached.get("text")
     ymd = date.replace("-", "")
@@ -52,7 +53,7 @@ async def fetch_statement(client: httpx.AsyncClient, date: str) -> str | None:
     text = _strip_html(r.text)
     if len(text) < 400:  # a real statement is never this short — treat as a miss
         return None
-    store.save_blob(key, {"date": date, "fetched_at": utcnow_iso(), "text": text[:40000]})
+    await run_store(store.save_blob, key, {"date": date, "fetched_at": utcnow_iso(), "text": text[:40000]})
     return text
 
 
@@ -60,7 +61,7 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     """Every configured decision date; per-date failure is a fault line, not
     a crash — coverage is published by the engine."""
     key = "fedtext:index"
-    cached = store.load_blob(key, FEDTEXT_TTL_MIN)
+    cached = await run_store(store.load_blob, key, FEDTEXT_TTL_MIN)
     if cached is not None:
         return cached
     texts: dict[str, str] = {}
@@ -76,7 +77,7 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
             faults.append({"source": "fedtext", "detail": f"{d}: {type(e).__name__}: {e}"})
     out = {"fetched_at": utcnow_iso(), "texts": texts}
     if texts:
-        store.save_blob(key, out)
+        await run_store(store.save_blob, key, out)
     return out
 
 

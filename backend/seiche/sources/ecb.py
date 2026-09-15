@@ -13,6 +13,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import ALL_SERIES, USER_AGENT, SeriesSpec
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
@@ -20,8 +21,8 @@ BASE = "https://data-api.ecb.europa.eu/service/data"
 
 
 async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str = "2019-10-01") -> Series:
-    if store.is_fresh(spec.mnemonic, spec.ttl_minutes):
-        cached = store.load_series(spec.mnemonic)
+    if await run_store(store.is_fresh, spec.mnemonic, spec.ttl_minutes):
+        cached = await run_store(store.load_series, spec.mnemonic)
         if cached is not None:
             return cached
     try:
@@ -44,10 +45,10 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str =
             spec.mnemonic, "ecb", spec.remote_id, spec.label, spec.unit,
             spec.freq, utcnow_iso(), pts,
         )
-        store.save_series(s)
+        await run_store(store.save_series, s)
         return s
     except Exception as exc:
-        cached = store.load_series(spec.mnemonic)
+        cached = await run_store(store.load_series, spec.mnemonic)
         if cached is not None:
             return cached
         raise SourceFault("ecb", f"{spec.remote_id}: {type(exc).__name__}: {exc}") from exc

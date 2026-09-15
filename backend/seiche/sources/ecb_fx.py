@@ -20,6 +20,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.collectors import FileRawCaptureSink
 from seiche.config import ECB_FX_CURRENCIES, USER_AGENT
 from seiche.sources.base import RawCapture, Series, SourceFault, utcnow_iso
@@ -309,12 +310,12 @@ async def fetch(
     """
     if mode not in {"auto", *SOURCE_URLS}:
         raise ValueError("invalid ECB FX download mode")
-    cached = await asyncio.to_thread(_load_cache)
+    cached = await run_store(_load_cache)
     if not force and mode == "auto" and cached:
-        if all(store.is_fresh(name, TTL_MINUTES) for name in cached):
+        if await run_store(lambda: all(store.is_fresh(name, TTL_MINUTES) for name in cached)):
             return cached
-    prior_latest = await asyncio.to_thread(store.load_blob, LATEST_CAPTURE_KEY)
-    selected_mode = _mode(mode, datetime.fromisoformat(utcnow_iso()))
+    prior_latest = await run_store(store.load_blob, LATEST_CAPTURE_KEY)
+    selected_mode = await run_store(_mode, mode, datetime.fromisoformat(utcnow_iso()))
     try:
         url = SOURCE_URLS[selected_mode]
         payload = await _download(client, url)
@@ -338,9 +339,9 @@ async def fetch(
             media_type="application/xml", payload=payload,
             evidence_hash=hashlib.sha256(payload).hexdigest(),
         )
-        await asyncio.to_thread(_persist, parsed, capture, selected_mode, raw_root, prior_latest)
+        await run_store(_persist, parsed, capture, selected_mode, raw_root, prior_latest)
         # Store merges rolling windows with the existing full history.
-        completed = await asyncio.to_thread(_load_cache)
+        completed = await run_store(_load_cache)
         if not completed:
             raise ValueError("ECB FX committed capture failed cache generation validation")
         return completed
@@ -350,7 +351,7 @@ async def fetch(
             faults.append({"source": SOURCE, "detail": detail})
             # Another collector may have committed while this request was in
             # flight. Return only the currently validated persisted generation.
-            current = await asyncio.to_thread(_load_cache)
+            current = await run_store(_load_cache)
             if current:
                 return current
         raise SourceFault(SOURCE, detail) from exc

@@ -13,6 +13,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import (
     BALLAST_CONTRACTS,
     BALLAST_CFTC_RELEASE_LAG_DAYS,
@@ -144,7 +145,7 @@ def _match_contract(name: str) -> str | None:
 
 async def fetch_tff_ust(client: httpx.AsyncClient, start: str = CFTC_START) -> dict:
     key = "cftc_tff_ust"
-    cached = store.load_blob(key, CFTC_TTL_MIN)
+    cached = await run_store(store.load_blob, key, CFTC_TTL_MIN)
     if cached is None:
         try:
             extra = " OR ".join(
@@ -161,9 +162,9 @@ async def fetch_tff_ust(client: httpx.AsyncClient, start: str = CFTC_START) -> d
             }
             rows = await _fetch_rows(client, BASE, params)
             cached = {"fetched_at": utcnow_iso(), "rows": rows}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("cftc", f"TFF: {_exception_detail(exc)}") from exc
     df = pd.DataFrame(cached["rows"])
@@ -203,7 +204,7 @@ async def fetch_disaggregated_commodities(
     """
 
     key = "cftc_disagg_ballast"
-    cached = store.load_blob(key, CFTC_TTL_MIN)
+    cached = await run_store(store.load_blob, key, CFTC_TTL_MIN)
     if cached is None:
         try:
             code_filter = " OR ".join(
@@ -220,9 +221,9 @@ async def fetch_disaggregated_commodities(
             }
             rows = await _fetch_rows(client, DISAGG_BASE, params)
             cached = {"fetched_at": utcnow_iso(), "rows": rows}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault(
                     "cftc",

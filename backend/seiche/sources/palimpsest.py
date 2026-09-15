@@ -31,6 +31,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import ALL_SERIES, PALIMPSEST_BASES, PALIMPSEST_TTL_MIN, USER_AGENT
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
@@ -102,9 +103,9 @@ def _merge_and_store(mnemonic: str, fresh: pd.Series) -> Series:
 async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     """DDTI + GFI series (accrued) plus the latest board for the card."""
     mnems = ("PALIMPSEST_FEAR", "PALIMPSEST_NEW", "PALIMPSEST_GFI")
-    if all(store.is_fresh(m, PALIMPSEST_TTL_MIN) for m in mnems):
-        cached = {m: store.load_series(m) for m in mnems}
-        latest = store.load_blob("palimpsest:latest") or {}
+    if await run_store(lambda: all(store.is_fresh(m, PALIMPSEST_TTL_MIN) for m in mnems)):
+        cached = {m: await run_store(store.load_series, m) for m in mnems}
+        latest = await run_store(store.load_blob, "palimpsest:latest") or {}
         if all(cached.values()):
             return {"fetched_at": utcnow_iso(), "series": cached, "latest": latest}
 
@@ -112,10 +113,10 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
 
     try:
         ddti_hist = _jsonl(await _get_text(client, "ddti-history.jsonl"))
-        out["series"]["PALIMPSEST_FEAR"] = _merge_and_store(
+        out["series"]["PALIMPSEST_FEAR"] = await run_store(_merge_and_store,
             "PALIMPSEST_FEAR", _daily(ddti_hist, "generated_at", "top_threat", "max")
         )
-        out["series"]["PALIMPSEST_NEW"] = _merge_and_store(
+        out["series"]["PALIMPSEST_NEW"] = await run_store(_merge_and_store,
             "PALIMPSEST_NEW", _daily(ddti_hist, "generated_at", "n_new", "last")
         )
     except SourceFault as e:
@@ -123,7 +124,7 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
 
     try:
         gfi_hist = _jsonl(await _get_text(client, "history.jsonl"))
-        out["series"]["PALIMPSEST_GFI"] = _merge_and_store(
+        out["series"]["PALIMPSEST_GFI"] = await run_store(_merge_and_store,
             "PALIMPSEST_GFI", _daily(gfi_hist, "date", "gfi", "last")
         )
     except SourceFault as e:
@@ -145,7 +146,7 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
             "n_terms": latest.get("n_terms"),
             "top": top,
         }
-        store.save_blob("palimpsest:latest", out["latest"])
+        await run_store(store.save_blob, "palimpsest:latest", out["latest"])
     except SourceFault as e:
         faults.append({"source": e.source, "detail": e.detail})
 

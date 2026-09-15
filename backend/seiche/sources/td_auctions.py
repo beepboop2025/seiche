@@ -20,6 +20,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import USER_AGENT
 from seiche.sources.base import SourceFault, utcnow_iso
 
@@ -43,7 +44,7 @@ async def fetch_mspd_maturities(client: httpx.AsyncClient, horizon_days: int = 7
     and the pre-window filter.
     """
     key = "fiscal_mspd_maturities"
-    cached = store.load_blob(key, MSPD_TTL_MIN)
+    cached = await run_store(store.load_blob, key, MSPD_TTL_MIN)
     if cached is None:
         try:
             # Latest publication month first: the dataset holds every month
@@ -72,13 +73,13 @@ async def fetch_mspd_maturities(client: httpx.AsyncClient, horizon_days: int = 7
                 max_pages=4,
             )
             cached = {"fetched_at": utcnow_iso(), "rows": rows}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except SourceFault:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("mspd", f"table 3: {exc}") from exc
     return {"fetched_at": cached["fetched_at"], "mspd": pd.DataFrame(cached["rows"])}

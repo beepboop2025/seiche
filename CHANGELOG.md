@@ -11,6 +11,17 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-09-15
+
+### Fixed
+
+- Run blocking source-cache operations in a bounded worker pool so they cannot
+  stall the API request loop or occupy its health-check workers.
+- Keep the last complete snapshot available while replacement evidence is
+  saved, then publish the snapshot and readiness evidence together.
+- Verify refreshed BIS data against its current materialization proof while
+  retaining the immutable signed release baseline and rejecting count regressions.
+
 ## [0.13.3] - 2026-09-14
 
 ### Fixed

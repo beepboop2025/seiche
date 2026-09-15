@@ -36,6 +36,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import LLAMA_HACKS_TTL_MIN, USER_AGENT
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
@@ -138,7 +139,7 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict] | None = None)
     TTL blob first; on upstream failure serve the stale blob; SourceFault
     only when there is no cached copy at all.
     """
-    cached = store.load_blob(BLOB_KEY, LLAMA_HACKS_TTL_MIN)
+    cached = await run_store(store.load_blob, BLOB_KEY, LLAMA_HACKS_TTL_MIN)
     if cached is not None:
         out = _from_blob(cached)
         out["daily"] = _envelope(out["daily"], out.get("fetched_at") or utcnow_iso())
@@ -148,11 +149,11 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict] | None = None)
         if daily.empty and not events:
             raise ValueError("empty hacks payload")
         out = {"fetched_at": utcnow_iso(), "daily": daily, "events": events}
-        store.save_blob(BLOB_KEY, _to_blob(out))
+        await run_store(store.save_blob, BLOB_KEY, _to_blob(out))
         out["daily"] = _envelope(daily, out["fetched_at"])
         return out
     except Exception as exc:
-        stale = store.load_blob(BLOB_KEY)
+        stale = await run_store(store.load_blob, BLOB_KEY)
         if stale is not None:
             out = _from_blob(stale)
             out["daily"] = _envelope(out["daily"], out.get("fetched_at") or utcnow_iso())

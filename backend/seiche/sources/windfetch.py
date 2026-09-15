@@ -27,6 +27,7 @@ from __future__ import annotations
 import httpx
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import USER_AGENT, WINDFETCH_TTL_MIN, WINDFETCH_URL
 from seiche.sources.base import SourceFault, utcnow_iso
 
@@ -43,7 +44,7 @@ def parse_pack(payload: object) -> dict:
 
 
 async def fetch_all(client: httpx.AsyncClient, faults: list[dict] | None = None) -> dict:
-    cached = store.load_blob(BLOB_KEY, WINDFETCH_TTL_MIN)
+    cached = await run_store(store.load_blob, BLOB_KEY, WINDFETCH_TTL_MIN)
     if cached is not None:
         return cached
     try:
@@ -52,10 +53,10 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict] | None = None)
         )
         r.raise_for_status()
         out = {"fetched_at": utcnow_iso(), "pack": parse_pack(r.json())}
-        store.save_blob(BLOB_KEY, out)
+        await run_store(store.save_blob, BLOB_KEY, out)
         return out
     except Exception as exc:  # noqa: BLE001
-        stale = store.load_blob(BLOB_KEY)
+        stale = await run_store(store.load_blob, BLOB_KEY)
         if stale is not None:
             if faults is not None:
                 faults.append({"source": "windfetch",

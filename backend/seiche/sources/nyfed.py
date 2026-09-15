@@ -13,6 +13,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.sources._async_store import run_store
 from seiche.config import (
     NYFED_RATES_START,
     NYFED_TTL_MIN,
@@ -34,7 +35,7 @@ async def _get_json(client: httpx.AsyncClient, path: str) -> dict:
 async def fetch_secured_rates(client: httpx.AsyncClient, start: str = NYFED_RATES_START) -> dict:
     """All secured rates with percentiles, as {rate_type: DataFrame}-shaped dict."""
     key = "nyfed_secured_rates"
-    cached = store.load_blob(key, NYFED_TTL_MIN)
+    cached = await run_store(store.load_blob, key, NYFED_TTL_MIN)
     if cached is None:
         try:
             import datetime as _dt
@@ -43,9 +44,9 @@ async def fetch_secured_rates(client: httpx.AsyncClient, start: str = NYFED_RATE
                 client, f"/rates/secured/all/search.json?startDate={start}&endDate={end}"
             )
             cached = {"fetched_at": utcnow_iso(), "refRates": raw.get("refRates", [])}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)  # stale fallback
+            cached = await run_store(store.load_blob, key)  # stale fallback
             if cached is None:
                 raise SourceFault("nyfed", f"secured rates: {exc}") from exc
     frames: dict[str, pd.DataFrame] = {}
@@ -67,7 +68,7 @@ async def fetch_secured_rates(client: httpx.AsyncClient, start: str = NYFED_RATE
 async def fetch_srf_ops(client: httpx.AsyncClient, n_ops: int = 900) -> dict:
     """Repo operation results -> daily accepted amounts ($B). Zero-usage days count."""
     key = "nyfed_srf_ops"
-    cached = store.load_blob(key, NYFED_TTL_MIN)
+    cached = await run_store(store.load_blob, key, NYFED_TTL_MIN)
     if cached is None:
         try:
             raw = await _get_json(client, f"/rp/repo/all/results/last/{n_ops}.json")
@@ -84,9 +85,9 @@ async def fetch_srf_ops(client: httpx.AsyncClient, n_ops: int = 900) -> dict:
                     for o in ops
                 ],
             }
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("nyfed", f"repo ops: {exc}") from exc
     df = pd.DataFrame(cached["ops"])
@@ -105,7 +106,7 @@ async def fetch_pd_positions(client: httpx.AsyncClient) -> dict:
     the street already holds when the next auction lands.
     """
     key = "nyfed_pd_positions"
-    cached = store.load_blob(key, PD_TTL_MIN)
+    cached = await run_store(store.load_blob, key, PD_TTL_MIN)
     if cached is None:
         try:
             out: dict[str, list] = {}
@@ -118,9 +119,9 @@ async def fetch_pd_positions(client: httpx.AsyncClient) -> dict:
                     if r.get("asofdate") and r.get("value") not in (None, "", "*")
                 ]
             cached = {"fetched_at": utcnow_iso(), "series": out}
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("nyfed", f"pd positions: {exc}") from exc
     frames = {}
@@ -141,7 +142,7 @@ async def fetch_fx_swaps(client: httpx.AsyncClient, n_ops: int = 90) -> dict:
     foreign central bank drawing the swap line means a bank in its
     jurisdiction could not find dollars privately at any acceptable rate."""
     key = "nyfed_fx_swaps"
-    cached = store.load_blob(key, NYFED_TTL_MIN)
+    cached = await run_store(store.load_blob, key, NYFED_TTL_MIN)
     if cached is None:
         try:
             raw = await _get_json(client, f"/fxs/usdollar/last/{n_ops}.json")
@@ -163,9 +164,9 @@ async def fetch_fx_swaps(client: httpx.AsyncClient, n_ops: int = 90) -> dict:
                     for o in ops
                 ],
             }
-            store.save_blob(key, cached)
+            await run_store(store.save_blob, key, cached)
         except Exception as exc:
-            cached = store.load_blob(key)
+            cached = await run_store(store.load_blob, key)
             if cached is None:
                 raise SourceFault("nyfed", f"fx swaps: {exc}") from exc
     return {"fetched_at": cached["fetched_at"], "ops": cached["ops"]}
