@@ -1,0 +1,165 @@
+{
+  "schema": "seiche.analytical-story.v1",
+  "evidence_contract": "lab-evidence-envelope/v1",
+  "id": "seiche:2026-09-15-daily",
+  "product": "seiche",
+  "slug": "2026-09-15-daily",
+  "canonical_url": "https://seiche.info/dispatches/2026-09-15-daily",
+  "headline": "ON RRP take-up wakes to 1.42 $B overnight: 2.9 sigma on a near-zero base, not a large flow",
+  "dek": "The board reads 44 out of 100, EROSION; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 5.7%; plumbing leads market pricing by +19 percentile points. The index is +1.8 against the last published letter.",
+  "beat": "dollar-funding-plumbing",
+  "editorial_class": "full_story",
+  "publication_status": "PUBLISHED",
+  "published_at": "2026-09-15T15:31:24Z",
+  "clocks": {
+    "event_time": "2026-09-15T00:00:00Z",
+    "source_publication_time": null,
+    "knowledge_time": "2026-09-15T15:31:24Z",
+    "publication_time": "2026-09-15T15:31:24Z",
+    "source_publication_status": "NOT_UNIFORMLY_COLLECTED"
+  },
+  "original_contribution": {
+    "kinds": [
+      "fresh_longitudinal_delta",
+      "dated_forward_test"
+    ],
+    "statement": "Seiche's contribution is the change against its accrued point-in-time record, its funding-system attribution and the dated test that follows; raw public prints are evidence, not the finished analysis.",
+    "exclusive_fact_claimed": false
+  },
+  "newsworthiness": {
+    "score": 55,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 0,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "claims": [
+    {
+      "evidence_status": "DERIVED",
+      "statement": "Seiche's composite reads 44.1 in EROSION.",
+      "metric": {
+        "label": "Seiche composite",
+        "value": 44.1,
+        "unit": "index points",
+        "coverage_pct": 100.0
+      },
+      "method_url": "https://seiche.info/methodology"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh ON RRP take-up print entered the mover set.",
+      "metric": {
+        "label": "ON RRP take-up",
+        "value": 1.42,
+        "unit": "$B",
+        "robust_z": 2.92,
+        "as_of": "2026-09-14"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh ON RRP take-up, referee history print entered the mover set.",
+      "metric": {
+        "label": "ON RRP take-up, referee history",
+        "value": 1.42,
+        "unit": "$B",
+        "robust_z": 2.92,
+        "as_of": "2026-09-14"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh 3-month T-bill secondary market rate print entered the mover set.",
+      "metric": {
+        "label": "3-month T-bill secondary market rate",
+        "value": 3.92,
+        "unit": "%",
+        "robust_z": 4.05,
+        "as_of": "2026-09-11"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    }
+  ],
+  "evidence_braid": {
+    "primary_product": "seiche",
+    "relationships": [
+      {
+        "product": "palimpsest",
+        "relation": "topic-surface-only",
+        "context_only": true,
+        "used_in_score": false,
+        "source_url": "https://palimpsest.info/readings/newsroom-latest.json",
+        "as_of": "2026-09-15",
+        "backtestable": false,
+        "status_note": "ACCRUING — 70/250 daily obs; context only until then (never in the composite, never a model feature)",
+        "readings": [
+          {
+            "signal": "fear",
+            "label": "Deletion-threat (top-term score)",
+            "value": 1.97,
+            "unit": "score",
+            "as_of": "2026-09-15",
+            "observations": 70,
+            "change_vs_prior_10_median": -1.21
+          },
+          {
+            "signal": "n_new",
+            "label": "Newly censor-targeted terms",
+            "value": 83.0,
+            "unit": "terms/day",
+            "as_of": "2026-09-15",
+            "observations": 70,
+            "change_vs_prior_10_median": -15.0
+          },
+          {
+            "signal": "gfi",
+            "label": "Generative Firewall Index",
+            "value": 15.0,
+            "unit": "0-100",
+            "as_of": "2026-09-15",
+            "observations": 49,
+            "change_vs_prior_10_median": -7.0
+          }
+        ]
+      }
+    ],
+    "cross_product_score": null
+  },
+  "countercase": [
+    {
+      "claim": "SOFR is 0.4bp below IORB, a current abundance signal rather than a scarcity print.",
+      "asof": "2026-09-09",
+      "source": "NY Fed secured rates and Federal Reserve IORB"
+    },
+    {
+      "claim": "Standing Repo Facility take-up is $0.00B; the backstop is not being tested in size.",
+      "asof": "2026-09-15",
+      "source": "New York Fed operations"
+    },
+    {
+      "claim": "Market stress sits at only the 36th percentile of its own history.",
+      "asof": "2026-09-14",
+      "source": "VIX, credit spreads and rates volatility"
+    }
+  ],
+  "sealed_call": null,
+  "adjudication": {
+    "status": "NOT_APPLICABLE_TO_THIS_STORY"
+  },
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "claim_fingerprint": "a42557836391e72c487db2a4dd502317a5d19bfe479951e91fb59e18b03072cc"
+}

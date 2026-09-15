@@ -1,14 +1,6 @@
 {
-  "date": "2026-09-13",
+  "date": "2026-09-15",
   "reported_prev": {
-    "SRF accepted": "2026-09-08",
-    "Newly censor-targeted terms": "2026-09-08",
-    "Brent crude oil spot, Europe": "2026-09-01",
-    "2y Treasury constant maturity yield": "2026-09-03",
-    "4-week T-bill secondary market rate": "2026-09-03",
-    "WTI crude oil spot, Cushing": "2026-09-01"
-  },
-  "reported": {
     "4-week T-bill secondary market rate": "2026-09-10",
     "3-month T-bill secondary market rate": "2026-09-10",
     "Newly censor-targeted terms": "2026-09-12",
@@ -17,30 +9,16 @@
     "10y Treasury constant maturity yield": "2026-09-10",
     "Korean won per USD (H.10)": "2026-09-04"
   },
-  "letter_prev": {
-    "regime": "EROSION",
-    "value": 44.7,
-    "decomp": {
-      "weather": 11.0,
-      "kink": 7.2,
-      "rvxray": 6.1,
-      "resonance": 6.0,
-      "buffers": 3.0,
-      "confession": 2.9,
-      "undertow": 2.8,
-      "warehouse": 2.5,
-      "tails": 2.0,
-      "auctions": 1.2,
-      "hydrophone": 0.1
-    },
-    "crunch": {
-      "date": "2026-09-10",
-      "worst_case_b": 2874.8,
-      "settlement_b": 246.0
-    },
-    "tell": 40.8
+  "reported": {
+    "3-month T-bill secondary market rate": "2026-09-11",
+    "4-week T-bill secondary market rate": "2026-09-11",
+    "Korean won per USD (H.10)": "2026-09-11",
+    "ON RRP take-up": "2026-09-14",
+    "ON RRP take-up, referee history": "2026-09-14",
+    "10y Treasury constant maturity yield": "2026-09-11",
+    "2y Treasury constant maturity yield": "2026-09-11"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "EROSION",
     "value": 44.0,
     "decomp": {
@@ -62,5 +40,28 @@
       "settlement_b": null
     },
     "tell": 19.8
+  },
+  "letter": {
+    "regime": "EROSION",
+    "value": 44.1,
+    "decomp": {
+      "weather": 11.0,
+      "kink": 7.5,
+      "resonance": 6.0,
+      "rvxray": 5.9,
+      "confession": 3.3,
+      "buffers": 3.0,
+      "undertow": 2.5,
+      "warehouse": 2.4,
+      "tails": 1.7,
+      "auctions": 0.8,
+      "hydrophone": 0.1
+    },
+    "crunch": {
+      "date": "2026-09-15",
+      "worst_case_b": 2936.4,
+      "settlement_b": null
+    },
+    "tell": 19.1
   }
 }
