@@ -27,8 +27,8 @@ a Bloomberg/Reuters replacement, a real-time quote service, or an execution venu
 ## The lab
 
 Seiche is one of three altitudes in a single liquidity lab that fills that gap:
-**Seiche** reads the plumbing, **[LiquiLens](https://liquilens.in)** ranks the
-institutions standing on it, and **Undertow** prices market liquidity itself
+**Seiche** reads the plumbing, **[LiquiLens](https://liquilens.in)** organizes
+institution evidence for review, and **Undertow** measures market liquidity itself
 (who provides depth in each segment, what an exit at position size costs
 today). The wiring between the three is real, not a brochure: the desk
 assistant pulls the LiquiLens failure board over MCP, the MARKET tab renders
@@ -36,6 +36,11 @@ Undertow's published pack live, and the Windfetch engine reads the FETCH pack
 built in the Undertow repo back into this board. On names: the internal
 composite engine called "undertow" (critical slowing down,
 `engines/undertow.py`) is unrelated to the Undertow sister product.
+
+For a first connected review, start with
+[funding context in the browser](https://liquilens.in/start/?task=funding).
+The shared [portfolio plan](docs/PORTFOLIO-FOCUS.md) prioritizes a recurring
+reviewer task while keeping each product's evidence and authority separate.
 
 ## Use Seiche everywhere
 
