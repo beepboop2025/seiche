@@ -286,6 +286,9 @@ jobs:
           print(json.dumps(social_cards.refresh_root(Path(sys.argv[2])), sort_keys=True))
           PY
           if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
+            python -I -S ops/release/frontend_site_proof.py editorial-csp \
+              --site-root /tmp/site --source-sha "$GITHUB_SHA" \
+              --source-proof "$RUNNER_TEMP/frontend-publication-proof/source-and-runtime.json"
             python -I -S ops/release/frontend_site_proof.py retire \
               --site-root /tmp/site --source-sha "$GITHUB_SHA" \
               --source-proof "$RUNNER_TEMP/frontend-publication-proof/source-and-runtime.json"
