@@ -18,7 +18,7 @@ export default function FundingPreview() {
     const started = performance.now();
     const timer = window.setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetch("/data/overview.json", { signal: controller.signal, credentials: "omit" });
+      const response = await fetch("https://api.seiche.info/api/overview", { signal: controller.signal, credentials: "omit" });
       if (!response.ok) throw new Error("The published funding snapshot is unavailable.");
       const text = await response.text();
       if (text.length > 4_000_000) throw new Error("The published snapshot could not be read.");
@@ -32,7 +32,7 @@ export default function FundingPreview() {
     }
   };
   return <section className="product-section product-peek" aria-labelledby="funding-peek-heading">
-    <div className="product-section__intro"><h2 id="funding-peek-heading">A closer look.<br/>One request.</h2><div><p>Open a few readings from Seiche’s published funding snapshot. See the figures, their dates and how long this request takes in your browser.</p><button className="product-button" onClick={read} disabled={busy}>{busy ? "Loading snapshot…" : receipt ? "Refresh the preview" : "Preview funding data"}</button></div></div>
+    <div className="product-section__intro"><h2 id="funding-peek-heading">A closer look.<br/>One request.</h2><div><p>Open a few readings from Seiche’s public funding API. See the figures, their dates and how long this request takes in your browser.</p><button className="product-button" onClick={read} disabled={busy}>{busy ? "Loading snapshot…" : receipt ? "Refresh the preview" : "Preview funding data"}</button></div></div>
     <div className="product-peek__result" aria-live="polite" aria-busy={busy}>
       {error && <p role="status" className="product-peek__error">{error}</p>}
       {receipt && <>
