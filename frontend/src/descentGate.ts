@@ -12,7 +12,7 @@ export const shouldDescend = (): boolean => {
   }
   if (window.matchMedia(SKIP_MEDIA).matches) return false;
   const hash = window.location.hash.replace("#", "");
-  return hash === "" || hash === "global"; // never intercept a deep link
+  return hash === ""; // named desk links never pass through the introduction
 };
 
 export const markDescended = () => {

@@ -96,19 +96,52 @@ def snapshot(root: Path, archive: Path) -> dict:
     }
 
 
-def seal(root: Path, before: dict, *, source_sha: str) -> dict:
+def declared_retirements(proof: Path | None, source_sha: str) -> list[str]:
+    if proof is None:
+        return []
+    if proof.is_symlink() or not proof.is_file():
+        raise ProofError("retirement requires a regular verified source proof")
+    publication = json.loads(proof.read_text()).get("frontendPublication", {})
+    if publication.get("sourceSha") != source_sha:
+        raise ProofError("retirement source differs from verified frontend receipt")
+    paths = publication.get("retiredPublicPaths", [])
+    if paths not in ([], ["funding.json"]):
+        raise ProofError("frontend receipt declares an unsupported retirement")
+    return paths
+
+
+def retire(root: Path, paths: list[str]) -> dict:
+    if paths not in ([], ["funding.json"]):
+        raise ProofError("unsupported public retirement")
+    files(root)
+    for relative in paths:
+        target = root / relative
+        if target.exists():
+            target.unlink()
+    return {"retiredPublicPaths": paths}
+
+
+def seal(root: Path, before: dict, *, source_sha: str, retired_paths=()) -> dict:
     if (
         before.get("schema") != SCHEMA
         or not isinstance(before.get("files"), dict)
         or re.fullmatch(r"[0-9a-f]{40}", source_sha) is None
     ):
         raise ProofError("invalid frontend recovery manifest or source")
+    retired_paths = list(retired_paths)
+    if retired_paths not in ([], ["funding.json"]):
+        raise ProofError("unsupported public retirement")
     after = files(root)
+    if any(relative in after for relative in retired_paths):
+        raise ProofError("retired public file is still present")
     changed = []
     for relative in sorted(set(before["files"]) | set(after)):
         old = before["files"].get(relative)
         new = after.get(relative)
         if old == new:
+            continue
+        if relative in retired_paths and new is None:
+            changed.append(relative)
             continue
         if relative != "index.html":
             if old is not None or new is None:
@@ -136,7 +169,7 @@ def seal(root: Path, before: dict, *, source_sha: str) -> dict:
             "data/overview.json",
             ".well-known/ai-catalog.json",
             *refs,
-            *changed,
+            *(relative for relative in changed if relative not in retired_paths),
         }
     )
     return {
@@ -146,6 +179,7 @@ def seal(root: Path, before: dict, *, source_sha: str) -> dict:
         "recoveryArchiveSha256": before["archiveSha256"],
         "changed": changed,
         "publicFiles": {relative: after[relative] for relative in public},
+        "absentPublicFiles": retired_paths,
     }
 
 
@@ -154,6 +188,9 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
         manifest.get("publicFiles"), dict
     ):
         raise ProofError("invalid frontend public manifest")
+    absent = manifest.get("absentPublicFiles", [])
+    if absent not in ([], ["funding.json"]):
+        raise ProofError("unsupported public absence proof")
     # One budget covers the entire file inventory, including backoff. A fresh
     # Pages upload may briefly return 404 for a new asset, but a large manifest
     # must not multiply the retry window or permit a mismatching 200 response.
@@ -236,35 +273,76 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
         if time.monotonic() >= deadline:
             raise ProofError("frontend public verification deadline exceeded")
         checked.append(relative)
+    for relative in absent:
+        if (root / relative).exists() or (root / relative).is_symlink():
+            raise ProofError("retired public file is still staged")
+        url = (
+            "https://seiche.info/"
+            + relative
+            + "?"
+            + urllib.parse.urlencode({"deployment": cache_key})
+        )
+        try:
+            fetch(url)
+        except urllib.error.HTTPError as error:
+            try:
+                final = urllib.parse.urlsplit(error.url)
+                if (
+                    error.code not in {404, 410}
+                    or final.scheme != "https"
+                    or final.netloc != "seiche.info"
+                    or final.path != "/funding.json"
+                ):
+                    raise ProofError(
+                        "retired public file absence is unproven"
+                    ) from error
+            finally:
+                error.close()
+        else:
+            raise ProofError("retired public file remains publicly accessible")
+        if time.monotonic() >= deadline:
+            raise ProofError("frontend public verification deadline exceeded")
     return {
         "schema": SCHEMA,
         "sourceSha": manifest["sourceSha"],
         "status": "verified",
         "paths": checked,
+        "absentPaths": absent,
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("snapshot", "seal", "public"))
+    parser.add_argument("command", choices=("snapshot", "retire", "seal", "public"))
     parser.add_argument("--site-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--source-sha")
     parser.add_argument("--cache-key")
+    parser.add_argument("--source-proof", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "snapshot":
             if args.archive is None:
                 raise ProofError("snapshot requires --archive")
             result = snapshot(args.site_root, args.archive)
+        elif args.command == "retire":
+            result = retire(
+                args.site_root,
+                declared_retirements(args.source_proof, args.source_sha or ""),
+            )
         else:
             if args.manifest is None or args.manifest.is_symlink():
                 raise ProofError("seal/public requires a regular --manifest")
             manifest = json.loads(args.manifest.read_text())
             if args.command == "seal":
                 result = seal(
-                    args.site_root, manifest, source_sha=args.source_sha or ""
+                    args.site_root,
+                    manifest,
+                    source_sha=args.source_sha or "",
+                    retired_paths=declared_retirements(
+                        args.source_proof, args.source_sha or ""
+                    ),
                 )
             else:
                 result = verify_public(

@@ -458,6 +458,8 @@ def main():
                     str(candidate),
                     "--source-sha",
                     source_sha,
+                    "--source-proof",
+                    str(temp / "frontend-publication-proof/source-and-runtime.json"),
                     "--manifest",
                     str(root / "previous-site.json"),
                 ],

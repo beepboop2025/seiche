@@ -24,7 +24,14 @@ Every commit after the signed backend subject is checked, including side
 branches, merges and reverted edits. This bounded contract permits:
 
 - regular TypeScript/TSX/CSS under `frontend/src`, plus `frontend/index.html`;
-- frontend test fixtures and direct-child Markdown documentation;
+- the exact shared `frontend/src/family-editorial.js` module bundled by Vite;
+  neighboring JavaScript files do not gain this exception;
+- frontend test fixtures, direct-child Markdown documentation and the root
+  product README (review-only; the packaged `backend/README.md` is excluded);
+- the exact `backend/tests/test_ai_discovery.py` navigation/discovery contract
+  (review-only; it is never imported by the frontend or backend renderer);
+- deletion of the exact personal `frontend/public/funding.json` manifest; its
+  modification, addition, reintroduction and neighboring public paths are denied;
 - the exact frontend publication controller/test files named by the verifier;
 - existing narrowly defined desk content, only with the existing desk identity
   and daily/weekly subject rules; repository content is excluded from this build;
@@ -135,6 +142,14 @@ The candidate may replace only the root shell and add new assets or the bounded,
 content-addressed root image. Existing data, catalog, dispatches, articles,
 views, cards and assets must remain byte-identical. Missing assets, changed
 evidence or unsafe paths stop publication before a push.
+
+The one optional retirement is separately named by `retiredPublicPaths` in the
+signed receipt: only `funding.json`. The publisher removes that exact copied
+manifest, using its verified source receipt. The independent seal rejects a
+replacement or any other deletion and records the required public absence.
+Canonical verification requires HTTP 404 or 410 for that path; a successful
+HTML fallback or the previous personal manifest fails. The recovery archive
+retains the prior bytes privately. Retirement makes no new legal-entity claim.
 
 Current-main checks and the ordinary non-force mirror push provide the source
 and mirror compare-and-swap checks; both are repeated before Cloudflare deploy.
