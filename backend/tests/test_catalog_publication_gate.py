@@ -1673,6 +1673,17 @@ def test_root_readme_alone_cannot_authorize_a_frontend_release(frontend_repo):
         front.compatibility_changes(root, release, source)
 
 
+def test_frontend_receipt_classifies_exact_discovery_test_as_review_only(frontend_repo):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    source = _frontend_change(root, {"backend/tests/test_ai_discovery.py": "# Navigation contract\n"})
+    changes = front.compatibility_changes(root, release, source)
+    assert next(change for change in changes if change["path"] == "backend/tests/test_ai_discovery.py")["kind"] == "review_only"
+    source = _frontend_change(root, {"backend/tests/test_neighbor.py": "# Not admitted\n"})
+    with pytest.raises(front.Error, match="forbidden runtime, build, catalog or data path"):
+        front.compatibility_changes(root, release, source)
+
+
 def test_frontend_receipt_admits_exact_bundled_editorial_module(frontend_repo):
     root, release, _ = frontend_repo
     source = _frontend_change(root, {"frontend/src/family-editorial.js": "export const fixture = true;\n"})

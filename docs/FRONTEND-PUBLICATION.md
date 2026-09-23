@@ -28,6 +28,8 @@ branches, merges and reverted edits. This bounded contract permits:
   neighboring JavaScript files do not gain this exception;
 - frontend test fixtures, direct-child Markdown documentation and the root
   product README (review-only; the packaged `backend/README.md` is excluded);
+- the exact `backend/tests/test_ai_discovery.py` navigation/discovery contract
+  (review-only; it is never imported by the frontend or backend renderer);
 - the exact frontend publication controller/test files named by the verifier;
 - existing narrowly defined desk content, only with the existing desk identity
   and daily/weekly subject rules; repository content is excluded from this build;

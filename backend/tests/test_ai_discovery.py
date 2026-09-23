@@ -273,13 +273,11 @@ def test_clean_public_urls_match_cloudflare_redirect_targets():
 
 def test_terminal_navigation_exposes_the_selection_surface():
     app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
-    nav = app[
-        app.index('<nav className="tabs">') : app.index(
-            "</nav>", app.index('<nav className="tabs">')
-        )
-    ]
+    assert "<WorkspaceNavigation" in app
+    nav = (ROOT / "frontend" / "src" / "WorkspaceNavigation.tsx").read_text()
+    assert 'aria-label="Funding desk tools"' in nav
     assert 'href="/use-cases"' in nav
-    assert "USE CASES" in nav
+    assert "Use cases" in nav
     commands = (ROOT / "frontend" / "src" / "commands.ts").read_text()
     assert 'url: "/guide"' in commands
     assert 'url: "/support"' in commands
