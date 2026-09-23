@@ -33,6 +33,11 @@ Error = gate.PublicationGateError
 SCHEMA = "seiche.frontend-publication.v1"
 PURPOSE = "frontend_only_no_runtime_activation"
 TAG_PREFIX = "frontend-publication-"
+EDITORIAL_ORIGIN = "https://myquantdoesntspeakenglish.com"
+EDITORIAL_CONNECT_BEFORE = (
+    "connect-src 'self' https://api.seiche.info https://cloudflareinsights.com;"
+)
+EDITORIAL_CONNECT_AFTER = EDITORIAL_CONNECT_BEFORE[:-1] + " " + EDITORIAL_ORIGIN + ";"
 
 # These files cannot be imported by the frontend build, or by postprocessing:
 # the latter runs from the immutable backend release archive, never this tree.
@@ -297,6 +302,26 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                     kind = "review_only"
                 elif path in CONTROLLER_PATHS:
                     kind = "publication_controller"
+                elif path == "frontend/public/_headers":
+                    if not metadata.endswith(b" M"):
+                        raise Error(
+                            "editorial CSP permits only the exact connect origin addition"
+                        )
+                    before = _blob(root, parent, path).decode("utf-8")
+                    after = _blob(root, commit, path).decode("utf-8")
+                    if (
+                        not metadata.endswith(b" M")
+                        or before.count(EDITORIAL_CONNECT_BEFORE) != 1
+                        or EDITORIAL_ORIGIN in before
+                        or after
+                        != before.replace(
+                            EDITORIAL_CONNECT_BEFORE, EDITORIAL_CONNECT_AFTER
+                        )
+                    ):
+                        raise Error(
+                            "editorial CSP permits only the exact connect origin addition"
+                        )
+                    kind = "editorial_connect_origin"
                 elif path == "frontend/public/funding.json":
                     if (
                         not metadata.endswith(b" D")
@@ -429,6 +454,8 @@ def prepare_receipt(
     }
     if any(change["kind"] == "retired_public_funding" for change in changes):
         payload["retiredPublicPaths"] = ["funding.json"]
+    if any(change["kind"] == "editorial_connect_origin" for change in changes):
+        payload["editorialConnectOrigin"] = EDITORIAL_ORIGIN
     return payload, changes
 
 

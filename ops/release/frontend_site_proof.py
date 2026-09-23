@@ -22,6 +22,11 @@ SAFE_PATH = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+")
 PUBLIC_VERIFY_SECONDS = 60
 PUBLIC_MAX_RETRIES = 5
 TEMPORARY_HTTP_STATUS = frozenset({404, 429, 502, 503, 504})
+EDITORIAL_ORIGIN = "https://myquantdoesntspeakenglish.com"
+EDITORIAL_CONNECT_BEFORE = (
+    "connect-src 'self' https://api.seiche.info https://cloudflareinsights.com;"
+)
+EDITORIAL_CONNECT_AFTER = EDITORIAL_CONNECT_BEFORE[:-1] + " " + EDITORIAL_ORIGIN + ";"
 
 
 class ProofError(RuntimeError):
@@ -121,7 +126,67 @@ def retire(root: Path, paths: list[str]) -> dict:
     return {"retiredPublicPaths": paths}
 
 
-def seal(root: Path, before: dict, *, source_sha: str, retired_paths=()) -> dict:
+def declared_editorial_origin(proof: Path | None, source_sha: str) -> str | None:
+    if proof is None:
+        return None
+    # Reuse the same verified-source/regular-file checks as retirement.
+    declared_retirements(proof, source_sha)
+    origin = json.loads(proof.read_text())["frontendPublication"].get(
+        "editorialConnectOrigin"
+    )
+    if origin not in (None, EDITORIAL_ORIGIN):
+        raise ProofError("unsupported editorial connect origin")
+    return origin
+
+
+def editorial_policy(root: Path) -> tuple[bytes, str]:
+    target = root / "_headers"
+    if target.is_symlink() or not target.is_file():
+        raise ProofError("editorial CSP requires a regular existing headers file")
+    body = target.read_bytes()
+    text = body.decode("utf-8")
+    policies = re.findall(r"^  Content-Security-Policy: (.+)$", text, re.MULTILINE)
+    if (
+        len(policies) != 1
+        or text.count(EDITORIAL_ORIGIN) != 1
+        or policies[0].count(EDITORIAL_CONNECT_AFTER) != 1
+    ):
+        raise ProofError(
+            "editorial CSP differs from the exact connect origin allowance"
+        )
+    return body, policies[0]
+
+
+def allow_editorial(root: Path, origin: str | None) -> dict:
+    if origin is None:
+        return {}
+    if origin != EDITORIAL_ORIGIN:
+        raise ProofError("unsupported editorial connect origin")
+    files(root)
+    target = root / "_headers"
+    if target.is_symlink() or not target.is_file():
+        raise ProofError("editorial CSP requires a regular existing headers file")
+    text = target.read_text()
+    if EDITORIAL_ORIGIN not in text:
+        if text.count(EDITORIAL_CONNECT_BEFORE) != 1:
+            raise ProofError(
+                "editorial CSP baseline differs from the expected connect directive"
+            )
+        target.write_text(
+            text.replace(EDITORIAL_CONNECT_BEFORE, EDITORIAL_CONNECT_AFTER)
+        )
+    _, policy = editorial_policy(root)
+    return {"contentSecurityPolicy": policy}
+
+
+def seal(
+    root: Path,
+    before: dict,
+    *,
+    source_sha: str,
+    retired_paths=(),
+    editorial_origin=None,
+) -> dict:
     if (
         before.get("schema") != SCHEMA
         or not isinstance(before.get("files"), dict)
@@ -132,6 +197,25 @@ def seal(root: Path, before: dict, *, source_sha: str, retired_paths=()) -> dict
     if retired_paths not in ([], ["funding.json"]):
         raise ProofError("unsupported public retirement")
     after = files(root)
+    policy_proof = {}
+    if editorial_origin is not None:
+        if editorial_origin != EDITORIAL_ORIGIN:
+            raise ProofError("unsupported editorial connect origin")
+        header_bytes, policy = editorial_policy(root)
+        # The privileged seal independently proves every other header byte remains
+        # identical to the recoverable mirror. The builder cannot widen this grant.
+        predecessor = header_bytes.replace(
+            EDITORIAL_CONNECT_AFTER.encode(), EDITORIAL_CONNECT_BEFORE.encode()
+        )
+        if before["files"].get("_headers") not in {
+            hashlib.sha256(predecessor).hexdigest(),
+            after["_headers"],
+        }:
+            raise ProofError("editorial CSP mutated another sealed header")
+        policy_proof = {
+            "contentSecurityPolicy": policy,
+            "headersSha256": after["_headers"],
+        }
     if any(relative in after for relative in retired_paths):
         raise ProofError("retired public file is still present")
     changed = []
@@ -139,6 +223,9 @@ def seal(root: Path, before: dict, *, source_sha: str, retired_paths=()) -> dict
         old = before["files"].get(relative)
         new = after.get(relative)
         if old == new:
+            continue
+        if relative == "_headers" and policy_proof:
+            changed.append(relative)
             continue
         if relative in retired_paths and new is None:
             changed.append(relative)
@@ -169,7 +256,11 @@ def seal(root: Path, before: dict, *, source_sha: str, retired_paths=()) -> dict
             "data/overview.json",
             ".well-known/ai-catalog.json",
             *refs,
-            *(relative for relative in changed if relative not in retired_paths),
+            *(
+                relative
+                for relative in changed
+                if relative not in retired_paths and relative != "_headers"
+            ),
         }
     )
     return {
@@ -180,6 +271,7 @@ def seal(root: Path, before: dict, *, source_sha: str, retired_paths=()) -> dict
         "changed": changed,
         "publicFiles": {relative: after[relative] for relative in public},
         "absentPublicFiles": retired_paths,
+        **policy_proof,
     }
 
 
@@ -191,6 +283,13 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
     absent = manifest.get("absentPublicFiles", [])
     if absent not in ([], ["funding.json"]):
         raise ProofError("unsupported public absence proof")
+    policy = manifest.get("contentSecurityPolicy")
+    if policy is not None:
+        header_bytes, staged_policy = editorial_policy(root)
+        if staged_policy != policy or hashlib.sha256(
+            header_bytes
+        ).hexdigest() != manifest.get("headersSha256"):
+            raise ProofError("frontend staged CSP changed")
     # One budget covers the entire file inventory, including backoff. A fresh
     # Pages upload may briefly return 404 for a new asset, but a large manifest
     # must not multiply the retry window or permit a mismatching 200 response.
@@ -216,9 +315,31 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
                 if urllib.parse.urlsplit(response.url).hostname != "seiche.info":
                     raise ProofError("frontend public probe left its canonical host")
                 body = response.read(16 * 1024 * 1024 + 1)
+                header_items = list(response.headers.items()) if policy else []
+                headers = dict(header_items)
+                if policy and urllib.parse.urlsplit(url).path == "/":
+                    if (
+                        sum(
+                            key.lower() == "content-security-policy"
+                            for key, _ in header_items
+                        )
+                        != 1
+                    ):
+                        raise ProofError(
+                            "frontend public CSP must have exactly one policy header"
+                        )
+                    final = urllib.parse.urlsplit(response.url)
+                    if (
+                        final.scheme != "https"
+                        or final.netloc != "seiche.info"
+                        or final.path != "/"
+                    ):
+                        raise ProofError(
+                            "frontend CSP probe left its exact canonical route"
+                        )
             if len(body) > 16 * 1024 * 1024:
                 raise ProofError("frontend public response exceeded its bound")
-            return body
+            return (body, headers) if policy else body
 
     checked = []
     for relative, digest in manifest["publicFiles"].items():
@@ -268,6 +389,15 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
                     ) from error
                 time.sleep(delay)
                 retries += 1
+        response_headers = {}
+        if isinstance(body, tuple):
+            body, response_headers = body
+        if relative == "index.html" and policy is not None:
+            actual_policy = {
+                key.lower(): value for key, value in response_headers.items()
+            }.get("content-security-policy")
+            if actual_policy != policy:
+                raise ProofError("frontend public CSP differs from the sealed policy")
         if hashlib.sha256(body).hexdigest() != digest:
             raise ProofError(f"frontend public bytes differ: {relative}")
         if time.monotonic() >= deadline:
@@ -308,12 +438,15 @@ def verify_public(root: Path, manifest: dict, *, cache_key: str, fetch=None) -> 
         "status": "verified",
         "paths": checked,
         "absentPaths": absent,
+        **({"contentSecurityPolicy": policy} if policy else {}),
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("snapshot", "retire", "seal", "public"))
+    parser.add_argument(
+        "command", choices=("snapshot", "retire", "editorial-csp", "seal", "public")
+    )
     parser.add_argument("--site-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--archive", type=Path)
@@ -326,6 +459,11 @@ def main() -> int:
             if args.archive is None:
                 raise ProofError("snapshot requires --archive")
             result = snapshot(args.site_root, args.archive)
+        elif args.command == "editorial-csp":
+            result = allow_editorial(
+                args.site_root,
+                declared_editorial_origin(args.source_proof, args.source_sha or ""),
+            )
         elif args.command == "retire":
             result = retire(
                 args.site_root,
@@ -340,6 +478,9 @@ def main() -> int:
                     args.site_root,
                     manifest,
                     source_sha=args.source_sha or "",
+                    editorial_origin=declared_editorial_origin(
+                        args.source_proof, args.source_sha or ""
+                    ),
                     retired_paths=declared_retirements(
                         args.source_proof, args.source_sha or ""
                     ),

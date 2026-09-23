@@ -1595,6 +1595,11 @@ def frontend_repo(content_repo):
     (root / "frontend/public/funding.json").write_text(
         '{"entity":{"type":"individual"}}'
     )
+    (root / "frontend/public/_headers").write_text(
+        "/*\n  Content-Security-Policy: default-src 'self'; "
+        + front.EDITORIAL_CONNECT_BEFORE
+        + " object-src 'none';\n  X-Frame-Options: DENY\n"
+    )
     release, fingerprint = _sign_content_release(root)
     return root, release, fingerprint
 
@@ -1676,6 +1681,66 @@ def test_root_readme_alone_cannot_authorize_a_frontend_release(frontend_repo):
     root, release, _ = frontend_repo
     source = _frontend_change(root, {"README.md": "# Product navigation\n"})
     with pytest.raises(front.Error, match="no frontend or isolated operations changes"):
+        front.compatibility_changes(root, release, source)
+
+
+def test_frontend_receipt_binds_exact_editorial_connect_origin(frontend_repo):
+    root, release, fingerprint = frontend_repo
+    _frontend_change(root)
+    path = "frontend/public/_headers"
+    before = (root / path).read_text()
+    source = _frontend_change(
+        root,
+        {
+            path: before.replace(
+                front.EDITORIAL_CONNECT_BEFORE, front.EDITORIAL_CONNECT_AFTER
+            )
+        },
+    )
+    payload, changes = front.prepare_receipt(
+        root, expected_sha=source, signer_fingerprint=fingerprint
+    )
+    assert payload["editorialConnectOrigin"] == "https://myquantdoesntspeakenglish.com"
+    assert any(change["kind"] == "editorial_connect_origin" for change in changes)
+    tag = _frontend_tag(root, fingerprint)
+    assert (
+        front.verify_frontend_receipt(
+            root, expected_sha=source, signer_fingerprint=fingerprint, receipt_tag=tag
+        )["editorialConnectOrigin"]
+        == front.EDITORIAL_ORIGIN
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["wildcard", "extra_origin", "script", "neighbor", "delete", "revert"]
+)
+def test_editorial_csp_cannot_authorize_other_header_changes(frontend_repo, mutation):
+    root, release, _ = frontend_repo
+    _frontend_change(root)
+    path = "frontend/public/_headers"
+    before = (root / path).read_text()
+    after = before.replace(
+        front.EDITORIAL_CONNECT_BEFORE, front.EDITORIAL_CONNECT_AFTER
+    )
+    if mutation == "wildcard":
+        after = after.replace(front.EDITORIAL_ORIGIN, "*")
+    elif mutation == "extra_origin":
+        after = after.replace(
+            front.EDITORIAL_ORIGIN, front.EDITORIAL_ORIGIN + " https://other.invalid"
+        )
+    elif mutation == "script":
+        after = after.replace("default-src 'self'", "default-src *")
+    elif mutation == "neighbor":
+        path = "frontend/public/_redirects"
+    elif mutation == "delete":
+        (root / path).unlink()
+        source = _frontend_change(root)
+    elif mutation == "revert":
+        _frontend_change(root, {path: after})
+        after = before
+    if mutation != "delete":
+        source = _frontend_change(root, {path: after})
+    with pytest.raises(front.Error, match="exact connect origin|forbidden runtime"):
         front.compatibility_changes(root, release, source)
 
 
@@ -2666,6 +2731,9 @@ def frontend_site(tmp_path):
             ".well-known/ai-catalog.json": '{"synthetic":true}',
             "dispatches/kept.md": "synthetic sealed evidence",
             "funding.json": '{"entity":{"type":"individual"}}',
+            "_headers": "/*\n  Content-Security-Policy: default-src 'self'; "
+            + site_proof.EDITORIAL_CONNECT_BEFORE
+            + " object-src 'none';\n  X-Frame-Options: DENY\n",
         },
     )
     before = site_proof.snapshot(root, tmp_path / "synthetic-rollback.tar")
@@ -2693,6 +2761,174 @@ def test_frontend_site_retains_recovery_and_proves_exact_public_bytes(frontend_s
     with pytest.raises(site_proof.ProofError, match="public bytes differ"):
         site_proof.verify_public(
             root, manifest, cache_key="synthetic", fetch=lambda _url: b"old CDN content"
+        )
+
+
+def test_editorial_csp_seal_and_public_header_proof(frontend_site, tmp_path):
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    proof = tmp_path / "verified-source.json"
+    proof.write_text(
+        json.dumps(
+            {
+                "frontendPublication": {
+                    "sourceSha": "a" * 40,
+                    "editorialConnectOrigin": site_proof.EDITORIAL_ORIGIN,
+                }
+            }
+        )
+    )
+    origin = site_proof.declared_editorial_origin(proof, "a" * 40)
+    policy = site_proof.allow_editorial(root, origin)["contentSecurityPolicy"]
+    with pytest.raises(site_proof.ProofError, match="sealed file"):
+        site_proof.seal(root, before, source_sha="a" * 40)
+    manifest = site_proof.seal(
+        root, before, source_sha="a" * 40, editorial_origin=origin
+    )
+    assert "_headers" not in manifest["publicFiles"]
+    assert "_headers" in manifest["changed"]
+    assert manifest["contentSecurityPolicy"] == policy
+
+    def fetch(url):
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        return (root / relative).read_bytes(), {"Content-Security-Policy": policy}
+
+    assert (
+        site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)[
+            "contentSecurityPolicy"
+        ]
+        == policy
+    )
+    for headers in (
+        {},
+        {"Content-Security-Policy": policy.replace(site_proof.EDITORIAL_ORIGIN, "*")},
+        {"Content-Security-Policy": policy + "; script-src *"},
+    ):
+        with pytest.raises(site_proof.ProofError, match="public CSP differs"):
+            site_proof.verify_public(
+                root,
+                manifest,
+                cache_key="synthetic",
+                fetch=lambda url: (fetch(url)[0], headers),
+            )
+    # A subsequent publication still verifies the already-installed exact policy.
+    existing = {**before, "files": site_proof.files(root)}
+    site_proof.allow_editorial(root, origin)
+    assert (
+        site_proof.seal(root, existing, source_sha="a" * 40, editorial_origin=origin)[
+            "contentSecurityPolicy"
+        ]
+        == policy
+    )
+    with pytest.raises(site_proof.ProofError, match="source differs"):
+        site_proof.declared_editorial_origin(proof, "b" * 40)
+    proof.write_text(
+        json.dumps(
+            {
+                "frontendPublication": {
+                    "sourceSha": "a" * 40,
+                    "editorialConnectOrigin": "https://other.invalid",
+                }
+            }
+        )
+    )
+    with pytest.raises(site_proof.ProofError, match="unsupported editorial"):
+        site_proof.declared_editorial_origin(proof, "a" * 40)
+
+
+@pytest.mark.parametrize("case", ["canonical", "downgrade", "redirect", "duplicate"])
+def test_editorial_csp_public_transport_requires_exact_root_and_one_policy(
+    frontend_site, monkeypatch, case
+):
+    from email.message import Message
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    site_proof.allow_editorial(root, site_proof.EDITORIAL_ORIGIN)
+    manifest = site_proof.seal(
+        root, before, source_sha="a" * 40, editorial_origin=site_proof.EDITORIAL_ORIGIN
+    )
+
+    class Response:
+        def __init__(self, url):
+            self.url = url
+            self.relative = urlsplit(url).path.lstrip("/") or "index.html"
+            self.headers = Message()
+            self.headers.add_header(
+                "Content-Security-Policy", manifest["contentSecurityPolicy"]
+            )
+            if self.relative == "index.html":
+                if case == "downgrade":
+                    self.url = "http://seiche.info/"
+                elif case == "redirect":
+                    self.url = "https://seiche.info/other"
+                elif case == "duplicate":
+                    self.headers.add_header(
+                        "Content-Security-Policy", "connect-src 'none'"
+                    )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def read(self, _bound):
+            return (root / self.relative).read_bytes()
+
+    monkeypatch.setattr(
+        site_proof.urllib.request,
+        "urlopen",
+        lambda request, **_kwargs: Response(request.full_url),
+    )
+    if case == "canonical":
+        assert (
+            site_proof.verify_public(root, manifest, cache_key="synthetic")["status"]
+            == "verified"
+        )
+    else:
+        with pytest.raises(
+            site_proof.ProofError, match="exact canonical route|exactly one policy"
+        ):
+            site_proof.verify_public(root, manifest, cache_key="synthetic")
+
+
+@pytest.mark.parametrize(
+    "mutation", ["another_header", "extra_origin", "neighbor", "deleted"]
+)
+def test_editorial_csp_privileged_seal_rejects_builder_widening(
+    frontend_site, mutation
+):
+    root, before = frontend_site
+    site_proof.allow_editorial(root, site_proof.EDITORIAL_ORIGIN)
+    target = root / "_headers"
+    if mutation == "another_header":
+        target.write_text(
+            target.read_text().replace(
+                "X-Frame-Options: DENY", "X-Frame-Options: SAMEORIGIN"
+            )
+        )
+    elif mutation == "extra_origin":
+        target.write_text(
+            target.read_text().replace(
+                site_proof.EDITORIAL_ORIGIN,
+                site_proof.EDITORIAL_ORIGIN + " https://other.invalid",
+            )
+        )
+    elif mutation == "neighbor":
+        (root / "_redirects").write_text("/* /index.html 200")
+    else:
+        target.unlink()
+    with pytest.raises(
+        site_proof.ProofError,
+        match="sealed header|exact connect origin|unauthorized file|regular existing headers",
+    ):
+        site_proof.seal(
+            root,
+            before,
+            source_sha="a" * 40,
+            editorial_origin=site_proof.EDITORIAL_ORIGIN,
         )
 
 

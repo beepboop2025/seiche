@@ -32,6 +32,9 @@ branches, merges and reverted edits. This bounded contract permits:
   (review-only; it is never imported by the frontend or backend renderer);
 - deletion of the exact personal `frontend/public/funding.json` manifest; its
   modification, addition, reintroduction and neighboring public paths are denied;
+- one exact `frontend/public/_headers` modification adding only
+  `https://myquantdoesntspeakenglish.com` to the existing `connect-src` directive;
+  other header bytes, origins, wildcards, additions and deletions remain denied;
 - the exact frontend publication controller/test files named by the verifier;
 - existing narrowly defined desk content, only with the existing desk identity
   and daily/weekly subject rules; repository content is excluded from this build;
@@ -150,6 +153,15 @@ replacement or any other deletion and records the required public absence.
 Canonical verification requires HTTP 404 or 410 for that path; a successful
 HTML fallback or the previous personal manifest fails. The recovery archive
 retains the prior bytes privately. Retirement makes no new legal-entity claim.
+
+The optional `editorialConnectOrigin` receipt field permits only the exact public
+MyQuant HTTPS feed origin. The unprivileged builder inserts that origin into the
+mirror's existing connect directive; the privileged seal independently hashes the
+candidate with this one insertion reversed against the recovery manifest. Every
+other header byte remains sealed. `_headers` is a Cloudflare control file, so
+public proof validates its staged hash and requires the canonical root response's
+entire Content-Security-Policy to equal the sealed policy instead of fetching a
+public `_headers` body. Missing or broader policies fail publication proof.
 
 Current-main checks and the ordinary non-force mirror push provide the source
 and mirror compare-and-swap checks; both are repeated before Cloudflare deploy.
