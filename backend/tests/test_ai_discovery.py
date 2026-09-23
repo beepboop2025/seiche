@@ -119,9 +119,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert corpus_mcp.get("status") not in {"active", "live"}
     assert corpus_mcp["metadata"].get("status") not in {"active", "live"}
     assert "live gateway" not in corpus_claims
-    assert corpus_mcp["metadata"]["publicToolCount"] == len(
-        corpus_mcp["capabilities"]
-    )
+    assert corpus_mcp["metadata"]["publicToolCount"] == len(corpus_mcp["capabilities"])
     world = next(
         entry
         for entry in catalog["entries"]

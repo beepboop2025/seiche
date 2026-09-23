@@ -284,9 +284,16 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                     ) from exc
                 if any(part in {"", ".", ".."} for part in path.split("/")):
                     raise Error("frontend history contains an unsafe path")
-                if path in {"frontend/index.html", "frontend/src/family-editorial.js"} or FRONTEND_PATH.fullmatch(path):
+                if path in {
+                    "frontend/index.html",
+                    "frontend/src/family-editorial.js",
+                } or FRONTEND_PATH.fullmatch(path):
                     kind = "frontend"
-                elif path in {"README.md", "backend/tests/test_ai_discovery.py"} or TEST_PATH.fullmatch(path) or DOC_PATH.fullmatch(path):
+                elif (
+                    path in {"README.md", "backend/tests/test_ai_discovery.py"}
+                    or TEST_PATH.fullmatch(path)
+                    or DOC_PATH.fullmatch(path)
+                ):
                     kind = "review_only"
                 elif path in CONTROLLER_PATHS:
                     kind = "publication_controller"
