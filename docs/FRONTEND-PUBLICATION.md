@@ -24,7 +24,10 @@ Every commit after the signed backend subject is checked, including side
 branches, merges and reverted edits. This bounded contract permits:
 
 - regular TypeScript/TSX/CSS under `frontend/src`, plus `frontend/index.html`;
-- frontend test fixtures and direct-child Markdown documentation;
+- the exact shared `frontend/src/family-editorial.js` module bundled by Vite;
+  neighboring JavaScript files do not gain this exception;
+- frontend test fixtures, direct-child Markdown documentation and the root
+  product README (review-only; the packaged `backend/README.md` is excluded);
 - the exact frontend publication controller/test files named by the verifier;
 - existing narrowly defined desk content, only with the existing desk identity
   and daily/weekly subject rules; repository content is excluded from this build;

@@ -1653,6 +1653,33 @@ def test_frontend_tag_authenticates_unsigned_source_without_rebinding_backend(
         )
 
 
+def test_frontend_receipt_classifies_root_product_readme_as_review_only(frontend_repo):
+    root, release, fingerprint = frontend_repo
+    _frontend_change(root)
+    source = _frontend_change(root, {"README.md": "# Product navigation\n"})
+    changes = front.compatibility_changes(root, release, source)
+    assert next(change for change in changes if change["path"] == "README.md")["kind"] == "review_only"
+    tag = _frontend_tag(root, fingerprint)
+    proof = front.verify_frontend_receipt(
+        root, expected_sha=source, signer_fingerprint=fingerprint, receipt_tag=tag
+    )
+    assert proof["backendReleaseSha"] == release
+
+
+def test_root_readme_alone_cannot_authorize_a_frontend_release(frontend_repo):
+    root, release, _ = frontend_repo
+    source = _frontend_change(root, {"README.md": "# Product navigation\n"})
+    with pytest.raises(front.Error, match="no frontend or isolated operations changes"):
+        front.compatibility_changes(root, release, source)
+
+
+def test_frontend_receipt_admits_exact_bundled_editorial_module(frontend_repo):
+    root, release, _ = frontend_repo
+    source = _frontend_change(root, {"frontend/src/family-editorial.js": "export const fixture = true;\n"})
+    changes = front.compatibility_changes(root, release, source)
+    assert next(change for change in changes if change["path"] == "frontend/src/family-editorial.js")["kind"] == "frontend"
+
+
 def test_frontend_receipt_accepts_reviewed_merge_and_reports_excluded_paths(
     frontend_repo,
 ):
@@ -1848,6 +1875,8 @@ def test_frontend_merge_still_rejects_reverted_unauthorized_desk_history(fronten
         "deploy/railway-ci/recovery-controller/test_recurring_extra.py",
         "deploy/railway-ci/recovery-controller/nested/attest.py",
         "backend/seiche/attest.py",
+        "backend/README.md",
+        "frontend/src/unreviewed-editorial.js",
         "deploy/railway-ci/recovery-controller/requirements-extra.lock",
         "deploy/railway-ci/recovery-controller/trusted/backend/seiche/api.py",
         "deploy/railway-ci/recovery-controller-extra/verify.py",

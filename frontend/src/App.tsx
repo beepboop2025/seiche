@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
+import { useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
@@ -16,6 +16,8 @@ import Odo from "./motion/Odo";
 import LivePulse from "./motion/LivePulse";
 import { useChangeFlash } from "./motion/useLive";
 import { tabSharePath } from "./shareRoutes";
+import { TERMINAL_TABS as TABS, terminalTabFromHash, type TerminalTab as Tab } from "./productRoutes";
+import WorkspaceNavigation from "./WorkspaceNavigation";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const Basin = lazy(() => import("./Basin"));
@@ -77,23 +79,11 @@ const Account = lazy(() => import("./tabs/Account"));
 // bidirectional funding loop as context surfaces, never hidden composite
 // inputs. SCARCITY and SUPPLY carry the two forward-looking Fed plumbing views.
 // Digit shortcuts index TABS positionally; hash routes remain name-based.
-const TABS = [
-  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "WORKBENCH", "CORPUS", "RESEARCH", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
-  "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
-] as const;
-type Tab = (typeof TABS)[number];
-
-// Unchanged, and deliberately: every existing deep link is a #tab hash that
-// hashToTab resolves by NAME, so reordering above moves nothing. Changing this
-// would silently redirect every bare seiche.info/ bookmark that expects the
-// board, which is a different decision from promoting a tab.
+// The public product entry owns the bare URL. Named desk routes retain their
+// existing tab and sub-route identities, including positional shortcuts.
 const DEFAULT_TAB: Tab = "TODAY";
 
-const hashToTab = (): Tab => {
-  const raw = decodeURIComponent(window.location.hash.replace("#", ""));
-  const h = raw.split("/")[0].toUpperCase();
-  return (TABS as readonly string[]).includes(h) ? (h as Tab) : DEFAULT_TAB;
-};
+const hashToTab = (): Tab => terminalTabFromHash(window.location.hash) ?? DEFAULT_TAB;
 
 export default function App() {
   return (
@@ -405,33 +395,7 @@ function AppInner() {
         <a href="/developers">Connect the free MCP or API →</a>
       </aside>}
 
-      <nav className="tabs">
-        <a href="/articles/" aria-label="Seiche daily articles and reviewed investigations">
-          ARTICLES
-        </a>
-        {TABS.map((t) => (
-          <Fragment key={t}>
-            <a
-              href={`#${t.toLowerCase()}`}
-              className={t === tab ? "active" : ""}
-              aria-current={t === tab ? "page" : undefined}
-              onClick={(e) => { e.preventDefault(); goTab(t); }}
-            >
-              {t === "CORPUS" ? "MARKET ATLAS" : t}
-            </a>
-            {t === "BOARD" && (
-              <a href="/use-cases" aria-label="Seiche use cases and selection guide">
-                USE CASES
-              </a>
-            )}
-          </Fragment>
-        ))}
-        <a href="/markets/" aria-label="Seiche world markets evidence atlas">
-          WORLD ATLAS
-        </a>
-        <button className="cmdk" onClick={() => setPalette(true)} title="command line — function codes or search">⌘K</button>
-        <button className="cmdk" onClick={() => setHelp(true)} title="keyboard shortcuts">?</button>
-      </nav>
+      <WorkspaceNavigation tab={tab} goTab={goTab} openCommands={() => setPalette(true)} openHelp={() => setHelp(true)} />
 
       {help && (
         <div className="kshort-backdrop" onClick={() => setHelp(false)}>

@@ -8,10 +8,10 @@ funding question. LiquiLens owns institution evidence; Undertow owns venue-depth
 and position-size exit context; Lab owns shared temporal/evaluation contracts.
 
 Start at [the funding research example](https://liquilens.in/start/?task=funding).
-The review-brief candidate in the public-site repository lets a reader retain
-separately dated responses and export them for discussion. That candidate needs
-its own deployment receipt before being described as live. A snapshot from
-Seiche cannot update the source date of an institution filing or an order book.
+The browser review brief lets a reader retain separately dated responses and
+export them for discussion. Its deployment identity belongs to the public-site
+repository. A snapshot from Seiche cannot update the source date of an
+institution filing or an order book.
 
 Prioritize an analyst's recurring funding brief and API integration before
 adding another generic AI assistant or forecast family. Measure whether the

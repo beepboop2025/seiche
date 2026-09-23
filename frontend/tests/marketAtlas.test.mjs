@@ -306,8 +306,8 @@ test("dataset cursors are generation-bound and detailed market inventory is lazy
 });
 
 test("navigation exposes current state and the corpus card mirrors nine grounded tools", async () => {
-  const [app, catalogText] = await Promise.all([
-    readFile(appUrl, "utf8"),
+  const [navigation, catalogText] = await Promise.all([
+    readFile(new URL("../src/WorkspaceNavigation.tsx", import.meta.url), "utf8"),
     readFile(catalogUrl, "utf8"),
   ]);
   const catalog = JSON.parse(catalogText);
@@ -315,7 +315,7 @@ test("navigation exposes current state and the corpus card mirrors nine grounded
     (entry) => entry.identifier === "urn:air:seiche.info:mcp:market-corpus",
   );
 
-  assert.match(app, /aria-current=\{t === tab \? "page" : undefined\}/);
+  assert.match(navigation, /aria-current=\{target === tab \? "page" : undefined\}/);
   assert.ok(corpus);
   assert.equal(corpus.metadata.publicToolCount, 9);
   assert.equal(corpus.capabilities.length, 9);
