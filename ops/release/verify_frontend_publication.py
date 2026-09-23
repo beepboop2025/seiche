@@ -297,6 +297,18 @@ def compatibility_changes(root: Path, release: str, source: str) -> list[dict]:
                     kind = "review_only"
                 elif path in CONTROLLER_PATHS:
                     kind = "publication_controller"
+                elif path == "frontend/public/funding.json":
+                    if (
+                        not metadata.endswith(b" D")
+                        or gate._run_git(
+                            root, "cat-file", "-e", f"{source}:{path}", check=False
+                        ).returncode
+                        == 0
+                    ):
+                        raise Error(
+                            "personal funding manifest retirement permits deletion only"
+                        )
+                    kind = "retired_public_funding"
                 elif path == RETIRED_HANDOFF_PATH:
                     # The owner reviews its signed add/remove history in this receipt;
                     # the one-time workflow must no longer exist in the published source.
@@ -415,6 +427,8 @@ def prepare_receipt(
             _canonical({"changes": changes})
         ).hexdigest(),
     }
+    if any(change["kind"] == "retired_public_funding" for change in changes):
+        payload["retiredPublicPaths"] = ["funding.json"]
     return payload, changes
 
 

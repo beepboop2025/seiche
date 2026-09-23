@@ -1592,6 +1592,9 @@ def frontend_repo(content_repo):
         shutil.copyfile(ROOT / relative, target)
     (root / "frontend/src").mkdir()
     (root / "frontend/src/App.tsx").write_text("// synthetic original UI\n")
+    (root / "frontend/public/funding.json").write_text(
+        '{"entity":{"type":"individual"}}'
+    )
     release, fingerprint = _sign_content_release(root)
     return root, release, fingerprint
 
@@ -1673,6 +1676,41 @@ def test_root_readme_alone_cannot_authorize_a_frontend_release(frontend_repo):
     root, release, _ = frontend_repo
     source = _frontend_change(root, {"README.md": "# Product navigation\n"})
     with pytest.raises(front.Error, match="no frontend or isolated operations changes"):
+        front.compatibility_changes(root, release, source)
+
+
+def test_frontend_receipt_binds_only_the_deleted_personal_funding_manifest(
+    frontend_repo,
+):
+    root, release, fingerprint = frontend_repo
+    (root / "frontend/public/funding.json").unlink()
+    source = _frontend_change(root)
+    payload, changes = front.prepare_receipt(
+        root, expected_sha=source, signer_fingerprint=fingerprint
+    )
+    assert payload["retiredPublicPaths"] == ["funding.json"]
+    assert any(change["kind"] == "retired_public_funding" for change in changes)
+    tag = _frontend_tag(root, fingerprint)
+    assert front.verify_frontend_receipt(
+        root, expected_sha=source, signer_fingerprint=fingerprint, receipt_tag=tag
+    )["retiredPublicPaths"] == ["funding.json"]
+
+
+@pytest.mark.parametrize("operation", ["modify", "readd", "neighbor"])
+def test_frontend_funding_retirement_cannot_authorize_other_public_writes(
+    frontend_repo, operation
+):
+    root, release, _ = frontend_repo
+    if operation == "readd":
+        (root / "frontend/public/funding.json").unlink()
+        _frontend_change(root)
+    path = (
+        "frontend/public/neighbor.json"
+        if operation == "neighbor"
+        else "frontend/public/funding.json"
+    )
+    source = _frontend_change(root, {path: '{"entity":{"type":"company"}}'})
+    with pytest.raises(front.Error, match="deletion only|forbidden runtime"):
         front.compatibility_changes(root, release, source)
 
 
@@ -2627,6 +2665,7 @@ def frontend_site(tmp_path):
             "data/overview.json": '{"as_of":"2000-01-01","status":"restricted"}',
             ".well-known/ai-catalog.json": '{"synthetic":true}',
             "dispatches/kept.md": "synthetic sealed evidence",
+            "funding.json": '{"entity":{"type":"individual"}}',
         },
     )
     before = site_proof.snapshot(root, tmp_path / "synthetic-rollback.tar")
@@ -2654,6 +2693,89 @@ def test_frontend_site_retains_recovery_and_proves_exact_public_bytes(frontend_s
     with pytest.raises(site_proof.ProofError, match="public bytes differ"):
         site_proof.verify_public(
             root, manifest, cache_key="synthetic", fetch=lambda _url: b"old CDN content"
+        )
+
+
+def test_frontend_funding_retirement_requires_receipt_and_proven_public_absence(
+    frontend_site, tmp_path
+):
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    root, before = frontend_site
+    proof = tmp_path / "verified-source.json"
+    proof.write_text(
+        json.dumps(
+            {
+                "frontendPublication": {
+                    "sourceSha": "a" * 40,
+                    "retiredPublicPaths": ["funding.json"],
+                }
+            }
+        )
+    )
+    paths = site_proof.declared_retirements(proof, "a" * 40)
+    site_proof.retire(root, paths)
+    with pytest.raises(site_proof.ProofError, match="sealed file"):
+        site_proof.seal(root, before, source_sha="a" * 40)
+    manifest = site_proof.seal(root, before, source_sha="a" * 40, retired_paths=paths)
+    assert manifest["absentPublicFiles"] == ["funding.json"]
+    assert "funding.json" not in manifest["publicFiles"]
+
+    def fetch(url):
+        relative = urlsplit(url).path.lstrip("/") or "index.html"
+        if relative == "funding.json":
+            raise HTTPError(url, 404, "Not found", {}, None)
+        return (root / relative).read_bytes()
+
+    assert site_proof.verify_public(root, manifest, cache_key="synthetic", fetch=fetch)[
+        "absentPaths"
+    ] == ["funding.json"]
+    with pytest.raises(site_proof.ProofError, match="remains publicly accessible"):
+        site_proof.verify_public(
+            root,
+            manifest,
+            cache_key="synthetic",
+            fetch=lambda url: (
+                b"old personal manifest" if "/funding.json?" in url else fetch(url)
+            ),
+        )
+    with pytest.raises(site_proof.ProofError, match="retirement source differs"):
+        site_proof.declared_retirements(proof, "b" * 40)
+    for target in (
+        "https://seiche.info/missing",
+        "http://seiche.info/funding.json",
+        "https://other.invalid/funding.json",
+    ):
+
+        def redirected(url):
+            if "/funding.json?" in url:
+                raise HTTPError(target, 404, "Redirected not found", {}, None)
+            return fetch(url)
+
+        with pytest.raises(site_proof.ProofError, match="absence is unproven"):
+            site_proof.verify_public(
+                root, manifest, cache_key="synthetic", fetch=redirected
+            )
+
+
+@pytest.mark.parametrize(
+    "paths", [["data/overview.json"], ["funding.json", "neighbor.json"]]
+)
+def test_frontend_retirement_rejects_neighboring_paths(frontend_site, paths):
+    root, before = frontend_site
+    with pytest.raises(site_proof.ProofError, match="unsupported public retirement"):
+        site_proof.retire(root, paths)
+    with pytest.raises(site_proof.ProofError, match="unsupported public retirement"):
+        site_proof.seal(root, before, source_sha="a" * 40, retired_paths=paths)
+
+
+def test_frontend_retirement_cannot_modify_or_retain_the_manifest(frontend_site):
+    root, before = frontend_site
+    (root / "funding.json").write_text('{"replacement":true}')
+    with pytest.raises(site_proof.ProofError, match="still present"):
+        site_proof.seal(
+            root, before, source_sha="a" * 40, retired_paths=["funding.json"]
         )
 
 
@@ -2941,6 +3063,13 @@ def test_frontend_workflow_retains_subject_archive_recovery_and_compare_and_swap
     assert workflow.index(
         "Deploy static fast path to Cloudflare Pages"
     ) < workflow.index("frontend_site_proof.py public")
+    assert workflow.index("frontend_site_proof.py retire") < workflow.index(
+        "frontend_site_proof.py seal"
+    )
+    assert (
+        '--source-proof "$RUNNER_TEMP/frontend-publication-proof/source-and-runtime.json"'
+        in workflow
+    )
 
 
 @pytest.mark.parametrize("extra_rows", [0, 148_005])
