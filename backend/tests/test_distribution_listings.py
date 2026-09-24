@@ -170,7 +170,9 @@ class SubmissionLedgerContracts(unittest.TestCase):
             self.assertIn(f"**{surface}**", readme)
         self.assertIn("distribution/submissions.csv", readme)
         self.assertIn("no deposit or DOI claimed", readme)
-        self.assertIn("Listed but stale; authenticated rescan pending", readme)
+        self.assertIn(
+            "Listed; authenticated refresh accepted, cached aliases may lag", readme
+        )
 
     def test_listing_state_ownership_and_freshness_are_independent(self) -> None:
         rows = _submission_rows()
