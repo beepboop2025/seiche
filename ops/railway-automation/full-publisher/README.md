@@ -74,3 +74,9 @@ GitHub publishers. Mirror compare-and-swap does not serialize Cloudflare writes.
 Prepare both controllers without writes and perform controlled serial apply
 with counterpart schedules held. After full acceptance, enable only this full
 publisher's cron; retire GitHub/static schedules while retaining prior states.
+# Runtime prerequisites and test isolation
+
+The image installs the system `/usr/bin/python3` interpreter used by isolated
+deployment helpers. GDELT durable history is supplied only to the baseline-seed
+and engine-export steps, matching the signed workflow. Engine tests do not
+receive the history path and cannot contaminate it through their mocked stores.

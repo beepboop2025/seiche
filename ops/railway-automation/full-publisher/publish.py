@@ -41,6 +41,16 @@ def clean_env(extra=None):
     return env
 
 
+def build_step_env(name, environment, history):
+    """Match the workflow's step-local history input; tests get no durable state."""
+    selected = {key: value for key, value in environment.items()
+                if key != "GDELT_WEB_HISTORY_FILE"}
+    if name in {"Seed GDELT WEB-NGRAM baseline when cache is cold",
+                "Run engines, export snapshot"}:
+        selected["GDELT_WEB_HISTORY_FILE"] = str(history)
+    return selected
+
+
 def quiesce_builder():
     """Terminate every builder process, including children that detached via setsid."""
     for _ in range(100):
@@ -490,7 +500,6 @@ def main():
             "PATH": str(build_temp / "venv/bin") + ":" + build_env["PATH"],
             "HOME": str(build_temp),
             "PUBLICATION_SOURCE_SHA": source_sha,
-            "GDELT_WEB_HISTORY_FILE": str(build / ".cache/gdelt-web-history.json"),
             "RUN_FULL_SUITE": "false" if reusable else "true",
         })
         for name in (
@@ -510,7 +519,8 @@ def main():
                 continue
             print("RAILWAY_FULL_STEP " + name, flush=True)
             run(["bash", "-euo", "pipefail", "-c", steps[name]["run"]],
-                build, build_env, unprivileged=True)
+                build, build_step_env(name, build_env, build / ".cache/gdelt-web-history.json"),
+                unprivileged=True)
         prepared = build / "frontend/dist"
         quiesce_builder()
         candidate = seal_candidate(prepared, trusted)

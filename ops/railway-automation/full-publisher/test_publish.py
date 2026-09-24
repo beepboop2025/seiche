@@ -18,6 +18,30 @@ spec.loader.exec_module(publisher)
 
 
 class PublisherBoundaryTests(unittest.TestCase):
+    def test_engine_tests_cannot_read_or_mutate_durable_history(self):
+        environment = {"PATH": "/bin", "GDELT_WEB_HISTORY_FILE": "/durable/history.json"}
+        for name in ("Engine tests (publish gates on green)", "Install backend",
+                     "Test and build frontend (snapshot baked into dist/)"):
+            with self.subTest(step=name):
+                selected = publisher.build_step_env(name, environment, Path("/build/history.json"))
+                self.assertEqual(selected, {"PATH": "/bin"})
+        for name in ("Seed GDELT WEB-NGRAM baseline when cache is cold",
+                     "Run engines, export snapshot"):
+            with self.subTest(step=name):
+                selected = publisher.build_step_env(name, environment, Path("/build/history.json"))
+                self.assertEqual(selected, {"PATH": "/bin", "GDELT_WEB_HISTORY_FILE": "/build/history.json"})
+        self.assertEqual(environment["GDELT_WEB_HISTORY_FILE"], "/durable/history.json")
+
+    @unittest.skipUnless(sys.platform == "linux", "System interpreter is verified in the Linux image")
+    def test_system_python_supports_isolated_deployment_helpers(self):
+        result = subprocess.run(
+            ["/usr/bin/python3", "-I", "-S", "-c", "import json,ssl,datetime; print('SYSTEM_PYTHON_OK')"],
+            env={"PATH": "/usr/bin:/bin", "PYTHONPATH": "/untrusted", "PYTHONHOME": "/untrusted"},
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "SYSTEM_PYTHON_OK")
+
     def test_builder_environment_never_inherits_credentials(self):
         with patch.dict(
             os.environ,
