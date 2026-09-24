@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { createElement, useEffect, useMemo, useState } from "react";
 import Chart from "../Chart";
 import LiveMarket from "../LiveMarket";
 import { API_BASE } from "../apiBase";
@@ -106,10 +106,12 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
             <div><span className={`regime ${comp.regime}`}>{comp.regime}</span></div>
             <div className="today-reading__meta">coverage {fmt(comp.coverage_pct, 0)}%</div>
             <div className={`conviction conviction--${editorial.confidence}`}>{editorial.confidence} conviction</div>
+          {createElement("research-flow", { product: "seiche" })}
           </aside>
         </div>
         <div className="today-conviction"><b>Why that conviction:</b> {editorial.confidence_note}</div>
       </header>
+      {createElement("economic-context", { "aria-label": "Economic context" })}
 
       <section className="today-scope" aria-labelledby="today-scope-title">
         <div className="today-scope__copy">

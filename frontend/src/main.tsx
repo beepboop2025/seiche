@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import Site from "./Site";
 import { DepthProvider } from "./depth";
 import "./styles.css";
+import "./research-ui.css";
+import "./research-interface.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -1,22 +1,9 @@
-import { lazy, Suspense, useEffect, useState } from "react";
-import ProductHome, { FamilyNav } from "./ProductHome";
-import { terminalTabFromHash } from "./productRoutes";
+import { lazy, Suspense, useEffect } from "react";
+import ResearchHeader from "./ResearchHeader";
 import "./product-home.css";
-
-const Terminal = lazy(() => import("./App"));
-
-export default function Site() {
-  const [terminal, setTerminal] = useState(() => terminalTabFromHash(window.location.hash) !== null);
-  useEffect(() => {
-    const navigate = () => setTerminal(terminalTabFromHash(window.location.hash) !== null);
-    window.addEventListener("hashchange", navigate);
-    return () => window.removeEventListener("hashchange", navigate);
-  }, []);
-  useEffect(() => {
-    document.documentElement.dataset.surface = terminal ? "desk" : "product";
-    window.scrollTo(0, 0);
-  }, [terminal]);
-  return terminal
-    ? <><FamilyNav desk /><Suspense fallback={<main className="desk-loading"><p>Opening the funding desk…</p></main>}><Terminal /></Suspense></>
-    : <ProductHome />;
+const Terminal=lazy(()=>import("./App"));
+/** One persistent frame for the entry, every named tool and unavailable states. */
+export default function Site(){
+  useEffect(()=>{document.documentElement.classList.add("research-interface");document.documentElement.dataset.product="seiche";document.documentElement.dataset.surface="desk";},[]);
+  return <><ResearchHeader/><Suspense fallback={<main id="main" className="research-page"><p className="rw-loading">Opening the funding research workspace…</p></main>}><Terminal/></Suspense></>;
 }
