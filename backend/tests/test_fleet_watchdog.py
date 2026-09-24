@@ -1095,13 +1095,15 @@ def test_unreadable_nyx_heartbeat_fails_loud(monkeypatch, tmp_path):
     path = _heartbeat(tmp_path, monkeypatch)
     real_open = wd.os.open
 
-    def deny_heartbeat(candidate, flags):
+    def deny_heartbeat(candidate, flags, *args, **kwargs):
         if candidate == str(path):
             raise PermissionError("denied for test")
-        return real_open(candidate, flags)
+        return real_open(candidate, flags, *args, **kwargs)
 
-    monkeypatch.setattr(wd.os, "open", deny_heartbeat)
-    problems = wd.check_mac_heartbeat()
+    # os is shared with pytest-memray/tempfile; restore before plugin teardown.
+    with monkeypatch.context() as probe:
+        probe.setattr(wd.os, "open", deny_heartbeat)
+        problems = wd.check_mac_heartbeat()
     assert len(problems) == 1
     assert "unreadable" in problems[0]
 

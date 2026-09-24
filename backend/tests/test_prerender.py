@@ -1,10 +1,10 @@
 """The no-JS home page: it must carry the board, and it must not cost the terminal.
 
-seiche.info shipped about 400 characters of body text to anything that does not
-run JavaScript, which is every AI crawler that reads raw HTML and every reader
-with scripting off. These tests hold both halves of the fix: the page says
-something real, and the interactive shell comes out the other side byte for
-byte identical apart from the <noscript> block and the card meta.
+The source shell offers product navigation before JavaScript loads. Prerendering
+adds the dated board and letters for raw-HTML readers without changing that
+fallback or the interactive application. These tests hold both halves of the
+contract: evidence is readable and the shell remains byte-identical apart from
+the <noscript> block and the card meta.
 """
 
 import json
@@ -90,11 +90,14 @@ def _shell_without_prerender(doc: str) -> str:
 # ---------------------------------------------------------------------------
 # the page says something
 # ---------------------------------------------------------------------------
-def test_the_shell_alone_is_the_problem_this_fixes():
-    """The unrendered shell is the ~400-character page. If this number ever
-    climbs on its own, the SPA template started carrying content and this
-    module's premise is worth rechecking."""
-    assert len(prerender.body_text(SHELL.read_text())) < 800
+def test_source_shell_offers_navigation_without_inventing_a_live_board():
+    shell = SHELL.read_text()
+    text = prerender.body_text(shell)
+    assert "Follow the flow" in text and "of funding." in text
+    assert 'href="/money-markets/"' in shell
+    assert 'href="/developers"' in shell
+    assert "The composite reads" not in text
+    assert "<noscript>" in shell
 
 
 def test_prerender_carries_the_board_and_the_letter(site):
@@ -155,10 +158,8 @@ def test_prerender_carries_the_same_argument_evidence_and_countercase(site):
     assert "Evidence ledger" in text and "Federal Reserve H.4.1" in text
     assert "The countercase" in text and "SOFR remains below IORB" in text
     assert "Conviction: GUARDED" in text
-    assert (
-        '<meta property="og:title" content="Seiche · world-market intelligence, '
-        'argued and audited" />'
-    ) in page
+    source_title = re.search(r'<meta property="og:title"[^>]*>', SHELL.read_text()).group(0)
+    assert source_title in page
     assert "the balance sheet is tightening" not in re.search(
         r'<meta property="og:title" content="([^"]*)"', page
     ).group(1).lower()
@@ -199,20 +200,24 @@ def test_interactive_shell_is_untouched(site):
     prerender.build(out)
     after = (out / "index.html").read_text()
 
-    assert '<div id="root"></div>' in after
+    assert '<div id="root">' in after
     assert '<script type="module" src="/src/main.tsx"></script>' in after
     assert _shell_without_prerender(before) == _shell_without_prerender(after)
 
 
 def test_prerendered_content_stays_inside_noscript(site):
-    """Not inside #root: React clears prerendered children on its first commit
-    (a flash for every reader who has JavaScript), and text hidden by CSS is the
-    shape search engines treat as hidden text. Everything lands in <noscript>."""
-    out, _, _ = site
+    """The generated board/letter belongs in noscript; the existing product
+    fallback inside #root must survive unchanged until React takes over."""
+    out, dispatch, _ = site
+    before = (out / "index.html").read_text().split("<body>", 1)[1]
     prerender.build(out)
     body = (out / "index.html").read_text().split("<body>", 1)[1]
     outside = re.sub(r"<noscript>.*?</noscript>", "", body, flags=re.S)
-    assert prerender.body_text("<body>" + outside + "</body>") == ""
+    assert outside == re.sub(r"<noscript>.*?</noscript>", "", before, flags=re.S)
+    generated = re.search(r"<noscript>(.*?)</noscript>", body, flags=re.S).group(1)
+    assert "The composite reads 41 out of 100, EROSION" in generated
+    assert dispatch["title"] in generated
+    assert "The composite reads" not in outside
 
 
 def test_running_twice_changes_nothing(site):
@@ -230,17 +235,13 @@ def test_card_meta_keeps_broad_identity_while_body_carries_live_reading(site):
     out, _, _ = site
     prerender.build(out)
     page = (out / "index.html").read_text()
-    assert (
-        '<meta property="og:title" content="Seiche · world-market intelligence, '
-        'argued and audited" />'
-    ) in page
+    source = SHELL.read_text()
     for key in ("og:title", "og:description", "twitter:title", "twitter:description"):
-        value = re.search(
-            r'content="([^"]*)"',
-            re.search(r'<meta [^>]*"' + re.escape(key) + r'"[^>]*>', page).group(0),
-        ).group(1)
+        tag = re.search(r'<meta [^>]*"' + re.escape(key) + r'"[^>]*>', page).group(0)
+        assert tag == re.search(r'<meta [^>]*"' + re.escape(key) + r'"[^>]*>', source).group(0)
+        value = re.search(r'content="([^"]*)"', tag).group(1)
         assert "EROSION" not in value
-    assert "Money, forex, capital and metadata-only China macro evidence" in page
+        assert "41 out of 100" not in value
     assert "The composite reads 41 out of 100, EROSION" in prerender.body_text(page)
     # the fleet's existing share card, not a new image pipeline
     assert '<meta property="og:image" content="https://seiche.info/og2.png" />' in page

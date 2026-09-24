@@ -70,7 +70,13 @@ def test_articles_are_the_public_front_door_without_hiding_evidence():
     assert _hrefs(hub).count("https://myquantdoesntspeakenglish.com/") == 2
     assert "The board checks new evidence six times a day" in hub
     assert "If coverage cannot support a verdict, Seiche abstains" in hub
-    assert "ARTICLES" in app[app.index('<nav className="tabs">'):app.index("</nav>", app.index('<nav className="tabs">'))]
+    assert 'import WorkspaceNavigation from "./WorkspaceNavigation"' in app
+    assert "<WorkspaceNavigation " in app
+    navigation = (ROOT / "frontend" / "src" / "WorkspaceNavigation.tsx").read_text()
+    assert 'aria-label="Funding desk tools"' in navigation
+    assert '<a href="/articles/">Published research</a>' in navigation
+    assert '"Evidence and settings"' in navigation
+    assert '"PROOF"' in navigation and '"REFEREE"' in navigation
 
 
 def test_manifest_and_share_assets_are_publication_ready():

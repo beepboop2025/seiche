@@ -11,6 +11,24 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.6] - 2026-09-24
+
+### Fixed
+
+- Align publication tests with the current product navigation and fallback shell.
+  Require generated board and dispatch evidence inside `noscript`, preserve the
+  existing shell bytes and keep source-owned social metadata unchanged.
+- Scope simulated storage and heartbeat errors to their probe calls so memory
+  profiler cleanup can perform its own filesystem operations normally. Production
+  no-fallback, error-reporting and write/fsync/close assertions remain enforced.
+
+### Changed
+
+- Prepare a new signed software baseline for the corrected publication suite.
+  Corpus receipt `r17` binds this application source without changing the corpus
+  version, data, rights or source clocks. Existing 0.13.5 artifacts remain intact;
+  activation and publication require fresh recovery and exact-source proof.
+
 ## [0.13.5] - 2026-09-24
 
 ### Fixed

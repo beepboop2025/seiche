@@ -64,7 +64,7 @@ ledger status. The auditable source of truth is
 | **Zenodo** | Release deposition metadata, citation identity, and related-source records ([metadata](.zenodo.json)) | Prepared; no deposit or DOI claimed |
 | **Hugging Face** | Rights-reviewed direct-OFR dataset card and staging layout ([dataset card](distribution/datasets/huggingface/README.md)) | Validated draft; upload prepared |
 | **Kaggle** | Dataset metadata and reference-only staging layout ([metadata](distribution/datasets/kaggle/dataset-metadata.json)) | Validated draft; upload prepared |
-| **Smithery** | Owner-published hosted endpoint entry ([live record](https://smithery.ai/servers/mrinallovesbhature/seiche)) | Listed but stale; authenticated rescan pending |
+| **Smithery** | Owner-published hosted endpoint entry ([live record](https://smithery.ai/servers/mrinallovesbhature/seiche)) | Listed; authenticated refresh accepted, cached aliases may lag |
 | **MCP directories** | Official Registry, Glama, Smithery, and eight additional live indexes ([dated inventory](distribution/MCP_DIRECTORIES.md)) | 11 live records; claim/freshness gaps tracked |
 | **Research notebooks** | Commit-pinned, hash-checking direct-OFR workflow ([notebook](notebooks/seiche_direct_ofr_research.ipynb)) | Usable in repo |
 | **Python / R / JavaScript** | Zero-secret world-markets API clients with evidence-contract checks ([clients](clients/)) | Usable in repo |
@@ -73,12 +73,12 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.5; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.6; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.13.5 estuary** bounds the HiGHS solver's native thread pool during
-repeated quantile fits in persistent API workers. It preserves the existing
-quantile constraints, explicit solver failures and snapshot evidence. Deployment
-and immutable package publication remain subject to the signed release gates.
+Version **0.13.6 estuary** repairs publication tests for the current product
+navigation, preserved no-JavaScript evidence and memory-profiled storage probes.
+It retains the existing analytical behavior and corpus data. Deployment and
+immutable package publication remain subject to the signed release gates.
 
 The verified NY Fed historical importer covers 34 canonical instruments.
 Archived observations retain unknown publication

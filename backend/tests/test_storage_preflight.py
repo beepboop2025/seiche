@@ -871,18 +871,21 @@ def test_unsupported_anonymous_probe_never_falls_back_in_production(
         calls.append(path)
         raise OSError(errno.EOPNOTSUPP, "anonymous inode unsupported")
 
-    monkeypatch.setattr(storage.os, "O_TMPFILE", 0o20000000, raising=False)
-    monkeypatch.setattr(storage.os, "open", unsupported)
     try:
-        with pytest.raises(
-            storage.PreflightError,
-            match="namespace-stable write/fsync probe is unavailable",
-        ):
-            storage._probe_write_and_fsync(
-                directory_path,
-                directory,
-                require_anonymous=True,
-            )
+        # Restore the shared os module before profiler/plugin teardown performs
+        # its own tempfile I/O; the mock describes only this storage probe.
+        with monkeypatch.context() as probe:
+            probe.setattr(storage.os, "O_TMPFILE", 0o20000000, raising=False)
+            probe.setattr(storage.os, "open", unsupported)
+            with pytest.raises(
+                storage.PreflightError,
+                match="namespace-stable write/fsync probe is unavailable",
+            ):
+                storage._probe_write_and_fsync(
+                    directory_path,
+                    directory,
+                    require_anonymous=True,
+                )
     finally:
         os.close(directory)
     assert calls == ["."]
@@ -944,14 +947,15 @@ def test_anonymous_probe_hard_io_errors_never_fall_back(
         calls.append(path)
         raise OSError(failure, os.strerror(failure))
 
-    monkeypatch.setattr(storage.os, "O_TMPFILE", 0o20000000, raising=False)
-    monkeypatch.setattr(storage.os, "open", fail_open)
-    with pytest.raises(storage.PreflightError, match="write/fsync probe failed"):
-        storage._probe_write_and_fsync(
-            tmp_path / "state",
-            71,
-            require_anonymous=False,
-        )
+    with monkeypatch.context() as probe:
+        probe.setattr(storage.os, "O_TMPFILE", 0o20000000, raising=False)
+        probe.setattr(storage.os, "open", fail_open)
+        with pytest.raises(storage.PreflightError, match="write/fsync probe failed"):
+            storage._probe_write_and_fsync(
+                tmp_path / "state",
+                71,
+                require_anonymous=False,
+            )
     assert calls == ["."]
 
 
@@ -975,21 +979,22 @@ def test_anonymous_probe_writes_syncs_and_closes_descriptor(
         events.append(("write", descriptor, payload))
         return len(payload)
 
-    monkeypatch.setattr(storage.os, "O_TMPFILE", anonymous_flag, raising=False)
-    monkeypatch.setattr(storage.os, "open", open_anonymous)
-    monkeypatch.setattr(storage.os, "write", write)
-    monkeypatch.setattr(
-        storage.os, "fsync", lambda descriptor: events.append(("fsync", descriptor))
-    )
-    monkeypatch.setattr(
-        storage.os, "close", lambda descriptor: events.append(("close", descriptor))
-    )
+    with monkeypatch.context() as probe:
+        probe.setattr(storage.os, "O_TMPFILE", anonymous_flag, raising=False)
+        probe.setattr(storage.os, "open", open_anonymous)
+        probe.setattr(storage.os, "write", write)
+        probe.setattr(
+            storage.os, "fsync", lambda descriptor: events.append(("fsync", descriptor))
+        )
+        probe.setattr(
+            storage.os, "close", lambda descriptor: events.append(("close", descriptor))
+        )
 
-    storage._probe_write_and_fsync(
-        tmp_path / "state",
-        71,
-        require_anonymous=True,
-    )
+        storage._probe_write_and_fsync(
+            tmp_path / "state",
+            71,
+            require_anonymous=True,
+        )
 
     opened = events[0]
     assert opened == (
