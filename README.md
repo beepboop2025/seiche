@@ -42,6 +42,12 @@ For a first connected review, start with
 The shared [portfolio plan](docs/PORTFOLIO-FOCUS.md) prioritizes a recurring
 reviewer task while keeping each product's evidence and authority separate.
 
+For a recurring agent workflow, the [free starter kit](https://liquilens.in/agents/)
+combines Seiche funding context with LiquiLens bank evidence and Undertow exit
+estimates. Use the [Hermes](https://liquilens.in/agents/hermes/) or
+[OpenClaw](https://liquilens.in/agents/openclaw/) setup guide. The selected public
+tools need no API key; fair-use limits and separate model-provider costs apply.
+
 ## Use Seiche everywhere
 
 Seiche is distributed as software, an MCP service, a research dataset, and
