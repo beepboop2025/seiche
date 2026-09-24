@@ -1,15 +1,6 @@
 {
-  "date": "2026-09-15",
+  "date": "2026-09-24",
   "reported_prev": {
-    "4-week T-bill secondary market rate": "2026-09-10",
-    "3-month T-bill secondary market rate": "2026-09-10",
-    "Newly censor-targeted terms": "2026-09-12",
-    "30y Treasury constant maturity yield": "2026-09-10",
-    "2y Treasury constant maturity yield": "2026-09-10",
-    "10y Treasury constant maturity yield": "2026-09-10",
-    "Korean won per USD (H.10)": "2026-09-04"
-  },
-  "reported": {
     "3-month T-bill secondary market rate": "2026-09-11",
     "4-week T-bill secondary market rate": "2026-09-11",
     "Korean won per USD (H.10)": "2026-09-11",
@@ -18,30 +9,17 @@
     "10y Treasury constant maturity yield": "2026-09-11",
     "2y Treasury constant maturity yield": "2026-09-11"
   },
-  "letter_prev": {
-    "regime": "EROSION",
-    "value": 44.0,
-    "decomp": {
-      "weather": 11.0,
-      "kink": 7.5,
-      "resonance": 6.0,
-      "rvxray": 5.9,
-      "confession": 3.3,
-      "buffers": 3.0,
-      "undertow": 2.5,
-      "warehouse": 2.4,
-      "tails": 1.7,
-      "auctions": 0.7,
-      "hydrophone": 0.1
-    },
-    "crunch": {
-      "date": "2026-09-15",
-      "worst_case_b": 2931.6,
-      "settlement_b": null
-    },
-    "tell": 19.8
+  "reported": {
+    "Effective federal funds rate": "2026-09-23",
+    "Secured overnight financing rate": "2026-09-23",
+    "Tri-party general collateral rate": "2026-09-22",
+    "Broad general collateral rate": "2026-09-22",
+    "Tri-party overnight/open avg rate": "2026-09-21",
+    "3-month T-bill secondary market rate": "2026-09-22",
+    "4-week T-bill secondary market rate": "2026-09-22",
+    "DVP overnight/open avg rate": "2026-09-22"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "EROSION",
     "value": 44.1,
     "decomp": {
@@ -63,5 +41,28 @@
       "settlement_b": null
     },
     "tell": 19.1
+  },
+  "letter": {
+    "regime": "EROSION",
+    "value": 44.0,
+    "decomp": {
+      "weather": 9.2,
+      "kink": 7.5,
+      "resonance": 6.0,
+      "rvxray": 5.9,
+      "confession": 4.0,
+      "buffers": 3.0,
+      "undertow": 2.4,
+      "warehouse": 2.4,
+      "tails": 1.8,
+      "auctions": 1.7,
+      "hydrophone": 0.0
+    },
+    "crunch": {
+      "date": "2026-09-29",
+      "worst_case_b": 2971.5,
+      "settlement_b": 175.0
+    },
+    "tell": 51.7
   }
 }
