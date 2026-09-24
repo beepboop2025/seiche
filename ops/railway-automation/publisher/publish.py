@@ -107,6 +107,90 @@ def current_main():
     return sha
 
 
+
+def verify_gate_files(checkout, manifest):
+    """Pin every privileged verifier before importing code from a checkout."""
+    for name in GATES:
+        path = checkout / name
+        assert_plain_path(path.parent, checkout)
+        if (not stat.S_ISREG(path.lstat().st_mode)
+                or hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get(name)):
+            raise RuntimeError("Publication verifier changed; update the reviewed controller")
+
+
+def equivalent_sources(root, current, current_sha, signer):
+    """Authenticate H/D using pinned C and pristine R, never code from H."""
+    tag = os.environ.get("PUBLICATION_EQUIVALENCE_TAG", "")
+    if not re.fullmatch(r"publication-source-equivalence-[0-9a-f]{40}", tag):
+        raise RuntimeError("Invalid publication source-equivalence receipt")
+    identity = json.loads((CONTROLLER / "controller-source.json").read_text())
+    controller_sha, engine_sha = identity.get("sha"), identity.get("engineSourceSha")
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)
+           for value in (current_sha, controller_sha, engine_sha)):
+        raise RuntimeError("Source equivalence requires independently pinned controller and engine sources")
+    controller = root / "controller-source"
+    backend = root / "engine-source"
+    for checkout, sha in ((controller, controller_sha), (backend, engine_sha)):
+        git(["clone", "--quiet", "--no-hardlinks", str(current), str(checkout)], root)
+        git(["checkout", "--quiet", "--detach", sha], checkout)
+    manifest = json.loads((CONTROLLER / "gate-sha256.json").read_text())
+    verify_gate_files(controller, manifest)
+    verify_gate_files(backend, identity.get("engineGateSha256", {}))
+    code = (
+        "import importlib.util,json,pathlib,sys; "
+        "controller=pathlib.Path(sys.argv[2]); "
+        "spec=importlib.util.spec_from_file_location('frontend_gate',pathlib.Path(sys.argv[7])/'verify_frontend_publication.py'); "
+        "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+        "print(json.dumps(module.verify_source_equivalence("
+        "pathlib.Path(sys.argv[1]),expected_sha=sys.argv[4],receipt_tag=sys.argv[5],"
+        "controller_root=controller,backend_root=pathlib.Path(sys.argv[3]),signer_fingerprint=sys.argv[6])))"
+    )
+    with tempfile.TemporaryDirectory(prefix=".admission-gates-", dir=root) as fresh:
+        for name in ("verify_frontend_publication.py", "verify_catalog_publication.py"):
+            (Path(fresh) / name).write_bytes((controller / "ops/release" / name).read_bytes())
+        admission = json.loads(run(
+            ["python", "-I", "-S", "-c", code, str(current), str(controller),
+             str(backend), current_sha, tag, signer, fresh],
+            controller, clean_env(), capture=True,
+        ))
+    subject = admission.get("sourceEquivalence", {})
+    if (admission.get("schema") != "seiche.publication-source-admission.v1"
+            or admission.get("currentSourceSha") != current_sha
+            or subject.get("sourceSha") != tag.removeprefix("publication-source-equivalence-")
+            or subject.get("controllerSourceSha") != controller_sha
+            or subject.get("backendReleaseSha") != engine_sha):
+        raise RuntimeError("Source-equivalence admission differs from the pinned source identities")
+    if current_main() != current_sha:
+        raise RuntimeError("Current main advanced during source-equivalence admission")
+    return controller, backend, admission
+
+
+def publication_identity(admission, current_sha, source_sha):
+    if admission is None or admission.get("schema") != "seiche.publication-source-admission.v1":
+        return {}
+    subject = admission["sourceEquivalence"]
+    return {
+        "publicationSourceSha": current_sha,
+        "controllerSourceSha": subject["controllerSourceSha"],
+        "engineSourceSha": subject["backendReleaseSha"],
+        "rendererSourceSha": subject["backendReleaseSha"],
+        "sourceEquivalenceReceipt": "publication-source-equivalence-" + subject["sourceSha"],
+        "sourceEquivalence": subject,
+        "deskOverlaySha256": admission["deskOverlay"]["sha256"],
+        "equivalentInputManifestSha256": admission["equivalentInputManifest"]["sha256"],
+        "buildSourceSha": source_sha,
+    }
+
+
+def require_current_publication(current_sha, mirror=None, mirror_sha=None, env=None):
+    if current_main() != current_sha:
+        raise RuntimeError("Source main advanced during publication")
+    if mirror is not None:
+        observed = git(["ls-remote", "origin", "refs/heads/main"], mirror, env).split()
+        if len(observed) != 2 or observed != [mirror_sha, "refs/heads/main"]:
+            raise RuntimeError("Site mirror compare-and-swap lost")
+
+
 def select_publication_source(trusted, current_sha, explicit_receipt):
     """Choose an exact receipt subject and separately check current desk ancestry."""
     current_tag = "frontend-publication-" + current_sha
@@ -289,6 +373,16 @@ def main():
         trusted = root / "trusted"
         git(["clone", "--quiet", SOURCE, str(trusted)], root)
         git(["checkout", "--quiet", "--detach", source_sha], trusted)
+        source_admission = None
+        if os.environ.get("PUBLICATION_EQUIVALENCE_TAG"):
+            trusted, _backend, source_admission = equivalent_sources(
+                root, trusted, current_source_sha, signer
+            )
+            source_sha = source_admission["sourceEquivalence"]["controllerSourceSha"]
+            receipt = "frontend-publication-" + source_sha
+            explicit_receipt = os.environ.get("FRONTEND_RECEIPT_TAG", "")
+            if explicit_receipt and explicit_receipt != receipt:
+                raise RuntimeError("Source equivalence requires the exact pinned controller frontend receipt")
         if (
             trusted / ".github/workflows/publish-static.yml"
         ).read_bytes() != workflow_path.read_bytes():
@@ -297,17 +391,15 @@ def main():
             )
         # Execute verification code only when its blob matches the controller's pinned manifest.
         manifest = json.loads((CONTROLLER / "gate-sha256.json").read_text())
-        for name in GATES:
-            if (
-                hashlib.sha256((trusted / name).read_bytes()).hexdigest()
-                != manifest[name]
-            ):
-                raise RuntimeError(
-                    "Publication verifier changed; update the reviewed controller"
-                )
-        source_sha, receipt, source_admission = select_publication_source(
-            trusted, current_source_sha, os.environ.get("FRONTEND_RECEIPT_TAG", "")
-        )
+        verify_gate_files(trusted, manifest)
+        if source_admission is None:
+            source_sha, receipt, source_admission = select_publication_source(
+                trusted, current_source_sha, os.environ.get("FRONTEND_RECEIPT_TAG", "")
+            )
+        identity = publication_identity(source_admission, current_source_sha, source_sha)
+        if identity:
+            identity["buildTreeKind"] = "signed_frontend_with_sealed_mirror_data"
+            identity["deskOverlayApplied"] = False
         temp = root / "temp"
         temp.mkdir()
         env = clean_env(
@@ -326,7 +418,14 @@ def main():
         ):
             print("RAILWAY_STATIC_STEP " + name, flush=True)
             run(["bash", "-euo", "pipefail", "-c", steps[name]["run"]], trusted, env)
-        if source_admission is not None:
+        if identity:
+            proof = json.loads((temp / "frontend-publication-proof/source-and-runtime.json").read_text())
+            identity["runtimeIdentity"] = {
+                name: proof[name] for name in
+                ("backendRuntimeSubject", "corpusRuntimeSubject", "runtimeEndpoints")
+            }
+            print("RAILWAY_STATIC_SOURCE_IDENTITY " + json.dumps(identity, sort_keys=True), flush=True)
+        if source_admission is not None and not identity:
             print(
                 "RAILWAY_STATIC_DESK_DESCENDANT_VERIFIED "
                 + json.dumps(source_admission, sort_keys=True),
@@ -341,6 +440,7 @@ def main():
             prior_state
             and prior_state.get("source") == source_sha
             and prior_state.get("site") == previous_sha
+            and (not identity or prior_state.get("publicationSourceSha") == current_source_sha)
         ):
             recovery_name = prior_state.get("recovery", "")
             if "/" in recovery_name or not recovery_name.startswith(
@@ -358,6 +458,7 @@ def main():
                 raise RuntimeError(
                     "Current main advanced during unchanged public proof"
                 )
+            require_current_publication(current_source_sha, mirror, previous_sha)
             retain_source_admission(evidence, source_admission)
             print(
                 f"RAILWAY_STATIC_UNCHANGED_VERIFIED source={source_sha} current_main={current_source_sha} site={previous_sha}",
@@ -473,6 +574,7 @@ def main():
             (proof_directory / "prepared-site.json").write_text(proof)
         if current_main() != current_source_sha:
             raise RuntimeError("Source main advanced during preparation")
+        require_current_publication(current_source_sha, mirror, previous_sha)
         print(
             f"RAILWAY_STATIC_PREPARE_PASS source={source_sha} current_main={current_source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
             flush=True,
@@ -507,6 +609,7 @@ def main():
                     "current_main": current_source_sha,
                     "source_admission": source_admission,
                     "previous_site": previous_sha,
+                    **identity,
                 }
             )
         )
@@ -550,6 +653,7 @@ def main():
             )
             if current_main() != current_source_sha:
                 raise RuntimeError("Source main advanced before mirror publication")
+            require_current_publication(current_source_sha, mirror, previous_sha, publish_env)
             git(["push", "origin", "HEAD:main"], mirror, publish_env)
         site_sha = git(["rev-parse", "HEAD"], mirror)
         if (
@@ -561,6 +665,7 @@ def main():
             raise RuntimeError("Site mirror compare-and-swap lost")
         if current_main() != current_source_sha:
             raise RuntimeError("Source main advanced before canonical publication")
+        require_current_publication(current_source_sha, mirror, site_sha, publish_env)
         run(
             [
                 "/opt/node22/bin/node",
@@ -571,7 +676,7 @@ def main():
                 "--project-name=seiche",
                 "--branch=main",
                 "--commit-hash",
-                source_sha,
+                current_source_sha if identity else source_sha,
             ],
             CONTROLLER,
             clean_env(
@@ -588,6 +693,7 @@ def main():
             clean_env({**env, "RUNNER_TEMP": str(temp)}),
             receipt,
         )
+        require_current_publication(current_source_sha, mirror, site_sha, publish_env)
         state = evidence / "current.json.tmp"
         state.write_text(
             json.dumps(
@@ -598,6 +704,7 @@ def main():
                     "site": site_sha,
                     "recovery": recovery.name,
                     "verified_at": time.time(),
+                    **identity,
                 }
             )
         )

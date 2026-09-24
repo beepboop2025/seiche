@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 
@@ -530,6 +531,461 @@ def verify_desk_only_descendant(
     }
 
 
+# This is a separate authority from SCHEMA. It never authorizes an engine,
+# catalog, corpus, activation or recovery subject different from the signed R.
+EQUIVALENCE_SCHEMA = "seiche.publication-source-equivalence.v1"
+EQUIVALENCE_PURPOSE = "unchanged_signed_engine_with_validated_desk_overlay"
+EQUIVALENCE_TAG_PREFIX = "publication-source-equivalence-"
+MAX_OVERLAY_FILES = 20000
+MAX_OVERLAY_BYTES = 128 * 1024 * 1024
+MAX_OVERLAY_FILE_BYTES = 8 * 1024 * 1024
+MAX_EQUIVALENCE_COMMITS = 10000
+
+
+def _tree_manifest(root: Path, revision: str) -> list[dict]:
+    entries = []
+    for raw in gate._run_git_bytes(
+        root, "ls-tree", "-r", "-z", "--full-tree", revision
+    ).stdout.split(b"\0"):
+        if not raw:
+            continue
+        try:
+            metadata, path = raw.decode("ascii").split("\t", 1)
+            mode, kind, oid = metadata.split()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise Error("equivalence tree contains an unsupported entry") from exc
+        if (
+            mode not in {"100644", "100755"}
+            or kind != "blob"
+            or gate.COMMIT_RE.fullmatch(oid) is None
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in path)
+        ):
+            raise Error("equivalence tree contains a nonregular or unsafe entry")
+        entries.append({"path": path, "mode": mode, "type": kind, "object": oid})
+    return entries
+
+
+def _reject_renames(root: Path, parent: str, commit: str) -> None:
+    raw = gate._run_git_bytes(
+        root,
+        "diff-tree",
+        "--raw",
+        "-r",
+        "-z",
+        "--find-renames",
+        "--no-commit-id",
+        "--no-abbrev",
+        parent,
+        commit,
+        "--",
+    ).stdout.split(b"\0")
+    if any(
+        re.fullmatch(rb":[0-9]{6} [0-9]{6} [0-9a-f]{40} [0-9a-f]{40} R[0-9]+", row)
+        for row in raw
+    ):
+        raise Error("equivalence history contains a renamed input")
+
+
+def _equivalence_history(root: Path, controller: str, source: str) -> list[dict]:
+    """Classify every edge, preserving complete inherited desk provenance."""
+    if gate._run_git(
+        root, "merge-base", "--is-ancestor", controller, source, check=False
+    ).returncode:
+        raise Error("equivalence source is not a controller descendant")
+    commits = _git(
+        root, "rev-list", "--reverse", "--topo-order", f"{controller}..{source}"
+    ).splitlines()
+    if len(commits) > MAX_EQUIVALENCE_COMMITS:
+        raise Error("equivalence history exceeds its commit bound")
+    changes = []
+    origins = {controller: frozenset()}
+    for commit in commits:
+        parents, author, subject = _git(
+            root,
+            "show",
+            "-s",
+            "--no-show-signature",
+            "--format=%P%x00%ae%x00%s",
+            commit,
+        ).split("\0")
+        parents = parents.split()
+        if not parents or any(parent not in origins for parent in parents):
+            raise Error("equivalence history merges unrelated controller ancestry")
+        inherited_origins = frozenset().union(*(origins[parent] for parent in parents))
+        inherited = len(parents) > 1 and any(
+            origins[parent] == inherited_origins
+            and _desk_tree(root, parent) == _desk_tree(root, commit)
+            for parent in parents
+        )
+        count = 0
+        desk_change = False
+        kinds = set()
+        for parent in parents:
+            _reject_renames(root, parent, commit)
+            raw = gate._run_git_bytes(
+                root,
+                "diff-tree",
+                "--raw",
+                "-r",
+                "-z",
+                "--no-renames",
+                "--no-commit-id",
+                "--no-abbrev",
+                parent,
+                commit,
+                "--",
+            ).stdout.split(b"\0")
+            if len(raw) % 2 != 1 or raw[-1] != b"":
+                raise Error("equivalence history has an invalid change list")
+            for metadata, path_bytes in zip(raw[:-1:2], raw[1:-1:2]):
+                if REGULAR_CHANGE.fullmatch(metadata) is None:
+                    raise Error("equivalence history changes a nonregular file mode")
+                try:
+                    path = path_bytes.decode("ascii")
+                except UnicodeDecodeError as exc:
+                    raise Error(
+                        "equivalence history contains an unsupported path"
+                    ) from exc
+                if path == "README.md" and metadata.endswith(b" M"):
+                    kind = "root_readme"
+                elif DESK_PATH.fullmatch(path):
+                    if len(parents) == 1:
+                        valid = author == "desk@seiche.info" and subject.startswith(
+                            ("dispatch: ", "week ahead: ")
+                        )
+                    else:
+                        valid = inherited
+                    if not valid:
+                        raise Error(
+                            "equivalence history has unauthorized or divergent desk evidence"
+                        )
+                    kind = "desk_content"
+                    desk_change = True
+                else:
+                    raise Error(f"equivalence history changes a forbidden path: {path}")
+                kinds.add(kind)
+                changes.append(
+                    {
+                        "commit": commit,
+                        "parent": parent,
+                        "path": path,
+                        "kind": kind,
+                        "change": metadata.decode("ascii"),
+                    }
+                )
+                count += 1
+        if not count:
+            raise Error("equivalence history contains an empty commit")
+        if len(parents) == 1 and "desk_content" in kinds and "root_readme" in kinds:
+            raise Error(
+                "equivalence desk commit mixes generated content with documentation"
+            )
+        origins[commit] = inherited_origins | (
+            {commit} if len(parents) == 1 and desk_change else set()
+        )
+    return changes
+
+
+def _verify_equivalence_tag(
+    root: Path, *, source: str, payload: dict, signer_fingerprint: str
+) -> None:
+    tag = EQUIVALENCE_TAG_PREFIX + source
+    if _git(root, "cat-file", "-t", tag) != "tag":
+        raise Error("equivalence receipt must be an annotated SSH-signed tag")
+    raw = gate._run_git_bytes(root, "cat-file", "tag", tag).stdout
+    header, separator, body = raw.partition(b"\n\n")
+    fields = header.splitlines()
+    if (
+        not separator
+        or len(fields) != 4
+        or fields[:3]
+        != [f"object {source}".encode(), b"type commit", f"tag {tag}".encode()]
+        or not fields[3].startswith(b"tagger ")
+    ):
+        raise Error("equivalence receipt has an inconsistent subject")
+    marker = b"-----BEGIN SSH SIGNATURE-----\n"
+    if body.count(marker) != 1 or b"-----BEGIN PGP SIGNATURE-----" in body:
+        raise Error("equivalence receipt requires the pinned SSH signature algorithm")
+    annotation, signature = body.split(marker)
+    if annotation != _canonical(payload) or not signature.endswith(
+        b"-----END SSH SIGNATURE-----\n"
+    ):
+        raise Error(
+            "equivalence receipt differs from the exact canonical reviewed inputs"
+        )
+    config = gate._signing_git_config(root, signer_fingerprint)
+    checked = gate._run_git(root, "-c", config, "verify-tag", "--raw", tag, check=False)
+    if (
+        checked.returncode
+        or f"key {signer_fingerprint}" not in checked.stdout + checked.stderr
+    ):
+        raise Error("equivalence receipt signature differs from the pinned signer")
+
+
+def _equivalence_inputs(
+    root: Path,
+    *,
+    expected_sha: str,
+    source_sha: str,
+    controller_root: Path,
+    backend_root: Path,
+    signer_fingerprint: str,
+) -> tuple[dict, dict, dict]:
+    """Authenticate R and C before classifying D; do not perform live checks."""
+    if gate.FINGERPRINT_RE.fullmatch(signer_fingerprint) is None:
+        raise Error("equivalence signer fingerprint is malformed")
+    root, controller_root, backend_root = (
+        item.resolve() for item in (root, controller_root, backend_root)
+    )
+    if len({root, controller_root, backend_root}) != 3:
+        raise Error(
+            "equivalence requires separate clean source, controller and backend roots"
+        )
+    if any(
+        gate.COMMIT_RE.fullmatch(value) is None for value in (expected_sha, source_sha)
+    ):
+        raise Error("equivalence source SHA is malformed")
+    controller = _git(controller_root, "rev-parse", "HEAD")
+    backend = _git(backend_root, "rev-parse", "HEAD")
+    for directory, revision in (
+        (root, expected_sha),
+        (controller_root, controller),
+        (backend_root, backend),
+    ):
+        _assert_clean(directory, revision)
+    # These immutable files are checked before importing the historical verifier.
+    for relative in (
+        "ops/release/verify_catalog_publication.py",
+        "ops/deploy/release-allowed-signers",
+    ):
+        original = _blob(backend_root, backend, relative)
+        for directory, revision in (
+            (root, expected_sha),
+            (controller_root, controller),
+        ):
+            if _blob(directory, revision, relative) != original:
+                raise Error(
+                    f"equivalence changed its original backend trust contract: {relative}"
+                )
+    if Path(__file__).read_bytes() != _blob(
+        controller_root, controller, "ops/release/verify_frontend_publication.py"
+    ):
+        raise Error(
+            "equivalence verifier is not the authenticated controller's exact code"
+        )
+    version, _ = gate.verify_local_identity(backend_root)
+    release_tag = gate.verify_signed_release(
+        backend_root,
+        version=version,
+        expected_sha=backend,
+        signer_fingerprint=signer_fingerprint,
+    )
+    if _git(backend_root, "rev-parse", release_tag + "^{commit}") != backend:
+        raise Error("equivalence backend root is not the exact signed release subject")
+    # Import only R's authenticated bytes, not the newly introduced controller's
+    # interpretation of what it was permitted to change during its bootstrap.
+    # A new private directory prevents ignored/stale bytecode caches in either
+    # checkout from substituting for the authenticated original source bytes.
+    with tempfile.TemporaryDirectory(
+        prefix=".equivalence-original-", dir=backend_root.parent
+    ) as temporary:
+        original_path = Path(temporary) / "verify_frontend_publication.py"
+        for relative in (
+            "verify_catalog_publication.py",
+            "verify_frontend_publication.py",
+        ):
+            (Path(temporary) / relative).write_bytes(
+                _blob(backend_root, backend, "ops/release/" + relative)
+            )
+        spec = importlib.util.spec_from_file_location(
+            "original_frontend_publication", original_path
+        )
+        assert spec and spec.loader
+        original = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(original)
+    controller_tag = TAG_PREFIX + controller
+    try:
+        bootstrap = original.verify_frontend_receipt(
+            controller_root,
+            expected_sha=controller,
+            signer_fingerprint=signer_fingerprint,
+            receipt_tag=controller_tag,
+        )
+        bootstrap_changes = original.compatibility_changes(
+            controller_root, backend, controller
+        )
+    except original.Error as exc:
+        raise Error(f"original controller bootstrap failed: {exc}") from exc
+    if (
+        bootstrap["backendReleaseSha"] != backend
+        or bootstrap["corpusReceiptSha"] != backend
+    ):
+        raise Error(
+            "equivalence controller bootstrap names a different backend or corpus subject"
+        )
+    controller_oid = _git(controller_root, "rev-parse", f"refs/tags/{controller_tag}")
+    if _git(root, "rev-parse", f"refs/tags/{controller_tag}") != controller_oid:
+        raise Error("equivalence controller receipt object differs between roots")
+    bootstrap_kinds = {
+        "review_only",
+        "publication_controller",
+        "excluded_monitor",
+        "excluded_desk_content",
+    }
+    if any(change["kind"] not in bootstrap_kinds for change in bootstrap_changes):
+        raise Error(
+            "equivalence bootstrap changes non-isolated frontend or release inputs"
+        )
+    for commit, parent in {
+        (change["commit"], change["parent"]) for change in bootstrap_changes
+    }:
+        _reject_renames(controller_root, parent, commit)
+    # Finite paths actually authorized in the original signed controller receipt,
+    # never a newly introduced glob that silently exempts later operations edits.
+    excluded = {"README.md"} | {
+        change["path"]
+        for change in bootstrap_changes
+        if change["kind"] != "excluded_desk_content"
+    }
+    history = {
+        "controllerChanges": bootstrap_changes,
+        "sourceChanges": _equivalence_history(root, controller, source_sha),
+    }
+    manifest = {
+        "excludedPaths": sorted(excluded),
+        "entries": [
+            entry
+            for entry in _tree_manifest(backend_root, backend)
+            if entry["path"] not in excluded and not DESK_PATH.fullmatch(entry["path"])
+        ],
+    }
+    for revision in (controller, source_sha, expected_sha):
+        candidate = [
+            entry
+            for entry in _tree_manifest(root, revision)
+            if entry["path"] not in excluded and not DESK_PATH.fullmatch(entry["path"])
+        ]
+        if candidate != manifest["entries"]:
+            raise Error(
+                "equivalence publication input manifest differs from the signed backend"
+            )
+    payload = {
+        "schema": EQUIVALENCE_SCHEMA,
+        "purpose": EQUIVALENCE_PURPOSE,
+        "sourceSha": source_sha,
+        "controllerSourceSha": controller,
+        "controllerReceiptTag": controller_tag,
+        "controllerReceiptObjectId": controller_oid,
+        "backendReleaseTag": release_tag,
+        "backendReleaseSha": backend,
+        "corpusReceiptTag": bootstrap["corpusReceiptTag"],
+        "corpusReceiptSha": bootstrap["corpusReceiptSha"],
+        "catalogSha256": hashlib.sha256(
+            _blob(backend_root, backend, gate.AI_CATALOG_PATH)
+        ).hexdigest(),
+        "equivalentInputManifestSha256": hashlib.sha256(
+            _canonical(manifest)
+        ).hexdigest(),
+        "classifiedHistorySha256": hashlib.sha256(_canonical(history)).hexdigest(),
+    }
+    return payload, manifest, history
+
+
+def prepare_source_equivalence(
+    root: Path,
+    *,
+    expected_sha: str,
+    controller_root: Path,
+    backend_root: Path,
+    signer_fingerprint: str,
+) -> tuple[dict, dict, dict]:
+    """Unsigned D review inputs, after independent original-R bootstrap of C."""
+    return _equivalence_inputs(
+        root,
+        expected_sha=expected_sha,
+        source_sha=expected_sha,
+        controller_root=controller_root,
+        backend_root=backend_root,
+        signer_fingerprint=signer_fingerprint,
+    )
+
+
+def verify_source_equivalence(
+    root: Path,
+    *,
+    expected_sha: str,
+    receipt_tag: str,
+    controller_root: Path,
+    backend_root: Path,
+    signer_fingerprint: str,
+) -> dict:
+    """Authenticate D plus current H; callers separately gate live R and CAS H.
+
+    No code from H is imported. The overlay is a bounded complete desk snapshot
+    identified by Git blob IDs; it is not permission to execute desk contents.
+    """
+    if re.fullmatch(EQUIVALENCE_TAG_PREFIX + r"[0-9a-f]{40}", receipt_tag) is None:
+        raise Error("equivalence receipt tag must name the exact source SHA")
+    source = receipt_tag[len(EQUIVALENCE_TAG_PREFIX) :]
+    payload, manifest, _ = _equivalence_inputs(
+        root,
+        expected_sha=expected_sha,
+        source_sha=source,
+        controller_root=controller_root,
+        backend_root=backend_root,
+        signer_fingerprint=signer_fingerprint,
+    )
+    _verify_equivalence_tag(
+        root, source=source, payload=payload, signer_fingerprint=signer_fingerprint
+    )
+    # This intentionally omits the controller signer exception. H must be D or
+    # an exact single-parent chain of the existing daily/weekly desk contract.
+    gate._verify_generated_content_descendants(root, release=source, head=expected_sha)
+    previous = source
+    for commit in _git(
+        root, "rev-list", "--reverse", f"{source}..{expected_sha}"
+    ).splitlines():
+        _reject_renames(root, previous, commit)
+        previous = commit
+    baseline = {
+        entry["path"]
+        for entry in _tree_manifest(backend_root, payload["backendReleaseSha"])
+        if DESK_PATH.fullmatch(entry["path"])
+    }
+    entries = []
+    total = 0
+    for entry in _tree_manifest(root, expected_sha):
+        if not DESK_PATH.fullmatch(entry["path"]):
+            continue
+        if entry["mode"] != "100644":
+            raise Error("equivalence desk overlay contains a nonregular file mode")
+        size = int(_git(root, "cat-file", "-s", entry["object"]))
+        total += size
+        if (
+            size > MAX_OVERLAY_FILE_BYTES
+            or total > MAX_OVERLAY_BYTES
+            or len(entries) >= MAX_OVERLAY_FILES
+        ):
+            raise Error("equivalence desk overlay exceeds its size bound")
+        entries.append({key: entry[key] for key in ("path", "mode", "object")})
+    overlay = {
+        "entries": entries,
+        "deletePaths": sorted(baseline - {entry["path"] for entry in entries}),
+    }
+    overlay["sha256"] = hashlib.sha256(_canonical(overlay)).hexdigest()
+    return {
+        "schema": "seiche.publication-source-admission.v1",
+        "sourceEquivalence": payload,
+        "currentSourceSha": expected_sha,
+        "equivalentInputManifest": {
+            **manifest,
+            "sha256": payload["equivalentInputManifestSha256"],
+        },
+        "deskOverlay": overlay,
+    }
+
+
 def require_unused_tag(root: Path, tag: str) -> None:
     if re.fullmatch(r"frontend-publication-[0-9a-f]{40}", tag) is None:
         raise Error("frontend tag name is malformed")
@@ -753,9 +1209,98 @@ def main() -> int:
     parser.add_argument("--signer-fingerprint", required=True)
     parser.add_argument("--receipt-tag")
     parser.add_argument("--prepare", action="store_true")
+    parser.add_argument(
+        "--source-equivalence",
+        action="store_true",
+        help="offline source admission; callers must separately prove live R and current-main H",
+    )
+    parser.add_argument("--controller-root", type=Path)
+    parser.add_argument("--backend-root", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
+        if args.source_equivalence:
+            if args.controller_root is None or args.backend_root is None:
+                raise Error(
+                    "source equivalence requires separate --controller-root and --backend-root"
+                )
+            if args.prepare:
+                if args.receipt_tag or args.output is None:
+                    raise Error(
+                        "equivalence prepare requires new --output and no receipt tag"
+                    )
+                payload, manifest, history = prepare_source_equivalence(
+                    args.root,
+                    expected_sha=args.expected_sha,
+                    controller_root=args.controller_root,
+                    backend_root=args.backend_root,
+                    signer_fingerprint=args.signer_fingerprint,
+                )
+                tag = EQUIVALENCE_TAG_PREFIX + args.expected_sha
+                if (
+                    gate._run_git(
+                        args.root,
+                        "show-ref",
+                        "--verify",
+                        "--quiet",
+                        f"refs/tags/{tag}",
+                        check=False,
+                    ).returncode
+                    == 0
+                ):
+                    raise Error(
+                        "equivalence receipt already exists locally; never reuse or move it"
+                    )
+                remote = gate._run_git(
+                    args.root,
+                    "ls-remote",
+                    "--exit-code",
+                    "--tags",
+                    "origin",
+                    f"refs/tags/{tag}",
+                    check=False,
+                )
+                if remote.returncode != 2:
+                    raise Error(
+                        "equivalence receipt remote absence could not be established"
+                    )
+                args.output.mkdir(parents=True, exist_ok=False)
+                for name, value in (
+                    ("receipt.json", payload),
+                    ("input-manifest.json", manifest),
+                    ("classified-history.json", history),
+                ):
+                    (args.output / name).write_bytes(_canonical(value))
+                print(
+                    json.dumps(
+                        {
+                            "status": "unsigned_review_inputs",
+                            "tag": tag,
+                            "output": str(args.output),
+                        }
+                    )
+                )
+            else:
+                if not args.receipt_tag or args.output is not None:
+                    raise Error(
+                        "equivalence verification requires --receipt-tag and no output directory"
+                    )
+                print(
+                    json.dumps(
+                        verify_source_equivalence(
+                            args.root,
+                            expected_sha=args.expected_sha,
+                            receipt_tag=args.receipt_tag,
+                            controller_root=args.controller_root,
+                            backend_root=args.backend_root,
+                            signer_fingerprint=args.signer_fingerprint,
+                        ),
+                        sort_keys=True,
+                    )
+                )
+            return 0
+        if args.controller_root is not None or args.backend_root is not None:
+            raise Error("separate roots require --source-equivalence")
         if args.prepare:
             if args.receipt_tag or args.output is None:
                 raise Error(

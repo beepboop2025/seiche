@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -292,6 +293,203 @@ class PublisherBoundaryTests(unittest.TestCase):
             self.assertEqual(
                 [path.name for path in destination.iterdir()], ["index.html"]
             )
+
+
+
+class AssemblerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = Path(__file__).with_name("assemble.py")
+        if not path.is_file():
+            raise unittest.SkipTest("Assembler runs from the source checkout, not the controller image")
+        spec = importlib.util.spec_from_file_location("publisher_assembler", path)
+        cls.assembler = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.assembler)
+
+    def test_static_default_and_full_contexts_pin_exact_committed_blobs_independently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            publisher.git(["init", "--quiet", "-b", "main"], repo)
+            files = list(self.assembler.FILES) + [
+                ".github/workflows/publish-static.yml", ".github/workflows/publish.yml",
+                "ops/requirements-social-cards.txt", "ops/railway-automation/publisher/github-known-hosts",
+            ]
+            for kind in ("publisher", "full-publisher"):
+                files.extend("ops/railway-automation/" + kind + "/" + name
+                             for name in ("Dockerfile", "publish.py", "test_publish.py"))
+            for name in files:
+                path = repo / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("committed " + name)
+            publisher.git(["add", "-A"], repo)
+            publisher.git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit",
+                           "--quiet", "--no-gpg-sign", "-m", "fixtures"], repo)
+            sha = publisher.git(["rev-parse", "HEAD"], repo)
+            (repo / "ops/railway-automation/full-publisher/publish.py").write_text("uncommitted executable")
+            static, full = root / "static", root / "full"
+            self.assembler.assemble_context(repo, static)
+            self.assembler.assemble_context(repo, full, kind="full", source=sha, engine_source=sha)
+            self.assertEqual(json.loads((static / "controller-source.json").read_text()), {"sha": sha})
+            full_identity = json.loads((full / "controller-source.json").read_text())
+            self.assertEqual(full_identity["sha"], sha)
+            self.assertEqual(full_identity["engineSourceSha"], sha)
+            self.assertEqual((full / "publish.py").read_text(), "committed ops/railway-automation/full-publisher/publish.py")
+            self.assertEqual((static / "publish.py").read_text(), "committed ops/railway-automation/publisher/publish.py")
+            self.assertTrue((static / "publish-static.yml").is_file())
+            self.assertTrue((full / "publish.yml").is_file())
+            self.assertFalse((full / "publish-static.yml").exists())
+            self.assertEqual(set(full_identity["engineGateSha256"]), set(self.assembler.FILES))
+            self.assertEqual(set(json.loads((full / "gate-sha256.json").read_text())), set(self.assembler.FILES))
+            (repo / "ops/railway-automation/publisher/publish.py").unlink()
+            (repo / "ops/railway-automation/publisher/publish.py").symlink_to("README.md")
+            publisher.git(["add", "-A"], repo)
+            publisher.git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit",
+                           "--quiet", "--no-gpg-sign", "-m", "unsafe fixture"], repo)
+            with self.assertRaisesRegex(ValueError, "nonexecutable regular file"):
+                self.assembler.assemble_context(repo, root / "unsafe")
+            self.assertFalse((root / "unsafe").exists())
+
+
+class SourceEquivalenceBoundaryTests(unittest.TestCase):
+    def admission(self):
+        return {
+            "schema": "seiche.publication-source-admission.v1",
+            "currentSourceSha": "d" * 40,
+            "sourceEquivalence": {"sourceSha": "c" * 40, "controllerSourceSha": "a" * 40,
+                                  "backendReleaseSha": "b" * 40},
+            "deskOverlay": {"sha256": "e" * 64},
+            "equivalentInputManifest": {"sha256": "f" * 64},
+        }
+
+    def controller(self, root):
+        bundle = root / "bundle"
+        bundle.mkdir()
+        (bundle / "controller-source.json").write_text(json.dumps({
+            "sha": "a" * 40, "engineSourceSha": "b" * 40, "engineGateSha256": {},
+        }))
+        (bundle / "gate-sha256.json").write_text("{}")
+        gates = root / "controller-source/ops/release"
+        gates.mkdir(parents=True)
+        for name in ("verify_frontend_publication.py", "verify_catalog_publication.py"):
+            (gates / name).write_text("verified source")
+        (gates / "__pycache__").mkdir()
+        (gates / "__pycache__/untrusted.pyc").write_bytes(b"ignored stale bytecode")
+        return bundle
+
+    def test_admission_executes_pinned_controller_with_three_separate_subjects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = self.controller(root)
+            def checked_import(command, cwd, env, capture=False):
+                fresh = Path(command[-1])
+                self.assertEqual(fresh.parent, root)
+                self.assertEqual(fresh.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(sorted(path.name for path in fresh.iterdir()),
+                                 ["verify_catalog_publication.py", "verify_frontend_publication.py"])
+                self.assertEqual((fresh / "verify_frontend_publication.py").read_text(), "verified source")
+                return json.dumps(self.admission())
+            with (patch.object(publisher, "CONTROLLER", bundle),
+                  patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40,
+                                          "SITE_DEPLOY_KEY": "never-pass", "CLOUDFLARE_API_TOKEN": "never-pass"}),
+                  patch.object(publisher, "git"),
+                  patch.object(publisher, "verify_gate_files") as pinned,
+                  patch.object(publisher, "current_main", return_value="d" * 40),
+                  patch.object(publisher, "run", side_effect=checked_import) as execute):
+                controller, backend, result = publisher.equivalent_sources(root, root / "current", "d" * 40, "public-fingerprint")
+            self.assertEqual(result, self.admission())
+            self.assertEqual([call.args[0] for call in pinned.call_args_list], [controller, backend])
+            command, cwd, env = execute.call_args.args
+            self.assertEqual(command[:3], ["python", "-I", "-S"])
+            self.assertEqual(cwd, controller)
+            self.assertEqual(command[5:8], [str(root / "current"), str(controller), str(backend)])
+            self.assertNotIn("SITE_DEPLOY_KEY", env)
+            self.assertNotIn("CLOUDFLARE_API_TOKEN", env)
+            self.assertEqual(len({root / "current", controller, backend}), 3)
+
+    def test_pin_failure_never_executes_admission_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (patch.object(publisher, "CONTROLLER", self.controller(root)),
+                  patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40}),
+                  patch.object(publisher, "git"),
+                  patch.object(publisher, "verify_gate_files", side_effect=RuntimeError("changed verifier")),
+                  patch.object(publisher, "run") as execute):
+                with self.assertRaisesRegex(RuntimeError, "changed verifier"):
+                    publisher.equivalent_sources(root, root / "current", "d" * 40, "pin")
+            execute.assert_not_called()
+
+    def test_invalid_signature_wrong_subject_or_advanced_main_never_admitted(self):
+        for change in ("signature", "head", "controller", "engine", "receipt", "advanced"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                value = self.admission()
+                if change == "head":
+                    value["currentSourceSha"] = "0" * 40
+                for field, kind in (("controllerSourceSha", "controller"), ("backendReleaseSha", "engine"), ("sourceSha", "receipt")):
+                    if change == kind:
+                        value["sourceEquivalence"][field] = "0" * 40
+                with (patch.object(publisher, "CONTROLLER", self.controller(root)),
+                      patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40}),
+                      patch.object(publisher, "git"),
+                      patch.object(publisher, "verify_gate_files"),
+                      patch.object(publisher, "current_main", return_value=("0" if change == "advanced" else "d") * 40),
+                      patch.object(publisher, "run", return_value=json.dumps(value),
+                                   side_effect=RuntimeError("bad signature") if change == "signature" else None)):
+                    with self.assertRaises(RuntimeError):
+                        publisher.equivalent_sources(root, root / "current", "d" * 40, "pin")
+
+    def test_missing_engine_pin_cannot_fall_back_to_current_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = self.controller(root)
+            (bundle / "controller-source.json").write_text(json.dumps({"sha": "a" * 40}))
+            with (patch.object(publisher, "CONTROLLER", bundle),
+                  patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40}),
+                  patch.object(publisher, "git") as clone):
+                with self.assertRaisesRegex(RuntimeError, "independently pinned"):
+                    publisher.equivalent_sources(root, root / "current", "d" * 40, "pin")
+            clone.assert_not_called()
+
+    def test_changed_gate_bytes_and_symlinks_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = {}
+            for name in publisher.GATES:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("reviewed")
+                manifest[name] = hashlib.sha256(b"reviewed").hexdigest()
+            publisher.verify_gate_files(root, manifest)
+            first = root / publisher.GATES[0]
+            first.write_text("changed")
+            with self.assertRaises(RuntimeError):
+                publisher.verify_gate_files(root, manifest)
+            first.unlink()
+            outside = root / "outside"
+            outside.write_text("reviewed")
+            first.symlink_to(outside)
+            with self.assertRaises(RuntimeError):
+                publisher.verify_gate_files(root, manifest)
+
+    def test_current_main_and_mirror_checks_use_publication_head(self):
+        with (patch.object(publisher, "current_main", return_value="d" * 40),
+              patch.object(publisher, "git", return_value="e" * 40 + "\trefs/heads/main")):
+            publisher.require_current_publication("d" * 40, Path("/mirror"), "e" * 40)
+            with self.assertRaisesRegex(RuntimeError, "Source main advanced"):
+                publisher.require_current_publication("b" * 40, Path("/mirror"), "e" * 40)
+            with self.assertRaisesRegex(RuntimeError, "compare-and-swap"):
+                publisher.require_current_publication("d" * 40, Path("/mirror"), "f" * 40)
+
+    def test_identity_keeps_publication_controller_engine_and_renderer_distinct(self):
+        value = publisher.publication_identity(self.admission(), "d" * 40, "b" * 40)
+        self.assertEqual(value["publicationSourceSha"], "d" * 40)
+        self.assertEqual(value["controllerSourceSha"], "a" * 40)
+        self.assertEqual(value["engineSourceSha"], "b" * 40)
+        self.assertEqual(value["rendererSourceSha"], "b" * 40)
+        self.assertEqual(value["sourceEquivalenceReceipt"], "publication-source-equivalence-" + "c" * 40)
+        self.assertEqual(publisher.publication_identity(None, "d" * 40, "d" * 40), {})
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 import importlib.util
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -205,6 +207,280 @@ class PublisherBoundaryTests(unittest.TestCase):
             sealed_catalog.write_text('{"entries":[{"modified":true}]}')
             with self.assertRaisesRegex(verifier.PublicationGateError, "bytes differ from source"):
                 verifier.verify_published_catalog(trusted, sealed_catalog)
+
+
+
+class DeskProjectionTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name).resolve()
+        self.current = self.root / "current"
+        self.current.mkdir()
+        publisher.git(["init", "--quiet", "-b", "main"], self.current)
+        self.runtime = "backend/seiche/engine.py"
+        self.state = "backend/seiche/dispatches/state.json"
+        self.old = "backend/seiche/dispatches/old.desk.md"
+        self.new = "frontend/public/dispatches/new.json"
+        for name, data in ((self.runtime, "SIGNED_ENGINE"), (self.state, '{"n":1}'),
+                           (self.old, "old desk"), ("frontend/src/main.ts", "SIGNED_FRONTEND")):
+            path = self.current / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(data)
+        self.engine_sha = self.commit()
+        (self.current / self.state).write_text('{"n":2}')
+        (self.current / self.old).unlink()
+        (self.current / self.new).parent.mkdir(parents=True)
+        (self.current / self.new).write_text('{"desk":"new"}')
+        (self.current / "README.md").write_text("public onboarding")
+        self.current_sha = self.commit()
+        self.backend, self.build = self.root / "backend", self.root / "build"
+        for checkout in (self.backend, self.build):
+            publisher.git(["clone", "--quiet", "--no-hardlinks", str(self.current), str(checkout)], self.root)
+            publisher.git(["checkout", "--quiet", "--detach", self.engine_sha], checkout)
+
+    def commit(self):
+        publisher.git(["add", "-A"], self.current)
+        publisher.git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                       "commit", "--quiet", "--no-gpg-sign", "-m", "fixture"], self.current)
+        return publisher.git(["rev-parse", "HEAD"], self.current)
+
+    def admission(self):
+        payload = {"entries": publisher.desk_tree(self.current, self.current_sha), "deletePaths": [self.old]}
+        digest = hashlib.sha256((json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()).hexdigest()
+        return {"currentSourceSha": self.current_sha,
+                "sourceEquivalence": {"backendReleaseSha": self.engine_sha},
+                "deskOverlay": {**payload, "sha256": digest}}
+
+    def test_projection_uses_exact_desk_blobs_but_keeps_signed_engine_and_frontend(self):
+        proof = publisher.apply_desk_projection(self.current, self.backend, self.build, self.admission())
+        self.assertEqual((self.build / self.state).read_text(), '{"n":2}')
+        self.assertEqual((self.build / self.new).read_text(), '{"desk":"new"}')
+        self.assertFalse((self.build / self.old).exists())
+        self.assertFalse((self.build / "README.md").exists())
+        self.assertEqual((self.build / self.runtime).read_text(), "SIGNED_ENGINE")
+        self.assertEqual((self.build / "frontend/src/main.ts").read_text(), "SIGNED_FRONTEND")
+        self.assertEqual(publisher.git(["rev-parse", "HEAD"], self.build), self.engine_sha)
+        self.assertEqual((self.backend / self.state).read_text(), '{"n":1}')
+        self.assertEqual(publisher.git(["status", "--porcelain"], self.backend), "")
+        self.assertEqual(proof["publicationSourceSha"], self.current_sha)
+        self.assertEqual(proof["engineSourceSha"], self.engine_sha)
+        self.assertEqual(proof["fileCount"], 2)
+        self.assertEqual(proof["deletedCount"], 1)
+        self.assertNotEqual(publisher.git(["status", "--porcelain"], self.build), "")
+
+    def test_overlay_digest_object_mode_deletion_and_path_changes_are_rejected_before_mutation(self):
+        for kind in ("digest", "object", "mode", "delete", "path"):
+            with self.subTest(kind=kind):
+                admission = self.admission()
+                overlay = admission["deskOverlay"]
+                if kind == "digest":
+                    overlay["sha256"] = "0" * 64
+                elif kind == "delete":
+                    overlay["deletePaths"] = [self.runtime]
+                else:
+                    overlay["entries"][0][kind] = {"object": "0" * 40, "mode": "100755", "path": self.runtime}[kind]
+                with self.assertRaisesRegex(RuntimeError, "Desk overlay differs"):
+                    publisher.apply_desk_projection(self.current, self.backend, self.build, admission)
+                self.assertEqual(publisher.git(["status", "--porcelain"], self.build), "")
+
+    def test_dirty_or_wrong_projection_base_is_rejected(self):
+        (self.build / self.runtime).write_text("unapproved")
+        with self.assertRaisesRegex(RuntimeError, "not pristine"):
+            publisher.apply_desk_projection(self.current, self.backend, self.build, self.admission())
+        publisher.git(["checkout", "--force", "--detach", self.current_sha], self.build)
+        with self.assertRaisesRegex(RuntimeError, "not the signed engine"):
+            publisher.apply_desk_projection(self.current, self.backend, self.build, self.admission())
+
+    def test_current_tree_executable_or_symlink_desk_entry_cannot_be_overlaid(self):
+        (self.current / self.state).chmod(0o755)
+        self.current_sha = self.commit()
+        with self.assertRaisesRegex(RuntimeError, "nonexecutable regular data"):
+            publisher.desk_tree(self.current, self.current_sha)
+        (self.current / self.state).unlink()
+        (self.current / self.state).symlink_to("../../engine.py")
+        self.current_sha = self.commit()
+        with self.assertRaisesRegex(RuntimeError, "nonexecutable regular data"):
+            publisher.desk_tree(self.current, self.current_sha)
+
+    def test_oversized_blob_stops_before_reading_or_writing(self):
+        admission = self.admission()
+        real_git = publisher.git
+
+        def git(args, cwd, env=None):
+            return str(8 * 1024 * 1024 + 1) if args[:2] == ["cat-file", "-s"] else real_git(args, cwd, env)
+
+        with patch.object(publisher, "git", side_effect=git):
+            with self.assertRaisesRegex(RuntimeError, "byte bound"):
+                publisher.apply_desk_projection(self.current, self.backend, self.build, admission)
+        self.assertEqual(publisher.git(["status", "--porcelain"], self.build), "")
+
+class RuntimeIdentityTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.backend = Path(temporary.name) / "backend"
+        self.backend.mkdir()
+        self.engine_sha = "a" * 40
+
+    def test_runtime_identity_checks_use_only_original_release_module_and_clean_environment(self):
+        gates = self.backend / "ops/release"
+        gates.mkdir(parents=True)
+        for name in ("verify_frontend_publication.py", "verify_catalog_publication.py"):
+            (gates / name).write_text("verified source")
+        with (patch.dict(os.environ, {"GH_TOKEN": "never-pass", "SITE_DEPLOY_KEY": "never-pass"}),
+              patch.object(publisher, "run", return_value='{"backendRuntimeSubject":{"sha":"signed"}}') as run):
+            result = publisher.verify_runtime_identity(self.backend, self.engine_sha)
+        self.assertEqual(result["backendRuntimeSubject"]["sha"], "signed")
+        command, cwd, env = run.call_args.args
+        self.assertEqual(command[5:7], [str(self.backend), self.engine_sha])
+        self.assertEqual(Path(command[7]).parent, self.backend.parent)
+        self.assertFalse(Path(command[7]).exists())
+        self.assertEqual(cwd, self.backend)
+        self.assertIn("module.RuntimeReceipts", command[4])
+        self.assertIn("verify_market_corpus_receipts", command[4])
+        self.assertNotIn("GH_TOKEN", env)
+        self.assertNotIn("SITE_DEPLOY_KEY", env)
+
+
+class SourceEquivalenceBoundaryTests(unittest.TestCase):
+    def admission(self):
+        return {
+            "schema": "seiche.publication-source-admission.v1",
+            "currentSourceSha": "d" * 40,
+            "sourceEquivalence": {"sourceSha": "c" * 40, "controllerSourceSha": "a" * 40,
+                                  "backendReleaseSha": "b" * 40},
+            "deskOverlay": {"sha256": "e" * 64},
+            "equivalentInputManifest": {"sha256": "f" * 64},
+        }
+
+    def controller(self, root):
+        bundle = root / "bundle"
+        bundle.mkdir()
+        (bundle / "controller-source.json").write_text(json.dumps({
+            "sha": "a" * 40, "engineSourceSha": "b" * 40, "engineGateSha256": {},
+        }))
+        (bundle / "gate-sha256.json").write_text("{}")
+        gates = root / "controller-source/ops/release"
+        gates.mkdir(parents=True)
+        for name in ("verify_frontend_publication.py", "verify_catalog_publication.py"):
+            (gates / name).write_text("verified source")
+        (gates / "__pycache__").mkdir()
+        (gates / "__pycache__/untrusted.pyc").write_bytes(b"ignored stale bytecode")
+        return bundle
+
+    def test_admission_executes_pinned_controller_with_three_separate_subjects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = self.controller(root)
+            def checked_import(command, cwd, env, capture=False):
+                fresh = Path(command[-1])
+                self.assertEqual(fresh.parent, root)
+                self.assertEqual(fresh.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(sorted(path.name for path in fresh.iterdir()),
+                                 ["verify_catalog_publication.py", "verify_frontend_publication.py"])
+                self.assertEqual((fresh / "verify_frontend_publication.py").read_text(), "verified source")
+                return json.dumps(self.admission())
+            with (patch.object(publisher, "CONTROLLER", bundle),
+                  patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40,
+                                          "SITE_DEPLOY_KEY": "never-pass", "CLOUDFLARE_API_TOKEN": "never-pass"}),
+                  patch.object(publisher, "git"),
+                  patch.object(publisher, "verify_gate_files") as pinned,
+                  patch.object(publisher, "current_main", return_value="d" * 40),
+                  patch.object(publisher, "run", side_effect=checked_import) as execute):
+                controller, backend, result = publisher.equivalent_sources(root, root / "current", "d" * 40, "public-fingerprint")
+            self.assertEqual(result, self.admission())
+            self.assertEqual([call.args[0] for call in pinned.call_args_list], [controller, backend])
+            command, cwd, env = execute.call_args.args
+            self.assertEqual(command[:3], ["python", "-I", "-S"])
+            self.assertEqual(cwd, controller)
+            self.assertEqual(command[5:8], [str(root / "current"), str(controller), str(backend)])
+            self.assertNotIn("SITE_DEPLOY_KEY", env)
+            self.assertNotIn("CLOUDFLARE_API_TOKEN", env)
+            self.assertEqual(len({root / "current", controller, backend}), 3)
+
+    def test_pin_failure_never_executes_admission_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (patch.object(publisher, "CONTROLLER", self.controller(root)),
+                  patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40}),
+                  patch.object(publisher, "git"),
+                  patch.object(publisher, "verify_gate_files", side_effect=RuntimeError("changed verifier")),
+                  patch.object(publisher, "run") as execute):
+                with self.assertRaisesRegex(RuntimeError, "changed verifier"):
+                    publisher.equivalent_sources(root, root / "current", "d" * 40, "pin")
+            execute.assert_not_called()
+
+    def test_invalid_signature_wrong_subject_or_advanced_main_never_admitted(self):
+        for change in ("signature", "head", "controller", "engine", "receipt", "advanced"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                value = self.admission()
+                if change == "head":
+                    value["currentSourceSha"] = "0" * 40
+                for field, kind in (("controllerSourceSha", "controller"), ("backendReleaseSha", "engine"), ("sourceSha", "receipt")):
+                    if change == kind:
+                        value["sourceEquivalence"][field] = "0" * 40
+                with (patch.object(publisher, "CONTROLLER", self.controller(root)),
+                      patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40}),
+                      patch.object(publisher, "git"),
+                      patch.object(publisher, "verify_gate_files"),
+                      patch.object(publisher, "current_main", return_value=("0" if change == "advanced" else "d") * 40),
+                      patch.object(publisher, "run", return_value=json.dumps(value),
+                                   side_effect=RuntimeError("bad signature") if change == "signature" else None)):
+                    with self.assertRaises(RuntimeError):
+                        publisher.equivalent_sources(root, root / "current", "d" * 40, "pin")
+
+    def test_missing_engine_pin_cannot_fall_back_to_current_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = self.controller(root)
+            (bundle / "controller-source.json").write_text(json.dumps({"sha": "a" * 40}))
+            with (patch.object(publisher, "CONTROLLER", bundle),
+                  patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40}),
+                  patch.object(publisher, "git") as clone):
+                with self.assertRaisesRegex(RuntimeError, "independently pinned"):
+                    publisher.equivalent_sources(root, root / "current", "d" * 40, "pin")
+            clone.assert_not_called()
+
+    def test_changed_gate_bytes_and_symlinks_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = {}
+            for name in publisher.GATES:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("reviewed")
+                manifest[name] = hashlib.sha256(b"reviewed").hexdigest()
+            publisher.verify_gate_files(root, manifest)
+            first = root / publisher.GATES[0]
+            first.write_text("changed")
+            with self.assertRaises(RuntimeError):
+                publisher.verify_gate_files(root, manifest)
+            first.unlink()
+            outside = root / "outside"
+            outside.write_text("reviewed")
+            first.symlink_to(outside)
+            with self.assertRaises(RuntimeError):
+                publisher.verify_gate_files(root, manifest)
+
+    def test_current_main_and_mirror_checks_use_publication_head(self):
+        with (patch.object(publisher, "current_main", return_value="d" * 40),
+              patch.object(publisher, "git", return_value="e" * 40 + "\trefs/heads/main")):
+            publisher.require_current_publication("d" * 40, Path("/mirror"), "e" * 40)
+            with self.assertRaisesRegex(RuntimeError, "Source main advanced"):
+                publisher.require_current_publication("b" * 40, Path("/mirror"), "e" * 40)
+            with self.assertRaisesRegex(RuntimeError, "compare-and-swap"):
+                publisher.require_current_publication("d" * 40, Path("/mirror"), "f" * 40)
+
+    def test_identity_keeps_publication_controller_engine_and_renderer_distinct(self):
+        value = publisher.publication_identity(self.admission(), "d" * 40, "b" * 40)
+        self.assertEqual(value["publicationSourceSha"], "d" * 40)
+        self.assertEqual(value["controllerSourceSha"], "a" * 40)
+        self.assertEqual(value["engineSourceSha"], "b" * 40)
+        self.assertEqual(value["rendererSourceSha"], "b" * 40)
+        self.assertEqual(value["sourceEquivalenceReceipt"], "publication-source-equivalence-" + "c" * 40)
+        self.assertEqual(publisher.publication_identity(None, "d" * 40, "d" * 40), {})
 
 
 if __name__ == "__main__":

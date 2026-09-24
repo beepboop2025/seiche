@@ -3400,3 +3400,457 @@ def test_live_bis_materialization_rejects_unbound_or_invalid_census(mutation):
         gate.PublicationGateError, match="Market Atlas runtime materialization"
     ):
         _verify_market(health, catalog, discovery, tools)
+
+
+@pytest.fixture(scope="module")
+def equivalence_template(tmp_path_factory):
+    """Build one immutable synthetic signed R/C template to avoid repeated fsyncs."""
+    root = content_repo.__wrapped__(tmp_path_factory.mktemp("equivalence-template"))
+    for relative in (
+        "ops/release/verify_catalog_publication.py",
+        "ops/release/frontend_site_proof.py",
+        "frontend/package.json",
+        "frontend/package-lock.json",
+        "frontend/tsconfig.json",
+        "frontend/vite.config.ts",
+    ):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+    verifier = "ops/release/verify_frontend_publication.py"
+    (root / verifier).write_bytes(
+        gate._run_git_bytes(ROOT, "show", f"HEAD:{verifier}").stdout
+    )
+    (root / "README.md").write_text("# Original product\n")
+    release, fingerprint = _sign_content_release(root)
+    controller = _frontend_change(
+        root,
+        {
+            verifier: (ROOT / verifier).read_text(),
+            "ops/railway-automation/full-publisher/publish.py": "# isolated controller fixture\n",
+        },
+    )
+    controller_tag = _frontend_tag(root, fingerprint)
+    return {
+        "root": root,
+        "release": release,
+        "controller": controller,
+        "fingerprint": fingerprint,
+        "controller_tag": controller_tag,
+    }
+
+
+@pytest.fixture
+def equivalence_repo(equivalence_template, tmp_path):
+    """Independent refs/index/worktrees; only immutable template objects are shared."""
+    template = equivalence_template
+    root = tmp_path / "repo"
+    _content_git(
+        template["root"], "clone", "-q", "--shared", str(template["root"]), str(root)
+    )
+    # Synthetic fixture-only configuration; production and global Git are untouched.
+    with (root / ".git/config").open("a") as config:
+        config.write("\n[user]\nname = seiche-desk\nemail = desk@seiche.info\n")
+        config.write(
+            "signingkey = "
+            + str(template["root"].parent / "fixture-signing-key")
+            + "\n"
+        )
+        config.write(
+            "[commit]\ngpgsign = false\n[tag]\ngpgsign = false\n[gpg]\nformat = ssh\n[core]\nfilemode = true\nfsync = none\n"
+        )
+    backend_root = root.parent / "pristine-backend"
+    controller_root = root.parent / "pristine-controller"
+    _content_git(
+        root,
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        str(backend_root),
+        template["release"],
+    )
+    _content_git(
+        root,
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        str(controller_root),
+        template["controller"],
+    )
+    return {
+        **template,
+        "root": root,
+        "backend_root": backend_root,
+        "controller_root": controller_root,
+    }
+
+
+def _equivalence_prepare(fixture):
+    return front.prepare_source_equivalence(
+        fixture["root"],
+        expected_sha=_content_git(fixture["root"], "rev-parse", "HEAD"),
+        backend_root=fixture["backend_root"],
+        controller_root=fixture["controller_root"],
+        signer_fingerprint=fixture["fingerprint"],
+    )
+
+
+def _equivalence_tag(fixture, *, change=None, key=None, canonical=True):
+    payload, _, _ = _equivalence_prepare(fixture)
+    if change:
+        payload.update(change)
+    receipt = fixture["root"].parent / "synthetic-source-equivalence.json"
+    receipt.write_bytes(
+        front._canonical(payload)
+        if canonical
+        else json.dumps(payload, indent=2).encode() + b"\n"
+    )
+    tag = front.EQUIVALENCE_TAG_PREFIX + payload["sourceSha"]
+    config = ["-c", f"user.signingkey={key}"] if key else []
+    _content_git(
+        fixture["root"],
+        *config,
+        "tag",
+        "-s",
+        "--cleanup=verbatim",
+        "-F",
+        str(receipt),
+        tag,
+    )
+    return tag
+
+
+def _equivalence_verify(fixture, tag):
+    return front.verify_source_equivalence(
+        fixture["root"],
+        expected_sha=_content_git(fixture["root"], "rev-parse", "HEAD"),
+        receipt_tag=tag,
+        backend_root=fixture["backend_root"],
+        controller_root=fixture["controller_root"],
+        signer_fingerprint=fixture["fingerprint"],
+    )
+
+
+def test_equivalence_can_authorize_controller_without_rebinding_engine(
+    equivalence_repo,
+):
+    f = equivalence_repo
+    proof = _equivalence_verify(f, _equivalence_tag(f))
+    receipt = proof["sourceEquivalence"]
+    assert receipt["sourceSha"] == receipt["controllerSourceSha"] == f["controller"]
+    assert receipt["backendReleaseSha"] == receipt["corpusReceiptSha"] == f["release"]
+    assert receipt["controllerReceiptObjectId"] == _content_git(
+        f["root"], "rev-parse", f["controller_tag"]
+    )
+    assert receipt["schema"] != front.SCHEMA
+    manifest = proof["equivalentInputManifest"]
+    assert (
+        manifest.pop("sha256") == hashlib.sha256(front._canonical(manifest)).hexdigest()
+    )
+    assert proof["deskOverlay"]["entries"] == []
+    # The original application/corpus path is still closed for this source.
+    with pytest.raises(gate.PublicationGateError, match="generated-content"):
+        gate.verify_market_corpus_release(
+            f["root"], expected_sha=f["controller"], signer_fingerprint=f["fingerprint"]
+        )
+
+
+def test_equivalence_binds_readme_dag_and_current_strict_desk_overlay(equivalence_repo):
+    f = equivalence_repo
+    root = f["root"]
+    branch = _content_git(root, "branch", "--show-current")
+    _content_git(root, "checkout", "-q", "-b", "readme")
+    _frontend_change(root, {"README.md": "# Free agent onboarding\n"})
+    _content_git(root, "checkout", "-q", branch)
+    _content_git(
+        root,
+        "merge",
+        "--no-ff",
+        "--no-gpg-sign",
+        "-m",
+        "reviewed README merge",
+        "readme",
+    )
+    source = _content_git(root, "rev-parse", "HEAD")
+    tag = _equivalence_tag(f)
+    head = _content_commit(
+        root, {"frontend/public/dispatches/daily.md": "new evidence\n"}
+    )
+    proof = _equivalence_verify(f, tag)
+    assert proof["currentSourceSha"] == head
+    assert proof["sourceEquivalence"]["sourceSha"] == source != head
+    overlay = proof["deskOverlay"]
+    assert overlay["entries"] == [
+        {
+            "path": "frontend/public/dispatches/daily.md",
+            "mode": "100644",
+            "object": _content_git(
+                root, "rev-parse", head + ":frontend/public/dispatches/daily.md"
+            ),
+        }
+    ]
+    assert (
+        overlay.pop("sha256") == hashlib.sha256(front._canonical(overlay)).hexdigest()
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend/seiche/assemble.py",
+        "backend/README.md",
+        ".github/workflows/publish.yml",
+        "frontend/src/App.tsx",
+        "frontend/package.json",
+        "ops/railway-automation/full-publisher/publish.py",
+        "docs/another-document.md",
+        "backend/tests/test_fleet_watchdog.py",
+    ],
+)
+def test_equivalence_rejects_even_reverted_forbidden_edges_after_controller(
+    equivalence_repo, path
+):
+    f = equivalence_repo
+    target = f["root"] / path
+    original = target.read_text() if target.exists() else None
+    _frontend_change(f["root"], {path: (original or "") + "\nunauthorized\n"})
+    if original is None:
+        target.unlink()
+    else:
+        target.write_text(original)
+    _content_commit(
+        f["root"], {}, author="reviewer@example.invalid", subject="revert hidden drift"
+    )
+    with pytest.raises(front.Error, match="forbidden path"):
+        _equivalence_prepare(f)
+
+
+@pytest.mark.parametrize("mode", ["symlink", "executable", "gitlink", "rename"])
+def test_equivalence_rejects_modes_and_renames(equivalence_repo, mode):
+    f = equivalence_repo
+    root = f["root"]
+    target = root / "README.md"
+    if mode == "symlink":
+        target.unlink()
+        target.symlink_to("backend/README.md")
+    elif mode == "executable":
+        target.chmod(0o755)
+    elif mode == "gitlink":
+        target.unlink()
+        target.mkdir()
+        _content_git(
+            root,
+            "update-index",
+            "--cacheinfo",
+            "160000," + f["controller"] + ",README.md",
+        )
+    else:
+        _content_git(root, "mv", "README.md", "frontend/renamed.md")
+    if mode != "gitlink":
+        _content_git(root, "add", ".")
+    _content_git(root, "commit", "-q", "-m", "bad input modes")
+    with pytest.raises(front.Error, match="nonregular|renamed"):
+        _equivalence_prepare(f)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"purpose": front.PURPOSE},
+        {"unexpected": True},
+        {"backendReleaseSha": "a" * 40},
+        {"corpusReceiptSha": "b" * 40},
+        {"controllerReceiptObjectId": "c" * 40},
+        {"equivalentInputManifestSha256": "d" * 64},
+        {"classifiedHistorySha256": "e" * 64},
+    ],
+)
+def test_equivalence_requires_exact_canonical_keys_and_subjects(
+    equivalence_repo, change
+):
+    f = equivalence_repo
+    tag = _equivalence_tag(f, change=change)
+    with pytest.raises(front.Error, match="exact canonical"):
+        _equivalence_verify(f, tag)
+
+
+def test_equivalence_rejects_noncanonical_and_wrong_signatures(equivalence_repo):
+    f = equivalence_repo
+    tag = _equivalence_tag(f, canonical=False)
+    with pytest.raises(front.Error, match="exact canonical"):
+        _equivalence_verify(f, tag)
+    _content_git(f["root"], "tag", "-d", tag)
+    key = f["root"].parent / "wrong-equivalence-key"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True
+    )
+    tag = _equivalence_tag(f, key=key)
+    with pytest.raises(front.Error, match="pinned signer"):
+        _equivalence_verify(f, tag)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"README.md": "# Needs a fresh D receipt\n"},
+        {"ops/railway-automation/full-publisher/publish.py": "# fresh ops forbidden\n"},
+    ],
+)
+def test_equivalence_current_main_requires_fresh_receipt_for_non_desk_changes(
+    equivalence_repo, change
+):
+    f = equivalence_repo
+    tag = _equivalence_tag(f)
+    _frontend_change(f["root"], change)
+    with pytest.raises(front.Error, match="generated-content"):
+        _equivalence_verify(f, tag)
+
+
+def test_equivalence_requires_original_bootstrap_receipt_and_clean_roots(
+    equivalence_repo,
+):
+    f = equivalence_repo
+    tag = _equivalence_tag(f)
+    _content_git(f["root"], "tag", "-d", f["controller_tag"])
+    with pytest.raises(front.Error):
+        _equivalence_verify(f, tag)
+
+
+def test_equivalence_desk_overlay_bound_is_enforced(equivalence_repo, monkeypatch):
+    f = equivalence_repo
+    tag = _equivalence_tag(f)
+    _content_commit(f["root"], {"frontend/public/articles/daily.md": "123456789"})
+    monkeypatch.setattr(front, "MAX_OVERLAY_FILE_BYTES", 8)
+    with pytest.raises(front.Error, match="size bound"):
+        _equivalence_verify(f, tag)
+
+
+def test_equivalence_rejects_mixed_desk_and_readme_commit(equivalence_repo):
+    f = equivalence_repo
+    _content_commit(
+        f["root"], {"README.md": "docs", "frontend/public/articles/daily.md": "data"}
+    )
+    with pytest.raises(front.Error, match="mixes"):
+        _equivalence_prepare(f)
+
+
+@pytest.mark.parametrize(
+    "scenario", ["inherited", "merge_authored", "rollback", "divergent"]
+)
+def test_equivalence_merge_desk_provenance(equivalence_repo, scenario):
+    f = equivalence_repo
+    root = f["root"]
+    branch = _content_git(root, "branch", "--show-current")
+    _content_git(root, "checkout", "-q", "-b", "docs-side")
+    _frontend_change(root, {"README.md": "# Reviewed docs\n"})
+    if scenario == "divergent":
+        _content_commit(root, {"frontend/public/dispatches/side.md": "side evidence"})
+    _content_git(root, "checkout", "-q", branch)
+    _content_commit(root, {"frontend/public/dispatches/daily.md": "main evidence"})
+    _content_git(root, "merge", "--no-ff", "--no-commit", "docs-side")
+    if scenario == "merge_authored":
+        (root / "frontend/public/dispatches/daily.md").write_text(
+            "merge-authored evidence"
+        )
+    elif scenario == "rollback":
+        (root / "frontend/public/dispatches/daily.md").unlink()
+    _content_git(root, "add", ".")
+    _content_git(root, "commit", "-q", "--no-gpg-sign", "-m", "reviewed docs merge")
+    if scenario == "inherited":
+        proof = _equivalence_verify(f, _equivalence_tag(f))
+        assert len(proof["deskOverlay"]["entries"]) == 1
+    else:
+        with pytest.raises(front.Error, match="unauthorized or divergent"):
+            _equivalence_prepare(f)
+
+
+def test_equivalence_checks_reverted_side_branch_edges(equivalence_repo):
+    f = equivalence_repo
+    root = f["root"]
+    branch = _content_git(root, "branch", "--show-current")
+    _content_git(root, "checkout", "-q", "-b", "forbidden-side")
+    _frontend_change(root, {"backend/seiche/hidden.py": "unauthorized"})
+    (root / "backend/seiche/hidden.py").unlink()
+    _frontend_change(root, {"README.md": "# Innocent endpoint tree\n"})
+    _content_git(root, "checkout", "-q", branch)
+    _content_git(
+        root,
+        "merge",
+        "--no-ff",
+        "--no-gpg-sign",
+        "-m",
+        "merge reverted branch",
+        "forbidden-side",
+    )
+    with pytest.raises(front.Error, match="forbidden path"):
+        _equivalence_prepare(f)
+
+
+def test_equivalence_controller_cannot_expand_its_original_bootstrap_rules(
+    equivalence_repo, monkeypatch
+):
+    f = equivalence_repo
+    root = f["root"]
+    forbidden = "backend/tests/test_fleet_watchdog.py"
+    controller = _frontend_change(
+        root, {forbidden: "# cannot expand original bootstrap\n"}
+    )
+    # Even if the newly introduced verifier attempts to authorize itself, the
+    # authenticated R module has its own unchanged finite classification.
+    monkeypatch.setattr(
+        front, "EXCLUDED_MONITOR_PATHS", front.EXCLUDED_MONITOR_PATHS | {forbidden}
+    )
+    _frontend_tag(root, f["fingerprint"])
+    _content_git(f["controller_root"], "checkout", "-q", "--detach", controller)
+    with pytest.raises(
+        front.Error, match="forbidden runtime, build, catalog or data path"
+    ):
+        _equivalence_prepare(f)
+
+
+@pytest.mark.parametrize("which", ["controller_root", "backend_root", "root"])
+def test_equivalence_rejects_dirty_trust_roots(equivalence_repo, which):
+    f = equivalence_repo
+    tag = _equivalence_tag(f)
+    target = f[which] / "README.md"
+    target.write_text("uncommitted source drift")
+    with pytest.raises(front.Error, match="dirty"):
+        _equivalence_verify(f, tag)
+
+
+def test_equivalence_does_not_admit_a_merge_after_signed_d(equivalence_repo):
+    f = equivalence_repo
+    root = f["root"]
+    tag = _equivalence_tag(f)
+    branch = _content_git(root, "branch", "--show-current")
+    _content_git(root, "checkout", "-q", "-b", "desk-side")
+    _content_commit(root, {"frontend/public/articles/daily.md": "desk"})
+    _content_git(root, "checkout", "-q", branch)
+    _content_git(
+        root, "merge", "--no-ff", "--no-gpg-sign", "-m", "desk merge", "desk-side"
+    )
+    with pytest.raises(front.Error, match="single-parent"):
+        _equivalence_verify(f, tag)
+
+
+def test_equivalence_rejects_unrelated_controller_ancestry(equivalence_repo):
+    f = equivalence_repo
+    root = f["root"]
+    branch = _content_git(root, "branch", "--show-current")
+    _content_git(root, "checkout", "-q", "--orphan", "unrelated")
+    _content_git(root, "commit", "-q", "-m", "unrelated identical tree")
+    _content_git(root, "checkout", "-q", branch)
+    _content_git(
+        root,
+        "merge",
+        "--allow-unrelated-histories",
+        "--no-ff",
+        "--no-gpg-sign",
+        "-m",
+        "unrelated merge",
+        "unrelated",
+    )
+    with pytest.raises(front.Error, match="unrelated controller ancestry"):
+        _equivalence_prepare(f)

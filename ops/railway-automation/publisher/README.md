@@ -42,3 +42,45 @@ Logs and retained evidence separate `source` (signed frontend subject) from
 `current_main`; unchanged runs repeat all live gates. An explicit
 FRONTEND_RECEIPT_TAG must still name current main exactly. A changed controller
 or frontend requires a fresh reviewed controller and exact signed receipt.
+
+## Signed publication-source equivalence
+
+An optional `PUBLICATION_EQUIVALENCE_TAG=publication-source-equivalence-D`
+admits current main H through a separate signed source-equivalence receipt D.
+The bundle must independently pin controller C and signed engine release R.
+The controller authenticates H/D using its exact C verifier, checks C's original
+frontend receipt using the verifier from pristine R, and pins all verifier bytes
+before importing either checkout. A missing, invalid or stale receipt fails;
+this option never falls back to the ordinary source-selection path.
+
+Static publication still builds exact frontend C and re-renders the mirror's
+sealed evidence with R. No H desk data is overlaid or generated here. An explicit
+`FRONTEND_RECEIPT_TAG`, when supplied, must equal `frontend-publication-C`.
+Recovery and state record H as `publicationSourceSha`, C as `controllerSourceSha`
+and `buildSourceSha`, R as `engineSourceSha` and `rendererSourceSha`, D, the
+admitted data/input digests, and the independently checked live runtime subjects.
+Main checks always compare H; mirror compare-and-swap checks run immediately
+before each public write and again after public verification.
+
+Assemble static and full contexts independently from exact committed Git blobs:
+
+```sh
+python ops/railway-automation/publisher/assemble.py /ssd/static-controller \
+  --kind static --source "$C" --engine-source "$R"
+python ops/railway-automation/publisher/assemble.py /ssd/full-controller \
+  --kind full --source "$C" --engine-source "$R"
+```
+
+The default command without these options still assembles the static controller
+at HEAD. Dirty working files never enter either context. `--engine-source`
+adds the separate engine SHA and verifier hashes to `controller-source.json`;
+it does not create a receipt or authorize deployment. First validate C through
+the original R frontend contract, obtain the exact reviewed frontend-C receipt
+and separate D receipt, and prepare with `PUBLISH_APPLY=0`. Activation follows
+operator acceptance of the complete proof; no signer key enters either image.
+
+Allow only one active publication writer across native static, native full and
+GitHub publishers. Main/mirror compare-and-swap checks are not a Cloudflare
+mutex. Prepare both controllers without writes, then apply serially while all
+counterparts are held. After full acceptance, enable only the full publisher's
+cron and retire the old GitHub/static schedules with their prior states saved.

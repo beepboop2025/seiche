@@ -20,6 +20,8 @@ SOURCE = "https://github.com/beepboop2025/seiche.git"
 MIRROR = "https://github.com/beepboop2025/seiche-site.git"
 GATES = (
     "ops/release/verify_catalog_publication.py",
+    "ops/release/verify_frontend_publication.py",
+    "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
 )
 
@@ -105,6 +107,90 @@ def current_main():
     return sha
 
 
+
+def verify_gate_files(checkout, manifest):
+    """Pin every privileged verifier before importing code from a checkout."""
+    for name in GATES:
+        path = checkout / name
+        assert_plain_path(path.parent, checkout)
+        if (not stat.S_ISREG(path.lstat().st_mode)
+                or hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get(name)):
+            raise RuntimeError("Publication verifier changed; update the reviewed controller")
+
+
+def equivalent_sources(root, current, current_sha, signer):
+    """Authenticate H/D using pinned C and pristine R, never code from H."""
+    tag = os.environ.get("PUBLICATION_EQUIVALENCE_TAG", "")
+    if not re.fullmatch(r"publication-source-equivalence-[0-9a-f]{40}", tag):
+        raise RuntimeError("Invalid publication source-equivalence receipt")
+    identity = json.loads((CONTROLLER / "controller-source.json").read_text())
+    controller_sha, engine_sha = identity.get("sha"), identity.get("engineSourceSha")
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)
+           for value in (current_sha, controller_sha, engine_sha)):
+        raise RuntimeError("Source equivalence requires independently pinned controller and engine sources")
+    controller = root / "controller-source"
+    backend = root / "engine-source"
+    for checkout, sha in ((controller, controller_sha), (backend, engine_sha)):
+        git(["clone", "--quiet", "--no-hardlinks", str(current), str(checkout)], root)
+        git(["checkout", "--quiet", "--detach", sha], checkout)
+    manifest = json.loads((CONTROLLER / "gate-sha256.json").read_text())
+    verify_gate_files(controller, manifest)
+    verify_gate_files(backend, identity.get("engineGateSha256", {}))
+    code = (
+        "import importlib.util,json,pathlib,sys; "
+        "controller=pathlib.Path(sys.argv[2]); "
+        "spec=importlib.util.spec_from_file_location('frontend_gate',pathlib.Path(sys.argv[7])/'verify_frontend_publication.py'); "
+        "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+        "print(json.dumps(module.verify_source_equivalence("
+        "pathlib.Path(sys.argv[1]),expected_sha=sys.argv[4],receipt_tag=sys.argv[5],"
+        "controller_root=controller,backend_root=pathlib.Path(sys.argv[3]),signer_fingerprint=sys.argv[6])))"
+    )
+    with tempfile.TemporaryDirectory(prefix=".admission-gates-", dir=root) as fresh:
+        for name in ("verify_frontend_publication.py", "verify_catalog_publication.py"):
+            (Path(fresh) / name).write_bytes((controller / "ops/release" / name).read_bytes())
+        admission = json.loads(run(
+            ["python", "-I", "-S", "-c", code, str(current), str(controller),
+             str(backend), current_sha, tag, signer, fresh],
+            controller, clean_env(), capture=True,
+        ))
+    subject = admission.get("sourceEquivalence", {})
+    if (admission.get("schema") != "seiche.publication-source-admission.v1"
+            or admission.get("currentSourceSha") != current_sha
+            or subject.get("sourceSha") != tag.removeprefix("publication-source-equivalence-")
+            or subject.get("controllerSourceSha") != controller_sha
+            or subject.get("backendReleaseSha") != engine_sha):
+        raise RuntimeError("Source-equivalence admission differs from the pinned source identities")
+    if current_main() != current_sha:
+        raise RuntimeError("Current main advanced during source-equivalence admission")
+    return controller, backend, admission
+
+
+def publication_identity(admission, current_sha, source_sha):
+    if admission is None or admission.get("schema") != "seiche.publication-source-admission.v1":
+        return {}
+    subject = admission["sourceEquivalence"]
+    return {
+        "publicationSourceSha": current_sha,
+        "controllerSourceSha": subject["controllerSourceSha"],
+        "engineSourceSha": subject["backendReleaseSha"],
+        "rendererSourceSha": subject["backendReleaseSha"],
+        "sourceEquivalenceReceipt": "publication-source-equivalence-" + subject["sourceSha"],
+        "sourceEquivalence": subject,
+        "deskOverlaySha256": admission["deskOverlay"]["sha256"],
+        "equivalentInputManifestSha256": admission["equivalentInputManifest"]["sha256"],
+        "buildSourceSha": source_sha,
+    }
+
+
+def require_current_publication(current_sha, mirror=None, mirror_sha=None, env=None):
+    if current_main() != current_sha:
+        raise RuntimeError("Source main advanced during publication")
+    if mirror is not None:
+        observed = git(["ls-remote", "origin", "refs/heads/main"], mirror, env).split()
+        if len(observed) != 2 or observed != [mirror_sha, "refs/heads/main"]:
+            raise RuntimeError("Site mirror compare-and-swap lost")
+
+
 def assert_plain_path(path, boundary):
     path.relative_to(boundary)
     for parent in [path, *path.parents]:
@@ -182,6 +268,110 @@ def copy_history(source, destination, builder=False):
             os.fsync(stream.fileno())
 
 
+DESK_PATH = re.compile(
+    r"(?:frontend/public/(?:dispatches|articles)/[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:md|json)"
+    r"|backend/seiche/dispatches/(?:[A-Za-z0-9][A-Za-z0-9_.-]*\.desk\.md"
+    r"|state\.json|weekly_state\.json|odds_ledger\.jsonl))"
+)
+
+
+def desk_tree(root, sha):
+    entries = []
+    for line in git(["ls-tree", "-r", "--full-tree", sha], root).splitlines():
+        metadata, path = line.split("\t", 1)
+        if DESK_PATH.fullmatch(path) is None:
+            continue
+        mode, kind, oid = metadata.split()
+        if mode != "100644" or kind != "blob" or not re.fullmatch(r"[0-9a-f]{40}", oid):
+            raise RuntimeError("Desk overlay is not nonexecutable regular data")
+        entries.append({"path": path, "mode": mode, "object": oid})
+    return entries
+
+
+def apply_desk_projection(current, backend, build, admission):
+    """Materialize only admitted Git blobs before any builder process starts."""
+    subject = admission["sourceEquivalence"]
+    current_sha, engine_sha = admission["currentSourceSha"], subject["backendReleaseSha"]
+    if git(["rev-parse", "HEAD"], build) != engine_sha:
+        raise RuntimeError("Projection base is not the signed engine source")
+    if git(["status", "--porcelain", "--untracked-files=all"], build):
+        raise RuntimeError("Projection base is not pristine")
+    entries = desk_tree(current, current_sha)
+    previous = desk_tree(backend, engine_sha)
+    paths = {entry["path"] for entry in entries}
+    deletions = sorted({entry["path"] for entry in previous} - paths)
+    payload = {"entries": entries, "deletePaths": deletions}
+    digest = hashlib.sha256((json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ) + "\n").encode()).hexdigest()
+    if admission.get("deskOverlay") != {**payload, "sha256": digest}:
+        raise RuntimeError("Desk overlay differs from the signed admission and current Git objects")
+    if len(entries) > 20000:
+        raise RuntimeError("Desk overlay exceeds its file bound")
+    # Bound and read every object before mutating even the disposable projection.
+    blobs, total = [], 0
+    for entry in entries:
+        size = int(git(["cat-file", "-s", entry["object"]], current))
+        total += size
+        if size > 8 * 1024 * 1024 or total > 128 * 1024 * 1024:
+            raise RuntimeError("Desk overlay exceeds its byte bound")
+        data = subprocess.run(
+            ["git", "cat-file", "blob", entry["object"]], cwd=current,
+            env=clean_env(), capture_output=True, check=True, timeout=60,
+        ).stdout
+        actual = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+        if len(data) != size or actual != entry["object"]:
+            raise RuntimeError("Desk overlay object changed while reading")
+        blobs.append((entry["path"], data))
+    for relative in [*deletions, *(path for path, _data in blobs)]:
+        destination = build / relative
+        ancestor = destination.parent
+        while not ancestor.exists() and not ancestor.is_symlink():
+            ancestor = ancestor.parent
+        assert_plain_path(ancestor, build)
+        if destination.exists() or destination.is_symlink():
+            info = destination.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_mode & 0o111:
+                raise RuntimeError("Projection destination is not nonexecutable regular data")
+    for relative in deletions:
+        (build / relative).unlink()
+    for relative, data in blobs:
+        destination = build / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        assert_plain_path(destination.parent, build)
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+        destination.chmod(0o644)
+    return {"schema": "seiche.engine-desk-projection.v1", "engineSourceSha": engine_sha,
+            "publicationSourceSha": current_sha, "deskOverlaySha256": digest,
+            "fileCount": len(entries), "byteCount": total, "deletedCount": len(deletions)}
+
+
+def verify_runtime_identity(backend, engine_sha):
+    """Run the original release's exact runtime-subject checks, separately from H."""
+    code = (
+        "import importlib.util,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); "
+        "spec=importlib.util.spec_from_file_location('released_frontend_gate',pathlib.Path(sys.argv[3])/'verify_frontend_publication.py'); "
+        "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+        "gate=module.gate; version,_=gate.verify_local_identity(root); "
+        "entry=gate._market_corpus_catalog_entry(gate._read_json(root/gate.AI_CATALOG_PATH)); "
+        "corpus=gate._market_corpus_publication_receipt(entry); "
+        "observed=module.RuntimeReceipts(sys.argv[2],version=version,corpus_release_id=corpus['releaseId']); "
+        "runtime=gate.verify_public_receipts(version,fetch_json=observed.fetch_json); "
+        "corpus_runtime=gate.verify_market_corpus_receipts(entry,fetch_json=observed.fetch_json,post_json=observed.post_json); "
+        "print(json.dumps({'backendRuntimeSubject':observed.subject,'corpusRuntimeSubject':observed.corpus_subject,"
+        "'runtimeEndpoints':observed.endpoints,'backendPublicReceipts':runtime,'corpusPublicReceipts':corpus_runtime}))"
+    )
+    with tempfile.TemporaryDirectory(prefix=".runtime-gates-", dir=backend.parent) as fresh:
+        for name in ("verify_frontend_publication.py", "verify_catalog_publication.py"):
+            (Path(fresh) / name).write_bytes((backend / "ops/release" / name).read_bytes())
+        return json.loads(run(
+            ["python", "-I", "-S", "-c", code, str(backend), engine_sha, fresh],
+            backend, clean_env(), capture=True,
+        ))
+
+
 def main():
     source_sha = current_main()
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
@@ -208,29 +398,37 @@ def main():
         trusted = root / "trusted"
         git(["clone", "--quiet", SOURCE, str(trusted)], root)
         git(["checkout", "--quiet", "--detach", source_sha], trusted)
+        current = trusted
+        source_admission = None
+        engine_sha = source_sha
+        controller_checkout = trusted
+        if os.environ.get("PUBLICATION_EQUIVALENCE_TAG"):
+            controller_checkout, trusted, source_admission = equivalent_sources(
+                root, current, source_sha, signer
+            )
+            engine_sha = source_admission["sourceEquivalence"]["backendReleaseSha"]
         if (
             trusted / ".github/workflows/publish.yml"
         ).read_bytes() != workflow_path.read_bytes():
             raise RuntimeError(
                 "Publication workflow changed; update the reviewed controller"
             )
-        # Execute verification code only when its blob matches the controller's pinned manifest.
-        manifest = json.loads((CONTROLLER / "gate-sha256.json").read_text())
-        for name in GATES:
-            if (
-                hashlib.sha256((trusted / name).read_bytes()).hexdigest()
-                != manifest[name]
-            ):
-                raise RuntimeError(
-                    "Publication verifier changed; update the reviewed controller"
-                )
+        # The opt-in path pinned both C and R before its first verifier import.
+        if source_admission is None:
+            verify_gate_files(trusted, json.loads((CONTROLLER / "gate-sha256.json").read_text()))
+        elif (controller_checkout / ".github/workflows/publish.yml").read_bytes() != workflow_path.read_bytes():
+            raise RuntimeError("Controller and signed engine workflows differ")
+        identity = publication_identity(source_admission, source_sha, engine_sha)
+        if identity:
+            identity["buildTreeKind"] = "signed_engine_with_validated_desk_overlay"
+            identity["deskOverlayApplied"] = True
         receipt = ""  # Full engine output requires the original backend release gate.
         temp = root / "temp"
         temp.mkdir()
         env = clean_env(
             {
-                "GITHUB_SHA": source_sha,
-                "PUBLICATION_SOURCE_SHA": source_sha,
+                "GITHUB_SHA": engine_sha,
+                "PUBLICATION_SOURCE_SHA": engine_sha,
                 "GITHUB_WORKSPACE": str(trusted),
                 "RUNNER_TEMP": str(temp),
                 "FRONTEND_RECEIPT_TAG": receipt,
@@ -246,18 +444,25 @@ def main():
             command = steps[name]["run"].replace("frontend/dist/.well-known/ai-catalog.json",
                                                    "frontend/public/.well-known/ai-catalog.json")
             run(["bash", "-euo", "pipefail", "-c", command], trusted, env)
+        if identity:
+            identity["runtimeIdentity"] = verify_runtime_identity(trusted, engine_sha)
+        require_current_publication(source_sha)
         mirror = root / "mirror"
         git(["clone", "--quiet", MIRROR, str(mirror)], root)
         previous_sha = git(["rev-parse", "HEAD"], mirror)
         digest = hashlib.sha256()
         for name in ("publish.py", "Dockerfile", "publish.yml", "gate-sha256.json",
-                     "requirements-social-cards.txt"):
+                     "requirements-social-cards.txt", "controller-source.json",
+                     "github-known-hosts", "test_publish.py"):
             digest.update(name.encode() + b"\0" + (CONTROLLER / name).read_bytes())
         controller_digest = digest.hexdigest()
         reusable = bool(prior_state and prior_state.get("source") == source_sha
                         and prior_state.get("controller_digest") == controller_digest)
         build = root / "build"
         git(["clone", "--quiet", "--no-hardlinks", str(trusted), str(build)], root)
+        if source_admission is not None:
+            identity["projection"] = apply_desk_projection(current, trusted, build, source_admission)
+            print("RAILWAY_FULL_SOURCE_IDENTITY " + json.dumps(identity, sort_keys=True), flush=True)
         shutil.chown(build, user=10001, group=10001)
         for path in build.rglob("*"):
             if not path.is_symlink():
@@ -268,7 +473,7 @@ def main():
         shutil.chown(build_temp, user=10001, group=10001)
         build_env = clean_env(
             {
-                "GITHUB_SHA": source_sha,
+                "GITHUB_SHA": engine_sha,
                 "PUBLICATION_SOURCE_SHA": source_sha,
                 "GITHUB_WORKSPACE": str(build),
                 "RUNNER_TEMP": str(build_temp),
@@ -310,11 +515,14 @@ def main():
         quiesce_builder()
         candidate = seal_candidate(prepared, trusted)
         run(["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
-             "--expected-sha", source_sha, "--signer-fingerprint", signer,
+             "--expected-sha", engine_sha, "--signer-fingerprint", signer,
              "--published-catalog", str(candidate / ".well-known/ai-catalog.json")],
             trusted, clean_env())
+        if identity:
+            identity["runtimeIdentity"] = verify_runtime_identity(trusted, engine_sha)
         if current_main() != source_sha:
             raise RuntimeError("Source main advanced during preparation")
+        require_current_publication(source_sha, mirror, previous_sha)
         print(
             f"RAILWAY_FULL_PREPARE_PASS source={source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
             flush=True,
@@ -335,8 +543,10 @@ def main():
                 if path.name != ".git":
                     archive.add(path, arcname=path.name)
         (recovery / "identity.json").write_text(
-            json.dumps({"source": source_sha, "previous_site": previous_sha})
+            json.dumps({"source": source_sha, "previous_site": previous_sha, **identity})
         )
+        if source_admission is not None:
+            (recovery / "source-admission.json").write_text(json.dumps(source_admission, sort_keys=True) + "\n")
         for path in recovery.rglob("*"):
             if path.is_file():
                 with path.open("rb") as stream:
@@ -377,6 +587,7 @@ def main():
             )
             if current_main() != source_sha:
                 raise RuntimeError("Source main advanced before mirror publication")
+            require_current_publication(source_sha, mirror, previous_sha, publish_env)
             git(["push", "origin", "HEAD:main"], mirror, publish_env)
         site_sha = git(["rev-parse", "HEAD"], mirror)
         if (
@@ -388,6 +599,7 @@ def main():
             raise RuntimeError("Site mirror compare-and-swap lost")
         if current_main() != source_sha:
             raise RuntimeError("Source main advanced before canonical publication")
+        require_current_publication(source_sha, mirror, site_sha, publish_env)
         run(
             [
                 "/opt/node22/bin/node",
@@ -412,9 +624,10 @@ def main():
             steps,
             trusted,
             candidate,
-            clean_env({**env, "RUNNER_TEMP": str(build_temp)}),
+            clean_env({**env, "RUNNER_TEMP": str(build_temp), "PUBLICATION_SOURCE_SHA": source_sha}),
             receipt,
         )
+        require_current_publication(source_sha, mirror, site_sha, publish_env)
         # Publish-success commits the history cache; failed generations never replace it.
         generated_history = build / ".cache/gdelt-web-history.json"
         if generated_history.is_file():
@@ -429,6 +642,7 @@ def main():
                     "recovery": recovery.name,
                     "verified_at": time.time(),
                     "controller_digest": controller_digest,
+                    **identity,
                 }
             )
         )
