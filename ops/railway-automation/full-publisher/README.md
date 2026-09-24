@@ -80,3 +80,10 @@ The image installs the system `/usr/bin/python3` interpreter used by isolated
 deployment helpers. GDELT durable history is supplied only to the baseline-seed
 and engine-export steps, matching the signed workflow. Engine tests do not
 receive the history path and cannot contaminate it through their mocked stores.
+
+The builder uses its image-created `/home/builder`, mode `0700`, as `HOME`.
+Its ownership and every ancestor are checked before a build. Temporary build
+files and caches still live in the disposable build directory. This lets the
+unchanged release-gate tests create private runtime directories without placing
+their trusted ancestry beneath world-writable `/tmp`. Linux image tests exercise
+the real builder UID and reject unsafe permissions, symlinks and `/tmp` ancestry.

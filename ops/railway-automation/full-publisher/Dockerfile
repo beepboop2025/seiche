@@ -10,6 +10,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
        git openssh-client curl rsync ca-certificates tini util-linux procps python3 build-essential libffi-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --create-home builder \
+    && chmod 0700 /home/builder \
     && PATH="/opt/node22/bin:$PATH" /opt/node22/bin/npm install --prefix /opt/publisher wrangler@4.125.0 \
     && python -m pip install --no-cache-dir PyYAML==6.0.3
 COPY requirements-social-cards.txt /controller/requirements-social-cards.txt

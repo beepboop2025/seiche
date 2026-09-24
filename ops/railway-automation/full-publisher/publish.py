@@ -41,6 +41,23 @@ def clean_env(extra=None):
     return env
 
 
+def builder_home(path=Path("/home/builder")):
+    """Keep release-gate runtime directories below a private, trusted ancestry."""
+    if not path.is_absolute():
+        raise RuntimeError("Builder home must be absolute")
+    for parent in (path, *path.parents):
+        info = parent.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid not in {0, 10001}
+                or (info.st_uid == 10001 and info.st_gid != 10001)
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            raise RuntimeError("Builder home has unsafe ancestry")
+    info = path.lstat()
+    if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) != (10001, 10001, 0o700):
+        raise RuntimeError("Builder home must be private to the builder")
+    return path
+
+
 def build_step_env(name, environment, history):
     """Match the workflow's step-local history input; tests get no durable state."""
     selected = {key: value for key, value in environment.items()
@@ -489,6 +506,7 @@ def main():
                 "RUNNER_TEMP": str(build_temp),
                 "FRONTEND_RECEIPT_TAG": receipt,
                 "XDG_CACHE_HOME": str(build_temp / "cache"),
+                "HOME": str(builder_home()),
             }
         )
         history = evidence / "gdelt-web-history.json"
@@ -498,7 +516,6 @@ def main():
             build_env, unprivileged=True)
         build_env.update({
             "PATH": str(build_temp / "venv/bin") + ":" + build_env["PATH"],
-            "HOME": str(build_temp),
             "PUBLICATION_SOURCE_SHA": source_sha,
             "RUN_FULL_SUITE": "false" if reusable else "true",
         })

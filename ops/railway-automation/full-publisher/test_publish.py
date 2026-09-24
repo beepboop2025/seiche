@@ -18,6 +18,52 @@ spec.loader.exec_module(publisher)
 
 
 class PublisherBoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0,
+                         "Builder identity and ancestry are verified in the Linux image")
+    def test_builder_home_supports_private_unprivileged_runtime(self):
+        home = publisher.builder_home()
+        code = """
+import os, pathlib, stat, tempfile
+home = pathlib.Path(os.environ['HOME'])
+assert os.getuid() == os.getgid() == 10001
+with tempfile.TemporaryDirectory(dir=home) as raw:
+    path = pathlib.Path(raw)
+    for directory in (path, *path.parents):
+        info = directory.lstat()
+        assert stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
+        assert info.st_uid == 0 or (info.st_uid, info.st_gid) == (10001, 10001)
+        assert not stat.S_IMODE(info.st_mode) & 0o022
+    assert stat.S_IMODE(path.stat().st_mode) == 0o700
+    (path / 'probe').write_text('private')
+print('PRIVATE_RUNTIME_OK')
+"""
+        result = publisher.run([sys.executable, "-I", "-S", "-c", code], home,
+                               publisher.clean_env({"HOME": str(home)}),
+                               unprivileged=True, capture=True)
+        self.assertEqual(result, "PRIVATE_RUNTIME_OK")
+
+    @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0,
+                         "Real filesystem ownership is verified in the Linux image")
+    def test_builder_home_rejects_untrusted_paths_and_permissions(self):
+        home = publisher.builder_home()
+        for parent in (Path('/tmp'), home):
+            with tempfile.TemporaryDirectory(dir=parent) as raw:
+                path = Path(raw)
+                os.chown(path, 10001, 10001)
+                if parent == Path('/tmp'):
+                    with self.assertRaisesRegex(RuntimeError, "unsafe ancestry"):
+                        publisher.builder_home(path)
+                else:
+                    self.assertEqual(publisher.builder_home(path), path)
+                    path.chmod(0o770)
+                    with self.assertRaisesRegex(RuntimeError, "unsafe ancestry"):
+                        publisher.builder_home(path)
+                    path.chmod(0o700)
+                    link = path / 'linked-home'
+                    link.symlink_to(home, target_is_directory=True)
+                    with self.assertRaisesRegex(RuntimeError, "unsafe ancestry"):
+                        publisher.builder_home(link)
+
     def test_engine_tests_cannot_read_or_mutate_durable_history(self):
         environment = {"PATH": "/bin", "GDELT_WEB_HISTORY_FILE": "/durable/history.json"}
         for name in ("Engine tests (publish gates on green)", "Install backend",
