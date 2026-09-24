@@ -11,6 +11,21 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-09-24
+
+### Fixed
+
+- Bound the HiGHS solver to one native thread per persistent API worker. Repeated
+  quantile fits retain their constraints, results, warnings and failure behavior
+  without accumulating a separate default solver pool for every worker thread.
+
+### Changed
+
+- Prepare a new immutable software release for the solver correction while
+  retaining the published 0.13.4 artifacts. Corpus receipt `r16` binds the new
+  application source without changing the independently versioned dataset or
+  its source clocks. Deployment requires fresh recovery and exact-source proof.
+
 ## [0.13.4] - 2026-09-15
 
 ### Fixed

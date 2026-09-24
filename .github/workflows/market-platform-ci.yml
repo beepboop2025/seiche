@@ -72,6 +72,7 @@ jobs:
         run: >-
           umask 0077 &&
           python -m pytest -q
+          backend/tests/test_caesar_highs_threads.py
           backend/tests/test_coverage_batch.py
           backend/tests/test_h10_publication_cadence.py
           backend/tests/test_trade_safety.py

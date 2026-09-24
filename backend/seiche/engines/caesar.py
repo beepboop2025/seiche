@@ -132,10 +132,12 @@ def _qr_lp(X: np.ndarray, y: np.ndarray, theta: float) -> np.ndarray:
     A = sparse.hstack(
         [sparse.csr_matrix(X), sparse.identity(n), -sparse.identity(n)], format="csc"
     )
+    # HiGHS has its own scheduler: OMP/BLAS limits do not bound the native
+    # pool it otherwise creates for each persistent API worker thread.
     res = linprog(
         c, A_eq=A, b_eq=y,
         bounds=[(None, None)] * (p - 1) + [(0.0, 0.999)] + [(0.0, None)] * (2 * n),
-        method="highs",
+        method="highs", options={"threads": 1},
     )
     if res.status != 0:
         raise RuntimeError(f"quantile LP failed (status {res.status})")
