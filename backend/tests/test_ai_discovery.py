@@ -271,10 +271,15 @@ def test_clean_public_urls_match_cloudflare_redirect_targets():
 
 def test_terminal_navigation_exposes_the_selection_surface():
     app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
-    assert "<WorkspaceNavigation" in app
+    site = (ROOT / "frontend" / "src" / "Site.tsx").read_text()
+    header = (ROOT / "frontend" / "src" / "ResearchHeader.tsx").read_text()
+    assert "<ResearchHeader" in site
+    assert "<WorkspaceNavigation" in header
+    for action in ("seiche:open-commands", "seiche:open-help"):
+        assert action in header and action in app
     nav = (ROOT / "frontend" / "src" / "WorkspaceNavigation.tsx").read_text()
     assert 'aria-label="Funding desk tools"' in nav
-    assert 'href="/use-cases"' in nav
+    assert 'contextLink("/use-cases")' in nav
     assert "Use cases" in nav
     commands = (ROOT / "frontend" / "src" / "commands.ts").read_text()
     assert 'url: "/guide"' in commands

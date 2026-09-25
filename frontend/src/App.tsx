@@ -92,6 +92,16 @@ function AppInner() {
   const [tab, setTab] = useState<Tab>(hashToTab());
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
+  useEffect(() => {
+    const openCommands = () => setPalette(true);
+    const openHelp = () => setHelp(true);
+    document.addEventListener("seiche:open-commands", openCommands);
+    document.addEventListener("seiche:open-help", openHelp);
+    return () => {
+      document.removeEventListener("seiche:open-commands", openCommands);
+      document.removeEventListener("seiche:open-help", openHelp);
+    };
+  }, []);
   const [compactDevice] = useState(() => window.matchMedia(COMPACT_DEVICE_QUERY).matches);
   const { setDepth, stepDepth } = useDepth();
 
