@@ -59,6 +59,22 @@ checker additionally binds the live backend and corpus subjects to R and its
 signed corpus receipt. Package/corpus checks, builder termination, sealed-file
 bounds, durable recovery and credential isolation remain required.
 
+After sealing the fresh engine output, the publisher separately verifies C's
+signed frontend receipt with R's original verifier and builds that exact frontend.
+Tests and the production build use separate archives and private npm homes. The
+engine build and pending history are made inaccessible to the frontend builder.
+Only the new root shell, additional assets, a content-addressed root card and the
+receipt's exact retirement/CSP exceptions may change the sealed engine output.
+Every generated observation, existing asset, article and catalog is compared by
+hash before publication. Repository `frontend/public` data never replaces the
+fresh engine data. R still supplies prerendering and social-card code.
+
+The durable execution records both source subjects, the verified frontend
+receipt, the input archive hash and the output manifest. Canonical publication
+checks the shell, referenced assets, sealed overview, catalog, declared absence
+and exact CSP in addition to the ordinary dataset proof. Thus a recurring data
+refresh retains the separately released frontend instead of restoring R's UI.
+
 Retained identity separates `publicationSourceSha` H, `controllerSourceSha` C,
 `engineSourceSha`/`rendererSourceSha` R, source-equivalence D, the input-manifest
 and desk-overlay digests, projection counts and live runtime identity. Main
