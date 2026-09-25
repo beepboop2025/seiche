@@ -43,6 +43,10 @@ subjects. It contains no assertion of deployment, live health or new traction.
 
 ## Canonical signed receipt
 
+The original v1 preparation remains the default and continues to reject UI
+changes in C. A separately reviewed UI uses v2, described below; an existing v1
+signature never grants that authority.
+
 Schema: `seiche.publication-source-equivalence.v1`.
 Purpose: `unchanged_signed_engine_with_validated_desk_overlay`.
 The exact required key set is:
@@ -164,6 +168,35 @@ The two new signed tags can be published only after the independent operator
 review and normal exact-release checks; never force-push them.
 
 ## Publisher API and projection
+
+### Separately built frontend (v2)
+
+Use `--source-equivalence --prepare --include-signed-frontend` only when C also
+contains a reviewed interface change. The canonical signed D annotation then
+uses schema `seiche.publication-source-equivalence.v2` and purpose
+`unchanged_signed_engine_with_separately_built_frontend`. Its remaining fields
+are identical to v1 and still bind the exact independently signed C receipt.
+
+R's original verifier must authenticate C and classify every change before
+this path is eligible. Only its existing `frontend`, `retired_public_funding`
+and `editorial_connect_origin` classes are added to the v1 bootstrap classes.
+There must be an actual admitted frontend change. Dependencies, build settings,
+backend code, catalog data and neighboring public assets remain forbidden.
+No frontend or controller changes after signed D are admitted.
+
+The full publisher first builds and seals R's engine output with the validated
+desk overlay. It separately tests and builds C's frontend from bounded,
+nonexecutable Git archive inputs, under an unprivileged identity and independent
+test/build directories. R's original frontend proof seals the compiled shell
+over the generated evidence. Only the root shell, new compiled assets, the
+bounded root image and original receipt's exact retirement/CSP exceptions may
+change. Publication verifies those bytes on the public origin after the
+unchanged dataset gate. Recovery retains the UI source, seal and prior mirror.
+Thus v2 signs the UI explicitly while keeping the engine and corpus subjects R.
+
+Verification selects the format from a bounded annotation, then recomputes the
+entire canonical payload and verifies its pinned SSH signature. An unsigned,
+malformed, downgraded or mismatched annotation grants no authority.
 
 ```python
 admission = verify_source_equivalence(

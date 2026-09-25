@@ -570,12 +570,17 @@ def verify_runtime_identity(backend, engine_sha):
 
 
 def main():
+    apply = os.environ.get("PUBLISH_APPLY") == "1"
+    if apply:
+        missing = [name for name in ("SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")
+                   if not os.environ.get(name, "").strip()]
+        if missing:
+            raise RuntimeError("Publication credentials missing: " + ", ".join(missing))
     source_sha = current_main()
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
     if expected != source_sha:
         raise RuntimeError("Requested source is no longer current main")
     print(f"RAILWAY_FULL_START source={source_sha} deployment={os.environ.get('RAILWAY_DEPLOYMENT_ID', 'local')}", flush=True)
-    apply = os.environ.get("PUBLISH_APPLY") == "1"
     evidence = Path("/evidence")
     prior_state = None
     if os.path.ismount(evidence):
@@ -712,7 +717,7 @@ def main():
         quiesce_builder()
         candidate = seal_candidate(prepared, trusted)
         frontend_manifest = None
-        if source_admission is not None:
+        if source_admission is not None and source_admission["sourceEquivalence"]["schema"] == "seiche.publication-source-equivalence.v2":
             # UI tests must not alter the engine's pending history cache either.
             for path in (build, build_temp):
                 shutil.chown(path, user=0, group=0)

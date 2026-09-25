@@ -20,6 +20,40 @@ spec.loader.exec_module(publisher)
 
 
 class PublisherBoundaryTests(unittest.TestCase):
+    def test_apply_requires_each_credential_before_source_or_build_work(self):
+        credentials = {name: "test-only" for name in (
+            "SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}
+        for name in credentials:
+            for missing in (None, "", " \n"):
+                with self.subTest(name=name, value=missing):
+                    environment = {"PUBLISH_APPLY": "1", **credentials}
+                    if missing is None:
+                        del environment[name]
+                    else:
+                        environment[name] = missing
+                    with patch.dict(os.environ, environment, clear=True), patch.object(publisher, "current_main") as lookup:
+                        with self.assertRaisesRegex(RuntimeError, "Publication credentials missing: " + name):
+                            publisher.main()
+                        lookup.assert_not_called()
+
+    def test_preparation_can_run_without_publication_credentials(self):
+        with patch.dict(os.environ, {"PUBLISH_APPLY": "0"}, clear=True), patch.object(
+            publisher, "current_main", side_effect=RuntimeError("source lookup marker")
+        ) as lookup:
+            with self.assertRaisesRegex(RuntimeError, "source lookup marker"):
+                publisher.main()
+            lookup.assert_called_once()
+
+    def test_configured_apply_reaches_source_verification(self):
+        environment = {"PUBLISH_APPLY": "1", **{name: "test-only" for name in (
+            "SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}}
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            publisher, "current_main", side_effect=RuntimeError("source lookup marker")
+        ) as lookup:
+            with self.assertRaisesRegex(RuntimeError, "source lookup marker"):
+                publisher.main()
+            lookup.assert_called_once()
+
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0,
                          "Builder identity and ancestry are verified in the Linux image")
     def test_builder_home_supports_private_unprivileged_runtime(self):
