@@ -64,17 +64,22 @@ def test_network_links_are_bidirectional_destinations():
 
 def test_articles_are_the_public_front_door_without_hiding_evidence():
     hub = HUB.read_text()
-    app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
+    site = (ROOT / "frontend" / "src" / "Site.tsx").read_text()
+    header = (ROOT / "frontend" / "src" / "ResearchHeader.tsx").read_text()
     assert "SEICHE / ARTICLES" in hub
     assert 'href="/dispatches/"' in hub
     assert _hrefs(hub).count("https://myquantdoesntspeakenglish.com/") == 2
     assert "The board checks new evidence six times a day" in hub
     assert "If coverage cannot support a verdict, Seiche abstains" in hub
-    assert 'import WorkspaceNavigation from "./WorkspaceNavigation"' in app
-    assert "<WorkspaceNavigation " in app
+    # The persistent site header serves the landing page, tools and error states.
+    assert 'import ResearchHeader from "./ResearchHeader"' in site
+    assert site.count("<ResearchHeader") == 1
+    assert 'import WorkspaceNavigation from "./WorkspaceNavigation"' in header
+    assert "<WorkspaceNavigation " in header
+    assert "contextLink={contextLink}" in header
     navigation = (ROOT / "frontend" / "src" / "WorkspaceNavigation.tsx").read_text()
     assert 'aria-label="Funding desk tools"' in navigation
-    assert '<a href="/articles/">Published research</a>' in navigation
+    assert '<a href={contextLink("/articles/")}>Published research</a>' in navigation
     assert '"Evidence and settings"' in navigation
     assert '"PROOF"' in navigation and '"REFEREE"' in navigation
 
