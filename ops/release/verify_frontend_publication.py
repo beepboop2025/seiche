@@ -535,6 +535,8 @@ def verify_desk_only_descendant(
 # catalog, corpus, activation or recovery subject different from the signed R.
 EQUIVALENCE_SCHEMA = "seiche.publication-source-equivalence.v1"
 EQUIVALENCE_PURPOSE = "unchanged_signed_engine_with_validated_desk_overlay"
+FRONTEND_EQUIVALENCE_SCHEMA = "seiche.publication-source-equivalence.v2"
+FRONTEND_EQUIVALENCE_PURPOSE = "unchanged_signed_engine_with_separately_built_frontend"
 EQUIVALENCE_TAG_PREFIX = "publication-source-equivalence-"
 MAX_OVERLAY_FILES = 20000
 MAX_OVERLAY_BYTES = 128 * 1024 * 1024
@@ -731,6 +733,7 @@ def _equivalence_inputs(
     controller_root: Path,
     backend_root: Path,
     signer_fingerprint: str,
+    include_signed_frontend: bool = False,
 ) -> tuple[dict, dict, dict]:
     """Authenticate R and C before classifying D; do not perform live checks."""
     if gate.FINGERPRINT_RE.fullmatch(signer_fingerprint) is None:
@@ -833,6 +836,12 @@ def _equivalence_inputs(
         "excluded_monitor",
         "excluded_desk_content",
     }
+    if include_signed_frontend:
+        # These paths still require R's original frontend classifier and exact
+        # signed C receipt above. They are not engine inputs or new exceptions.
+        if not any(change["kind"] == "frontend" for change in bootstrap_changes):
+            raise Error("frontend equivalence requires original-verifier-admitted frontend changes")
+        bootstrap_kinds |= {"frontend", "retired_public_funding", "editorial_connect_origin"}
     if any(change["kind"] not in bootstrap_kinds for change in bootstrap_changes):
         raise Error(
             "equivalence bootstrap changes non-isolated frontend or release inputs"
@@ -871,8 +880,8 @@ def _equivalence_inputs(
                 "equivalence publication input manifest differs from the signed backend"
             )
     payload = {
-        "schema": EQUIVALENCE_SCHEMA,
-        "purpose": EQUIVALENCE_PURPOSE,
+        "schema": FRONTEND_EQUIVALENCE_SCHEMA if include_signed_frontend else EQUIVALENCE_SCHEMA,
+        "purpose": FRONTEND_EQUIVALENCE_PURPOSE if include_signed_frontend else EQUIVALENCE_PURPOSE,
         "sourceSha": source_sha,
         "controllerSourceSha": controller,
         "controllerReceiptTag": controller_tag,
@@ -899,6 +908,7 @@ def prepare_source_equivalence(
     controller_root: Path,
     backend_root: Path,
     signer_fingerprint: str,
+    include_signed_frontend: bool = False,
 ) -> tuple[dict, dict, dict]:
     """Unsigned D review inputs, after independent original-R bootstrap of C."""
     return _equivalence_inputs(
@@ -908,7 +918,29 @@ def prepare_source_equivalence(
         controller_root=controller_root,
         backend_root=backend_root,
         signer_fingerprint=signer_fingerprint,
+        include_signed_frontend=include_signed_frontend,
     )
+
+
+def _equivalence_frontend_requested(root: Path, receipt_tag: str) -> bool:
+    """Select a bounded receipt format; this is not signature authorization.
+
+    The exact canonical payload and pinned SSH signature are verified after
+    recomputing every input. No supplied receipt path or hash becomes trusted.
+    """
+    raw = gate._run_git_bytes(root, "cat-file", "tag", receipt_tag).stdout
+    if len(raw) > 65536:
+        raise Error("equivalence receipt exceeds its size bound")
+    annotation = raw.partition(b"\n\n")[2].partition(b"-----BEGIN SSH SIGNATURE-----\n")[0]
+    payload = gate._load_json_bytes(annotation, label="equivalence receipt")
+    if not isinstance(payload, dict):
+        raise Error("equivalence receipt is not an object")
+    pair = (payload.get("schema"), payload.get("purpose"))
+    if pair == (EQUIVALENCE_SCHEMA, EQUIVALENCE_PURPOSE):
+        return False
+    if pair == (FRONTEND_EQUIVALENCE_SCHEMA, FRONTEND_EQUIVALENCE_PURPOSE):
+        return True
+    raise Error("equivalence receipt differs from the exact canonical schema and purpose")
 
 
 def verify_source_equivalence(
@@ -928,6 +960,7 @@ def verify_source_equivalence(
     if re.fullmatch(EQUIVALENCE_TAG_PREFIX + r"[0-9a-f]{40}", receipt_tag) is None:
         raise Error("equivalence receipt tag must name the exact source SHA")
     source = receipt_tag[len(EQUIVALENCE_TAG_PREFIX) :]
+    include_signed_frontend = _equivalence_frontend_requested(root, receipt_tag)
     payload, manifest, _ = _equivalence_inputs(
         root,
         expected_sha=expected_sha,
@@ -935,6 +968,7 @@ def verify_source_equivalence(
         controller_root=controller_root,
         backend_root=backend_root,
         signer_fingerprint=signer_fingerprint,
+        include_signed_frontend=include_signed_frontend,
     )
     _verify_equivalence_tag(
         root, source=source, payload=payload, signer_fingerprint=signer_fingerprint
@@ -1209,6 +1243,8 @@ def main() -> int:
     parser.add_argument("--signer-fingerprint", required=True)
     parser.add_argument("--receipt-tag")
     parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--include-signed-frontend", action="store_true",
+                        help="prepare explicit v2 authority for a separately built, original-R-approved frontend")
     parser.add_argument(
         "--source-equivalence",
         action="store_true",
@@ -1219,6 +1255,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
+        if args.include_signed_frontend and not (args.source_equivalence and args.prepare):
+            raise Error("--include-signed-frontend requires --source-equivalence --prepare")
         if args.source_equivalence:
             if args.controller_root is None or args.backend_root is None:
                 raise Error(
@@ -1235,6 +1273,7 @@ def main() -> int:
                     controller_root=args.controller_root,
                     backend_root=args.backend_root,
                     signer_fingerprint=args.signer_fingerprint,
+                    include_signed_frontend=args.include_signed_frontend,
                 )
                 tag = EQUIVALENCE_TAG_PREFIX + args.expected_sha
                 if (

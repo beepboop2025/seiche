@@ -3487,18 +3487,23 @@ def equivalence_repo(equivalence_template, tmp_path):
     }
 
 
-def _equivalence_prepare(fixture):
+def _equivalence_prepare(fixture, *, include_signed_frontend=False):
     return front.prepare_source_equivalence(
         fixture["root"],
         expected_sha=_content_git(fixture["root"], "rev-parse", "HEAD"),
         backend_root=fixture["backend_root"],
         controller_root=fixture["controller_root"],
         signer_fingerprint=fixture["fingerprint"],
+        include_signed_frontend=include_signed_frontend,
     )
 
 
-def _equivalence_tag(fixture, *, change=None, key=None, canonical=True):
-    payload, _, _ = _equivalence_prepare(fixture)
+def _equivalence_tag(
+    fixture, *, change=None, key=None, canonical=True, include_signed_frontend=False
+):
+    payload, _, _ = _equivalence_prepare(
+        fixture, include_signed_frontend=include_signed_frontend
+    )
     if change:
         payload.update(change)
     receipt = fixture["root"].parent / "synthetic-source-equivalence.json"
@@ -3531,6 +3536,100 @@ def _equivalence_verify(fixture, tag):
         controller_root=fixture["controller_root"],
         signer_fingerprint=fixture["fingerprint"],
     )
+
+
+def _frontend_equivalence_fixture(fixture):
+    controller = _frontend_change(
+        fixture["root"],
+        {
+            "frontend/src/App.tsx": "export default function App() { return 'Reviewed research workspace' }\n",
+        },
+    )
+    controller_tag = _frontend_tag(fixture["root"], fixture["fingerprint"])
+    _content_git(fixture["controller_root"], "checkout", "-q", "--detach", controller)
+    return {**fixture, "controller": controller, "controller_tag": controller_tag}
+
+
+def test_frontend_equivalence_requires_explicit_new_authority(equivalence_repo):
+    f = _frontend_equivalence_fixture(equivalence_repo)
+    with pytest.raises(front.Error, match="non-isolated frontend"):
+        _equivalence_prepare(f)
+    tag = _equivalence_tag(f, include_signed_frontend=True)
+    proof = _equivalence_verify(f, tag)
+    receipt = proof["sourceEquivalence"]
+    assert receipt["schema"] == front.FRONTEND_EQUIVALENCE_SCHEMA
+    assert receipt["purpose"] == front.FRONTEND_EQUIVALENCE_PURPOSE
+    assert receipt["controllerSourceSha"] == f["controller"]
+    assert receipt["backendReleaseSha"] == receipt["corpusReceiptSha"] == f["release"]
+    assert "frontend/src/App.tsx" in proof["equivalentInputManifest"]["excludedPaths"]
+    assert not any(
+        row["path"] == "frontend/src/App.tsx"
+        for row in proof["equivalentInputManifest"]["entries"]
+    )
+    assert proof["deskOverlay"]["entries"] == []
+
+
+def test_frontend_equivalence_cannot_relabel_a_controller_only_receipt(
+    equivalence_repo,
+):
+    with pytest.raises(
+        front.Error, match="requires original-verifier-admitted frontend changes"
+    ):
+        _equivalence_prepare(equivalence_repo, include_signed_frontend=True)
+
+
+def test_frontend_equivalence_cannot_downgrade_the_signed_purpose(equivalence_repo):
+    f = _frontend_equivalence_fixture(equivalence_repo)
+    tag = _equivalence_tag(
+        f,
+        include_signed_frontend=True,
+        change={
+            "schema": front.EQUIVALENCE_SCHEMA,
+            "purpose": front.EQUIVALENCE_PURPOSE,
+        },
+    )
+    with pytest.raises(front.Error, match="non-isolated frontend"):
+        _equivalence_verify(f, tag)
+
+
+def test_frontend_equivalence_still_requires_original_frontend_signature(
+    equivalence_repo,
+):
+    f = _frontend_equivalence_fixture(equivalence_repo)
+    tag = _equivalence_tag(f, include_signed_frontend=True)
+    _content_git(f["root"], "tag", "-d", f["controller_tag"])
+    with pytest.raises(front.Error):
+        _equivalence_verify(f, tag)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend/seiche/assemble.py",
+        "frontend/package.json",
+        "frontend/public/data/overview.json",
+    ],
+)
+def test_frontend_equivalence_never_authorizes_runtime_dependency_or_data_drift(
+    equivalence_repo, path
+):
+    f = _frontend_equivalence_fixture(equivalence_repo)
+    _frontend_change(f["root"], {path: "unauthorized runtime or evidence change\n"})
+    with pytest.raises(front.Error, match="forbidden path"):
+        _equivalence_prepare(f, include_signed_frontend=True)
+
+
+def test_frontend_equivalence_later_ui_changes_require_a_new_receipt(equivalence_repo):
+    f = _frontend_equivalence_fixture(equivalence_repo)
+    tag = _equivalence_tag(f, include_signed_frontend=True)
+    _frontend_change(
+        f["root"],
+        {
+            "frontend/src/App.tsx": "export default function App() { return 'Unreviewed change' }\n"
+        },
+    )
+    with pytest.raises(front.Error, match="generated-content"):
+        _equivalence_verify(f, tag)
 
 
 def test_equivalence_can_authorize_controller_without_rebinding_engine(

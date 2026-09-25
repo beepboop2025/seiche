@@ -1,6 +1,8 @@
 """Reviewed Railway controller for Seiche's full engine publication path."""
 
 import hashlib
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +14,7 @@ import time
 import subprocess
 import tarfile
 import tempfile
+from contextlib import contextmanager
 
 import yaml
 
@@ -266,6 +269,173 @@ def seal_candidate(prepared, trusted):
     return candidate
 
 
+@contextmanager
+def original_frontend_proof(backend):
+    """Load only the independently pinned engine's proof code, without bytecode."""
+    identity = json.loads((CONTROLLER / "controller-source.json").read_text())
+    name = "ops/release/frontend_site_proof.py"
+    body = (backend / name).read_bytes()
+    if hashlib.sha256(body).hexdigest() != identity["engineGateSha256"].get(name):
+        raise RuntimeError("Original frontend proof changed")
+    with tempfile.TemporaryDirectory(prefix=".frontend-proof-", dir=backend.parent) as raw:
+        path = Path(raw) / "proof.py"
+        path.write_bytes(body)
+        spec = importlib.util.spec_from_file_location("released_frontend_proof", path)
+        module = importlib.util.module_from_spec(spec)
+        # Compile the bytes we just authenticated; no import cache can replace them.
+        exec(compile(body, str(path), "exec"), module.__dict__)
+        yield module
+
+
+def seal_frontend_overlay(before, output, proof, *, source_sha, retired, editorial):
+    """Keep every generated observation while admitting the signed UI exceptions."""
+    if retired not in ([], ["funding.json"]) or editorial not in (None, proof.EDITORIAL_ORIGIN):
+        raise RuntimeError("Unsupported frontend publication exception")
+    after = proof.files(output)
+    policy = {}
+    if editorial:
+        header, value = proof.editorial_policy(output)
+        original = header.replace(proof.EDITORIAL_CONNECT_AFTER.encode(),
+                                  proof.EDITORIAL_CONNECT_BEFORE.encode())
+        if before.get("_headers") not in {hashlib.sha256(original).hexdigest(), after["_headers"]}:
+            raise RuntimeError("Frontend changed another engine header")
+        policy = {"contentSecurityPolicy": value, "headersSha256": after["_headers"]}
+    if any(path in after for path in retired):
+        raise RuntimeError("Retired public file was reintroduced")
+    changed = []
+    for path in sorted(set(before) | set(after)):
+        old, new = before.get(path), after.get(path)
+        if old == new:
+            continue
+        allowed = path == "index.html" or (path == "_headers" and policy)
+        allowed = allowed or (path in retired and new is None)
+        card = proof.ROOT_CARD.fullmatch(path)
+        allowed = allowed or (old is None and new is not None and
+            (proof.ASSET.fullmatch(path) or (card and new.startswith(card.group(1)))))
+        if not allowed:
+            raise RuntimeError("Frontend changed generated engine evidence: " + path)
+        changed.append(path)
+    refs = re.findall(r'(?:src|href)=["\']\./(assets/[^"\']+)["\']',
+                      (output / "index.html").read_text())
+    if not refs or any(not proof.ASSET.fullmatch(path) or path not in after for path in refs):
+        raise RuntimeError("Frontend references a missing or invalid asset")
+    public = {"index.html", "data/overview.json", ".well-known/ai-catalog.json", *refs,
+              *(path for path in changed if path not in retired and path != "_headers")}
+    return {"schema": proof.SCHEMA, "artifactKind": "generated_engine_with_signed_frontend",
+            "sourceSha": source_sha,
+            "engineManifestSha256": hashlib.sha256(json.dumps(before, sort_keys=True,
+                separators=(",", ":")).encode()).hexdigest(),
+            "changed": changed, "publicFiles": {path: after[path] for path in sorted(public)},
+            "absentPublicFiles": retired, **policy}
+
+
+def extract_frontend_archive(raw, destination):
+    """Validate the complete archive before writing any signed frontend files."""
+    if not raw or len(raw) > 128 * 1024 * 1024:
+        raise RuntimeError("Signed frontend archive exceeds its byte bound")
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
+        members, total, seen = archive.getmembers(), 0, set()
+        for entry in members:
+            path = Path(entry.name)
+            total += entry.size
+            if (path.is_absolute() or ".." in path.parts or not path.parts or
+                    path.parts[0] != "frontend" or ".git" in path.parts or
+                    path.as_posix() != entry.name.rstrip("/") or path.as_posix() in seen or
+                    not (entry.isfile() or entry.isdir()) or entry.linkname or
+                    entry.size > 16 * 1024 * 1024 or total > 128 * 1024 * 1024 or
+                    len(members) > 20000):
+                raise RuntimeError("Unsafe signed frontend archive member")
+            seen.add(path.as_posix())
+        for entry in members:
+            target = destination / entry.name
+            if entry.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("xb") as output:
+                    shutil.copyfileobj(archive.extractfile(entry), output)
+
+
+def build_signed_frontend(root, controller, backend, engine_candidate, admission, signer):
+    """Build exact signed C in isolation, then overlay it on newly sealed R data."""
+    subject = admission["sourceEquivalence"]
+    source_sha, engine_sha = subject["controllerSourceSha"], subject["backendReleaseSha"]
+    source_proof = json.loads(run([
+        "python", "-I", "-S", str(backend / "ops/release/verify_frontend_publication.py"),
+        "--root", str(controller), "--expected-sha", source_sha,
+        "--signer-fingerprint", signer, "--receipt-tag", "frontend-publication-" + source_sha,
+    ], backend, clean_env(), capture=True))
+    publication = source_proof.get("frontendPublication", {})
+    if publication.get("sourceSha") != source_sha or publication.get("backendReleaseSha") != engine_sha:
+        raise RuntimeError("Frontend receipt does not bind the generated engine")
+    source_path = root / "signed-frontend-source.json"
+    source_path.write_text(json.dumps(source_proof, sort_keys=True) + "\n")
+    archive_path = root / "signed-frontend-source.tar"
+    with archive_path.open("xb") as archive:
+        subprocess.run(["git", "archive", "--format=tar", source_sha, "frontend"],
+                       cwd=controller, env=clean_env(), stdout=archive, timeout=90, check=True)
+    if archive_path.stat().st_size > 128 * 1024 * 1024:
+        raise RuntimeError("Signed frontend archive exceeds its byte bound")
+    archive_bytes = archive_path.read_bytes()
+    # A second pristine archive prevents tests from altering the published build.
+    for stage, commands in (("tests", ("ci", "test")), ("build", ("ci", "run build"))):
+        directory = root / ("signed-frontend-" + stage)
+        directory.mkdir()
+        extract_frontend_archive(archive_bytes, directory)
+        for path in (directory, *directory.rglob("*")):
+            if path.is_symlink() or not (path.is_file() or path.is_dir()):
+                raise RuntimeError("Unsafe signed frontend archive")
+            shutil.chown(path, user=10001, group=10001)
+        home = root / ("signed-frontend-home-" + stage)
+        home.mkdir(mode=0o700)
+        shutil.chown(home, user=10001, group=10001)
+        environment = clean_env({"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache")})
+        for command in commands:
+            run(["npm", *command.split()], directory / "frontend", environment, unprivileged=True)
+        # Test-created npm configuration and caches cannot enter the build stage.
+        for path in (home, directory):
+            shutil.chown(path, user=0, group=0)
+            path.chmod(0o700)
+    quiesce_builder()
+    sealed_ui = root / "signed-frontend-output"
+    sealed_ui.mkdir()
+    copy_public_tree(root / "signed-frontend-build/frontend/dist", sealed_ui)
+    output = seal_candidate(engine_candidate, backend)
+    with original_frontend_proof(backend) as proof:
+        before = proof.files(engine_candidate)
+        # Public files from the source archive are never copied over engine data.
+        (output / "index.html").write_bytes((sealed_ui / "index.html").read_bytes())
+        for path in (sealed_ui / "assets").rglob("*"):
+            if path.is_dir():
+                continue
+            relative = path.relative_to(sealed_ui).as_posix()
+            if not proof.ASSET.fullmatch(relative):
+                raise RuntimeError("Unexpected signed frontend asset")
+            target = output / relative
+            if target.exists() and target.read_bytes() != path.read_bytes():
+                raise RuntimeError("Frontend asset collides with retained engine output")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(path.read_bytes())
+        code = ("import json,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); "
+                "from seiche import prerender,social_cards; "
+                "size=prerender.build(Path(sys.argv[2])); "
+                "assert size>=1000, 'incomplete frontend prerender'; "
+                "print(json.dumps(social_cards.refresh_root(Path(sys.argv[2])),sort_keys=True))")
+        run(["python", "-I", "-c", code, str(backend / "backend"), str(output)],
+            backend, clean_env())
+        retired = proof.declared_retirements(source_path, source_sha)
+        editorial = proof.declared_editorial_origin(source_path, source_sha)
+        proof.retire(output, retired)
+        proof.allow_editorial(output, editorial)
+        manifest = seal_frontend_overlay(before, output, proof, source_sha=source_sha,
+                                         retired=retired, editorial=editorial)
+        manifest["frontendSourceArchiveSha256"] = hashlib.sha256(archive_bytes).hexdigest()
+    (root / "signed-frontend-output.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+    print("RAILWAY_FULL_FRONTEND_PASS " + json.dumps({"frontendSourceSha": source_sha,
+        "engineSourceSha": engine_sha, "engineManifestSha256": manifest["engineManifestSha256"]}), flush=True)
+    return output, manifest
+
+
 def verify_publication(steps, trusted, candidate, env, receipt):
     run(["python", "-I", "-S", str(trusted / "ops/release/verify_public_dataset.py"),
          "--expected-root", str(candidate), "--cache-key", env["PUBLICATION_SOURCE_SHA"]
@@ -400,12 +570,17 @@ def verify_runtime_identity(backend, engine_sha):
 
 
 def main():
+    apply = os.environ.get("PUBLISH_APPLY") == "1"
+    if apply:
+        missing = [name for name in ("SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")
+                   if not os.environ.get(name, "").strip()]
+        if missing:
+            raise RuntimeError("Publication credentials missing: " + ", ".join(missing))
     source_sha = current_main()
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
     if expected != source_sha:
         raise RuntimeError("Requested source is no longer current main")
     print(f"RAILWAY_FULL_START source={source_sha} deployment={os.environ.get('RAILWAY_DEPLOYMENT_ID', 'local')}", flush=True)
-    apply = os.environ.get("PUBLISH_APPLY") == "1"
     evidence = Path("/evidence")
     prior_state = None
     if os.path.ismount(evidence):
@@ -541,6 +716,15 @@ def main():
         prepared = build / "frontend/dist"
         quiesce_builder()
         candidate = seal_candidate(prepared, trusted)
+        frontend_manifest = None
+        if source_admission is not None and source_admission["sourceEquivalence"]["schema"] == "seiche.publication-source-equivalence.v2":
+            # UI tests must not alter the engine's pending history cache either.
+            for path in (build, build_temp):
+                shutil.chown(path, user=0, group=0)
+                path.chmod(0o700)
+            candidate, frontend_manifest = build_signed_frontend(
+                root, controller_checkout, trusted, candidate, source_admission, signer)
+            identity["frontendSourceSha"] = source_admission["sourceEquivalence"]["controllerSourceSha"]
         run(["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
              "--expected-sha", engine_sha, "--signer-fingerprint", signer,
              "--published-catalog", str(candidate / ".well-known/ai-catalog.json")],
@@ -574,6 +758,9 @@ def main():
         )
         if source_admission is not None:
             (recovery / "source-admission.json").write_text(json.dumps(source_admission, sort_keys=True) + "\n")
+        if frontend_manifest is not None:
+            for name in ("signed-frontend-source.json", "signed-frontend-output.json"):
+                shutil.copyfile(root / name, recovery / name)
         for path in recovery.rglob("*"):
             if path.is_file():
                 with path.open("rb") as stream:
@@ -654,6 +841,10 @@ def main():
             clean_env({**env, "RUNNER_TEMP": str(build_temp), "PUBLICATION_SOURCE_SHA": source_sha}),
             receipt,
         )
+        if frontend_manifest is not None:
+            with original_frontend_proof(trusted) as proof:
+                proof.verify_public(candidate, frontend_manifest,
+                                    cache_key=source_sha + "-" + env["GITHUB_RUN_ATTEMPT"])
         require_current_publication(source_sha, mirror, site_sha, publish_env)
         # Publish-success commits the history cache; failed generations never replace it.
         generated_history = build / ".cache/gdelt-web-history.json"

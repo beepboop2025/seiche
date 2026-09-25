@@ -1,5 +1,6 @@
 import importlib.util
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import time
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +20,40 @@ spec.loader.exec_module(publisher)
 
 
 class PublisherBoundaryTests(unittest.TestCase):
+    def test_apply_requires_each_credential_before_source_or_build_work(self):
+        credentials = {name: "test-only" for name in (
+            "SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}
+        for name in credentials:
+            for missing in (None, "", " \n"):
+                with self.subTest(name=name, value=missing):
+                    environment = {"PUBLISH_APPLY": "1", **credentials}
+                    if missing is None:
+                        del environment[name]
+                    else:
+                        environment[name] = missing
+                    with patch.dict(os.environ, environment, clear=True), patch.object(publisher, "current_main") as lookup:
+                        with self.assertRaisesRegex(RuntimeError, "Publication credentials missing: " + name):
+                            publisher.main()
+                        lookup.assert_not_called()
+
+    def test_preparation_can_run_without_publication_credentials(self):
+        with patch.dict(os.environ, {"PUBLISH_APPLY": "0"}, clear=True), patch.object(
+            publisher, "current_main", side_effect=RuntimeError("source lookup marker")
+        ) as lookup:
+            with self.assertRaisesRegex(RuntimeError, "source lookup marker"):
+                publisher.main()
+            lookup.assert_called_once()
+
+    def test_configured_apply_reaches_source_verification(self):
+        environment = {"PUBLISH_APPLY": "1", **{name: "test-only" for name in (
+            "SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}}
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            publisher, "current_main", side_effect=RuntimeError("source lookup marker")
+        ) as lookup:
+            with self.assertRaisesRegex(RuntimeError, "source lookup marker"):
+                publisher.main()
+            lookup.assert_called_once()
+
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0,
                          "Builder identity and ancestry are verified in the Linux image")
     def test_builder_home_supports_private_unprivileged_runtime(self):
@@ -551,6 +587,199 @@ class SourceEquivalenceBoundaryTests(unittest.TestCase):
         self.assertEqual(value["rendererSourceSha"], "b" * 40)
         self.assertEqual(value["sourceEquivalenceReceipt"], "publication-source-equivalence-" + "c" * 40)
         self.assertEqual(publisher.publication_identity(None, "d" * 40, "d" * 40), {})
+
+
+class SignedFrontendTests(unittest.TestCase):
+    def gate(self):
+        path = next((parent / "ops/release/frontend_site_proof.py"
+                     for parent in Path(__file__).resolve().parents
+                     if (parent / "ops/release/frontend_site_proof.py").is_file()), None)
+        if path is None:
+            self.skipTest("Original proof integration runs in actual-image repository qualification")
+        spec = importlib.util.spec_from_file_location("original_frontend_proof", path)
+        proof = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(proof)
+        return proof, path
+
+    def site(self, root):
+        for name, text in {
+            "index.html": '<script src="./assets/old.js"></script>',
+            "assets/old.js": "old UI",
+            "data/overview.json": '{"as_of":"2026-09-24","rate":4.2}',
+            ".well-known/ai-catalog.json": '{"entries":[]}',
+            "dispatches/current.html": "newly generated evidence",
+        }.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+
+    def test_new_frontend_keeps_current_engine_data_and_old_assets(self):
+        proof, _ = self.gate()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.site(root)
+            before = proof.files(root)
+            (root / "index.html").write_text('<script src="./assets/new.js"></script>')
+            (root / "assets/new.js").write_text("new UI")
+            result = publisher.seal_frontend_overlay(before, root, proof,
+                source_sha="a" * 40, retired=[], editorial=None)
+            self.assertEqual(result["changed"], ["assets/new.js", "index.html"])
+            self.assertEqual(result["publicFiles"]["data/overview.json"], before["data/overview.json"])
+            self.assertEqual(proof.files(root)["assets/old.js"], before["assets/old.js"])
+            self.assertEqual(result["artifactKind"], "generated_engine_with_signed_frontend")
+            self.assertNotIn("previousMirrorSha", result)
+
+    def test_frontend_cannot_mutate_or_remove_generated_evidence(self):
+        proof, _ = self.gate()
+        for name, change in (("data/overview.json", "change"),
+                             (".well-known/ai-catalog.json", "change"),
+                             ("assets/old.js", "change"),
+                             ("dispatches/current.html", "delete"),
+                             ("dispatches/invented.html", "add")):
+            with self.subTest(path=name, change=change), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                self.site(root)
+                before = proof.files(root)
+                if change == "delete":
+                    (root / name).unlink()
+                else:
+                    (root / name).write_text("unauthorized")
+                with self.assertRaisesRegex(RuntimeError, "generated engine evidence"):
+                    publisher.seal_frontend_overlay(before, root, proof,
+                        source_sha="a" * 40, retired=[], editorial=None)
+
+    def test_signed_retirement_and_exact_editorial_policy_remain_bounded(self):
+        proof, _ = self.gate()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.site(root)
+            (root / "funding.json").write_text("retired personal manifest")
+            (root / "_headers").write_text("/*\n  Content-Security-Policy: default-src 'self'; " +
+                                          proof.EDITORIAL_CONNECT_BEFORE + "\n")
+            before = proof.files(root)
+            proof.retire(root, ["funding.json"])
+            proof.allow_editorial(root, proof.EDITORIAL_ORIGIN)
+            result = publisher.seal_frontend_overlay(before, root, proof,
+                source_sha="a" * 40, retired=["funding.json"], editorial=proof.EDITORIAL_ORIGIN)
+            self.assertEqual(result["absentPublicFiles"], ["funding.json"])
+            self.assertIn(proof.EDITORIAL_ORIGIN, result["contentSecurityPolicy"])
+            (root / "_headers").write_text((root / "_headers").read_text().replace(
+                "default-src 'self'", "default-src *"))
+            with self.assertRaisesRegex(RuntimeError, "another engine header"):
+                publisher.seal_frontend_overlay(before, root, proof,
+                    source_sha="a" * 40, retired=["funding.json"], editorial=proof.EDITORIAL_ORIGIN)
+
+    def test_original_frontend_helper_is_hash_pinned(self):
+        _, source = self.gate()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            name = "ops/release/frontend_site_proof.py"
+            path = root / name
+            path.parent.mkdir(parents=True)
+            path.write_bytes(source.read_bytes())
+            (root / "controller-source.json").write_text(json.dumps({
+                "engineGateSha256": {name: hashlib.sha256(source.read_bytes()).hexdigest()}}))
+            with patch.object(publisher, "CONTROLLER", root):
+                with publisher.original_frontend_proof(root) as proof:
+                    self.assertEqual(proof.SCHEMA, "seiche.frontend-site-proof.v1")
+                path.write_text("raise RuntimeError('untrusted')")
+                with self.assertRaisesRegex(RuntimeError, "Original frontend proof changed"):
+                    with publisher.original_frontend_proof(root):
+                        self.fail("Changed helper was loaded")
+
+    def archive(self, extra=None):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            member = tarfile.TarInfo("frontend/src/main.ts")
+            body = b"signed source"
+            member.size = len(body)
+            archive.addfile(member, io.BytesIO(body))
+            if extra is not None:
+                archive.addfile(extra, io.BytesIO(b"x" * extra.size) if extra.isfile() else None)
+        return stream.getvalue()
+
+    def test_archive_validation_precedes_every_write(self):
+        for name, kind in (("frontend/../../outside", tarfile.REGTYPE),
+                           ("/tmp/outside", tarfile.REGTYPE),
+                           ("backend/runtime.py", tarfile.REGTYPE),
+                           ("frontend/link", tarfile.SYMTYPE),
+                           ("frontend/hardlink", tarfile.LNKTYPE),
+                           ("frontend/src/main.ts", tarfile.REGTYPE)):
+            with self.subTest(name=name, kind=kind), tempfile.TemporaryDirectory() as raw:
+                extra = tarfile.TarInfo(name)
+                extra.type = kind
+                if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+                    extra.linkname = "/outside"
+                destination = Path(raw)
+                with self.assertRaisesRegex(RuntimeError, "Unsafe signed frontend archive"):
+                    publisher.extract_frontend_archive(self.archive(extra), destination)
+                self.assertEqual(list(destination.iterdir()), [])
+
+    def test_build_archive_does_not_inherit_test_mutations(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            test, build = root / "tests", root / "build"
+            test.mkdir(); build.mkdir()
+            archive = self.archive()
+            publisher.extract_frontend_archive(archive, test)
+            (test / "frontend/src/main.ts").write_text("test side effect")
+            publisher.extract_frontend_archive(archive, build)
+            self.assertEqual((build / "frontend/src/main.ts").read_text(), "signed source")
+
+    def test_separate_ui_build_never_copies_source_public_data_over_engine_output(self):
+        proof, proof_path = self.gate()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            controller, backend, engine = (root / name for name in ("controller", "backend", "engine"))
+            for directory in (controller, backend, engine):
+                directory.mkdir()
+            self.site(engine)
+            publisher.git(["init", "--quiet", "-b", "main"], controller)
+            source = controller / "frontend/src/main.ts"
+            source.parent.mkdir(parents=True)
+            source.write_text("signed UI")
+            publisher.git(["add", "."], controller)
+            publisher.git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                           "commit", "--quiet", "--no-gpg-sign", "-m", "fixture"], controller)
+            sha = publisher.git(["rev-parse", "HEAD"], controller)
+            helper = backend / "ops/release/frontend_site_proof.py"
+            helper.parent.mkdir(parents=True)
+            helper.write_bytes(proof_path.read_bytes())
+            (controller / "controller-source.json").write_text(json.dumps({"engineGateSha256": {
+                "ops/release/frontend_site_proof.py": hashlib.sha256(helper.read_bytes()).hexdigest()}}))
+            environments = []
+
+            def run(command, cwd, environment, **options):
+                if "--receipt-tag" in command:
+                    self.assertEqual(Path(command[3]).parent, helper.parent)
+                    return json.dumps({"frontendPublication": {"sourceSha": sha, "backendReleaseSha": "b" * 40}})
+                if command[0] == "npm":
+                    environments.append(environment)
+                    self.assertTrue(options["unprivileged"])
+                    if command[1:] == ["test"]:
+                        (cwd / "src/main.ts").write_text("test mutation")
+                        (Path(environment["HOME"]) / ".npmrc").write_text("test mutation")
+                    if command[1:] == ["run", "build"]:
+                        self.assertEqual((cwd / "src/main.ts").read_text(), "signed UI")
+                        self.assertFalse((Path(environment["HOME"]) / ".npmrc").exists())
+                        self.site(cwd / "dist")
+                        (cwd / "dist/index.html").write_text('<script src="./assets/new.js"></script>')
+                        (cwd / "dist/assets/new.js").write_text("compiled UI")
+                        (cwd / "dist/data/overview.json").write_text("old source data")
+                else:
+                    self.assertEqual(command[:3], ["python", "-I", "-c"])
+                    self.assertEqual(command[-2], str(backend / "backend"))
+
+            admission = {"sourceEquivalence": {"controllerSourceSha": sha, "backendReleaseSha": "b" * 40}}
+            with (patch.object(publisher, "CONTROLLER", controller),
+                  patch.object(publisher, "run", side_effect=run),
+                  patch.object(publisher.shutil, "chown"), patch.object(publisher, "quiesce_builder")):
+                candidate, manifest = publisher.build_signed_frontend(
+                    root, controller, backend, engine, admission, "test-fingerprint")
+            self.assertEqual((candidate / "data/overview.json").read_bytes(), (engine / "data/overview.json").read_bytes())
+            self.assertEqual((candidate / "dispatches/current.html").read_bytes(), (engine / "dispatches/current.html").read_bytes())
+            self.assertIn("assets/new.js", manifest["publicFiles"])
+            self.assertEqual(len({env["HOME"] for env in environments}), 2)
 
 
 if __name__ == "__main__":

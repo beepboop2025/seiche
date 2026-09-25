@@ -1,28 +1,18 @@
-import { useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
+import { createElement, useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
+import { requestBoard } from "./boardRequest";
 import { Any } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
 import type { Command } from "./commands";
 import { useDepth, DepthDial } from "./depth";
 import { useAttentionMarks } from "./attention";
-import Tape from "./Tape";
-import DepthRail from "./DepthRail";
-import { shouldDescend } from "./descentGate";
 import { MotionProvider, MotionToggle } from "./motion/motionMode";
-import Gauge from "./motion/Gauge";
-import Odo from "./motion/Odo";
-import LivePulse from "./motion/LivePulse";
-import { useChangeFlash } from "./motion/useLive";
 import { tabSharePath } from "./shareRoutes";
 import { TERMINAL_TABS as TABS, terminalTabFromHash, type TerminalTab as Tab } from "./productRoutes";
-import WorkspaceNavigation from "./WorkspaceNavigation";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
-const Basin = lazy(() => import("./Basin"));
-const Descent = lazy(() => import("./Descent"));
-const WaveTank = lazy(() => import("./motion/WaveTank"));
 
 const COMPACT_DEVICE_QUERY = "(max-width: 800px), (pointer: coarse)";
 const LIVE_UPGRADE_DELAY_MS = 1500;
@@ -97,14 +87,23 @@ function AppInner() {
   const [snap, setSnap] = useState<Any | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [live, setLive] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(hashToTab());
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
-  const [descending, setDescending] = useState(shouldDescend);
+  useEffect(() => {
+    const openCommands = () => setPalette(true);
+    const openHelp = () => setHelp(true);
+    document.addEventListener("seiche:open-commands", openCommands);
+    document.addEventListener("seiche:open-help", openHelp);
+    return () => {
+      document.removeEventListener("seiche:open-commands", openCommands);
+      document.removeEventListener("seiche:open-help", openHelp);
+    };
+  }, []);
   const [compactDevice] = useState(() => window.matchMedia(COMPACT_DEVICE_QUERY).matches);
   const { setDepth, stepDepth } = useDepth();
-  // direction-flash for the masthead composite (up = amber, down = blue)
-  const flash = useChangeFlash(snap?.engines?.composite?.value);
 
   // unseen-panel marks re-arm on every tab visit
   useAttentionMarks(tab);
@@ -166,79 +165,74 @@ function AppInner() {
     else if (cmd.type === "depth") setDepth(cmd.level);
   };
 
-  // Boot from the snapshot CI bakes into the static build, then upgrade to
-  // live after the snapshot has had a paint opportunity. The two payloads are
-  // each ~150 KB; racing them made the API and the same-origin fallback fight
-  // for the mobile critical path even though either one can draw the board.
-  // A missing snapshot still falls straight through to the live API.
+  // Published bytes provide a dated first paint; refreshes never erase them.
   const gotLive = useRef(false);
+  const snapshot = useRef<Any | null>(null);
+  const generation = useRef(0);
+  const requests = useRef(new Set<AbortController>());
+  const apiPending = useRef<AbortController | null>(null);
   const liveUpgradeTimer = useRef<number | null>(null);
-
-  const loadSnapshot = () =>
-    // Match the HTML `crossorigin="anonymous"` preload's same-origin
-    // credentials mode so the browser can reuse the preloaded response.
-    fetch("/data/overview.json", { credentials: "same-origin" })
-      .then((r) => {
-        const ct = r.headers.get("content-type") ?? "";
-        if (!r.ok || !(ct.includes("json") || ct.includes("octet"))) throw new Error("snapshot unavailable");
-        return r.json();
-      })
-      .then((data) => {
-        if (gotLive.current) return; // never replace live data with the baked copy
-        setSnap(data); setLive(false); setErr(null);
-      });
-
-  const loadApi = (timeoutMs = 6000) => {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
-    return fetch(`${API_BASE}/api/overview`, { headers: authHeaders(), signal: ctl.signal })
-      .then((r) => {
-        if (r.status === 401) throw new Error("session expired — sign in again");
-        const ct = r.headers.get("content-type") ?? "";
-        if (!r.ok || !ct.includes("json")) throw new Error("the board is temporarily unreachable — retry in a moment");
-        return r.json();
-      })
-      .then((data) => { gotLive.current = true; setSnap(data); setLive(true); setErr(null); })
-      .finally(() => clearTimeout(timer));
+  const failure = (reason: unknown, epoch: number) => {
+    if (epoch !== generation.current) return;
+    const message = reason instanceof Error ? reason.message : "The source could not be refreshed.";
+    if (snapshot.current) setRefreshError(message); else setErr(message);
   };
-
+  const load = async (url: string, liveSource: boolean, epoch: number) => {
+    if (liveSource && apiPending.current) return;
+    const controller = new AbortController();
+    requests.current.add(controller);
+    if (liveSource) apiPending.current = controller;
+    try {
+      const data = await requestBoard(url, { signal: controller.signal,
+        headers: liveSource ? authHeaders() : {}, timeoutMs: liveSource ? 15000 : 4000 });
+      if (epoch !== generation.current || controller.signal.aborted || (!liveSource && gotLive.current)) return;
+      if (liveSource) gotLive.current = true;
+      snapshot.current = data;
+      setSnap(data); setLive(liveSource); setErr(null);
+      if (liveSource) { setRefreshError(null); setCheckedAt(new Date().toISOString()); }
+    } finally {
+      requests.current.delete(controller);
+      if (apiPending.current === controller) apiPending.current = null;
+    }
+  };
+  const loadApi = (epoch = generation.current) => load(`${API_BASE}/api/overview`, true, epoch);
   const boot = () => {
-    void loadSnapshot().then(
-      () => {
-        // Give the snapshot and Week Ahead the first-paint window before the
-        // cross-origin refresh competes for mobile bandwidth and parse time.
-        // Failure remains non-fatal: the visible snapshot is timestamped.
-        liveUpgradeTimer.current = window.setTimeout(() => {
-          void loadApi().catch(() => undefined);
-        }, LIVE_UPGRADE_DELAY_MS);
-      },
-      () => {
-        void loadApi().catch((reason) => {
-          setErr(String((reason as Error)?.message ?? reason));
-        });
-      },
-    );
+    const epoch = ++generation.current;
+    for (const controller of requests.current) controller.abort();
+    requests.current.clear(); apiPending.current = null;
+    if (!snapshot.current) gotLive.current = false;
+    void load("/data/overview.json", false, epoch).then(() => {
+      if (epoch !== generation.current) return;
+      liveUpgradeTimer.current = window.setTimeout(() => {
+        void loadApi(epoch).catch(reason => failure(reason, epoch));
+      }, LIVE_UPGRADE_DELAY_MS);
+    }, () => {
+      if (epoch === generation.current) void loadApi(epoch).catch(reason => failure(reason, epoch));
+    });
   };
-
   const retry = () => {
     if (liveUpgradeTimer.current !== null) clearTimeout(liveUpgradeTimer.current);
-    setErr(null); setSnap(null); boot();
+    setErr(null); setRefreshError(null); boot();
   };
-
   useEffect(() => {
     boot();
-    // The server's ETag + 60-second public cache make unchanged checks cheap.
-    // Visible tabs learn about a newly assembled official-data snapshot within
-    // a minute; hidden tabs skip the request entirely.
-    const t = setInterval(() => {
-      if (document.visibilityState === "visible") void loadApi().catch(() => undefined);
-    }, BOARD_REFRESH_MS);
-    const onHash = () => switchTab(hashToTab());
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      const epoch = generation.current;
+      void loadApi(epoch).catch(reason => failure(reason, epoch));
+    };
+    const timer = setInterval(refresh, BOARD_REFRESH_MS);
+    const onHash = () => { const next = terminalTabFromHash(window.location.hash); if (next || !window.location.hash) switchTab(next ?? DEFAULT_TAB); };
     window.addEventListener("hashchange", onHash);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
-      clearInterval(t);
+      ++generation.current;
+      clearInterval(timer);
       if (liveUpgradeTimer.current !== null) clearTimeout(liveUpgradeTimer.current);
+      for (const controller of requests.current) controller.abort();
+      requests.current.clear(); apiPending.current = null;
       window.removeEventListener("hashchange", onHash);
+      document.removeEventListener("visibilitychange", refresh);
     };
   }, []);
 
@@ -298,31 +292,29 @@ function AppInner() {
   // Fully open: the whole terminal renders for everyone, no sign in.
   // Accounts exist only for optional email alerts (ACCOUNT tab).
   if (tab === "WORKBENCH" && (!snap || err)) {
-    return <main className="app"><div className="masthead"><a className="wordmark" href="#TODAY">SEICHE</a></div>
+    return <main className="app research-app" id="main" data-tab={tab}>
       <Suspense fallback={<TabSkeleton />}><MarketWorkbench /></Suspense></main>;
   }
   if (tab === "RESEARCH" && (!snap || err)) {
-    return <main className="app"><div className="masthead"><a className="wordmark" href="#TODAY">SEICHE</a></div>
+    return <main className="app research-app" id="main" data-tab={tab}>
       <Suspense fallback={<TabSkeleton />}><Research /></Suspense></main>;
   }
-  if (err) {
+  if (err && !snap) {
     return (
-      <main className="app">
-        <div className="masthead">
-          <div className="wordmark">SEI<span>CHE</span></div>
-          <div className="tagline">funding-stress &amp; leveraged-positioning early warning</div>
-        </div>
+      <main className="app research-app" id="main" data-tab={tab}>
         <div className="errbox">
           <div className="errtitle">The board is temporarily unreachable</div>
           <div className="errmsg">{err}</div>
           <div className="erractions">
             <button className="btn-accent" onClick={retry}>Retry</button>
+            <a href="#workbench">Open the research workbench</a>
           </div>
         </div>
+        {createElement("economic-context", { "aria-label": "Available economic observations" })}
       </main>
     );
   }
-  if (!snap) return <main className="app"><AppSkeleton /></main>;
+  if (!snap) return <main className="app research-app" id="main" data-tab={tab}><AppSkeleton /></main>;
 
   const c = snap.engines?.composite ?? {};
   const compositeCoverage = typeof c.coverage_pct === "number" ? c.coverage_pct : null;
@@ -338,64 +330,15 @@ function AppInner() {
       : `dependent views may be degraded; composite coverage remains ${compositeCoverage.toFixed(1)}%`;
   const tabCardPath = tabSharePath(tab);
 
-  if (descending) {
-    return (
-      <>
-        {!compactDevice && <Suspense fallback={null}><Basin value={c.value ?? null} regime={c.regime ?? null} /></Suspense>}
-        <Suspense fallback={<div className="app"><AppSkeleton /></div>}>
-          <Descent snap={snap} onDone={() => setDescending(false)} />
-        </Suspense>
-      </>
-    );
-  }
-
   return (
-    <main className="app">
-      {!compactDevice && tab !== "TODAY" && <Suspense fallback={null}><Basin value={c.value ?? null} regime={c.regime ?? null} /></Suspense>}
-      <DepthRail />
-      <div className={`masthero${tab === "TODAY" ? " masteditorial" : ""}`}>
-        {tab === "TODAY" ? null : compactDevice
-          ? <div className="wavetank" aria-hidden="true" />
-          : <Suspense fallback={<div className="wavetank" aria-hidden="true" />}>
-              <WaveTank value={c.value ?? null} regime={c.regime ?? null} />
-            </Suspense>}
-        <div className="masthead">
-          <div className="wordmark">SEI<span>CHE</span></div>
-          <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
-          <a className="prolink" href="/guide">new? how to read this</a>
-          <div className="mastindex">
-            {/* sonar: ping period tightens as the composite rises — CALM pings
-                lazily, STRESS pings urgently. The gauge needle sweeps up on
-                first paint and the odometer digits roll on every refresh. */}
-            <Gauge v={c.value ?? null} size={44} />
-            <span
-              className={`mastvalue sonar${flash ? ` flash-${flash}` : ""}`}
-              style={{ "--ping": `${(3.6 - 2.6 * Math.min(1, (c.value ?? 20) / 100)).toFixed(2)}s` } as CSSProperties}
-            >
-              <Odo v={c.value} d={0} />
-            </span>
-            <span className={`regime ${c.regime}`} style={{ fontSize: 10, padding: "3px 8px" }}>{c.regime}</span>
-            <DepthDial />
-            <MotionToggle />
-          </div>
-          <div className="right">
-            <LivePulse snap={snap} /><br />
-            {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />
-            FRED · NY Fed · OFR · FiscalData · CFTC · ECB<br />
-            <a className="prolink" href="/support">free · support Seiche</a>
-          </div>
-        </div>
-      </div>
-
-      {tab !== "TODAY" && <Tape snap={snap} />}
-
-      {tab !== "TODAY" && <aside className="agent-launch" aria-label="Seiche API and MCP access">
-        <span className="agent-launch__eyebrow">BUILD WITH THE LIVE BOARD</span>
-        <span className="agent-launch__copy">Give an AI agent current funding, money-, forex- and capital-market context with source clocks and citation URLs.</span>
-        <a href="/developers">Connect the free MCP or API →</a>
-      </aside>}
-
-      <WorkspaceNavigation tab={tab} goTab={goTab} openCommands={() => setPalette(true)} openHelp={() => setHelp(true)} />
+    <main className="app research-app" id="main" data-tab={tab}>
+      {refreshError && <div className="rw-notice" role="status">{refreshError} The dated snapshot remains visible. <button className="rw-button" onClick={retry}>Refresh</button></div>}
+      <section className="research-observation-bar" aria-label="Snapshot status">
+        <div><span>Funding research</span><strong>{live ? "API snapshot" : "Published snapshot"}</strong></div>
+        <div><span>Snapshot assembled</span><strong>{snap.generated_at?.slice(0, 16).replace("T", " ") ?? "Unavailable"} UTC</strong></div>
+        <div><span>Last successful API check</span><strong>{checkedAt ? `${checkedAt.slice(11, 16)} UTC` : "Refresh pending"}</strong></div>
+        <a href="#system">Inspect source coverage</a>
+      </section>
 
       {help && (
         <div className="kshort-backdrop" onClick={() => setHelp(false)}>
