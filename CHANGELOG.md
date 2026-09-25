@@ -11,6 +11,14 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.8] - 2026-09-25
+
+### Fixed
+
+- Accept a signed stopped-source proof for Railway instances marked `REMOVED`,
+  allowing a new application transition after a workspace spending-limit shutdown.
+  Scope, signature, unique instance identities and current-data checks still apply.
+
 ## [0.13.7] - 2026-09-25
 
 ### Added
@@ -450,7 +458,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.7...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.8...HEAD
+[0.13.8]: https://github.com/beepboop2025/seiche/compare/v0.13.7...v0.13.8
 [0.13.7]: https://github.com/beepboop2025/seiche/compare/v0.13.6...v0.13.7
 [0.13.6]: https://github.com/beepboop2025/seiche/compare/v0.13.5...v0.13.6
 [0.13.5]: https://github.com/beepboop2025/seiche/compare/v0.13.4...v0.13.5

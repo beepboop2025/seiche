@@ -318,7 +318,9 @@ def validate_source_fence(
     for item in instances:
         row = _closed(item, {"id", "status"}, "stopped source instance")
         identity = _uuid(row["id"], "stopped source instance")
-        if identity in ids or row["status"] not in {"STOPPED", "EXITED"}:
+        # Railway removes instances when a workspace spending limit is reached.
+        # The signed proof still names every actual, terminal predecessor instance.
+        if identity in ids or row["status"] not in {"STOPPED", "EXITED", "REMOVED"}:
             raise ApplicationContractError(
                 "application source instance is not uniquely stopped"
             )

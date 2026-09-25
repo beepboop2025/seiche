@@ -198,6 +198,26 @@ def test_signed_source_proof_still_requires_unique_stopped_scoped_instances(
         app.validate_source_fence(signed("source_stopped", payload), request=request)
 
 
+@pytest.mark.parametrize("status", ["STOPPED", "EXITED", "REMOVED"])
+def test_signed_source_proof_accepts_terminal_provider_instances(transition, signed, status):
+    _, _, request, candidate, _, _ = transition
+    payload = deepcopy(candidate["source_fence"]["payload"])
+    payload["deployment"]["instances"][0]["status"] = status
+    assert app.validate_source_fence(signed("source_stopped", payload), request=request) == payload
+
+
+@pytest.mark.parametrize("status", ["RUNNING", "CREATED", "DEPLOYING", "CRASHED", "REMOVING", None])
+def test_removed_predecessor_does_not_hide_another_unsettled_instance(transition, signed, status):
+    _, _, request, candidate, _, _ = transition
+    payload = deepcopy(candidate["source_fence"]["payload"])
+    payload["deployment"]["instances"][0]["status"] = "REMOVED"
+    payload["deployment"]["instances"].append({
+        "id": "88888888-8888-4888-8888-888888888888", "status": status,
+    })
+    with pytest.raises(app.ApplicationContractError, match="uniquely stopped"):
+        app.validate_source_fence(signed("source_stopped", payload), request=request)
+
+
 def test_successor_preserves_original_candidate_and_new_recovery_identity(transition):
     _, _, request, candidate, grant, parent = transition
     original_bytes = app.canonical(parent["candidate"])

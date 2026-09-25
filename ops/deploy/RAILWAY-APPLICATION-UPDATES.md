@@ -42,7 +42,7 @@ the volume, checks current state and waits for its signed writer grant.
 
 Submit the context once to the existing service. Record the new deployment UUID
 and replica from Railway; never infer either from a version or filename. Observe
-all predecessor instances as `EXITED` or `STOPPED`, and verify the frozen Hetzner
+all predecessor instances as `EXITED`, `STOPPED`, or `REMOVED`, and verify the frozen Hetzner
 writer units remain stopped. Only then sign the `source_stopped` payload defined
 by `stateful_application.validate_source_fence` and publish it atomically at:
 
@@ -103,3 +103,18 @@ can write during the copy; an individual copy has a fifteen-minute deadline.
 Application approvals are SSH signatures, not GitHub OIDC attestations. The
 subsequent recovery workflow independently attests its actual export and off-site
 receipts. Retain both types of evidence with their correct provenance.
+
+## Recovery after a workspace spending-limit shutdown
+
+Railway may retire every deployment when a hard usage limit is reached. Raising
+the limit can create replacement deployment IDs. The old application image must
+reject those replacements because its accepted grant names the original ID.
+Never override provider identity variables or edit the sealed activation.
+
+A fresh signed application transition must name the removed deployment as its
+predecessor, audit the existing volume and database, and bind its real destination
+deployment. A signed stopped-source proof may retain Railway's `REMOVED` instance
+state; any running, restarting, crashed or removal-in-progress instance fails the
+terminal-state check. Keep all original receipts and failed recovery diagnostics.
+Protected recovery and publication acceptance must be completed for the replacement
+before publication schedules resume.

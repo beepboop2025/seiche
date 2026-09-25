@@ -1,6 +1,6 @@
 # Publishing Seiche release surfaces
 
-This runbook covers **0.13.7 estuary**, which bundles the unified research
+This runbook covers **0.13.8 estuary**, which bundles the unified research
 interface, economic charts and board recovery with the application. Publication
 controllers keep generated evidence sealed and check apply credentials early.
 Existing nullable
@@ -55,7 +55,7 @@ CI lanes install the reviewed CPython 3.12 Linux wheel from
 `ops/requirements-social-cards.txt` with `--only-binary=:all:` and
 `--require-hashes` before collecting the card tests or invoking the renderer.
 This keeps the image toolchain outside `backend/pyproject.toml`; the package
-metadata carries version `0.13.7`. The image dependencies remain hash-pinned
+metadata carries version `0.13.8`. The image dependencies remain hash-pinned
 separately from the package metadata.
 
 The shared corpus is an explicit gap in the finite publisher. Dataset IDs are
@@ -139,8 +139,8 @@ below remains required for runtime, package, catalog or data-contract changes.
    ```bash
    gh workflow run publish-pypi.yml \
      --repo beepboop2025/seiche \
-     --ref v0.13.7 \
-     -f release_tag=v0.13.7
+     --ref v0.13.8 \
+     -f release_tag=v0.13.8
    ```
    Do not run a local token-backed `twine upload`: PyPI versions are immutable,
    and bypassing the signed-tag/OIDC gate would sever the artifact-to-commit
@@ -156,13 +156,13 @@ below remains required for runtime, package, catalog or data-contract changes.
 4. **Wait for the immutable PyPI receipt.** Do not create the GitHub Release
    while the tag-triggered PyPI workflow is queued or failing. Watch that run to
    completion, then confirm PyPI exposes exactly one wheel and one source archive
-   for `0.13.7` and retain their server-reported SHA-256 digests:
+   for `0.13.8` and retain their server-reported SHA-256 digests:
    ```bash
    gh run list --repo beepboop2025/seiche \
      --workflow publish-pypi.yml --event push --limit 10
    gh run watch RUN_ID --repo beepboop2025/seiche --exit-status
    curl --fail --show-error --silent \
-     https://pypi.org/pypi/seiche/0.13.7/json |
+     https://pypi.org/pypi/seiche/0.13.8/json |
      jq -r '.urls[] | [.filename, .digests.sha256] | @tsv'
    ```
    The workflow already verifies the immutable PyPI bytes against the signed
@@ -203,7 +203,7 @@ below remains required for runtime, package, catalog or data-contract changes.
    and verify that `beepboop2025/seiche` is toggled **On**. Zenodo archives new
    GitHub releases only after repository enablement. The repository's
    [`.zenodo.json` follows Zenodo's documented GitHub authoring format](https://help.zenodo.org/docs/github/describe-software/zenodo-json/) and
-   explicitly carries version `0.13.7`, language `eng`, `upload_type`, license,
+   explicitly carries version `0.13.8`, language `eng`, `upload_type`, license,
    access, creators, related identifiers, and the research boundary. Because
    Zenodo ignores `CITATION.cff` whenever `.zenodo.json` is present, all required
    release metadata must remain complete in this file. CI pins and checks the
@@ -212,8 +212,8 @@ below remains required for runtime, package, catalog or data-contract changes.
    schema is not the raw `.zenodo.json` authoring contract.
    Confirm that no release exists yet:
    ```bash
-   if gh release view v0.13.7 --repo beepboop2025/seiche >/dev/null 2>&1; then
-     echo "v0.13.7 already released; inspect receipts instead of recreating it" >&2
+   if gh release view v0.13.8 --repo beepboop2025/seiche >/dev/null 2>&1; then
+     echo "v0.13.8 already released; inspect receipts instead of recreating it" >&2
      exit 1
    fi
    ```
@@ -222,10 +222,10 @@ below remains required for runtime, package, catalog or data-contract changes.
    starts Zenodo archival plus the MCP and GHCR publishers. It must happen only
    after steps 4 and 5 are green:
    ```bash
-   gh release create v0.13.7 \
+   gh release create v0.13.8 \
      --repo beepboop2025/seiche \
      --verify-tag \
-     --title "Seiche 0.13.7" \
+     --title "Seiche 0.13.8" \
      --generate-notes
    ```
    Do not delete and recreate the release as a retry mechanism. Use the
@@ -235,16 +235,16 @@ below remains required for runtime, package, catalog or data-contract changes.
 7. **Receipt the three release-triggered surfaces.** Treat these as separate
    outcomes even though the GitHub Release starts them concurrently:
 
-   - **Zenodo:** wait for the integration to archive `v0.13.7`; open the record,
-     confirm version `0.13.7`, software type, open access, creator, license, and
+   - **Zenodo:** wait for the integration to archive `v0.13.8`; open the record,
+     confirm version `0.13.8`, software type, open access, creator, license, and
      GitHub relationship, then record the version DOI, concept DOI, record URL,
      and archive checksum. Do not claim a DOI while only `.zenodo.json` exists.
    - **MCP Registry:** watch `publish-mcp.yml`, then query the owner namespace and
-     retain the workflow URL plus the returned `0.13.7` record. Recovery must use
+     retain the workflow URL plus the returned `0.13.8` record. Recovery must use
      the tag as both workflow ref and explicit input:
      ```bash
      gh workflow run publish-mcp.yml --repo beepboop2025/seiche \
-       --ref v0.13.7 -f release_tag=v0.13.7
+       --ref v0.13.8 -f release_tag=v0.13.8
      curl --fail --show-error --silent \
        'https://registry.modelcontextprotocol.io/v0.1/servers/io.github.beepboop2025%2Fseiche/versions/latest'
      ```
@@ -275,7 +275,7 @@ below remains required for runtime, package, catalog or data-contract changes.
 8. **Verify the independently published OpenBB extension.** Version `0.1.0`
    is already published from Seiche `v0.12.1` with a
    [successful verification receipt](https://github.com/beepboop2025/seiche/actions/runs/33942222780).
-   Do not dispatch another publication of that immutable version for `v0.13.7`.
+   Do not dispatch another publication of that immutable version for `v0.13.8`.
    The following records the original publication procedure; a future OpenBB
    update requires its own new version. Configure the PyPI pending or
    trusted publisher for project `openbb-seiche`, workflow
