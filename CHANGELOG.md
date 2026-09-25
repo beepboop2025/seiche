@@ -11,6 +11,28 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.7] - 2026-09-25
+
+### Added
+
+- A shared dark research workspace with connected product navigation,
+  source-dated economic charts, keyboard inspection and pausable motion.
+- Typed, bundled chart and flow components, with validation of source dates,
+  units, numeric observations and redistribution eligibility.
+
+### Fixed
+
+- Retain the last verified funding board during temporary API failures and
+  recover through bounded requests and visibility-aware refreshes.
+- Check publication credentials before expensive collection and build work.
+
+### Changed
+
+- Bind this application source with corpus receipt `r18`, preserving existing
+  corpus data, source clocks, rights and immutable older release artifacts.
+- Support separately built, signed frontend publication while preserving the
+  original engine's generated evidence and validating the complete source history.
+
 ## [0.13.6] - 2026-09-24
 
 ### Fixed
@@ -428,7 +450,10 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.6...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.7...HEAD
+[0.13.7]: https://github.com/beepboop2025/seiche/compare/v0.13.6...v0.13.7
+[0.13.6]: https://github.com/beepboop2025/seiche/compare/v0.13.5...v0.13.6
+[0.13.5]: https://github.com/beepboop2025/seiche/compare/v0.13.4...v0.13.5
 [0.12.6]: https://github.com/beepboop2025/seiche/compare/v0.12.5...v0.12.6
 [0.12.5]: https://github.com/beepboop2025/seiche/compare/v0.12.4...v0.12.5
 [0.12.4]: https://github.com/beepboop2025/seiche/compare/v0.12.3...v0.12.4

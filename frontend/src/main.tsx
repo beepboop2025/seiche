@@ -5,6 +5,8 @@ import { DepthProvider } from "./depth";
 import "./styles.css";
 import "./research-ui.css";
 import "./research-interface.css";
+import "./research/economy";
+import "./research/flow";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
