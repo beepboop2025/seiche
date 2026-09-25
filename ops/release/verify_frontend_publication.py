@@ -940,7 +940,7 @@ def _equivalence_frontend_requested(root: Path, receipt_tag: str) -> bool:
         return False
     if pair == (FRONTEND_EQUIVALENCE_SCHEMA, FRONTEND_EQUIVALENCE_PURPOSE):
         return True
-    raise Error("equivalence receipt differs from the canonical schema and purpose")
+    raise Error("equivalence receipt differs from the exact canonical schema and purpose")
 
 
 def verify_source_equivalence(
