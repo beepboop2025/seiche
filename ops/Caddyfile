@@ -95,10 +95,10 @@ api.seiche.info {
     }
 
     # Undertow MCP remote (agent tools; bearer-token subscriber tier
-    # verified in-process against the bot entitlement state). Must sit
-    # ABOVE the static /undertow/* mirror — handle blocks match in
-    # source order. The site-wide OPTIONS preflight handler sits below
-    # the mirror and never fires for this path, so answer it here.
+    # verified in-process against the bot entitlement state). The static
+    # mirror explicitly excludes this namespace: Caddy sorts handle and
+    # handle_path directives, so source order alone is not a routing guard.
+    # Answer OPTIONS here because the site preflight does not run afterward.
     handle /undertow/mcp* {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS, DELETE"
@@ -111,15 +111,14 @@ api.seiche.info {
     }
 
     # Undertow x402 machine-payable feed (paid attested data; free
-    # summary/manifest). Must sit ABOVE the static /undertow/* mirror —
-    # handle blocks match in source order. Path passes intact.
+    # summary/manifest). The static mirror excludes this namespace.
+    # Path passes intact.
     handle /undertow/x402/* {
         reverse_proxy 127.0.0.1:8791
     }
 
     # Undertow subscriber web backend (web desk login + entitled
-    # packs). Must sit ABOVE the static /undertow/* mirror —
-    # handle blocks match in source order.
+    # packs). The static mirror excludes this namespace.
     handle /undertow/desk/* {
         reverse_proxy 127.0.0.1:8792
     }
@@ -139,8 +138,8 @@ api.seiche.info {
     # Undertow LIVE relay snapshots (undertow-liverelay.service writes
     # /var/lib/undertow-relay every ~1.5s; quotes.json + klines.json).
     # no-store: the mirror 10-minute cache header would defeat a live
-    # snapshot. Must sit ABOVE the static /undertow/* mirror block —
-    # handle blocks match in source order.
+    # snapshot. The static mirror excludes this namespace regardless of
+    # Caddy's directive sorting.
     handle_path /undertow/live/* {
         header Access-Control-Allow-Origin "*"
         header Cache-Control "no-store"
@@ -163,8 +162,14 @@ api.seiche.info {
 
     # Undertow published packs — static public mirror (board + retail
     # packs only; refreshed by undertow-public-mirror.timer). Consumed by
-    # the LiquiLens app's Undertow Retail layer.
-    handle_path /undertow/* {
+    # the LiquiLens app's Undertow Retail layer. Named exclusions prevent
+    # Caddy's directive sorting from shadowing the API and exact index.
+    @undertow_static {
+        path /undertow/*
+        not path /undertow/ /undertow/mcp* /undertow/x402/* /undertow/desk/* /undertow/paypal/* /undertow/live/*
+    }
+    handle @undertow_static {
+        uri strip_prefix /undertow
         header Access-Control-Allow-Origin "*"
         header Cache-Control "public, max-age=600"
         header X-Content-Type-Options "nosniff"
