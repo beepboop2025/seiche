@@ -166,6 +166,21 @@ REVIEWED_RECOVERY_COMMITS = {
             "ops/railway-automation/publisher/test_publish.py",
         }
     ),
+    "2b7f86ce445781231e2eea3e61b4e691215fe36f": frozenset(
+        {
+            ".github/workflows/railway-stateful-recovery.yml",
+            "backend/tests/test_railway_stateful_recovery.py",
+            "deploy/railway-ci/recovery-controller/ATTESTATION-IDENTITY.md",
+            "deploy/railway-ci/recovery-controller/attest_live.py",
+            "deploy/railway-ci/recovery-controller/test_attest_live.py",
+        }
+    ),
+    "6819c49afe7b647c6af7870629336e1dac1af52a": frozenset(
+        {
+            "deploy/railway-ci/recovery-controller/ATTESTATION-IDENTITY.md",
+            "deploy/railway-ci/recovery-controller/attest_live.py",
+        }
+    ),
     "ff98e9d1883c7b23afd42c0e44654ba63d1364d3": frozenset(
         {
             "deploy/railway-ci/recovery-controller/README.md",

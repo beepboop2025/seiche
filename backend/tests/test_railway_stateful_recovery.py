@@ -1587,6 +1587,8 @@ def test_native_attestation_cannot_start_a_production_export() -> None:
         "NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}",
         "secrets.RECOVERY_NATIVE_ATTEST_POLICY_ZLIB_BASE64",
         "vars.RECOVERY_NATIVE_ATTEST_POLICY_SHA256",
+        "ATTEST_CONTROLLER_RAILWAY_TOKEN: ${{ secrets.RECOVERY_CONTROLLER_RAILWAY_TOKEN }}",
+        "python -B deploy/railway-ci/recovery-controller/attest_live.py",
     ):
         assert required in job
     for forbidden in (
