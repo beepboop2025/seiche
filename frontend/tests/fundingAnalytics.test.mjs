@@ -8,7 +8,7 @@ const core = uri(await read('core.ts')), charts = uri(await read('analyticsChart
 const series = uri((await read('seriesModel.ts')).replace("from \"./core\"", `from '${core}'`));
 const funding = uri((await read('fundingAnalytics.ts')).replace("from './core'", `from '${core}'`).replace("from './seriesModel'", `from '${series}'`).replace("from './analyticsCharts'", `from '${charts}'`).replace("import './analytics.css';", ''));
 const {difference, changes, dateValue, windowPoints, csv, number} = await import(charts);
-const {fundingPoints, treasuryCurve, fundingSpecs} = await import(funding);
+const {fundingPoints, moneyFundBillions, treasuryCurve, fundingSpecs} = await import(funding);
 const point = (date, y) => ({x: dateValue(date), y, label: date});
 const model = (key, points, unit = '%') => ({key, label: key, unit, points: points.map(([date, value]) => ({date, value})), asOf: points.at(-1)[0], state: 'fresh', source: 'fred', remote: key, cadence: 'daily', lag: 'one business day'});
 
@@ -28,6 +28,25 @@ test('treasury curve uses one common observation date and never substitutes a ne
 test('wrong source units cannot enter reserve or rate calculations', () => {
   assert.deepEqual(fundingPoints(model('SOFR', [['2026-09-21', 4]], 'bp'), '%'), []);
   assert.equal(fundingPoints(model('WRESBAL', [['2026-09-21', 2000000]], '$M'), '$M', 1000)[0].y, 2000);
+});
+test('OFR repo balances match Seiche backend billions through raw dollars, normalized values and latest zero', () => {
+  const raw = {...model('MMF_REPO_TOT', [['2026-07-31', 2925256922261.54], ['2026-08-31', 2832193657532.53]], '$B'), source: 'ofr', remote: 'MMF-MMF_RP_TOT-M'};
+  const normalized = {...raw, points: raw.points.map(p => ({...p, value: p.value / 1e9}))};
+  assert.deepEqual(moneyFundBillions(raw), moneyFundBillions(normalized));
+  assert.ok(Math.abs(moneyFundBillions(raw).at(-1).y - 2832.19365753253) < 1e-9);
+  const withZero = {...raw, points: [...raw.points, {date: '2026-09-01', value: 0}]};
+  assert.equal(moneyFundBillions(withZero).at(-1).y, 0);
+  assert.equal(moneyFundBillions(withZero)[0].y, moneyFundBillions(raw)[0].y);
+  const card = fundingSpecs(new Map([[raw.key, raw]]), null).find(s => s.id === 'mmf-repo-allocation');
+  assert.equal(card.unit, 'USD bn'); assert.equal(card.series[0].points.at(-1).y, moneyFundBillions(raw).at(-1).y);
+});
+test('OFR normalization cannot silently rescale another source or an unbound remote series', () => {
+  const raw = {...model('MMF_REPO_FED', [['2026-06-30', 6829980601.94]], '$B'), source: 'ofr', remote: 'MMF-MMF_RP_wFR-M'};
+  assert.ok(Math.abs(moneyFundBillions(raw)[0].y - 6.82998060194) < 1e-10);
+  assert.deepEqual(moneyFundBillions({...raw, source: 'fred'}), []);
+  assert.deepEqual(moneyFundBillions({...raw, remote: 'MMF-MMF_RP_TOT-M'}), []);
+  assert.deepEqual(moneyFundBillions({...raw, unit: '$M'}), []);
+  assert.deepEqual(moneyFundBillions({...raw, key: 'WALCL'}), []);
 });
 test('history windows are relative to source observations and changes preserve missingness', () => {
   const points = [point('2026-06-01', 4), point('2026-09-21', null), point('2026-09-22', 4.2)];

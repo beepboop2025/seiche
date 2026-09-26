@@ -14,7 +14,7 @@ fallback so a board failure does not prevent independent series inspection.
 | Corporate funding premiums | AA financial/nonfinancial 3M commercial paper minus DGS3M; exact-date differences × 100 bp |
 | Treasury term structure | DGS3M, DGS2, DGS10 and DGS30 at their latest common observation date |
 | SOFR repricing | Consecutive available SOFR observations; difference × 100 bp |
-| Money-fund repo | Total repo, repo with the Fed, and repo with FICC; overlapping totals/components, never summed |
+| Money-fund repo | Total repo, repo with the Fed, and repo with FICC; USD billions using the existing OFR series-wide unit rule; overlapping totals/components, never summed |
 | Fed balance sheet | WALCL; USD million / 1,000 |
 
 Only catalog members with redistributable JSON routes are fetched. The existing
@@ -24,6 +24,16 @@ carried across missing dates. Future-dated scheduled entries are omitted from
 observed history; the source record remains linked. The 3-month and 1-year
 controls use a common source-observation window. The maximum loaded history is
 520 observations per source, not a claim to full lifetime history.
+
+The three OFR money-fund repo routes currently declare the configured `$B` unit
+but can return whole-dollar observations. `moneyFundBillions` is restricted to
+their exact OFR source/remote identities and matches `assemble._vol_b`: divide
+by 1e9 when the full loaded history has an absolute value above 1e6, otherwise
+retain an already normalized series. This is the existing domain-specific
+unit boundary, not a generic magnitude-based currency conversion. It runs
+before history-window filtering and includes zero observations. Regression
+fixtures check current dollar-scale observations, already-normalized history,
+latest zero and mismatched provenance.
 
 `frontend/src/research/analyticsCharts.ts` provides the shared SVG renderer. Its
 plain JavaScript transpilation and identical stylesheet are vendored into the

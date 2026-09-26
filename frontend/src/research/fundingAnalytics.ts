@@ -5,9 +5,18 @@ import './analytics.css';
 
 const API = 'https://api.seiche.info';
 export const FUNDING_KEYS = ['SOFR', 'EFFR', 'IORB', 'TGCR', 'BGCR', 'WRESBAL', 'TGA_LONG', 'RRPONTSYD', 'WALCL', 'CP_FIN_3M', 'CP_NONFIN_3M', 'DGS3M', 'DGS2', 'DGS10', 'DGS30', 'MMF_REPO_FED', 'MMF_REPO_FICC', 'MMF_REPO_TOT'];
+const MMF_REMOTE_IDS: Record<string, string> = {MMF_REPO_TOT: 'MMF-MMF_RP_TOT-M', MMF_REPO_FED: 'MMF-MMF_RP_wFR-M', MMF_REPO_FICC: 'MMF-MMF_RP_wFICC-M'};
 export function fundingPoints(model: EconomicSeries | undefined, unit: string, divisor = 1, cutoff = Date.now()): Point[] {
   if (!model || model.unit !== unit) return [];
   return model.points.map(p => ({x: Date.parse(p.date + 'T00:00:00Z'), y: p.value / divisor, label: p.date, note: `${model.key} · source state: ${model.state}`})).filter(p => p.x <= cutoff);
+}
+export function moneyFundBillions(model: EconomicSeries | undefined, cutoff = Date.now()): Point[] {
+  if (!model || model.source !== 'ofr' || !MMF_REMOTE_IDS[model.key] || model.remote !== MMF_REMOTE_IDS[model.key] || model.unit !== '$B') return [];
+  // Match assemble._vol_b: the raw OFR endpoint can retain whole dollars while
+  // declaring the configured $B unit. Inspect the full history, not its latest
+  // value or selected window, so zero balances cannot change the unit boundary.
+  const divisor = model.points.some(p => Math.abs(p.value) > 1e6) ? 1e9 : 1;
+  return fundingPoints(model, '$B', divisor, cutoff);
 }
 export function treasuryCurve(models: Map<string, EconomicSeries>, cutoff = Date.now()): {points: Point[]; date: string | null} {
   const tenors: [string, number][] = [['DGS3M', .25], ['DGS2', 2], ['DGS10', 10], ['DGS30', 30]];
@@ -23,6 +32,7 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
   const raw = (key: string, unit = '%', divisor = 1) => fundingPoints(models.get(key), unit, divisor, cutoff);
   const points = (key: string, unit = '%', divisor = 1) => windowPoints(raw(key, unit, divisor), days, end);
   const named = (key: string, name = key, unit = '%', divisor = 1): Series => ({name, points: points(key, unit, divisor)});
+  const moneyFund = (key: string, name: string): Series => ({name, points: windowPoints(moneyFundBillions(models.get(key), cutoff), days, end)});
   const spread = (left: string, right: string): Series => ({name: `${left} − ${right}`, points: windowPoints(difference(raw(left), raw(right), 100), days, end)});
   const sources = (keys: string[]) => keys.map(key => ({label: `${key} · ${models.get(key)?.label || 'Source unavailable'} · ${models.get(key)?.asOf || 'No observation date'} · ${models.get(key)?.state || 'unavailable'}`, url: `${API}/api/series/${key}`}));
   const base = (id: string, index: number, title: string, description: string, unit: string, keys: string[], note: string): ChartSpec => {
@@ -42,7 +52,7 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
     {...base('commercial-paper-premium', 6, 'Short-term corporate funding premiums', 'Three-month AA commercial paper against the three-month Treasury yield.', 'bp', ['CP_FIN_3M', 'CP_NONFIN_3M', 'DGS3M'], 'Derived from exact-date rate differences × 100. Commercial paper and Treasury yields have different market conventions; this is a reference spread, not a quoted arbitrage return.'), series: [spread('CP_FIN_3M', 'DGS3M'), spread('CP_NONFIN_3M', 'DGS3M')], zero: true},
     {...base('treasury-curve', 7, 'The Treasury term structure', `Four published maturities, all observed on ${curve.date || 'a common date that is currently unavailable'}.`, '%', ['DGS3M', 'DGS2', 'DGS10', 'DGS30'], 'Latest common observation date across all four maturities. Lines only connect the observed tenors; intervening maturities are not estimated. Independent of the history-window control.'), xType: 'linear', xLabel: 'Maturity · years', series: [{name: curve.date || 'Common date unavailable', points: curve.points}]},
     {...base('overnight-repricing', 8, 'SOFR repricing, fixing by fixing', 'Changes between consecutive available daily observations.', 'bp / observation', ['SOFR'], 'Derived: (current SOFR − previous available SOFR) × 100. Weekends and holidays are not fabricated. The series describes observed repricing, not expected volatility.'), series: [{name: 'SOFR change', points: daily}], zero: true},
-    {...base('mmf-repo-allocation', 9, 'Who receives money-fund repo cash?', 'Total repo lending alongside the Fed and FICC components.', 'USD bn', ['MMF_REPO_TOT', 'MMF_REPO_FED', 'MMF_REPO_FICC'], 'Published money-market-fund repo balances. Fed and FICC are components of the total, so these lines must not be added together. Monthly observations retain their native cadence.'), series: [named('MMF_REPO_TOT', 'Total repo', '$B'), named('MMF_REPO_FED', 'With the Fed', '$B'), named('MMF_REPO_FICC', 'With FICC', '$B')], maxGapDays: 65, zero: true},
+    {...base('mmf-repo-allocation', 9, 'Who receives money-fund repo cash?', 'Total repo lending alongside the Fed and FICC components.', 'USD bn', ['MMF_REPO_TOT', 'MMF_REPO_FED', 'MMF_REPO_FICC'], 'OFR dollar balances are normalized to billions using Seiche’s existing series-wide unit rule. Fed and FICC are components of the total, so these lines must not be added together. Monthly observations retain their native cadence.'), series: [moneyFund('MMF_REPO_TOT', 'Total repo'), moneyFund('MMF_REPO_FED', 'With the Fed'), moneyFund('MMF_REPO_FICC', 'With FICC')], maxGapDays: 65, zero: true},
     {...base('fed-balance-sheet', 10, 'The Federal Reserve balance sheet', 'Total assets provide the balance-sheet context around reserve conditions.', 'USD bn', ['WALCL'], 'H.4.1 total assets; source dollars in millions divided by 1,000. This series is not equated with reserves or combined into a synthetic net-liquidity score.'), series: [named('WALCL', 'Fed total assets', '$M', 1000)], maxGapDays: 15},
   ];
 }
