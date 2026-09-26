@@ -90,7 +90,7 @@ Changelog = "https://github.com/beepboop2025/seiche/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = [
-    "hatchling==1.32.0",
+    "hatchling==1.32.3",
     "packaging==26.3",
     "pathspec==1.1.1",
     "pluggy==1.6.0",
