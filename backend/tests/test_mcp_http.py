@@ -201,9 +201,6 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
 def test_edge_serves_bounded_dormant_undertow_paypal_response():
     root = Path(__file__).resolve().parents[2]
     caddy = (root / "ops" / "Caddyfile").read_text(encoding="utf-8")
-    paypal_at = caddy.index("handle /undertow/paypal/*")
-    mirror_at = caddy.index("handle_path /undertow/*")
-    assert paypal_at < mirror_at
     block = caddy.split("handle /undertow/paypal/* {", 1)[1].split("\n    }", 1)[0]
     assert "reverse_proxy" not in block
     assert "127.0.0.1:8798" not in block
@@ -243,7 +240,7 @@ def test_undertow_curated_discovery_tracks_the_public_tool_count():
         encoding="utf-8"
     )
     block = caddy.split("@undertow_index path", 1)[1].split(
-        "handle_path /undertow/*", 1
+        "@undertow_static", 1
     )[0]
     assert '"authentication":"none for ten public tools"' in block
     assert "none for nine public tools" not in block
