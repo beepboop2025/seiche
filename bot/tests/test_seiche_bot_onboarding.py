@@ -62,6 +62,7 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
     assert calls[1][1]["commands"] is bot.BOT_COMMANDS
     names = [command["command"] for command in calls[1][1]["commands"]]
     assert names == [
+        "menu", "funding", "trend", "community", "settings",
         "research",
         "now",
         "snap",
@@ -77,7 +78,7 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
         "start",
         "stop",
     ]
-    assert 8 <= len(names) <= 14
+    assert 8 <= len(names) <= 20
     assert any(
         command == {"command": "help",
                     "description": "Full command list and desk guide"}
@@ -155,10 +156,8 @@ def test_start_is_one_letter_glance_with_a_single_follow_action(
     assert "not investment advice" in text
     assert "/odds" not in text and "/turns" not in text
     assert "joint" not in text.lower()
-    assert keyboard == [[{
-        "text": "✉️ Read today's letter",
-        "url": f"{bot.SITE}/dispatches/",
-    }]]
+    assert any(button.get("callback_data") == "/funding" for row in keyboard for button in row)
+    assert any(button.get("url") == f"{bot.SITE}/dispatches/" for row in keyboard for button in row)
 
     subscribers = json.loads((tmp_path / "subscribers.json").read_text())
     assert "4242" in subscribers
@@ -357,7 +356,6 @@ def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch)
 
 
 _LAB_AD_FORBIDDEN = (
-    "LiquidityLabTalk",
     "creator-intel",
     "creator_intel",
     "LiquidityCryptoDesk",
@@ -377,8 +375,8 @@ def test_lab_channel_about_fits_telegram():
     assert "fail-closed" in bot.LAB_CHANNEL_ABOUT
     assert "/china" in bot.LAB_CHANNEL_ABOUT
     assert "metadata only, 0 values" in bot.LAB_CHANNEL_ABOUT
-    assert "LiquidityLabTalk" not in bot.LAB_CHANNEL_ABOUT
-    assert "LiquidityLabTalk" not in bot.LAB_CHANNEL_PIN
+    assert "LiquidityLabTalk" in bot.LAB_CHANNEL_ABOUT
+    assert "LiquidityLabTalk" in bot.LAB_CHANNEL_PIN
     assert "joint score" in bot.LAB_CHANNEL_PIN
     assert "/china" in bot.LAB_CHANNEL_PIN
     assert "never in a score or gauge" in bot.LAB_CHANNEL_PIN
@@ -389,7 +387,7 @@ def test_lab_channel_about_fits_telegram():
     assert "@riptide_anake_bot" not in bot.LAB_CHANNEL_PIN
 
 
-def test_public_storefront_keeps_talk_crypto_and_creator_intel_off_the_lab():
+def test_public_storefront_separates_crypto_and_creator_intel_and_opens_lab_discussion():
     doors = json.dumps(bot.lab_card_keyboard())
     ad_copy = "\n".join([
         bot.LAB_CHANNEL_ABOUT,
@@ -401,6 +399,7 @@ def test_public_storefront_keeps_talk_crypto_and_creator_intel_off_the_lab():
     ])
     for needle in _LAB_AD_FORBIDDEN:
         assert needle not in ad_copy
+    assert "https://t.me/LiquidityLabTalk" in doors
     assert "https://t.me/seiche_desk_bot" in doors
     assert "https://t.me/LiquiLens_bot" in doors
     assert "https://t.me/undertow_LiquiLens_bot" in doors
