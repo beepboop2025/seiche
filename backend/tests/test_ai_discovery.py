@@ -387,3 +387,41 @@ def test_financial_evidence_router_is_external_pinned_and_china_complete():
     assert "revision-safe public economic observations" in china
     assert "Far Basin model-entry gate" in china
     assert "never enters Seiche's market composite or model features" not in china
+
+
+import importlib.util
+spec = importlib.util.spec_from_file_location('build_standard_api_catalog', ROOT/'backend/scripts/build_api_catalog.py')
+catalog = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(catalog)
+
+
+def test_standard_catalog_matches_actual_inventory_and_keeps_transports_separate():
+    path = ROOT/'frontend/public/.well-known/api-catalog'
+    assert path.read_text() == catalog.render()
+    links = json.loads(path.read_text())['linkset']
+    endpoints = {item['href'] for item in links[0]['item']}
+    assert endpoints == {'https://api.seiche.info/api', 'https://api.seiche.info/mcp', 'https://api.seiche.info/api/v2/corpus/mcp'}
+    assert {item['anchor'] for item in links[1:]} == endpoints
+    for interface in links[1:]:
+        assert interface['service-desc'] and interface['service-doc']
+
+
+def test_catalog_version_tracks_metadata_instead_of_a_second_manual_inventory():
+    data = json.loads((ROOT/'frontend/public/.well-known/ai-catalog.json').read_text())
+    entry = next(e for e in data['entries'] if e['identifier'] == 'urn:air:seiche.info:mcp:funding-stress')
+    entry['data']['version'] = '9.8.7'
+    built = catalog.build_catalog(data)
+    main_mcp = next(x for x in built['linkset'] if x['anchor'] == 'https://api.seiche.info/mcp')
+    assert main_mcp['service-desc'][0]['href'].endswith('/versions/9.8.7')
+    corpus = next(x for x in built['linkset'] if x['anchor'].endswith('/api/v2/corpus/mcp'))
+    assert corpus['service-desc'][0]['href'] == 'https://seiche.info/.well-known/mcp-market-corpus.json'
+    assert (ROOT/'frontend/public/.well-known/mcp-market-corpus.json').read_text() == catalog.render_corpus_descriptor()
+
+
+def test_catalog_has_required_head_discovery_and_media_type_configuration():
+    headers = (ROOT/'frontend/public/_headers').read_text()
+    section = headers.split('/.well-known/api-catalog\n', 1)[1].split('\n\n', 1)[0]
+    assert 'Content-Type: application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"' in section
+    assert 'rel="api-catalog"' in section
+    assert 'Access-Control-Allow-Origin: *' in section
+    assert 'rel="api-catalog"' in (ROOT/'frontend/public/developers.html').read_text()

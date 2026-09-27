@@ -1,0 +1,87 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://seiche.info/.well-known/api-catalog",
+      "item": [
+        {
+          "href": "https://api.seiche.info/api"
+        },
+        {
+          "href": "https://api.seiche.info/mcp"
+        },
+        {
+          "href": "https://api.seiche.info/api/v2/corpus/mcp"
+        }
+      ]
+    },
+    {
+      "anchor": "https://api.seiche.info/api",
+      "service-desc": [
+        {
+          "href": "https://api.seiche.info/api/openapi.json",
+          "type": "application/vnd.oai.openapi+json",
+          "title": "Seiche Public REST API"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://seiche.info/developers",
+          "type": "text/html"
+        }
+      ],
+      "service-meta": [
+        {
+          "href": "https://seiche.info/terms",
+          "type": "text/html",
+          "title": "Public research use and limits"
+        }
+      ]
+    },
+    {
+      "anchor": "https://api.seiche.info/mcp",
+      "service-desc": [
+        {
+          "href": "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.beepboop2025%2Fseiche/versions/0.13.9",
+          "type": "application/json",
+          "title": "Seiche \u2014 world-markets evidence terminal"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://seiche.info/developers",
+          "type": "text/html"
+        }
+      ],
+      "service-meta": [
+        {
+          "href": "https://api.seiche.info/.well-known/mcp.json",
+          "type": "application/json",
+          "title": "Native MCP transport discovery"
+        }
+      ]
+    },
+    {
+      "anchor": "https://api.seiche.info/api/v2/corpus/mcp",
+      "service-desc": [
+        {
+          "href": "https://seiche.info/.well-known/mcp-market-corpus.json",
+          "type": "application/json",
+          "title": "Seiche Market Atlas \u2014 structured evidence corpus"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://seiche.info/developers",
+          "type": "text/html"
+        }
+      ],
+      "service-meta": [
+        {
+          "href": "https://api.seiche.info/.well-known/mcp.json",
+          "type": "application/json",
+          "title": "Native MCP transport discovery"
+        }
+      ]
+    }
+  ]
+}

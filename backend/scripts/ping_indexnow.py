@@ -60,6 +60,8 @@ STATIC_PATHS = (
     "/llms.txt",
     "/product-card.json",
     "/.well-known/ai-catalog.json",
+    "/.well-known/api-catalog",
+    "/datasets/direct-ofr/",
 )
 
 

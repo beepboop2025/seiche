@@ -85,5 +85,6 @@ Disallow: /
 # Machine-readable direct-OFR DCAT 3 catalog:     https://seiche.info/datasets/direct-ofr/catalog.jsonld
 # Agents can query the live board over MCP:     https://api.seiche.info/mcp
 
+# Standard API discovery: https://seiche.info/.well-known/api-catalog
 Agentmap: https://seiche.info/.well-known/ai-catalog.json
 Sitemap: https://seiche.info/sitemap.xml
