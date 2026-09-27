@@ -73,13 +73,15 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.8; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.9; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.13.8 estuary** connects the dark research workspace, source-dated
-economic charts and shared product navigation. The board retains its last
-verified observations during a temporary request failure. Charts and motion
-are bundled with the typed frontend; publication checks preserve generated
-evidence and reject missing credentials before a publication attempt.
+Version **0.13.9 estuary** adds ten funding analytics views to the opening page:
+overnight rates and spreads, reserves, Treasury cash, reverse repo, commercial
+paper premiums, Treasury yields, SOFR changes, repo allocation and Fed assets.
+Charts retain source dates, units and missing observations, with keyboard
+inspection, expandable views, source tables and CSV/SVG export. The typed
+frontend and the existing Undertow routing correction ship together through
+the signed application release process.
 Deployment and immutable package publication remain subject to signed release gates.
 
 The verified NY Fed historical importer covers 34 canonical instruments.

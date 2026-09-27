@@ -11,6 +11,27 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.9] - 2026-09-27
+
+### Added
+
+- Ten homepage funding analytics views built from 18 eligible source histories,
+  including overnight rates, exact-date spreads, balance-sheet series, commercial
+  paper premiums, a common-date Treasury curve, SOFR changes and repo allocation.
+- Keyboard chart inspection, expandable views, source tables and CSV/SVG export.
+  Missing observations remain unavailable and source dates and units stay visible.
+
+### Fixed
+
+- Include the reviewed Caddy route-order correction that preserves Undertow
+  service routes when Seiche's proxy configuration is sorted.
+
+### Changed
+
+- Bind the new application version with corpus receipt `r19`. Existing corpus
+  data, rights and source clocks are unchanged; prior signed tags remain immutable.
+  Runtime, package, registry and homepage publication require fresh release proof.
+
 ## [0.13.8] - 2026-09-25
 
 ### Fixed
@@ -458,7 +479,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.8...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.9...HEAD
+[0.13.9]: https://github.com/beepboop2025/seiche/compare/v0.13.8...v0.13.9
 [0.13.8]: https://github.com/beepboop2025/seiche/compare/v0.13.7...v0.13.8
 [0.13.7]: https://github.com/beepboop2025/seiche/compare/v0.13.6...v0.13.7
 [0.13.6]: https://github.com/beepboop2025/seiche/compare/v0.13.5...v0.13.6
