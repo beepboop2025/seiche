@@ -103,8 +103,8 @@ TG = f"https://api.telegram.org/bot{TOKEN}"
 # 5. @LiquidityCryptoDesk + @liquilens_crypto_bot — separate brand.
 #    Cross-link only. Never dump into the Lab card or its keyboards.
 #
-# Hidden until there is a real crowd: @LiquidityLabTalk. Never in
-# ad-facing copy (About, pin, daily card, Hermes default keyboard).
+# The owner reopened community discovery on 2026-09-27.
+# @LiquidityLabTalk is the verified linked discussion group.
 #
 # Never on the Lab channel: Corporate, RealEcon, Palimpsest, Riptide,
 # Crypto, creator-intel. Creator-intel is Lab/Demo UI when it lands; it
@@ -114,11 +114,7 @@ LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 CRYPTO_CHANNEL = "https://t.me/LiquidityCryptoDesk"
 CRYPTO_BOT = "https://t.me/liquilens_crypto_bot"
-LAB_CHANNEL_ABOUT = (
-    "One daily card: Seiche, LiquiLens, Undertow. Three named "
-    "lanes, fail-closed. China evidence identities via Seiche /china; "
-    "metadata only, 0 values. Move-only extras. Public data. Research only."
-)
+LAB_CHANNEL_ABOUT = 'One daily card: Seiche funding, LiquiLens banks, Undertow depth. Evidence stays fail-closed. /china: metadata only, 0 values. Charts and research tools in the bots. Discuss sources at @LiquidityLabTalk. Research only.'
 LAB_CHANNEL_PIN = (
     "<b>Start here</b>\n\n"
     "This channel is one daily Liquidity Lab card: three "
@@ -129,6 +125,8 @@ LAB_CHANNEL_PIN = (
     "Undertow (exit cost): @undertow_LiquiLens_bot\n\n"
     "China macro evidence identities: /china in @seiche_desk_bot. "
     "Metadata only, 0 values, never in a score or gauge.\n\n"
+    "Try /funding in Seiche, /review and /compare in LiquiLens, "
+    "/workbench in Undertow. Discuss sources at @LiquidityLabTalk.\n\n"
     "Screens, not a joint score. "
     "Public data. Research only, not investment advice."
 )
@@ -154,7 +152,7 @@ ASK_PER_CHAT_WINDOW_S = 60
 REF_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 ACTIVATION_COMMANDS = frozenset({
     "/now", "/snap", "/ask", "/letter", "/tandem",
-    "/atlas",
+    "/atlas", "/funding", "/trend",
 })
 RETENTION_TRACK_DAYS = 30
 
@@ -364,6 +362,7 @@ def lab_card_keyboard(ref: str = "lab_letter") -> list:
           "url": f"https://t.me/LiquiLens_bot?start={q}"},
          {"text": "🌊 Undertow",
           "url": f"https://t.me/undertow_LiquiLens_bot?start={q}"}],
+        [{"text": "Discuss the evidence", "url": "https://t.me/LiquidityLabTalk"}],
     ]
 
 
@@ -2010,10 +2009,155 @@ def _btn(text: str, data: str) -> dict:
     return {"text": text, "callback_data": data}
 
 
+# Public evidence only: a small in-memory cache shields the shared API budget
+# from repeated button taps. Source clocks remain in every returned card.
+_RESEARCH_CACHE: dict = {}
+
+
+def research_get(path: str):
+    now = time.monotonic()
+    cached = _RESEARCH_CACHE.get(path)
+    if cached and now < cached[0]:
+        return cached[1]
+    payload = _get_json(f"{API}{path}", timeout=8, tries=1)
+    payload = payload if isinstance(payload, dict) else None
+    if len(_RESEARCH_CACHE) >= 32:
+        _RESEARCH_CACHE.pop(next(iter(_RESEARCH_CACHE)))
+    _RESEARCH_CACHE[path] = (time.monotonic() + (45 if payload else 5), payload)
+    return payload
+
+
+COMMUNITY_URL = "https://t.me/LiquidityLabTalk"
+FUNDING_GROUPS = {
+    "overview": ("Funding snapshot", ("policy.sofr", "policy.sofr_minus_iorb", "liquidity.reserves", "liquidity.tga", "liquidity.on_rrp")),
+    "rates": ("Overnight funding", ("policy.sofr", "policy.effr", "policy.iorb", "policy.sofr_minus_iorb", "distribution.sofr.iqr")),
+    "cash": ("Cash and facilities", ("liquidity.reserves", "liquidity.tga", "liquidity.on_rrp", "liquidity.srf", "liquidity.discount_window")),
+    "credit": ("Commercial-paper funding", ("unsecured.cp_financial_3m", "unsecured.cp_nonfinancial_3m", "unsecured.treasury_3m", "unsecured.financial_cp_minus_treasury", "unsecured.nonfinancial_cp_minus_treasury")),
+}
+
+
+def _research_number(value) -> bool:
+    import math
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def funding_keyboard() -> list:
+    return [[_btn("Overnight rates", "/funding rates"), _btn("Cash buffers", "/funding cash")],
+            [_btn("Credit funding", "/funding credit"), _btn("SOFR trend", "/trend SOFR")],
+            [{"text": "Open funding charts", "url": SITE + "/"}],
+            [_btn("All tools", "/menu"), _btn("Join the community", "/community")]]
+
+
+def fmt_funding(payload: dict | None, topic: str = "overview") -> str:
+    if topic not in FUNDING_GROUPS:
+        return "Use /funding overview, /funding rates, /funding cash or /funding credit."
+    if not isinstance(payload, dict) or payload.get("schema") != "seiche.money-market-desk.v1" or payload.get("ok") is not True:
+        return "<b>Funding data unavailable</b>\nThe source did not return a current funding desk. Missing data are not calm. Try again or open the funding charts."
+    title, ids = FUNDING_GROUPS[topic]
+    metrics = {}
+    sections = payload.get("sections")
+    for section in sections if isinstance(sections, list) else []:
+        if isinstance(section, dict):
+            raw_metrics = section.get("metrics")
+            for row in raw_metrics if isinstance(raw_metrics, list) else []:
+                if isinstance(row, dict) and isinstance(row.get("id"), str):
+                    metrics[row["id"]] = row
+    lines = [f"<b>{title}</b>", f"Source as of {esc(payload.get('asof') or 'unavailable')}", ""]
+    for metric_id in ids:
+        row = metrics.get(metric_id, {})
+        label = esc(str(row.get("label") or metric_id)[:100])
+        freshness = str(row.get("freshness") or "unknown")
+        available = row.get("status") == "available" and freshness in {"fresh", "aging"} and _research_number(row.get("value")) and bool(row.get("asof"))
+        if not available:
+            lines.extend([f"<b>{label}</b>: unavailable ({esc(freshness)})", ""])
+            continue
+        lines.append(f"<b>{label}</b>: {row['value']:g} {esc(row.get('unit', ''))}")
+        delta_key = next((key for key in ("change_1d", "change_1w", "change_1m") if _research_number(row.get(key))), None)
+        if delta_key:
+            cadence = {"change_1d": "previous observation", "change_1w": "previous weekly observation", "change_1m": "previous monthly observation"}[delta_key]
+            lines.append(f"Change vs {cadence}: {row[delta_key]:+g} {esc(row.get('change_unit', ''))}")
+        lines.extend([f"{esc(row['asof'])} · {esc(freshness)}", "Source: " + esc(str(row.get("source") or "not supplied")[:120]), ""])
+    lines.extend(["<i>Different publication cadences stay separate. Descriptive funding context; no trade signal.</i>",
+                  "Compare the dated readings in the charts, then discuss what would change your interpretation."])
+    return "\n".join(lines)
+
+
+TREND_SERIES = {"SOFR", "EFFR", "IORB", "WRESBAL", "RRPONTSYD", "WALCL", "DGS3MO", "DGS2", "DGS10"}
+
+
+def fmt_series_trend(payload: dict | None, mnemonic: str) -> str:
+    if not isinstance(payload, dict):
+        return "Series history is unavailable. /funding opens the latest source snapshot."
+    provenance = payload.get("provenance") or {}
+    if not isinstance(provenance, dict) or provenance.get("mnemonic") != mnemonic:
+        return "The source did not identify the requested series. No trend is inferred."
+    points = payload.get("points")
+    if not isinstance(points, list):
+        return "Series observations are unavailable. No trend is inferred."
+    valid = [p for p in points if isinstance(p, list) and len(p) == 2 and isinstance(p[0], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", p[0]) and _research_number(p[1])]
+    if len(valid) != len(points) or len(valid) < 2 or any(a[0] >= b[0] for a, b in zip(valid, valid[1:])):
+        return "Series history has missing or inconsistent observations. No continuous trend is inferred."
+    first, last = valid[0], valid[-1]
+    freshness = str(provenance.get("staleness") or "unknown")
+    lines = [f"<b>{esc(mnemonic)} · {esc(provenance.get('label') or mnemonic)}</b>",
+             f"{first[0]} → {last[0]} · {len(valid)} published observations",
+             f"Evidence freshness: {esc(freshness)}", "",
+             "<code>" + spark([p[1] for p in valid]) + "</code>",
+             f"First: {first[1]:g} {esc(provenance.get('unit', ''))}",
+             f"Last: {last[1]:g} {esc(provenance.get('unit', ''))}",
+             f"Observed change: {last[1] - first[1]:+g} {esc(provenance.get('unit', ''))}", "",
+             "Source: " + esc(str(provenance.get("source") or "unavailable")),
+             "Retrieved: " + esc(str(provenance.get("fetched_at") or "not supplied")),
+             "Historical observations; missing days are not filled. The sparkline shows direction, not a forecast."]
+    if freshness != "fresh":
+        lines.append("<b>This series is not confirmed fresh; do not read its last value as a current quote.</b>")
+    return "\n".join(lines)
+
+
+def fmt_tools_menu() -> str:
+    return ("<b>Seiche research desk</b>\n\n"
+            "Start with the question you want to answer:\n"
+            "• <b>What changed in funding?</b> /funding shows source dates and changes.\n"
+            "• <b>How did a series move?</b> /trend SOFR shows 20 published observations.\n"
+            "• <b>What does it mean?</b> /ask answers from the served board.\n"
+            "• <b>Where is the evidence?</b> /atlas and /research open the source network.\n\n"
+            "/settings shows your delivery status. /community opens discussions and sharing. "
+            "You can use these tools without following the daily letter.")
+
+
+def community_keyboard() -> list:
+    share = "https://t.me/share/url?" + urllib.parse.urlencode({
+        "url": BOT_URL + "?start=tool_funding",
+        "text": "Track dollar funding with dated source readings and history in Seiche. Join the Liquidity Lab discussion to compare the evidence."})
+    return [[{"text": "Join Lab discussion", "url": COMMUNITY_URL}, {"text": "Follow public brief", "url": LAB_LINK}],
+            [{"text": "Share funding tools", "url": share}],
+            [{"text": "Review a bank", "url": "https://t.me/LiquiLens_bot?start=tool_review"},
+             {"text": "Compare crypto exits", "url": "https://t.me/undertow_LiquiLens_bot?start=tool_workbench"}],
+            [_btn("Back to tools", "/menu")]]
+
+
+def fmt_community() -> str:
+    return ("<b>Liquidity Lab · research together</b>\n\n"
+            "Discuss Seiche funding readings, LiquiLens institution filings and Undertow market depth. "
+            "The channel carries the public brief; the group is where readers can question the evidence.\n\n"
+            "A useful contribution: what changed, the dated source, and what would change your conclusion. "
+            "Keep personal account details private.\n\n"
+            "Tap Join to enter the discussion, or Share to invite someone to try a useful tool.")
+
+
 def keyboard_for(cmd: str) -> list | None:
     """Inline keyboard rows per command. A button tap IS a command."""
-    if cmd == "/start":
-        return [[{"text": "✉️ Read today's letter", "url": f"{SITE}/dispatches/"}]]
+    if cmd in ("/start", "/menu"):
+        return [[_btn("Funding snapshot", "/funding"), _btn("SOFR history", "/trend SOFR")],
+                [_btn("Research tools", "/menu"), _btn("Community", "/community")],
+                [{"text": "Read today's letter", "url": f"{SITE}/dispatches/"}]]
+    if cmd in ("/funding", "/trend"):
+        return funding_keyboard()
+    if cmd == "/community":
+        return community_keyboard()
+    if cmd == "/settings":
+        return [[_btn("Follow letter", "/start"), _btn("Stop deliveries", "/stop")],
+                [_btn("Data and privacy", "/privacy"), _btn("Tools", "/menu")]]
     if cmd == "/help":
         return [[_btn("🌡 Full gauge", "/now"),
                  _btn("📰 Today's article", "/article")],
@@ -2122,7 +2266,8 @@ def fmt_welcome(index: list | None) -> str:
         )
     lines.extend([
         "",
-        "/help opens the full desk · /stop unsubscribes.",
+        "Try /funding or /trend SOFR. /menu opens the tools; /community opens discussions.",
+        "/help lists commands; /stop unsubscribes.",
         "",
         "<i>Public data. Research context only — not investment advice.</i>",
     ])
@@ -2325,6 +2470,9 @@ def _safe_record_activation(chat_id: int, command: str) -> bool:
         return False
 
 
+HELP += '\n\n/menu — research workflows · /funding — dated funding changes · /trend SOFR — source history · /community — discussion · /settings — delivery controls'
+
+
 def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     raw_cmd, _, arg = text.strip().partition(" ")
     cmd, _, suffix = raw_cmd.partition("@")
@@ -2342,7 +2490,7 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     # A shared chat has one chat_id but many people who can issue commands.
     # Subscription mutations therefore belong in a one-person private chat;
     # read-only desk commands continue through the normal group path below.
-    if cmd in ("/start", "/stop", "/delete_me") and chat_type != "private":
+    if cmd in ("/start", "/stop", "/delete_me", "/settings") and chat_type != "private":
         send(chat_id, PRIVATE_SUBSCRIPTION_PROMPT,
              PRIVATE_SUBSCRIPTION_KEYBOARD)
         return
@@ -2352,6 +2500,34 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         and (cmd != "/ask" or bool(arg.strip()))
     ):
         _safe_record_activation(chat_id, cmd)
+    if cmd == "/start" and arg.strip() in {"tool_funding", "tool_menu"}:
+        _safe_record_first_open(chat_id, arg.strip())
+        handle(chat_id, "/funding" if arg.strip() == "tool_funding" else "/menu", chat_type)
+        return
+    if cmd == "/menu":
+        send(chat_id, fmt_tools_menu(), keyboard_for("/menu"))
+        return
+    if cmd == "/community":
+        send(chat_id, fmt_community(), community_keyboard())
+        return
+    if cmd == "/settings":
+        following = str(chat_id) in load_state("subscribers.json", {})
+        send(chat_id, "<b>Delivery settings</b>\n" + ("Following" if following else "Not following")
+             + " the daily 11:30 UTC letter, state-change alerts and routed news. "
+             "Use the buttons to follow or stop. Research tools remain available.", keyboard_for("/settings"))
+        return
+    if cmd == "/funding":
+        topic = arg.strip().lower() or "overview"
+        payload = research_get("/api/money-markets") if topic in FUNDING_GROUPS else None
+        send(chat_id, fmt_funding(payload, topic), funding_keyboard())
+        return
+    if cmd == "/trend":
+        series = arg.strip().upper() or "SOFR"
+        if series not in TREND_SERIES:
+            send(chat_id, "Use /trend followed by: " + ", ".join(sorted(TREND_SERIES)), funding_keyboard())
+        else:
+            send(chat_id, fmt_series_trend(research_get("/api/series/" + series + "?n=20"), series), funding_keyboard())
+        return
     if cmd == "/start":
         ref = arg.strip() if REF_RE.fullmatch(arg.strip()) else ""
         _safe_record_first_open(chat_id, ref)
@@ -2712,11 +2888,17 @@ BOT_SHORT_DESCRIPTION = (
 )
 BOT_DESCRIPTION = (
     "Public US dollar-funding board from Fed, NY Fed, OFR and Treasury "
-    "records. One daily letter at 11:30 UTC, plus state-change alerts. "
+    "records. /funding for rates and cash buffers; /trend for history; "
+    "/community to discuss evidence. One daily letter at 11:30 UTC, plus state-change alerts. "
     "Research context only; not investment advice. Free, no sign-in: "
     "seiche.info"
 )
 BOT_COMMANDS = [
+    {"command": "menu", "description": "Choose a funding research workflow"},
+    {"command": "funding", "description": "Dated rates, cash buffers and funding changes"},
+    {"command": "trend", "description": "20 published observations: /trend SOFR"},
+    {"command": "community", "description": "Join discussions or share a useful tool"},
+    {"command": "settings", "description": "Your private delivery status and controls"},
     {"command": "research", "description": "Connected sources, funding, institutions and liquidity"},
     {"command": "now", "description": "The gauge: regime, composite, the Tell"},
     {"command": "snap", "description": "The forwardable gauge card"},
