@@ -46,6 +46,7 @@ H10_DAILY_REMOTE_IDS = frozenset(
     }
 )
 _NEW_YORK = ZoneInfo("America/New_York")
+DTS_SOURCE_URL = "https://home.treasury.gov/policy-issues/financial-markets-financial-institutions-and-fiscal-service/cash-and-debt-forecasting"
 
 
 @lru_cache(maxsize=8)
@@ -55,6 +56,51 @@ def _federal_holidays(year: int) -> frozenset[date]:
         .holidays(start=f"{year}-01-01", end=f"{year}-12-31")
         .date
     )
+
+
+def treasury_dts_freshness(asof: str, *, now: datetime) -> dict:
+    """DTS is due by 16:00 New York on the following federal business day.
+
+    The deadline is an expectation, never an observed publication timestamp.
+    Preserve weekends, holidays and the intraday cutoff in read-time checks.
+    """
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("publication evaluation time must be timezone-aware")
+
+    def business(day: date) -> bool:
+        return day.weekday() < 5 and day not in _federal_holidays(day.year)
+
+    def previous(day: date) -> date:
+        day -= timedelta(days=1)
+        while not business(day):
+            day -= timedelta(days=1)
+        return day
+
+    local_now = now.astimezone(_NEW_YORK)
+    release_day = local_now.date()
+    if not business(release_day) or local_now.time() < time(16):
+        release_day = previous(release_day)
+    expected_day = previous(release_day)
+    observed = date.fromisoformat(asof)
+    missed = 0
+    cursor = expected_day
+    while cursor > observed:
+        missed += 1
+        cursor = previous(cursor)
+    return {
+        "freshness": "fresh" if missed == 0 else "aging" if missed == 1 else "stale",
+        "freshness_policy": "treasury-dts-next-business-day-v1",
+        "publication_schedule": {
+            "source_url": DTS_SOURCE_URL,
+            "timezone": "America/New_York",
+            "rule": "16:00 on the following federal business day",
+            "clock_precision": "scheduled",
+            "latest_due_at": datetime.combine(release_day, time(16), _NEW_YORK).isoformat(),
+            "actual_published_at": None,
+            "expected_observation_date": expected_day.isoformat(),
+            "missed_publication_opportunities": missed,
+        },
+    }
 
 
 @lru_cache(maxsize=64)

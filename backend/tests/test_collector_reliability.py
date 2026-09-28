@@ -101,7 +101,7 @@ async def test_latest_run_restores_schedule_and_circuit_across_supervisors(
     assert failed.status is CollectorRunStatus.FAILED
     assert failed.consecutive_failures == 5
     assert failed.circuit_open_until == (now + timedelta(minutes=15)).isoformat()
-    assert failed.next_due == (now + timedelta(days=1)).isoformat()
+    assert failed.next_due == (now + timedelta(hours=1)).isoformat()
     restarted_adapter = _Adapter(RuntimeError("must not be called"))
     restarted = CollectorSupervisor(
         observation_writer=repository.save_observations,
@@ -151,7 +151,7 @@ async def test_policy_unavailable_preflight_supersedes_restored_circuit() -> Non
     assert run.attempts == 0
     assert run.consecutive_failures == 0
     assert run.circuit_open_until is None
-    assert run.next_due == (now + timedelta(days=1)).isoformat()
+    assert run.next_due == (now + timedelta(hours=1)).isoformat()
     assert run.fault == "ACCESS_POLICY: source access policy is unavailable"
     assert adapter.checks == 1
 

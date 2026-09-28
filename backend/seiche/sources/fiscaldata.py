@@ -13,7 +13,7 @@ import pandas as pd
 
 from seiche import store
 from seiche.sources._async_store import run_store
-from seiche.config import AUCTIONS_START, FISCAL_TTL_MIN, TGA_START, USER_AGENT
+from seiche.config import AUCTIONS_START, FISCAL_TTL_MIN, TGA_START, TGA_TTL_MIN, USER_AGENT
 from seiche.sources.base import SourceFault, utcnow_iso
 
 BASE = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -40,7 +40,7 @@ async def _get_all_pages(client: httpx.AsyncClient, path: str, params: dict, max
 async def fetch_tga_daily(client: httpx.AsyncClient, start: str = TGA_START) -> dict:
     """Daily TGA opening balance, $B."""
     key = "fiscal_tga_daily"
-    cached = await run_store(store.load_blob, key, FISCAL_TTL_MIN)
+    cached = await run_store(store.load_blob, key, TGA_TTL_MIN)
     if cached is None:
         try:
             # Pre-2021 the DTS labels the TGA row "Federal Reserve Account"

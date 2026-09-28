@@ -111,6 +111,13 @@ _NYFED_RATE_CLOCK = PublicationClock(
     precision=PublicationClockPrecision.SCHEDULED,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
+_TREASURY_DTS_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(16, 0),
+    business_day_lag=1,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
 _NYFED_UNSECURED_RATE_CLOCK = PublicationClock(
     timezone_name="America/New_York",
     local_time=time(9, 0),
@@ -190,18 +197,31 @@ PACK = MarketPack(
     ),
     policy_regime=PolicyRegime.FLOOR,
     source_adapters=(
-        SourceAdapterSpec("fred_daily", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW),
+        SourceAdapterSpec(
+            "fred_daily", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW,
+            collection_cadence="PT1H",
+        ),
         SourceAdapterSpec("fred_weekly", _OPEN, "P1W", _FRED_WEEKLY_CLOCK, _ALLOW),
-        SourceAdapterSpec("nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW),
+        SourceAdapterSpec(
+            "nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW,
+            collection_cadence="PT1H",
+        ),
         SourceAdapterSpec(
             "nyfed_unsecured_rates",
             _OPEN,
             "P1D",
             _NYFED_UNSECURED_RATE_CLOCK,
             _ALLOW,
+            collection_cadence="PT1H",
         ),
-        SourceAdapterSpec("nyfed_facilities", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW),
-        SourceAdapterSpec("fiscaldata", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW),
+        SourceAdapterSpec(
+            "nyfed_facilities", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW,
+            collection_cadence="PT1H",
+        ),
+        SourceAdapterSpec(
+            "fiscaldata", _OPEN, "P1D", _TREASURY_DTS_CLOCK, _ALLOW,
+            collection_cadence="PT1H",
+        ),
     ),
     instruments=(
         InstrumentSpec(
@@ -225,6 +245,7 @@ PACK = MarketPack(
             100,
             _SIMPLE,
             _ACT_360,
+            freshness_clock=_NYFED_RATE_CLOCK,
         ),
         InstrumentSpec(
             "US.NYFED.EFFR",
@@ -236,6 +257,7 @@ PACK = MarketPack(
             100,
             _SIMPLE,
             _ACT_360,
+            freshness_clock=_NYFED_UNSECURED_RATE_CLOCK,
         ),
         InstrumentSpec(
             "US.FED.POLICY_CEILING",

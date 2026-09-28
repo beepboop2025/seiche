@@ -531,7 +531,8 @@ WINDFETCH_TTL_MIN = 360
 # NY Fed + FiscalData + CFTC are fetched through dedicated collectors
 # (structured payloads, not single series). TTLs below.
 NYFED_TTL_MIN = 240        # rates with percentiles, SRF ops
-FISCAL_TTL_MIN = 360       # daily TGA, auctions
+FISCAL_TTL_MIN = 360       # auctions
+TGA_TTL_MIN = 60           # poll releases hourly; daily observations remain daily
 CFTC_TTL_MIN = 1440        # COT is weekly; daily check is plenty
 PD_TTL_MIN = 720           # primary dealer stats are weekly (Thu 4:15pm ET)
 

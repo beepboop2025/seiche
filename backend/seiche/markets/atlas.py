@@ -13,6 +13,7 @@ import re
 import statistics
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
@@ -28,7 +29,7 @@ from seiche.domain.observation import (
     SemanticRole,
     StalenessState,
 )
-from seiche.markets.base import MarketPack
+from seiche.markets.base import MarketPack, PublicationClock
 from seiche.markets.base import CalendarUnavailableError
 
 ATLAS_SCHEMA = "seiche.global-money-markets.v1"
@@ -1231,14 +1232,26 @@ def _publication_opportunity_clock(
     adapter,
     calendar,
     cutoff: datetime,
+    *,
+    publication_clock: PublicationClock | None = None,
 ) -> tuple[StalenessState, int | None, datetime | None, str]:
     """Age a row by source publication opportunities, not wall-clock days."""
 
     if latest.source_publication_time is None:
         return (StalenessState.UNKNOWN, None, None, "source publication time unknown")
 
+    if publication_clock is not None:
+        adapter = replace(adapter, publication_clock=publication_clock)
+
     local_zone = calendar.timezone
-    event_day = latest.event_time.astimezone(local_zone).date()
+    # Canonical daily/weekly events are source business-date labels stored at
+    # UTC midnight, not instants to shift into the previous New York session.
+    event_day = (
+        latest.event_time.astimezone(UTC).date()
+        if not adapter.expected_cadence.startswith("PT")
+        and latest.event_time.astimezone(UTC).time() == time.min
+        else latest.event_time.astimezone(local_zone).date()
+    )
     try:
         # These calls validate both ends of the clock even when no opportunity
         # falls between them.  An unreviewed calendar year must fail loud.
@@ -1312,11 +1325,12 @@ def _publication_opportunity_clock(
             f"calendar unavailable ({type(exc).__name__})",
         )
 
+    strict_daily = latest.market_id == "US-USD" and adapter.expected_cadence == "P1D"
     aged = (
         StalenessState.FRESH
-        if missed <= 2
+        if missed <= (0 if strict_daily else 2)
         else StalenessState.AGING
-        if missed <= 4
+        if missed <= (1 if strict_daily else 4)
         else StalenessState.STALE
         if missed <= 8
         else StalenessState.DEAD
@@ -1488,6 +1502,7 @@ def _metric(
             adapter,
             pack.settlement_calendar,
             cutoff,
+            publication_clock=instrument.freshness_clock,
         )
         if clock_latest is not None
         else None
@@ -1745,12 +1760,14 @@ def _spread_metric(
         benchmark_adapter,
         pack.settlement_calendar,
         cutoff,
+        publication_clock=benchmark.freshness_clock,
     )
     anchor_clock = _publication_opportunity_clock(
         latest_anchor,
         anchor_adapter,
         pack.settlement_calendar,
         cutoff,
+        publication_clock=anchor.freshness_clock,
     )
     states = (benchmark_clock[0], anchor_clock[0])
     state_rank = {
@@ -2087,6 +2104,7 @@ def build_global_money_market_atlas(
                 "classification": adapter.classification.value,
                 "redistribution_status": adapter.redistribution_status.value,
                 "expected_cadence": adapter.expected_cadence,
+                "collection_cadence": adapter.collection_cadence or adapter.expected_cadence,
                 "source_url": _SOURCE_URLS.get(adapter.adapter_id),
                 "last_run_status": (
                     run.get("status")
@@ -2285,7 +2303,7 @@ def build_global_money_market_atlas(
             "percentile": "tie-aware empirical midrank over observations in the trailing three elapsed calendar years; minimum 20 observations",
             "policy_spread": "exact event-time intersection in canonical basis points, aged by the worse input publication clock",
             "frequency": "changes are observation-count based and retain each adapter's native cadence",
-            "freshness": "observation currentness counts missed pack-calendar publication opportunities using adapter lag/time; FRESH <=2, AGING 3-4, STALE 5-8, DEAD >=9; invalid calendars are UNKNOWN and collector health never refreshes an old observation",
+            "freshness": "observation currentness counts missed pack-calendar publication opportunities using adapter lag/time; US daily FRESH 0, AGING 1, STALE 2-8; other native cadences FRESH <=2, AGING 3-4, STALE 5-8; DEAD >=9; invalid calendars are UNKNOWN and collector health never refreshes an old observation",
             "publication_boundary": "already collected canonical observations; no collection on request",
             "role": "context-only; does not enter the Seiche composite or constitute investment advice",
         },

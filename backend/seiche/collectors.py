@@ -343,12 +343,23 @@ class CollectorSupervisor:
     ) -> list[CollectorRun]:
         """Run normal schedules plus explicitly scoped startup initialization.
 
-        An early startup run retains its saved daily deadline. Source policy,
+        An early startup run retains its saved deadline, bounded by any newly
+        configured polling interval. Source policy,
         circuit state, retries and all persistence still use ``_run_one``;
         only a newly opened circuit may postpone that original deadline.
         """
 
         current = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+        # A newly configured polling interval also bounds inherited daily
+        # deadlines. Preserve active circuit holds across this migration.
+        for key, task in self._tasks.items():
+            if task.spec.collection_cadence is not None:
+                state = self._states[key]
+                bounded = min(
+                    state.next_due,
+                    current + cadence_delta(task.spec.collection_cadence),
+                )
+                state.next_due = max(bounded, state.open_until or bounded)
         due = [
             (key, task)
             for key, task in self._tasks.items()
@@ -408,7 +419,9 @@ class CollectorSupervisor:
     ) -> CollectorRun:
         state = self._states[key]
         started = datetime.now(UTC).replace(microsecond=0)
-        cadence = cadence_delta(task.spec.expected_cadence)
+        cadence = cadence_delta(
+            task.spec.collection_cadence or task.spec.expected_cadence
+        )
 
         def unavailable_run(
             fault: SourcePolicyUnavailableError,

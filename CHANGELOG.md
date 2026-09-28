@@ -11,6 +11,25 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.10] - 2026-09-29
+
+### Fixed
+
+- Poll US funding sources hourly while retaining their native daily observation
+  cadence, and bound inherited daily deadlines without bypassing circuit holds.
+- Preserve canonical business-date labels when evaluating publication clocks;
+  US daily observations with missed releases can no longer report fresh.
+- Evaluate TGA against Treasury's next-business-day 16:00 New York deadline,
+  including federal holidays and daylight saving time, at build and read time.
+  Scheduled deadlines remain separate from unknown actual publication times.
+- Refresh the legacy TGA cache hourly so the desk can collect newly released
+  statements without waiting for the auctions cache's six-hour interval.
+
+### Changed
+
+- Bind the application version with corpus receipt `r20`; existing corpus data,
+  source clocks, and rights retain their original evidence boundaries.
+
 ## [0.13.9] - 2026-09-27
 
 ### Added
@@ -479,7 +498,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.9...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.10...HEAD
+[0.13.10]: https://github.com/beepboop2025/seiche/compare/v0.13.9...v0.13.10
 [0.13.9]: https://github.com/beepboop2025/seiche/compare/v0.13.8...v0.13.9
 [0.13.8]: https://github.com/beepboop2025/seiche/compare/v0.13.7...v0.13.8
 [0.13.7]: https://github.com/beepboop2025/seiche/compare/v0.13.6...v0.13.7

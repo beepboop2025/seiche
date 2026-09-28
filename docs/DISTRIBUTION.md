@@ -4,11 +4,10 @@ Seiche publishes one version identity across PyPI, the official MCP Registry,
 scientific metadata, and the GHCR container. The repository contracts reject a
 release when those surfaces drift.
 
-Version **0.13.9 estuary** adds ten funding analytics views to the homepage,
-with source tables, keyboard inspection, expandable views and CSV/SVG export.
-Source dates, units, missing observations and evidence restrictions remain explicit. Versioned commands below apply only after this
-version completes its signed release and publication gates; they do not
-establish current package or container availability.
+Version **0.13.10 estuary** repairs US funding collection recurrence and
+publication-aware freshness. Hourly polling retains native daily observations;
+TGA uses Treasury's next-business-day publication deadline. Signed application,
+recovery, package and registry receipts remain separate acceptance boundaries.
 
 The repository front door lists every supported surface in
 [`README.md`](../README.md#use-seiche-everywhere). Public publication state is
@@ -44,8 +43,8 @@ drop-in replacement for the hosted deployment.
 
 Published images use these tags:
 
-- the release version, such as `0.13.9`;
-- the Git tag, such as `v0.13.9`;
+- the release version, such as `0.13.10`;
+- the Git tag, such as `v0.13.10`;
 - the first 12 hexadecimal characters of the source commit, prefixed with
   `sha-`;
 - `latest` for a non-prerelease GitHub Release.
@@ -75,7 +74,7 @@ IMAGE=ghcr.io/beepboop2025/seiche
 ROOT_DIGEST=sha256:<index-digest>
 AMD64_DIGEST=sha256:<amd64-child-digest>
 ARM64_DIGEST=sha256:<arm64-child-digest>
-RELEASE_TAG=v0.13.9
+RELEASE_TAG=v0.13.10
 SOURCE_SHA=<40-hex-signed-commit>
 for platform in linux/amd64 linux/arm64; do
   DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" docker pull \

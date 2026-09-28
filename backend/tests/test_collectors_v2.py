@@ -427,7 +427,7 @@ async def test_cancelled_cycle_reaps_pending_collector_tasks() -> None:
 @pytest.mark.asyncio
 async def test_source_schedule_does_not_run_before_its_own_cadence() -> None:
     now = datetime(2026, 8, 9, 10, tzinfo=UTC)
-    adapter = _FakeAdapter("US-USD", "fred_daily", now)
+    adapter = _FakeAdapter("JP-JPY", "boj_rates", now)
     supervisor = CollectorSupervisor(observation_writer=lambda rows: len(rows))
     supervisor.register(adapter)
 
@@ -663,7 +663,7 @@ async def test_nyfed_startup_initializes_only_missing_group_and_keeps_durable_du
     runs = await supervisor.run_due(now=now, startup_due=selected)
     assert {run.adapter_id for run in runs} == {missing_adapter, "fred_daily"}
     assert added.calls == normal.calls == 1 and untouched.calls == 0
-    expected_due = (now + timedelta(hours=14)).isoformat()
+    expected_due = (now + timedelta(hours=1)).isoformat()
     run = next(run for run in runs if run.adapter_id == missing_adapter)
     assert run.status is CollectorRunStatus.SUCCESS and run.next_due == expected_due
     assert (missing_adapter, expected_due) in completions
@@ -767,7 +767,7 @@ async def test_nyfed_startup_preserves_failure_history_and_circuit(open_circuit)
     )
     assert run.consecutive_failures == (3 if open_circuit else 4)
     assert (adapter.calls == 0) is open_circuit
-    assert run.next_due == max(now + timedelta(hours=14), open_until or now).isoformat()
+    assert run.next_due == max(now + timedelta(hours=1), open_until or now).isoformat()
     assert published[0]["next_due"] == run.next_due
     assert published[0]["consecutive_failures"] == run.consecutive_failures
 
@@ -798,7 +798,7 @@ async def test_nyfed_startup_does_not_bypass_policy_or_duplicate_a_normally_due_
     )
     assert (
         next(run for run in runs if run.adapter_id == "nyfed_unsecured_rates").next_due
-        == (now + timedelta(days=1)).isoformat()
+        == (now + timedelta(hours=1)).isoformat()
     )
 
 

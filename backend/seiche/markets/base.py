@@ -253,12 +253,19 @@ class SourceAdapterSpec:
     backoff_seconds: float = 1.5
     circuit_breaker_failures: int = 5
     circuit_breaker_cooldown_seconds: int = 900
+    # Acquisition can run more often than the source publishes observations.
+    # Keep expected_cadence native for freshness, statistics and history.
+    collection_cadence: str | None = None
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", self.adapter_id):
             raise ValueError("adapter_id must be a lowercase path-safe identifier")
         if not re.fullmatch(r"P(?:T\d+[HMS]|\d+D|\d+W)", self.expected_cadence):
             raise ValueError("expected_cadence must be a simple ISO-8601 duration")
+        if self.collection_cadence is not None and not re.fullmatch(
+            r"P(?:T[1-9]\d*[HMS]|[1-9]\d*D|[1-9]\d*W)", self.collection_cadence
+        ):
+            raise ValueError("collection_cadence must be a positive ISO-8601 duration")
         if self.retry_limit < 0 or self.backoff_seconds < 0:
             raise ValueError("retry settings cannot be negative")
         if self.circuit_breaker_failures < 1:
@@ -283,6 +290,9 @@ class InstrumentSpec:
     value_multiplier: Decimal | int | float | str = Decimal("1")
     rate_compounding: RateCompounding | None = None
     day_count: DayCountConvention | None = None
+    # A mixed source adapter can carry benchmarks with distinct release times.
+    # This schedule governs currentness only, never an observed publication time.
+    freshness_clock: PublicationClock | None = None
 
     def __post_init__(self) -> None:
         if not self.instrument_id.strip() or not self.mnemonic.strip():

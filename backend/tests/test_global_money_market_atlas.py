@@ -889,7 +889,9 @@ def test_publication_clock_respects_weekends_holidays_and_china_working_weekends
         as_of=datetime(2026, 7, 3, 12, tzinfo=UTC),
     )["markets"][0]["benchmark"]
     assert holiday_metric["missed_publication_opportunities"] == 0
-    assert holiday_metric["expected_next_update"].startswith("2026-07-06")
+    # The next observation after the declared holiday is Monday; EFFR is
+    # released on the following business day, unlike the same-day IORB series.
+    assert holiday_metric["expected_next_update"].startswith("2026-07-07")
 
     china_pack = _pbc_calendar_test_pack()
     before_working_weekend = datetime(2026, 2, 13, tzinfo=UTC)

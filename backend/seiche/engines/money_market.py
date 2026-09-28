@@ -24,6 +24,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from seiche.sources.publication import treasury_dts_freshness
+
 SCHEMA = "seiche.money-market-desk.v1"
 DAILY_CHART_ROWS = 180
 MONTHLY_CHART_ROWS = 36
@@ -548,6 +550,18 @@ def _freshness_status(age_days: int, cadence: str) -> str:
     if age_days <= aging:
         return "aging"
     return "stale"
+
+
+def _apply_tga_publication_clock(row: dict, evaluated_at: object) -> None:
+    if (
+        row.get("id") not in {"liquidity.tga", "fiscal_tga"}
+        or not row.get("asof")
+        or row.get("freshness") == "unavailable"
+    ):
+        return
+    moment = pd.Timestamp(evaluated_at)
+    moment = moment.tz_localize("UTC") if moment.tzinfo is None else moment.tz_convert("UTC")
+    row.update(treasury_dts_freshness(row["asof"], now=moment.to_pydatetime()))
 
 
 def _regime_state(score: float | None) -> str:
@@ -2146,6 +2160,8 @@ def analyze(
         )
         for source_id, label, publisher, series_id, cadence, values in source_specs
     ]
+    for row in source_metadata:
+        _apply_tga_publication_clock(row, evaluation_asof if evaluation_asof is not None else evaluated_at)
     status_counts = {
         status: sum(row["freshness"] == status for row in source_metadata)
         for status in ("fresh", "aging", "stale", "unavailable")
@@ -2164,6 +2180,7 @@ def analyze(
         )
         metric["age_days_vs_evaluation_asof"] = metric_age_days
         metric["freshness"] = _freshness_status(metric_age_days, metric["cadence"])
+        _apply_tga_publication_clock(metric, evaluation_asof if evaluation_asof is not None else evaluated_at)
     _refresh_section_clocks(sections)
     historical_available_metrics = sum(
         metric["status"] == "available" for metric in all_metrics
@@ -2729,6 +2746,7 @@ def refresh_for_evaluation(
                     age,
                     str(metric.get("cadence") or "daily"),
                 )
+                _apply_tga_publication_clock(metric, evaluation_asof)
     _refresh_section_clocks(sections)
 
     source_metadata = out.get("source_metadata") or out.get("sources") or []
@@ -2741,6 +2759,7 @@ def refresh_for_evaluation(
             if age is not None
             else "unavailable"
         )
+        _apply_tga_publication_clock(row, evaluation_asof)
     out["source_metadata"] = source_metadata
     out["sources"] = copy.deepcopy(source_metadata)
 
