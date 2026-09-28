@@ -34,6 +34,9 @@ they change a public contract, methodology, or release artifact.
   handles explicitly, and give waiting writers a longer yield between steps.
 - Poll the sparse daily OFR GCF rate and volume feeds hourly so a new actual
   print can replace older context promptly; no-print dates remain missing.
+- Require signed installation and attestation-policy data for the actual native
+  recovery deployment before it can lock, sign or export; missing admission
+  waits within a fixed bound and invalid admission fails closed.
 
 ### Changed
 

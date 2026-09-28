@@ -13,6 +13,7 @@ from unittest import mock
 
 import attest
 import recurring
+import native_installation_gate
 import verify
 
 
@@ -93,6 +94,7 @@ class NativeAdmissionTests(unittest.TestCase):
         self.patch(mock.patch.object(recurring, "ROOT", self.controller))
         self.patch(mock.patch.object(recurring, "TRUSTED", self.controller / "trusted"))
         self.patch(mock.patch.object(recurring, "Path", side_effect=lambda path: self.root / "evidence" if str(path) == "/evidence/native" else Path(path)))
+        self.patch(mock.patch.object(native_installation_gate, "admit", return_value={}))
         self.keys = self.patch(mock.patch.object(recurring, "validate_signers", side_effect=lambda *args: self.trace.append("keys")))
         self.source_check = self.patch(mock.patch.object(recurring, "source_identity", side_effect=lambda *args: self.trace.append("source") or self.source))
         self.monitor = self.patch(mock.patch.object(recurring, "monitor", side_effect=lambda *args: self.trace.append("monitor") or {"deployment_id": self.uuid, "release_sha": self.source}))

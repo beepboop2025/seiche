@@ -12,8 +12,6 @@ import subprocess
 import tempfile
 import time
 
-from prepare import admitted_source_paths
-
 import verify
 
 
@@ -24,6 +22,7 @@ MONITOR_NAMES = ("RAILWAY_TOKEN", "RAILWAY_EDGE_TOKEN", "RAILWAY_RECOVERY_PROBE_
 
 def source_identity(policy, private):
     """Fetched source is read as data; only manifest-pinned controller bytes execute."""
+    from prepare import admitted_source_paths
     env = verify.environment(private)
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0")
     repo = private / "source-identity"
@@ -197,6 +196,8 @@ def main():
         raise RuntimeError("native governed export confirmation is missing")
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     os.umask(0o077)
+    import native_installation_gate
+    native_installation_gate.admit()
     lock_root = Path("/evidence/native")
     lock_root.mkdir(parents=True, mode=0o700, exist_ok=True)
     with (lock_root / ".execution.lock").open("a") as lock:

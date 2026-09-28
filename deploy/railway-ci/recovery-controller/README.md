@@ -99,7 +99,19 @@ are excluded from runtime admission. The original strict 26-hour monitor still
 runs first with its three existing isolated inputs.
 
 Activation requires `RECOVERY_OPERATION=export-recurring` and
-`RECOVERY_CONFIRMATION=EXPORT_WITHOUT_AUTHORITY_CHANGE`. The registered production
+`RECOVERY_CONFIRMATION=EXPORT_WITHOUT_AUTHORITY_CHANGE`. Before taking a lock or
+creating export evidence, the versioned installation gate requires owner-signed
+`installation.json` and `policy.json`, with their `.sig` files, under
+`/evidence/native/admissions/<actual deployment ID>/`. The installation uses the
+existing `seiche-railway-recovery-installation-v1` SSH namespace; the tail policy
+uses `seiche-railway-recovery-tail-policy-v1`. Both documents must be canonical
+and match the actual deployment, configured image digest, project, environment,
+service, source, image manifest, evidence key and reviewed tail inputs and targets.
+The volume supplies signed data only; admission code remains part of the image.
+The operator must verify the protected tail configuration and publish the complete
+admission directory atomically. Absent data waits for at most 1,800 seconds;
+present invalid data fails immediately. Read-only `verify-existing` qualification
+does not enter this gate. The registered production
 recovery key (`RECOVERY_CONTROL_SIGNING_KEY_PEM`) and separate evidence-only key
 (`RECOVERY_EXECUTION_SIGNING_KEY_PEM`) are validated before an export can begin.
 The evidence key is never registered for production commands. The controller has
@@ -108,9 +120,11 @@ runs with the existing separate UID, closed file descriptors, no credentials or
 production DSN, immutable input files and a sticky output directory; all processes
 must quiesce before the original trusted Object Lock stage resumes.
 
-Use a 7,200-second outer deadline: the original monitor has at most 1,800 seconds,
+Use a 7,200-second outer deadline, including any installation wait. The original
+monitor has at most 1,800 seconds,
 and export, restore and sealing together retain the original 5,400-second job
-budget. Per-stage limits cannot extend that aggregate. One volume-backed lock and
+budget. Per-stage limits and admission waits cannot extend the outer deadline;
+they cannot all consume their nominal maxima in one execution. One volume-backed lock and
 one replica prevent overlapping native jobs. The daily native schedule is
 `31 2 * * *`; its thin GitHub tail starts at `46 4 * * *`, after the two-hour
 monitor/export window plus 15 minutes. GitHub no longer schedules the original
