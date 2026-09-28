@@ -40,6 +40,41 @@ def test_tga_holiday_and_dst_publication_boundary():
     assert after["publication_schedule"]["expected_observation_date"] == "2026-11-10"
 
 
+@pytest.mark.asyncio
+async def test_sparse_gcf_source_refetches_after_one_hour_without_filling_no_prints(
+    tmp_path, monkeypatch,
+):
+    import httpx
+    import pandas as pd
+    from seiche import store
+    from seiche.config import ALL_SERIES
+    from seiche.sources import ofr
+    from seiche.sources.base import Series
+
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "source.sqlite")
+    spec = ALL_SERIES["GCF_RATE_OO"]
+    store.save_series(Series(
+        spec.mnemonic, spec.source, spec.remote_id, spec.label, spec.unit, spec.freq,
+        (datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+        pd.Series([3.91], index=pd.to_datetime(["2026-09-17"])),
+    ))
+    requests = []
+
+    def publish(request):
+        requests.append(request)
+        return httpx.Response(200, json=[
+            ["2026-09-17", 3.91], ["2026-09-18", None], ["2026-09-25", 3.94],
+        ])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(publish)) as client:
+        result = await ofr.fetch_series(client, spec)
+    assert len(requests) == 1
+    assert result.points.loc["2026-09-25"] == 3.94
+    assert pd.isna(result.points.loc["2026-09-18"])
+    assert result.freq == "D"
+
+
 def test_tga_read_time_refresh_retains_intraday_clock_and_observations():
     payload = {
         "schema": "seiche.money-market-desk.v1", "ok": True, "asof": "2026-09-25",

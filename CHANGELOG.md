@@ -29,6 +29,11 @@ they change a public contract, methodology, or release artifact.
 - Close failed MCP meter connections and return explicit unavailable errors
   during SQLite contention without running unmetered tools or repeating the
   storage timeout for every message in a batch.
+- Exclude live SQLite databases and sidecars from the recovery tree copy;
+  create database snapshots only through the online backup API, close all
+  handles explicitly, and give waiting writers a longer yield between steps.
+- Poll the sparse daily OFR GCF rate and volume feeds hourly so a new actual
+  print can replace older context promptly; no-print dates remain missing.
 
 ### Changed
 

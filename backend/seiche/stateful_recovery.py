@@ -22,6 +22,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping, NamedTuple
 
@@ -1030,7 +1031,11 @@ def _copy_sqlite_online(
         if clock() >= deadline:
             raise RecoveryContractError("online SQLite copy exceeded fifteen minutes")
         if remaining:
-            pause(0.001)
+            # Give waiting API writers time to acquire their lock between
+            # steps, including under rollback-journal contention. This adds
+            # about 42 seconds for a 4 GiB database with 4 KiB pages, within
+            # the unchanged fifteen-minute deadline.
+            pause(0.01)
 
     live.backup(snapshot, pages=256, progress=progress, sleep=0.01)
 
@@ -1044,20 +1049,24 @@ def _snapshot_api(
     expected_source_uid = os.geteuid() if source_owner_uid is None else source_owner_uid
     if destination.exists() or destination.is_symlink():
         raise RecoveryContractError("recovery API staging path already exists")
-    shutil.copytree(source, destination, symlinks=True)
-    for suffix in ("", "-wal", "-shm"):
-        path = destination / f"seiche.sqlite{suffix}"
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
     source_database = source / "seiche.sqlite"
     if source_database.is_symlink() or not source_database.is_file():
         raise RecoveryContractError("recovery API SQLite source is unsafe")
+    # SQLite and every live sidecar belong to the online backup below. A raw
+    # recursive copy can race writes, waste another full database-sized read,
+    # and leave a rollback journal beside the new independent snapshot.
+    sqlite_members = {f"seiche.sqlite{suffix}" for suffix in ("", "-wal", "-shm", "-journal")}
+
+    def ignore_live_databases(directory: str, names: list[str]) -> set[str]:
+        if Path(directory) == source:
+            return set(names) & (sqlite_members | {"_agent_room"})
+        return set()
+
+    shutil.copytree(source, destination, symlinks=True, ignore=ignore_live_databases)
     target_database = destination / "seiche.sqlite"
     try:
-        with sqlite3.connect(f"file:{source_database}?mode=ro", uri=True) as live:
-            with sqlite3.connect(target_database) as snapshot:
+        with closing(sqlite3.connect(f"file:{source_database}?mode=ro", uri=True)) as live:
+            with closing(sqlite3.connect(target_database)) as snapshot:
                 _copy_sqlite_online(live, snapshot)
                 if snapshot.execute("PRAGMA quick_check").fetchone() != ("ok",):
                     raise RecoveryContractError("recovery SQLite backup is corrupt")
@@ -1090,10 +1099,10 @@ def _snapshot_api(
             destination_room_root.mkdir(mode=0o700)
             destination_room_root.chmod(0o700)
             target_room_database = destination_room_root / "agent-room.sqlite"
-            with sqlite3.connect(
+            with closing(sqlite3.connect(
                 f"file:{source_room_database}?mode=ro", uri=True
-            ) as live_room:
-                with sqlite3.connect(target_room_database) as snapshot_room:
+            )) as live_room:
+                with closing(sqlite3.connect(target_room_database)) as snapshot_room:
                     _copy_sqlite_online(live_room, snapshot_room)
                     if snapshot_room.execute("PRAGMA quick_check").fetchone() != (
                         "ok",

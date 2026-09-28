@@ -1570,6 +1570,118 @@ def test_online_copy_cannot_hold_the_export_open_indefinitely(tmp_path: Path):
                 recovery._copy_sqlite_online(live, snapshot, clock=lambda: next(ticks))
 
 
+@pytest.mark.parametrize("journal_mode", ["delete", "wal"])
+def test_snapshot_skips_live_database_and_sidecars_before_online_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, journal_mode: str,
+):
+    source = tmp_path / "live-api"
+    source.mkdir()
+    (source / "keep.json").write_text('{"preserved":true}')
+    database = source / "seiche.sqlite"
+    if journal_mode == "delete":
+        # A separate process keeps SQLite's page-cache pressure independent
+        # of connections retained by earlier tests, then models writer death.
+        subprocess.run([sys.executable, "-I", "-B", "-c", textwrap.dedent("""
+            import os, sqlite3, sys
+            from pathlib import Path
+            path = Path(sys.argv[1])
+            writer = sqlite3.connect(path)
+            writer.execute('PRAGMA synchronous=FULL')
+            writer.execute('PRAGMA cache_size=5')
+            writer.execute('PRAGMA cache_spill=ON')
+            writer.execute('CREATE TABLE sample(id INTEGER PRIMARY KEY, payload BLOB)')
+            writer.executemany('INSERT INTO sample VALUES (?,zeroblob(4096))', [(n,) for n in range(600)])
+            writer.commit()
+            writer.execute('UPDATE sample SET payload=randomblob(4096)')
+            assert Path(str(path) + '-journal').read_bytes()[:8] == bytes.fromhex('d9d505f920a163d7')
+            os._exit(0)
+        """), str(database)], check=True, timeout=30)
+        writer = sqlite3.connect(database)
+        journal = source / "seiche.sqlite-journal"
+        assert journal.read_bytes()[:8] == bytes.fromhex("d9d505f920a163d7")
+        # Demonstrate what this real journal does on an isolated synthetic
+        # copy: SQLite rolls spilled pages back to the prior committed rows.
+        prior = tmp_path / "rollback-demonstration.sqlite"
+        recovery.shutil.copy2(database, prior)
+        recovery.shutil.copy2(journal, Path(str(prior) + "-journal"))
+        with sqlite3.connect(prior) as rolled_back:
+            assert rolled_back.execute(
+                "SELECT COUNT(*) FROM sample WHERE payload != zeroblob(4096)"
+            ).fetchone() == (0,)
+    else:
+        writer = sqlite3.connect(database)
+        assert writer.execute("PRAGMA journal_mode=wal").fetchone() == ("wal",)
+        writer.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, payload BLOB)")
+        writer.executemany("INSERT INTO sample VALUES (?,zeroblob(4096))", [(n,) for n in range(600)])
+        writer.commit()
+        writer.execute("UPDATE sample SET payload=randomblob(4096)")
+        assert (source / "seiche.sqlite-wal").stat().st_size > 0
+        assert (source / "seiche.sqlite-shm").stat().st_size > 0
+    copytree = recovery.shutil.copytree
+    copied = []
+
+    def observed_copytree(src, dst, **kwargs):
+        def copy_file(src_file, dst_file):
+            copied.append(Path(src_file).name)
+            return recovery.shutil.copy2(src_file, dst_file)
+        result = copytree(src, dst, copy_function=copy_file, **kwargs)
+        # The live writer can finish before the online copy opens its source.
+        if journal_mode == "delete":
+            writer.execute("UPDATE sample SET payload=randomblob(4096)")
+        writer.commit()
+        return result
+
+    monkeypatch.setattr(recovery.shutil, "copytree", observed_copytree)
+    destination = tmp_path / "snapshot"
+    try:
+        recovery._snapshot_api(source, destination)
+    finally:
+        writer.close()
+    assert copied == ["keep.json"]
+    assert not any((destination / f"seiche.sqlite{suffix}").exists()
+                   for suffix in ("-journal", "-wal", "-shm"))
+    assert (destination / "keep.json").read_text() == '{"preserved":true}'
+    with sqlite3.connect(destination / "seiche.sqlite") as snapshot:
+        assert snapshot.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert snapshot.execute("SELECT COUNT(*) FROM sample").fetchone() == (600,)
+        assert snapshot.execute(
+            "SELECT COUNT(*) FROM sample WHERE payload != zeroblob(4096)"
+        ).fetchone() == (600,)
+    with sqlite3.connect(database, timeout=0.1) as live:
+        live.execute("INSERT INTO sample VALUES (1000, 'still writable')")
+
+
+@pytest.mark.parametrize("fail_copy", [False, True])
+def test_snapshot_closes_both_database_handles_even_if_copy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_copy: bool,
+):
+    source = tmp_path / "live-api"
+    source.mkdir()
+    with sqlite3.connect(source / "seiche.sqlite") as database:
+        database.execute("CREATE TABLE sample (id INTEGER)")
+    connect = sqlite3.connect
+    handles = []
+
+    def tracked_connect(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        handles.append(connection)
+        return connection
+
+    monkeypatch.setattr(recovery.sqlite3, "connect", tracked_connect)
+    if fail_copy:
+        def unavailable(*args, **kwargs):
+            raise sqlite3.OperationalError("synthetic interrupted backup")
+        monkeypatch.setattr(recovery, "_copy_sqlite_online", unavailable)
+        with pytest.raises(recovery.RecoveryContractError, match="SQLite backup failed"):
+            recovery._snapshot_api(source, tmp_path / "snapshot")
+    else:
+        recovery._snapshot_api(source, tmp_path / "snapshot")
+    assert len(handles) == 2
+    for handle in handles:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            handle.execute("SELECT 1")
+
+
 def test_native_attestation_cannot_start_a_production_export() -> None:
     workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     job = workflow.split("  attest-native-recovery:\n", 1)[1].split(

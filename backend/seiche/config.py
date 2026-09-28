@@ -504,8 +504,8 @@ RUNWAY_QT_PACE_B_PER_MONTH = 0.0
 # nulls are "no print", not a collector gap (verified 2026-07-20: 20
 # non-null prints in the trailing 52 days, identical coverage on both legs).
 OFR_GCF_SERIES = [
-    SeriesSpec("GCF_RATE_OO", "ofr", "REPO-GCF_AR_OO-P", "GCF repo overnight/open avg rate", "%", "D", 360),
-    SeriesSpec("GCF_VOL_OO", "ofr", "REPO-GCF_TV_OO-P", "GCF repo overnight/open volume", "$B", "D", 360),
+    SeriesSpec("GCF_RATE_OO", "ofr", "REPO-GCF_AR_OO-P", "GCF repo overnight/open avg rate", "%", "D", 60),
+    SeriesSpec("GCF_VOL_OO", "ofr", "REPO-GCF_TV_OO-P", "GCF repo overnight/open volume", "$B", "D", 60),
 ]
 
 # Primary-dealer financing, total securities-in (OFR STFM, weekly) — how much
