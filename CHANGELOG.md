@@ -24,6 +24,11 @@ they change a public contract, methodology, or release artifact.
   Scheduled deadlines remain separate from unknown actual publication times.
 - Refresh the legacy TGA cache hourly so the desk can collect newly released
   statements without waiting for the auctions cache's six-hour interval.
+- Align backend bot regressions with the merged research menu and community
+  links while retaining the single daily channel-post constraint.
+- Close failed MCP meter connections and return explicit unavailable errors
+  during SQLite contention without running unmetered tools or repeating the
+  storage timeout for every message in a batch.
 
 ### Changed
 

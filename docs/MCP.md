@@ -219,6 +219,13 @@ headers:
 | `X-MCP-Usage-Limit` | the daily quota (absent when unlimited) |
 | `X-MCP-Usage-Remaining` | calls left today |
 
+If the usage database is unavailable, a single billable request returns HTTP
+503 with a JSON-RPC error and `Retry-After: 5`; its tool is not executed.
+Batch requests retain HTTP 200 and per-message errors, so clients retry only
+failed message IDs and keep successful results. The remaining billable messages
+in that batch do not repeat the storage wait. `GET /mcp/usage` also returns 503
+instead of an invented usage count. Quotas remain enforced after recovery.
+
 Check the meter any time: `GET /mcp/usage`. When the daily quota is reached, a
 `tools/call` returns an `isError` result pointing at the upgrade page — the
 agent can relay it. Only `tools/call` is billable; `initialize`, `tools/list`,

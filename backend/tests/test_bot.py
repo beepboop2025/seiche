@@ -696,8 +696,8 @@ def test_where_card_names_the_locked_storefront():
     assert "@EvidenceSignalDesk" not in bot.LAB_CHANNEL_PIN
     assert "@LiquiLens_bot" in bot.LAB_CHANNEL_PIN
     assert "@undertow_LiquiLens_bot" in bot.LAB_CHANNEL_PIN
-    assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_PIN
-    assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_ABOUT
+    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_PIN
+    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_ABOUT
     assert "LiquidityCryptoDesk" not in bot.LAB_CHANNEL_PIN
     assert "LiquidityCryptoDesk" not in bot.LAB_CHANNEL_ABOUT
     assert "joint score" in bot.LAB_CHANNEL_PIN
@@ -800,17 +800,19 @@ def test_answer_inline_serves_filters_and_caches(monkeypatch):
     assert [r["id"] for r in calls[-1][1]["results"]] == ["proof"]
 
 
-def test_setup_registers_the_short_command_tray(sent):
+def test_setup_registers_the_research_command_tray(sent):
     bot.run_setup()
 
     command_call = next(payload for method, payload in sent
                         if method == "setMyCommands")
     commands = [item["command"] for item in command_call["commands"]]
     assert commands == [
+        "menu", "funding", "trend", "community", "settings",
         "research", "now", "snap", "ask", "letter", "tandem", "atlas", "china", "where",
         "privacy", "delete_me", "help", "start", "stop",
     ]
-    assert 8 <= len(commands) <= 14
+    assert len(commands) == len(set(commands))
+    assert 1 <= len(commands) <= 100
 
 
 def test_setup_discovery_metadata_respects_telegram_limits(sent):
@@ -874,4 +876,5 @@ def test_letter_publishes_at_zero_subscribers(monkeypatch, sent):
         "https://t.me/seiche_desk_bot?start=lab_letter",
         "https://t.me/LiquiLens_bot?start=lab_letter",
         "https://t.me/undertow_LiquiLens_bot?start=lab_letter",
+        "https://t.me/LiquidityLabTalk",
     ]

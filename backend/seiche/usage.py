@@ -23,15 +23,19 @@ def _today() -> str:
 
 def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=5.0)
-    conn.execute("PRAGMA busy_timeout=5000")   # ride out the shared writer lock
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS mcp_usage (
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")   # ride out the shared writer lock
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS mcp_usage (
                ukey TEXT NOT NULL,
                day  TEXT NOT NULL,
                calls INTEGER NOT NULL DEFAULT 0,
                PRIMARY KEY (ukey, day)
            )"""
-    )
+        )
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 

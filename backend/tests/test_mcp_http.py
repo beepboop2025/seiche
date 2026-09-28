@@ -6,6 +6,7 @@ Exercises the /mcp endpoint through FastAPI's TestClient with a canned snapshot
 
 import json
 import logging
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -766,6 +767,72 @@ def test_tool_call_returns_content_and_meters(client):
     # the billable call was metered
     assert r.headers["X-MCP-Usage-Used"] == "1"
     assert r.headers["X-MCP-Usage-Limit"] == str(usage.MCP_ANON_DAILY)
+
+
+def test_locked_meter_refuses_tool_and_recovers_without_bypassing_quota(client, monkeypatch):
+    call = _rpc("tools/call", {"name": "data_health", "arguments": {}})
+    dispatched = []
+    dispatch = mcp_server.dispatch
+
+    def track_dispatch(*args, **kwargs):
+        dispatched.append(args[0])
+        return dispatch(*args, **kwargs)
+
+    monkeypatch.setattr(mcp_server, "dispatch", track_dispatch)
+    usage.peek("ip:testclient")
+    lock = sqlite3.connect(usage.DB_PATH)
+    try:
+        lock.execute("BEGIN EXCLUSIVE")
+        response = client.post("/mcp", json=call)
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "5"
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.json()["id"] == call["id"]
+        assert "tool was not executed" in response.json()["error"]["message"]
+        assert str(usage.DB_PATH) not in response.text
+        assert dispatched == []
+    finally:
+        lock.rollback()
+        lock.close()
+    response = client.post("/mcp", json=call)
+    assert response.status_code == 200
+    assert response.headers["X-MCP-Usage-Used"] == "1"
+    assert len(dispatched) == 1
+
+
+def test_meter_fault_is_bounded_and_isolated_within_batch(client, monkeypatch):
+    charges = []
+
+    def unavailable(*args):
+        charges.append(args)
+        raise sqlite3.OperationalError("private database path")
+
+    monkeypatch.setattr(usage, "charge", unavailable)
+    calls = [
+        _rpc("tools/call", {"name": "data_health", "arguments": {}}, msg_id=1),
+        _rpc("ping", msg_id=2),
+        _rpc("tools/call", {"name": "data_health", "arguments": {}}, msg_id=3),
+    ]
+    response = client.post("/mcp", json=calls)
+    assert response.status_code == 200
+    results = response.json()
+    assert [row["id"] for row in results] == [1, 2, 3]
+    assert "error" in results[0] and "error" in results[2]
+    assert results[1]["result"] == {}
+    assert len(charges) == 1
+    assert "private database path" not in response.text
+
+
+def test_usage_report_storage_fault_does_not_report_zero(client, monkeypatch):
+    def unavailable(*args):
+        raise sqlite3.OperationalError("private database path")
+
+    monkeypatch.setattr(usage, "peek", unavailable)
+    response = client.get("/mcp/usage")
+    assert response.status_code == 503
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "used_today" not in response.json()
+    assert "private database path" not in response.text
 
 
 def test_public_context_routes_share_the_mcp_contract(client):

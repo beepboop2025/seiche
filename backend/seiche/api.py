@@ -4215,6 +4215,7 @@ def mcp_http(
     limit = usage.quota_for(ident)
     responses: list[dict] = []
     meter: dict | None = None
+    meter_unavailable = False
 
     for m in msgs:
         billable = (
@@ -4223,7 +4224,20 @@ def mcp_http(
             and "id" in m
         )
         if billable:
-            meter = usage.charge(ukey, limit)
+            if not meter_unavailable:
+                try:
+                    meter = usage.charge(ukey, limit)
+                except sqlite3.Error:
+                    logging.getLogger("seiche.api").exception("MCP usage meter unavailable")
+                    meter_unavailable = True
+            if meter_unavailable:
+                # Never run an unmetered call or repeat the storage timeout for
+                # each remaining message. Non-billable messages can still run.
+                responses.append(mcp_server._error(
+                    m.get("id"), MCP_SERVER_ERROR,
+                    "MCP usage meter temporarily unavailable; tool was not executed",
+                ))
+                continue
             if not meter["allowed"]:
                 responses.append(_mcp_quota_result(m.get("id"), meter))
                 continue
@@ -4253,6 +4267,13 @@ def mcp_http(
     if not responses:  # notification-only body
         return Response(status_code=202, headers=headers)
     payload = responses if isinstance(body, list) else responses[0]
+    if meter_unavailable:
+        headers["Cache-Control"] = "no-store"
+        # A batch can contain successful messages; preserve their individual
+        # results so clients retry only the failed message IDs.
+        if not isinstance(body, list):
+            headers["Retry-After"] = "5"
+            return JSONResponse(payload, status_code=503, headers=headers)
     return JSONResponse(payload, headers=headers)
 
 
@@ -4308,7 +4329,14 @@ def mcp_usage_report(
     ip = _client_ip(request)
     ukey = usage.key_for(ident, ip)
     limit = usage.quota_for(ident)
-    used = usage.peek(ukey)
+    try:
+        used = usage.peek(ukey)
+    except sqlite3.Error:
+        logging.getLogger("seiche.api").exception("MCP usage report unavailable")
+        raise HTTPException(
+            503, "MCP usage meter temporarily unavailable",
+            headers={"Cache-Control": "no-store", "Retry-After": "5"},
+        ) from None
     return {
         "tier": ident["tier"] if ident else "anon",
         "used_today": used,
