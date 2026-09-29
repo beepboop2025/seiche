@@ -73,15 +73,14 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.10; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.11; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.13.10 estuary** repairs USD funding delivery and freshness.
-Daily official sources are polled hourly, source business dates retain their
-calendar meaning, and overdue US daily releases are explicit. Treasury cash
-uses its next-business-day 16:00 New York deadline, including weekends,
-holidays and daylight saving time. Scheduled deadlines do not assert actual
-publication times. Deployment and immutable package publication remain subject
-to signed release gates.
+Version **0.13.11 estuary** refreshes the legacy funding-reference caches hourly.
+New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding
+observations can reach the daily review without waiting through the previous
+four-to-twelve-hour cache windows. Failed refreshes retain the original source
+dates and stale warnings. Deployment and immutable package publication remain
+subject to signed release gates.
 
 The verified NY Fed historical importer covers 34 canonical instruments.
 Archived observations retain unknown publication

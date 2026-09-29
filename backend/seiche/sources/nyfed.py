@@ -25,6 +25,10 @@ from seiche.sources.base import SourceFault, utcnow_iso
 
 BASE = "https://markets.newyorkfed.org/api"
 
+# Keep the legacy funding desk aligned with hourly canonical collection. The
+# four-hour cache remains appropriate for the separate FX-swap collector.
+_FUNDING_CACHE_MINUTES = 60
+
 
 async def _get_json(client: httpx.AsyncClient, path: str) -> dict:
     r = await client.get(f"{BASE}{path}", headers={"User-Agent": USER_AGENT}, timeout=30)
@@ -35,7 +39,7 @@ async def _get_json(client: httpx.AsyncClient, path: str) -> dict:
 async def fetch_secured_rates(client: httpx.AsyncClient, start: str = NYFED_RATES_START) -> dict:
     """All secured rates with percentiles, as {rate_type: DataFrame}-shaped dict."""
     key = "nyfed_secured_rates"
-    cached = await run_store(store.load_blob, key, NYFED_TTL_MIN)
+    cached = await run_store(store.load_blob, key, _FUNDING_CACHE_MINUTES)
     if cached is None:
         try:
             import datetime as _dt
@@ -68,7 +72,7 @@ async def fetch_secured_rates(client: httpx.AsyncClient, start: str = NYFED_RATE
 async def fetch_srf_ops(client: httpx.AsyncClient, n_ops: int = 900) -> dict:
     """Repo operation results -> daily accepted amounts ($B). Zero-usage days count."""
     key = "nyfed_srf_ops"
-    cached = await run_store(store.load_blob, key, NYFED_TTL_MIN)
+    cached = await run_store(store.load_blob, key, _FUNDING_CACHE_MINUTES)
     if cached is None:
         try:
             raw = await _get_json(client, f"/rp/repo/all/results/last/{n_ops}.json")

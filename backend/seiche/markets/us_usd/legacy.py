@@ -1,11 +1,17 @@
 """Legacy source specs owned by the US-USD pack during v1 migration.
 
 The v1 assembler still consumes these lists directly. Keeping the aliases in
-``seiche.config`` preserves byte-for-byte legacy behavior while moving market
-knowledge out of the universal configuration module.
+``seiche.config`` preserves legacy names and source contracts while moving
+market knowledge out of the universal configuration module.
 """
 
 from seiche.markets.base import SourceSeriesSpec
+
+
+# Match the canonical USD funding adapters' hourly acquisition schedule. These
+# daily publications can advance while a six/twelve-hour legacy cache still
+# pins the desk's exact-date SOFR-IORB horizon to the preceding business day.
+_FUNDING_CACHE_MINUTES = 60
 
 
 FRED_SERIES = [
@@ -28,8 +34,8 @@ FRED_SERIES = [
         "W",
         720,
     ),
-    SourceSeriesSpec("RRPONTSYD", "fred", "RRPONTSYD", "ON RRP take-up", "$B", "D", 360),
-    SourceSeriesSpec("IORB", "fred", "IORB", "Interest on reserve balances", "%", "D", 720),
+    SourceSeriesSpec("RRPONTSYD", "fred", "RRPONTSYD", "ON RRP take-up", "$B", "D", _FUNDING_CACHE_MINUTES),
+    SourceSeriesSpec("IORB", "fred", "IORB", "Interest on reserve balances", "%", "D", _FUNDING_CACHE_MINUTES),
     SourceSeriesSpec(
         "SRF_CEILING",
         "fred",
@@ -57,9 +63,9 @@ FRED_SERIES = [
         "D",
         100000,
     ),
-    SourceSeriesSpec("EFFR", "fred", "EFFR", "Effective federal funds rate", "%", "D", 360),
+    SourceSeriesSpec("EFFR", "fred", "EFFR", "Effective federal funds rate", "%", "D", _FUNDING_CACHE_MINUTES),
     SourceSeriesSpec(
-        "SOFR", "fred", "SOFR", "Secured overnight financing rate", "%", "D", 360
+        "SOFR", "fred", "SOFR", "Secured overnight financing rate", "%", "D", _FUNDING_CACHE_MINUTES
     ),
     SourceSeriesSpec("GDP", "fred", "GDP", "Nominal GDP (SAAR)", "$B", "Q", 10080),
     SourceSeriesSpec(

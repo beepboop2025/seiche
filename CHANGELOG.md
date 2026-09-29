@@ -11,6 +11,21 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.11] - 2026-09-29
+
+### Fixed
+
+- Refresh legacy FRED SOFR, EFFR, IORB and overnight reverse-repo caches hourly
+  so newly published observations reach the daily funding review promptly.
+- Refresh the New York Fed secured-rate and standing-repo caches hourly,
+  retaining daily observation cadence, original capture clocks and vintage
+  history. Failed refreshes keep stale inputs visibly stale.
+
+### Changed
+
+- Bind the application version with corpus receipt `r21`; existing corpus data,
+  source clocks and rights retain their original evidence boundaries.
+
 ## [0.13.10] - 2026-09-29
 
 ### Fixed
@@ -511,7 +526,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.10...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.11...HEAD
+[0.13.11]: https://github.com/beepboop2025/seiche/compare/v0.13.10...v0.13.11
 [0.13.10]: https://github.com/beepboop2025/seiche/compare/v0.13.9...v0.13.10
 [0.13.9]: https://github.com/beepboop2025/seiche/compare/v0.13.8...v0.13.9
 [0.13.8]: https://github.com/beepboop2025/seiche/compare/v0.13.7...v0.13.8

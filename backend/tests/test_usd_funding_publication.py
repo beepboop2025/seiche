@@ -75,6 +75,136 @@ async def test_sparse_gcf_source_refetches_after_one_hour_without_filling_no_pri
     assert result.freq == "D"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mnemonic", ["SOFR", "EFFR", "IORB", "RRPONTSYD"])
+async def test_legacy_funding_cache_rechecks_hourly_and_preserves_prior_vintage(
+    tmp_path, monkeypatch, mnemonic,
+):
+    import httpx
+    import pandas as pd
+    from seiche import store
+    from seiche.config import ALL_SERIES
+    from seiche.sources import fred
+    from seiche.sources.base import Series
+
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "funding.sqlite")
+    spec = ALL_SERIES[mnemonic]
+    previous_capture = (datetime.now(UTC) - timedelta(minutes=61)).isoformat()
+    store.save_series(Series(
+        spec.mnemonic, spec.source, spec.remote_id, spec.label, spec.unit, spec.freq,
+        previous_capture,
+        pd.Series([3.9], index=pd.to_datetime(["2026-09-25"])),
+    ))
+    requests = []
+
+    def publish(request):
+        requests.append(request)
+        return httpx.Response(200, text=(
+            f"observation_date,{spec.remote_id}\n"
+            "2026-09-25,3.9\n2026-09-28,3.91\n"
+        ))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(publish)) as client:
+        result = await fred.fetch_series(client, spec)
+        cached = await fred.fetch_series(client, spec)
+
+    assert len(requests) == 1  # The next five-minute sweep still uses its cache.
+    assert result.asof == cached.asof == "2026-09-28"
+    assert result.points.loc["2026-09-28"] == 3.91
+    assert result.freq == "D"  # Acquisition frequency is not publication frequency.
+    with store._conn() as conn:
+        prior = conn.execute(
+            "SELECT value FROM observation_vintages "
+            "WHERE mnemonic=? AND obs_date=? AND knowledge_time=?",
+            (mnemonic, "2026-09-25", store._canonical_utc(previous_capture)),
+        ).fetchone()
+    assert prior == (3.9,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["secured_rates", "srf_ops"])
+async def test_legacy_nyfed_funding_cache_rechecks_after_one_hour(
+    tmp_path, monkeypatch, kind,
+):
+    import httpx
+    from seiche import store
+    from seiche.sources import nyfed
+
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "nyfed.sqlite")
+    key = "nyfed_" + kind
+    old_clock = (datetime.now(UTC) - timedelta(minutes=61)).isoformat()
+    if kind == "secured_rates":
+        old = {"fetched_at": old_clock, "refRates": [{
+            "effectiveDate": "2026-09-25", "type": "SOFR", "percentRate": 3.9,
+        }]}
+        response = {"refRates": [{
+            "effectiveDate": "2026-09-28", "type": "SOFR", "percentRate": 3.91,
+        }]}
+    else:
+        old = {"fetched_at": old_clock, "ops": [{
+            "date": "2026-09-25", "accepted": 0.0, "submitted": 0.0,
+        }]}
+        response = {"repo": {"operations": [{
+            "operationDate": "2026-09-28", "totalAmtAccepted": 1000000,
+            "totalAmtSubmitted": 1000000,
+        }]}}
+    store.save_blob(key, old)
+    with store._conn() as conn:
+        conn.execute("UPDATE blobs SET fetched_at=? WHERE key=?", (old_clock, key))
+    requests = []
+
+    def publish(request):
+        requests.append(request)
+        return httpx.Response(200, json=response)
+
+    fetch = getattr(nyfed, "fetch_" + kind)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(publish)) as client:
+        result = await fetch(client)
+        await fetch(client)
+    assert len(requests) == 1
+    frame = result["frames"]["SOFR"] if kind == "secured_rates" else result["daily"]
+    assert frame.index[-1].date().isoformat() == "2026-09-28"
+
+
+@pytest.mark.asyncio
+async def test_unavailable_funding_refresh_retains_original_capture_clock(
+    tmp_path, monkeypatch,
+):
+    import httpx
+    import pandas as pd
+    from seiche import store
+    from seiche.config import ALL_SERIES
+    from seiche.sources import fred
+    from seiche.sources.base import Series
+
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "outage.sqlite")
+    spec = ALL_SERIES["SOFR"]
+    old_clock = (datetime.now(UTC) - timedelta(minutes=61)).isoformat()
+    store.save_series(Series(
+        spec.mnemonic, spec.source, spec.remote_id, spec.label, spec.unit, spec.freq,
+        old_clock, pd.Series([3.9], index=pd.to_datetime(["2026-09-25"])),
+    ))
+    requests = []
+
+    def unavailable(request):
+        requests.append(request)
+        return httpx.Response(503)
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(fred.asyncio, "sleep", no_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unavailable)) as client:
+        result = await fred.fetch_series(client, spec)
+    assert len(requests) == 4
+    assert result.fetched_at == old_clock
+    assert result.asof == "2026-09-25"
+    assert not store.is_fresh("SOFR", spec.ttl_minutes)
+
+
 def test_tga_read_time_refresh_retains_intraday_clock_and_observations():
     payload = {
         "schema": "seiche.money-market-desk.v1", "ok": True, "asof": "2026-09-25",
