@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -124,11 +125,21 @@ class InstallationGateTests(unittest.TestCase):
         folder = self.publish()
         (folder / 'policy.json').write_bytes(b'{"bad":NaN}')
         self.runtime()
-        with mock.patch.object(gate.time, 'sleep') as sleep, mock.patch.object(recurring, 'Path') as lock, \
+        owner_signature = attest.owner_signature
+
+        def signature_with_process_wait(*args, **kwargs):
+            # subprocess may briefly wait for ssh-keygen; this is not gate polling.
+            time.sleep(0.001)
+            return owner_signature(*args, **kwargs)
+
+        with mock.patch.object(gate, 'time', wraps=gate.time) as clock, \
+                mock.patch.object(attest, 'owner_signature', side_effect=signature_with_process_wait), \
+                mock.patch.object(recurring, 'Path') as lock, \
                 mock.patch.object(recurring, 'run_locked') as exporter:
+            clock.sleep.return_value = None
             with self.assertRaisesRegex(ValueError, 'nonfinite'):
                 recurring.main()
-        sleep.assert_not_called()
+        clock.sleep.assert_not_called()
         lock.assert_not_called()
         exporter.assert_not_called()
 
@@ -137,19 +148,20 @@ class InstallationGateTests(unittest.TestCase):
         (folder / 'installation.json').write_bytes(b'{"bad":NaN}')
         (folder / 'policy.json').unlink()
         self.runtime()
-        with mock.patch.object(gate.time, 'sleep') as sleep:
+        with mock.patch.object(gate, 'time', wraps=gate.time) as clock:
+            clock.sleep.return_value = None
             with self.assertRaisesRegex(ValueError, 'nonfinite'):
                 gate.admit()
-        sleep.assert_not_called()
+        clock.sleep.assert_not_called()
 
     def test_missing_gate_wait_is_bounded(self):
         self.runtime()
         self.patch(mock.patch.object(gate, 'WAIT_SECONDS', 3))
-        with mock.patch.object(gate.time, 'monotonic', side_effect=[0, 1, 3]), \
-                mock.patch.object(gate.time, 'sleep') as sleep:
+        with mock.patch.object(gate, 'time') as clock:
+            clock.monotonic.side_effect = [0, 1, 3]
             with self.assertRaisesRegex(ValueError, 'timed out'):
                 gate.admit()
-        sleep.assert_called_once_with(2)
+        clock.sleep.assert_called_once_with(2)
 
     def test_bad_signature_wrong_namespace_and_wrong_owner_rejected(self):
         for file in ('installation.json', 'policy.json'):
