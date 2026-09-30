@@ -4,7 +4,18 @@
 # the terminal plus <style> blocks in the static pages. script-src stays
 # strict: the one inline script moved to /support.js; ld+json is data, CSP
 # does not touch it.
+/.well-known/api-catalog
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, s-maxage=3600
+  Content-Type: application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"
+  Link: <https://seiche.info/.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"
+
 /.well-known/ai-catalog.json
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, s-maxage=3600
+  Content-Type: application/json; charset=utf-8
+
+/.well-known/mcp-market-corpus.json
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=300, s-maxage=3600
   Content-Type: application/json; charset=utf-8

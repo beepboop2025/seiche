@@ -1,0 +1,14 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.beepboop2025/seiche-market-corpus",
+  "title": "Seiche Market Atlas \u2014 structured evidence corpus",
+  "description": "Rights-aware attested evidence objects, structural inspection, bounded full-fidelity BIS records, revisions and canonical Seiche market discovery with explicit evidence clocks.",
+  "version": "1.0.0",
+  "websiteUrl": "https://seiche.info/#corpus",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.seiche.info/api/v2/corpus/mcp"
+    }
+  ]
+}
