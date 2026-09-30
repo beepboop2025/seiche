@@ -7,6 +7,7 @@ opens confine it to the new inspection directory and named snapshot archives.
 
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 import errno
 import hashlib
@@ -16,11 +17,15 @@ import os
 from pathlib import Path
 import stat
 import tarfile
+from threading import Lock
 from typing import BinaryIO, Iterator
 
 LOG = logging.getLogger(__name__)
 CHUNK_BYTES = 1024 * 1024
 WINDOW_BYTES = 16 * CHUNK_BYTES
+SMALL_WORKERS = 4
+SMALL_FD_LIMIT = 32
+SMALL_PENDING_BYTES = 16 * CHUNK_BYTES
 
 
 class InspectionIOError(OSError):
@@ -48,6 +53,13 @@ class InspectionIO:
             os, "POSIX_FADV_DONTNEED"
         )
         self._fallback_reported = False
+        self._fallback_lock = Lock()
+        # Admission belongs to the single extraction thread. The executor's
+        # queue is bounded by these retained futures, including running work.
+        self._executor: ThreadPoolExecutor | None = None
+        self._pending: dict[Future[None], int] = {}
+        self._pending_bytes = 0
+        self._small_error: BaseException | None = None
         try:
             self._check_root()
             for path in archives:
@@ -136,16 +148,18 @@ class InspectionIO:
                 if exc.errno not in {errno.ENOSYS, errno.EOPNOTSUPP, errno.EINVAL}:
                     raise
                 self._advice_supported = False
-        if not self._fallback_reported:
-            LOG.warning(
-                "Recovery inspection cache advice unavailable; bounded copying "
-                "and private write synchronization remain active, cache "
-                "eviction is not established"
-            )
-            self._fallback_reported = True
+        with self._fallback_lock:
+            if not self._fallback_reported:
+                LOG.warning(
+                    "Recovery inspection cache advice unavailable; bounded copying "
+                    "and private write synchronization remain active, cache "
+                    "eviction is not established"
+                )
+                self._fallback_reported = True
 
     @contextmanager
     def reader(self, path: Path) -> Iterator[BinaryIO]:
+        self.drain()
         path = path.absolute()
         archive_identity = self._archives.get(path)
         handle = (
@@ -171,10 +185,26 @@ class InspectionIO:
 
     def release_audited_file(self, path: Path) -> None:
         """Release only a private copy after its independent reader has closed."""
+        self.drain()
         with self._open_scratch(path) as handle:
             self._sync_discard(handle, 0, os.fstat(handle.fileno()).st_size)
 
     def makefile(self, archive: tarfile.TarFile, member: tarfile.TarInfo, path: str):
+        small = member.sparse is None and 0 <= member.size < CHUNK_BYTES
+        page = os.sysconf("SC_PAGE_SIZE")
+        charge = ((member.size + page - 1) // page) * page
+        try:
+            if small:
+                self._admit_small(charge)
+            else:
+                self.drain()
+            self._write_member(archive, member, path, small=small, charge=charge)
+        except BaseException:
+            # A failed extraction cannot leave asynchronous writers behind.
+            self.close()
+            raise
+
+    def _write_member(self, archive, member, path, *, small: bool, charge: int):
         source = archive.fileobj
         source.seek(member.offset_data)
         with self._open_scratch(Path(path), create=True) as target:
@@ -197,11 +227,77 @@ class InspectionIO:
                     if target.tell() - window_start >= WINDOW_BYTES:
                         self._sync_discard(target, window_start, target.tell())
                         window_start = target.tell()
-                self._sync_discard(target, window_start, target.tell())
+                if not small:
+                    self._sync_discard(target, window_start, target.tell())
             if member.sparse is not None:
                 target.truncate(member.size)
                 target.flush()
                 getattr(os, "fdatasync", os.fsync)(target.fileno())
+            if small:
+                self._queue_small(target, member.size, charge)
+
+    def _reap(self) -> None:
+        for future in tuple(self._pending):
+            if future.done():
+                self._pending_bytes -= self._pending.pop(future)
+                try:
+                    future.result()
+                except BaseException as exc:
+                    if self._small_error is None:
+                        self._small_error = exc
+        if self._small_error is not None:
+            raise self._small_error
+
+    def _admit_small(self, charge: int) -> None:
+        self._reap()
+        # Reserve two descriptor slots before opening: the extraction handle
+        # and its short-lived duplicate. After submission only one remains.
+        while (
+            len(self._pending) + 2 > SMALL_FD_LIMIT
+            or self._pending_bytes + charge > SMALL_PENDING_BYTES
+        ):
+            wait(self._pending, return_when=FIRST_COMPLETED)
+            self._reap()
+
+    def _queue_small(self, target: BinaryIO, size: int, charge: int) -> None:
+        target.flush()
+        identity = self._identity(os.fstat(target.fileno()))[:3]
+        if identity[2] != size:
+            raise InspectionIOError("inspection output size changed")
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(
+                max_workers=SMALL_WORKERS, thread_name_prefix="inspection-sync"
+            )
+        descriptor = os.dup(target.fileno())
+        try:
+            future = self._executor.submit(self._sync_small, descriptor, identity)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self._pending[future] = charge
+        self._pending_bytes += charge
+
+    def _sync_small(self, descriptor: int, identity: tuple[int, ...]) -> None:
+        # No pathname reopen: the descriptor pins the already-authorized inode.
+        # TarFile may concurrently apply its original mode/mtime metadata.
+        try:
+            handle = os.fdopen(descriptor, "wb", buffering=0)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with handle:
+            self._check_root()
+            if self._identity(os.fstat(descriptor))[:3] != identity:
+                raise InspectionIOError("inspection output identity changed")
+            self._sync_discard(handle, 0, identity[2])
+            if self._identity(os.fstat(descriptor))[:3] != identity:
+                raise InspectionIOError("inspection output identity changed")
+
+    def drain(self) -> None:
+        """Join all admitted work before a new phase, including on failure."""
+        if self._pending:
+            wait(self._pending)
+        self._reap()
 
     def _sync_discard(self, handle: BinaryIO, start: int, end: int) -> None:
         handle.flush()
@@ -211,8 +307,15 @@ class InspectionIO:
 
     def close(self) -> None:
         if self._root_fd >= 0:
-            os.close(self._root_fd)
-            self._root_fd = -1
+            try:
+                self.drain()
+            finally:
+                try:
+                    if self._executor is not None:
+                        self._executor.shutdown(wait=True)
+                finally:
+                    os.close(self._root_fd)
+                    self._root_fd = -1
 
     def __enter__(self) -> InspectionIO:
         return self
@@ -256,3 +359,9 @@ class InspectionTarFile(tarfile.TarFile):
 
     def makefile(self, tarinfo: tarfile.TarInfo, targetpath: str) -> None:
         self.inspection_io.makefile(self, tarinfo, targetpath)
+
+    def extractall(self, *args, **kwargs) -> None:
+        try:
+            super().extractall(*args, **kwargs)
+        finally:
+            self.inspection_io.drain()
