@@ -140,3 +140,19 @@ def test_tool_degrades_to_tool_error(monkeypatch, tmp_path):
     resp = _call("institutional_flows")
     assert resp["result"]["isError"] is True
     assert "unavailable" in resp["result"]["content"][0]["text"]
+
+
+def test_railway_tool_uses_public_projection_with_source_clocks(monkeypatch):
+    from seiche import wake_public
+    from test_wake_public import pack, NOW
+    monkeypatch.delenv("WAKE_PACK_PATH", raising=False)
+    def missing():
+        raise wakeflows.WakePackError("no local pack")
+    monkeypatch.setattr(wakeflows, "load", missing)
+    monkeypatch.setattr(wake_public, "load", lambda: wake_public.validate(wake_public.project(pack(), now=NOW), now=NOW))
+    result = _call("institutional_flows")
+    assert result["result"].get("isError", False) is False
+    out = _payload(result)
+    assert out["sections"]["basis_trade"]["status"] == "fresh"
+    assert out["sources"]["cftc"]["reference_date"] == "2026-09-22"
+    assert "method_versions" not in out

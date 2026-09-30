@@ -11,6 +11,16 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.12] - 2026-09-30
+
+### Fixed
+
+- Deliver current public institutional-flow readings across the Hetzner/Railway
+  boundary without exposing the private Wake engine pack.
+- Include per-section source dates and freshness; omit stale or unavailable
+  readings and reject malformed, future-dated or oversized projections.
+- Publish the allowlisted projection atomically after successful Wake runs.
+
 ## [0.13.11] - 2026-09-29
 
 ### Fixed
@@ -526,7 +536,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.11...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.12...HEAD
+[0.13.12]: https://github.com/beepboop2025/seiche/compare/v0.13.11...v0.13.12
 [0.13.11]: https://github.com/beepboop2025/seiche/compare/v0.13.10...v0.13.11
 [0.13.10]: https://github.com/beepboop2025/seiche/compare/v0.13.9...v0.13.10
 [0.13.9]: https://github.com/beepboop2025/seiche/compare/v0.13.8...v0.13.9

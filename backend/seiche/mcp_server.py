@@ -1014,10 +1014,19 @@ def tool_flows(_args: dict, public: bool) -> Any:
     try:
         pack = wakeflows.load()
     except wakeflows.WakePackError:
-        raise ToolError(
-            "the institutional-flows pack is unavailable on this deployment"
-        )
-    out = wakeflows.readings(pack)
+        # Explicit local paths are operator-owned and must not silently fall
+        # back to a different source. Railway has no shared Hetzner filesystem.
+        from seiche import wake_public
+        try:
+            if os.environ.get("WAKE_PACK_PATH"):
+                raise wakeflows.WakePackError("explicit local pack unavailable")
+            out = wake_public.load()
+        except wakeflows.WakePackError:
+            raise ToolError(
+                "the institutional-flows pack is unavailable on this deployment"
+            )
+    else:
+        out = wakeflows.readings(pack)
     if public:
         # The literature-level method disclosure STAYS: the reading below
         # names the Barth-Kahn recipe and the Hawkes branching ratio on
