@@ -75,6 +75,32 @@ def test_current_runtime_needs_no_override(repository):
     )
 
 
+@pytest.mark.parametrize("native", [False, True])
+def test_shared_proof_preflight_runs_for_manual_and_native_monitors(repository, native):
+    root, _, environment = repository
+    workflow = (ROOT / ".github/workflows/railway-stateful-recovery.yml").read_text()
+    proof = workflow.split(
+        "      - name: Prove native backups, PITR coverage, volume headroom, and both edges\n",
+        1,
+    )[1].split("        run: |\n", 1)[1]
+    preflight = textwrap.dedent(proof.split("          for value in", 1)[0])
+    if native:
+        # Native admit() creates a partial source tree; it verifies its pinned
+        # helpers itself and never executes the manual GitHub-only step.
+        environment.update(
+            GITHUB_EVENT_NAME="schedule",
+            RECOVERY_SOURCE_SHA=environment["GITHUB_SHA"],
+            REQUESTED_SOURCE_SHA="",
+        )
+    subprocess.run(
+        ["bash", "-c", preflight],
+        cwd=root,
+        env={**os.environ, **environment, "GITHUB_WORKSPACE": str(root)},
+        check=True,
+        timeout=30,
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

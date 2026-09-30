@@ -56,7 +56,8 @@ class MonitorTests(unittest.TestCase):
             env = monitor.public_env(root)
             env.update({"EXPECTED_VOLUME_ID": "volume", "EXPECTED_ENVIRONMENT_ID": "environment",
                         "EXPECTED_SERVICE_ID": "service", "EXPECTED_POSTGRES_ID": "postgres",
-                        "RAILWAY_PROJECT_ID": "project", "OUTPUT": str(root / "outputs")})
+                        "RAILWAY_PROJECT_ID": "project", "RECOVERY_SOURCE_SHA": RELEASE,
+                        "OUTPUT": str(root / "outputs")})
             return subprocess.run([sys.executable, "-I", "-S", str(ROOT / "validator.py")],
                                   env=env, cwd=root, capture_output=True, text=True)
 
@@ -82,6 +83,11 @@ class MonitorTests(unittest.TestCase):
     def test_original_validator_rejects_split_public_identity(self):
         data = fixtures()
         data["public.headers"] = data["public.headers"].replace(RELEASE, "b" * 40)
+        result = self.validate(data)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("production identities differ", result.stderr)
+        # Agreement between edges cannot substitute for the requested runtime.
+        data["origin.headers"] = data["public.headers"]
         result = self.validate(data)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("production identities differ", result.stderr)

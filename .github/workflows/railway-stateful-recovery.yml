@@ -990,7 +990,13 @@ jobs:
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-monitor
         run: |
           set -euo pipefail
-          python3 -I -S "$GITHUB_WORKSPACE/ops/railway/verify_recovery_source.py"
+          # The manual job verifies both signatures in its preceding step.
+          # Native monitors independently admit their pinned helper closure and
+          # run this shared proof with workflow and runtime at the same main SHA.
+          [[ "$RECOVERY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          test "$GITHUB_REF" = refs/heads/main
           for value in \
             "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" \
             "$RAILWAY_ENVIRONMENT_ID" "$RAILWAY_SERVICE_ID" \
