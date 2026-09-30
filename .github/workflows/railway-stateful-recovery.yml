@@ -1361,7 +1361,7 @@ jobs:
       always() && needs.monitor.result == 'success' &&
       github.event_name == 'workflow_dispatch' && inputs.operation == 'export-recovery'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment: railway-stateful-recovery-export
     permissions:
       attestations: write
@@ -1774,10 +1774,12 @@ jobs:
           submission_replica_id=$(cat proof/submission-replica-id.txt)
           replica_id="$submission_replica_id"
           ready=0
-          # A real 1.5 GB export plus semantic restore inspection exceeded the
-          # former fixed-attempt window. Reserve 45 minutes for the receipt;
-          # download/restore/off-site checks remain inside the 90-minute job.
-          recovery_ready_deadline=$((SECONDS + 2700))
+          # Manual recovery must also protect a preceding deployment that still
+          # performs two restore inspections. A 2.54 GB capture exceeded the
+          # former 45-minute window. Keep receipt readiness bounded at 75 minutes,
+          # leaving 35 minutes before the unchanged download credential expires.
+          # Independent restore/off-site checks remain inside the 120-minute job.
+          recovery_ready_deadline=$((SECONDS + 4500))
           while (( SECONDS < recovery_ready_deadline )); do
             railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \

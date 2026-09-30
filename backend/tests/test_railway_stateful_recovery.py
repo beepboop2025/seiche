@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import stat
 import subprocess
@@ -655,6 +656,163 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     assert resumed_receipt == receipt
 
 
+def _capture_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    platform, environment, activation = _activation_context(tmp_path, monkeypatch)
+    request = _request(activation, now=datetime.now(UTC).replace(microsecond=0))
+    monkeypatch.setattr(migration, "_audit_nbs", lambda _root: "verified_head")
+
+    def dump(destination: Path, _dsn: str) -> tuple[int, int, int, int]:
+        destination.write_bytes(b"PGDMP" + b"x" * 2048)
+        return (10, 20, 30, 40)
+
+    monkeypatch.setattr(recovery, "_snapshot_postgres", dump)
+    capture = recovery.capture_snapshot(
+        environment,
+        request,
+        platform_root=platform,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    return platform, environment, activation, request, capture
+
+
+@pytest.fixture
+def captured_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    return _capture_recovery(tmp_path, monkeypatch)
+
+
+def _finalize_capture(fixture):
+    platform, environment, _activation, request, capture = fixture
+    return recovery.finalize_receipt(
+        environment,
+        request,
+        capture,
+        writers_stopped_at=capture.started_at,
+        writers_restarted_at=_iso(datetime.now(UTC) + timedelta(seconds=1)),
+        worker_commands=cutover.worker_commands(),
+        platform_root=platform,
+        runtime_gid=os.getegid(),
+    )
+
+
+def test_capture_defers_restore_and_finalization_audits_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspection = recovery._restored_filesystem_identity
+    restored: list[Path] = []
+    collectors_resumed = False
+
+    def inspect(bundle, **kwargs):
+        assert collectors_resumed, "restore must not extend the collector pause"
+        restored.append(bundle.root)
+        return inspection(bundle, **kwargs)
+
+    monkeypatch.setattr(recovery, "_restored_filesystem_identity", inspect)
+    fixture = _capture_recovery(tmp_path, monkeypatch)
+    platform, environment, activation, request, capture = fixture
+    assert restored == []
+    assert not (platform / "recovery-receipts").exists()
+    collectors_resumed = True
+    path, receipt = _finalize_capture(fixture)
+    assert path.is_file()
+    assert restored == [capture.bundle.root]
+
+    # A caller presenting only a receipt and archives gets an independent audit.
+    candidate = json.loads(
+        Path(environment["SEICHE_RAILWAY_CANDIDATE_RECEIPT_PATH"]).read_bytes()
+    )
+    shadow = json.loads(next((platform / "receipts").iterdir()).read_bytes())
+    recovery.validate_receipt(
+        receipt,
+        request=request,
+        activation_receipt=activation,
+        candidate_receipt=candidate,
+        shadow_receipt=shadow,
+        railway=_railway(platform),
+        bundle_root=capture.bundle.root,
+    )
+    assert restored == [capture.bundle.root, capture.bundle.root]
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_changed_capture_is_never_receipted(
+    captured_recovery,
+    monkeypatch: pytest.MonkeyPatch,
+    when: str,
+) -> None:
+    platform, _environment, _activation, _request_doc, capture = captured_recovery
+    member = capture.bundle.root / "seiche.dump"
+
+    def corrupt():
+        member.chmod(0o640)
+        member.write_bytes(b"PGDMP" + b"changed archive" * 200)
+        member.chmod(0o440)
+
+    if when == "before":
+        corrupt()
+    else:
+        original = recovery._restored_filesystem_identity
+
+        def inspect(*args, **kwargs):
+            result = original(*args, **kwargs)
+            corrupt()
+            return result
+
+        monkeypatch.setattr(recovery, "_restored_filesystem_identity", inspect)
+    with pytest.raises(recovery.RecoveryContractError):
+        _finalize_capture(captured_recovery)
+    assert not (platform / "recovery-receipts").exists()
+    assert not (platform / "recovery-evidence").exists()
+
+
+def test_failed_capture_restore_never_seals_a_receipt(
+    captured_recovery,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    platform = captured_recovery[0]
+
+    def failed_restore(*args, **kwargs):
+        raise recovery.RecoveryContractError("restored SQLite is corrupt")
+
+    monkeypatch.setattr(recovery, "_restored_filesystem_identity", failed_restore)
+    with pytest.raises(recovery.RecoveryContractError, match="SQLite is corrupt"):
+        _finalize_capture(captured_recovery)
+    assert not (platform / "recovery-receipts").exists()
+
+
+@pytest.mark.parametrize(
+    "field", ["expected_nbs_audit_result", "expected_agent_room_audit"]
+)
+def test_capture_restore_must_match_captured_semantic_state(
+    captured_recovery,
+    field: str,
+) -> None:
+    platform, environment, activation, request, capture = captured_recovery
+    mismatch = (
+        "different_head"
+        if field == "expected_nbs_audit_result"
+        else _verified_agent_room_audit()
+    )
+    capture = capture._replace(**{field: mismatch})
+    with pytest.raises(
+        recovery.RecoveryContractError, match="differs from staged state"
+    ):
+        _finalize_capture((platform, environment, activation, request, capture))
+    assert not (platform / "recovery-receipts").exists()
+
+
+def test_capture_cannot_substitute_palimpsest_state(captured_recovery) -> None:
+    platform, environment, activation, request, capture = captured_recovery
+    forged = dict(capture.palimpsest_china_state, tree_sha256="1" * 64)
+    capture = capture._replace(palimpsest_china_state=forged)
+    with pytest.raises(
+        recovery.RecoveryContractError, match="state differs from bundle"
+    ):
+        _finalize_capture((platform, environment, activation, request, capture))
+    assert not (platform / "recovery-receipts").exists()
+
+
 def test_recovery_snapshots_agent_room_online_and_audits_restored_key(
     tmp_path: Path,
 ) -> None:
@@ -877,7 +1035,7 @@ def test_production_supervisor_orders_pause_export_restart_and_receipt(
         calls.append("export")
         return exported
 
-    monkeypatch.setattr(recovery, "export_snapshot", export)
+    monkeypatch.setattr(recovery, "capture_snapshot", export)
 
     def restart(*_args: object, **_kwargs: object) -> list[_Child]:
         calls.append("restart")
@@ -931,7 +1089,7 @@ def test_production_supervisor_does_not_receipt_after_api_exit(
         api.code = 73
         return object()
 
-    monkeypatch.setattr(recovery, "export_snapshot", export)
+    monkeypatch.setattr(recovery, "capture_snapshot", export)
     monkeypatch.setattr(
         cutover,
         "_terminate_children",
@@ -983,7 +1141,7 @@ def test_production_supervisor_does_not_restart_writers_after_export_and_api_fai
         api.code = 79
         raise RuntimeError("simultaneous export and API failure")
 
-    monkeypatch.setattr(recovery, "export_snapshot", export)
+    monkeypatch.setattr(recovery, "capture_snapshot", export)
     monkeypatch.setattr(
         cutover, "_terminate_children", lambda _children: calls.append("stop")
     )
@@ -1009,6 +1167,23 @@ def test_production_supervisor_does_not_restart_writers_after_export_and_api_fai
     assert "export" in calls
     assert "restart" not in calls
     assert "receipt" not in calls
+
+
+def test_manual_receipt_wait_leaves_time_before_download_credentials_expire() -> None:
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    manual = text.split("\n  export-recovery:\n", 1)[1].split(
+        "\n  resume-offsite:\n", 1
+    )[0]
+    receipt_seconds = int(
+        re.search(r"recovery_ready_deadline=\$\(\(SECONDS \+ (\d+)\)\)", manual)[1]
+    )
+    download_minutes = int(
+        re.search(r"download_expires_at=.*?'\+(\d+) minutes'", manual)[1]
+    )
+    job_minutes = int(re.search(r"timeout-minutes: (\d+)", manual)[1])
+    assert 0 < receipt_seconds <= 75 * 60
+    assert download_minutes * 60 - receipt_seconds >= 30 * 60
+    assert download_minutes + 10 <= job_minutes <= 120
 
 
 def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:

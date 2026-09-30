@@ -1800,7 +1800,7 @@ def _serve_production(
                 break
             writers_stopped_at = migration._iso_now()
             try:
-                exported = recovery.export_snapshot(
+                exported = recovery.capture_snapshot(
                     production,
                     request,
                     runtime_uid=migration.RUNTIME_UID,

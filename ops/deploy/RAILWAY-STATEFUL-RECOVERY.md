@@ -34,14 +34,32 @@ For one valid `recovery_export` command it:
 3. takes an online SQLite copy, archives market/NBS and Palimpsest China
    activation state, dumps PostgreSQL, and commits the exact nine-file
    backup-v4 generation atomically;
-4. restarts both writers and observes them alive; and
-5. publishes a content-bound immutable recovery receipt.
+4. restarts both writers and observes them alive;
+5. restores the sealed snapshot into private scratch, audits SQLite, NBS,
+   Agent Room and Palimpsest China state, and hashes the restored trees; and
+6. publishes a content-bound immutable recovery receipt only after that audit
+   and a second archive-identity check succeed.
+
+The supervisor passes an unverified `RecoveryCapture` from capture to
+finalization. It does not perform a duplicate restore while collectors are
+paused. Other callers of `export_snapshot` still receive a fully inspected
+export, and independent receipt readers still restore the archives themselves.
+Capturing a sealed archive is not recovery acceptance.
 
 An export failure restarts the writers but cannot publish a success receipt.
-The hosted export waits up to 45 minutes for the exact receipt, within its
-90-minute job limit. Large backups include semantic restore inspection before
-the receipt is emitted. A hosted timeout does not cancel that root operation;
-reconcile the request and completed receipt before starting another export.
+The hosted manual export waits up to 75 minutes for the exact receipt, within
+its 120-minute job limit. This also supports a preceding application version
+that still restores the snapshot twice: a measured 2.54 GB snapshot exceeded
+the former 45-minute receipt window. The download credential still expires
+110 minutes after the request, and both API routes must remain continuously
+available throughout capture and download. Native exports retain their
+separate 45-minute stage budget.
+
+A hosted timeout does not cancel the root operation. Reconcile its original
+request and completed receipt before starting another export. Retain the
+failed workflow as a failure; a late receipt or a larger budget in a later
+workflow does not retroactively accept it. Every new accepted run still needs
+its own complete continuity, restore, locked offsite and attestation proofs.
 An interrupted run revalidates the already committed bundle and can seal the
 same receipt after restart. Receipt names are sortable
 `SNAPSHOT_ID-REQUEST_ID.json` values; no mutable `latest` pointer is trusted.

@@ -1,8 +1,9 @@
 """Phase-6 portable recovery exports for Railway stateful production.
 
 The production supervisor briefly pauses the two writer children, calls this
-module to commit one backup-v4 generation, restarts the writers, and only then
-publishes the recovery receipt.  Public API reads remain available throughout.
+module to capture one backup-v4 generation, restarts the writers, and then
+restores and audits that sealed snapshot before publishing the recovery receipt.
+Public API reads remain available throughout.
 """
 
 from __future__ import annotations
@@ -126,6 +127,17 @@ _OFFSITE_OBJECTS = frozenset(
 
 class RecoveryContractError(RuntimeError):
     """Raised when recovery state is ambiguous or not content-bound."""
+
+
+class RecoveryCapture(NamedTuple):
+    """Sealed archive bytes awaiting a filesystem restore audit, not a receipt."""
+
+    bundle: migration.BackupBundle
+    expected_nbs_audit_result: str | None
+    expected_agent_room_audit: Mapping[str, Any] | None
+    palimpsest_china_state: Mapping[str, Any]
+    started_at: str
+    completed_at: str
 
 
 class RecoveryExport(NamedTuple):
@@ -1379,14 +1391,15 @@ def _validate_recovery_generation_permissions(
             raise RecoveryContractError("recovery generation member is unsafe")
 
 
-def export_snapshot(
+def capture_snapshot(
     environment: Mapping[str, str],
     request: Mapping[str, Any],
     *,
     platform_root: Path | None = None,
     runtime_uid: int = migration.RUNTIME_UID,
     runtime_gid: int = migration.RUNTIME_GID,
-) -> RecoveryExport:
+) -> RecoveryCapture:
+    """Capture immutable bytes; finalization must restore them before receipting."""
     root = platform_root or migration.PLATFORM_ROOT
     _activation_body, activation = activation_context(environment)
     _candidate_body, candidate = candidate_context(
@@ -1420,22 +1433,15 @@ def export_snapshot(
             snapshot_id=snapshot_id,
             commit=str(validated["commit"]),
         )
-        nbs_result, tree_digests, agent_room_audit = _restored_filesystem_identity(
-            bundle,
-            scratch_parent=snapshots,
-            runtime_uid=runtime_uid,
-            runtime_gid=runtime_gid,
-        )
         observed_palimpsest_state = _palimpsest_china_state_from_bundle(bundle)
         if observed_palimpsest_state != expected_palimpsest_state:
             raise RecoveryContractError(
                 "recovery snapshot Palimpsest China state differs from candidate"
             )
-        return RecoveryExport(
+        return RecoveryCapture(
             bundle,
-            nbs_result,
-            agent_room_audit,
-            tree_digests,
+            None,
+            None,
             observed_palimpsest_state,
             started_at,
             _iso_now(),
@@ -1463,11 +1469,6 @@ def export_snapshot(
                 api_gid=runtime_gid,
                 declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
             )
-            tree_digests = {
-                "market": migration.hash_tree(market),
-                "nbs": migration.hash_tree(nbs),
-                "palimpsest-china": migration.hash_tree(palimpsest),
-            }
         except Exception as exc:
             raise RecoveryContractError(str(exc)) from exc
         observed_palimpsest_state = _palimpsest_china_state(
@@ -1504,7 +1505,6 @@ def export_snapshot(
             api_stage,
             source_owner_uid=runtime_uid,
         )
-        tree_digests["api"] = migration.hash_tree(api_stage)
         _archive_roots(stage / "api-data.tgz", {"api-data": api_stage})
         shutil.rmtree(api_stage)
         _write_all(
@@ -1555,21 +1555,6 @@ def export_snapshot(
             snapshot_id=snapshot_id,
             commit=str(validated["commit"]),
         )
-        restored_nbs_result, restored_tree_digests, restored_agent_room_audit = (
-            _restored_filesystem_identity(
-                bundle,
-                scratch_parent=snapshots,
-                runtime_uid=runtime_uid,
-                runtime_gid=runtime_gid,
-            )
-        )
-        if (
-            restored_nbs_result != nbs_result
-            or restored_agent_room_audit != staged_agent_room_audit
-        ):
-            raise RecoveryContractError(
-                "recovery archive restore proof differs from staged state"
-            )
         _seal_recovery_generation(stage, runtime_gid=runtime_gid)
         stage.rename(final)
         migration._fsync_directory(snapshots)
@@ -1579,11 +1564,10 @@ def export_snapshot(
             snapshot_id=snapshot_id,
             commit=str(validated["commit"]),
         )
-        return RecoveryExport(
+        return RecoveryCapture(
             bundle,
-            restored_nbs_result,
-            restored_agent_room_audit,
-            restored_tree_digests,
+            nbs_result,
+            staged_agent_room_audit,
             observed_palimpsest_state,
             started_at,
             _iso_now(),
@@ -1591,6 +1575,78 @@ def export_snapshot(
     finally:
         if stage is not None and stage.is_dir() and not stage.is_symlink():
             shutil.rmtree(stage)
+
+
+def _inspect_capture(
+    capture: RecoveryCapture,
+    *,
+    runtime_uid: int,
+    runtime_gid: int,
+) -> RecoveryExport:
+    bundle = _bundle_identity(
+        capture.bundle.root,
+        snapshot_id=capture.bundle.snapshot_id,
+        commit=capture.bundle.source_revision,
+    )
+    if bundle != capture.bundle:
+        raise RecoveryContractError("sealed recovery capture changed before inspection")
+    if _palimpsest_china_state_from_bundle(bundle) != capture.palimpsest_china_state:
+        raise RecoveryContractError(
+            "captured Palimpsest China state differs from bundle"
+        )
+    nbs_result, trees, agent_room_audit = _restored_filesystem_identity(
+        bundle,
+        scratch_parent=bundle.root.parent,
+        runtime_uid=runtime_uid,
+        runtime_gid=runtime_gid,
+    )
+    if (
+        capture.expected_nbs_audit_result is not None
+        and nbs_result != capture.expected_nbs_audit_result
+    ) or (
+        capture.expected_agent_room_audit is not None
+        and agent_room_audit != capture.expected_agent_room_audit
+    ):
+        raise RecoveryContractError(
+            "recovery archive restore proof differs from staged state"
+        )
+    if (
+        _bundle_identity(
+            bundle.root,
+            snapshot_id=bundle.snapshot_id,
+            commit=bundle.source_revision,
+        )
+        != bundle
+    ):
+        raise RecoveryContractError("sealed recovery capture changed during inspection")
+    return RecoveryExport(
+        bundle,
+        nbs_result,
+        agent_room_audit,
+        trees,
+        capture.palimpsest_china_state,
+        capture.started_at,
+        capture.completed_at,
+    )
+
+
+def export_snapshot(
+    environment: Mapping[str, str],
+    request: Mapping[str, Any],
+    *,
+    platform_root: Path | None = None,
+    runtime_uid: int = migration.RUNTIME_UID,
+    runtime_gid: int = migration.RUNTIME_GID,
+) -> RecoveryExport:
+    """Capture and fully inspect for callers outside the production supervisor."""
+    capture = capture_snapshot(
+        environment,
+        request,
+        platform_root=platform_root,
+        runtime_uid=runtime_uid,
+        runtime_gid=runtime_gid,
+    )
+    return _inspect_capture(capture, runtime_uid=runtime_uid, runtime_gid=runtime_gid)
 
 
 def render_receipt(
@@ -2172,7 +2228,7 @@ def _remove_recovery_evidence_stage(
 def finalize_receipt(
     environment: Mapping[str, str],
     request: Mapping[str, Any],
-    export: RecoveryExport,
+    export: RecoveryExport | RecoveryCapture,
     *,
     writers_stopped_at: str,
     writers_restarted_at: str,
@@ -2191,6 +2247,15 @@ def finalize_receipt(
         platform_root=root,
     )
     railway = migration.railway_identity(environment)
+    # The supervisor has already resumed collectors. Audit this sealed capture
+    # once here; public/independent receipt readers still restore from scratch.
+    inspected_capture = isinstance(export, RecoveryCapture)
+    if isinstance(export, RecoveryCapture):
+        export = _inspect_capture(
+            export,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
     receipt = render_receipt(
         request,
         activation,
@@ -2209,7 +2274,7 @@ def finalize_receipt(
         candidate_receipt=candidate,
         shadow_receipt=shadow,
         railway=railway,
-        bundle_root=export.bundle.root,
+        bundle_root=None if inspected_capture else export.bundle.root,
     )
     receipts = root / "recovery-receipts"
     cutover._prepare_authority_directory(receipts, runtime_gid=runtime_gid)
