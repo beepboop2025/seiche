@@ -1,6 +1,6 @@
 """The native monitor's pinned subset must contain its complete import closure."""
 
-import importlib.util
+import ast
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,11 +12,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_prepared_monitor_subset_runs_real_pair_parser(tmp_path):
     path = ROOT / "deploy/railway-ci/recovery-monitor/prepare.py"
-    spec = importlib.util.spec_from_file_location("recovery_monitor_prepare", path)
-    assert spec is not None and spec.loader is not None
-    prepare = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(prepare)
-    for name in prepare.INPUTS:
+    assignments = [
+        node
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and any(
+            isinstance(target, ast.Name) and target.id == "INPUTS"
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
+        )
+    ]
+    assert len(assignments) == 1, "Expected exactly one top-level INPUTS assignment"
+    inputs = ast.literal_eval(assignments[0].value)
+    assert isinstance(inputs, list) and inputs
+    assert all(isinstance(name, str) for name in inputs)
+    for name in inputs:
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, target)
