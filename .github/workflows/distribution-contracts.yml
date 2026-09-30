@@ -672,6 +672,7 @@ jobs:
           python -m pip install --disable-pip-version-check --quiet \
             "httpx==0.28.1" \
             "openbb-core==1.6.13" \
+            "PyJWT==2.14.0" \
             "poetry-core==2.4.1" \
             "pytest==9.1.1" \
             "pytest-asyncio==1.4.0"
@@ -702,6 +703,7 @@ jobs:
             "build==1.5.0" \
             "httpx==0.28.1" \
             "openbb-core==1.6.13" \
+            "PyJWT==2.14.0" \
             "poetry-core==2.4.1" \
             "pytest==9.1.1" \
             "pytest-asyncio==1.4.0" \
@@ -765,6 +767,7 @@ jobs:
             "$smoke/bin/python" -m pip install --disable-pip-version-check --quiet \
               "httpx==0.28.1" \
               "openbb-core==1.6.13" \
+              "PyJWT==2.14.0" \
               "poetry-core==2.4.1"
             if test "$artifact_kind" = wheel; then
               artifact=("${RUNNER_TEMP}/openbb-dist-first"/*.whl)
@@ -780,7 +783,8 @@ jobs:
             "$smoke/bin/python" - <<'PY'
           from importlib.metadata import entry_points, version
 
-          assert version("openbb-seiche") == "0.1.0"
+          assert version("openbb-seiche") == "0.1.1"
+          assert version("PyJWT") == "2.14.0"
           for group in ("openbb_provider_extension", "openbb_core_extension"):
               matches = [entry for entry in entry_points(group=group) if entry.name == "seiche"]
               assert len(matches) == 1, (group, matches)

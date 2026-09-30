@@ -1,6 +1,6 @@
 [project]
 name = "openbb-seiche"
-version = "0.1.0"
+version = "0.1.1"
 description = "Seiche funding-liquidity and world-markets evidence provider for OpenBB"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -30,6 +30,7 @@ requires-python = ">=3.10,<4"
 dependencies = [
     "httpx>=0.27,<1",
     "openbb-core>=1.6.10,<2.0.0",
+    "PyJWT>=2.14,<3",
 ]
 
 [project.urls]

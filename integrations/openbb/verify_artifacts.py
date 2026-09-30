@@ -24,7 +24,7 @@ import zlib
 
 PROJECT_NAME = "openbb-seiche"
 NORMALIZED_NAME = "openbb_seiche"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 SDIST_ROOT = f"{NORMALIZED_NAME}-{VERSION}"
 DIST_INFO = f"{NORMALIZED_NAME}-{VERSION}.dist-info"
 WHEEL_FILENAME = f"{NORMALIZED_NAME}-{VERSION}-py3-none-any.whl"
@@ -109,6 +109,7 @@ EXPECTED_METADATA_HEADERS = (
     ("Maintainer-email", "beepboop2025@users.noreply.github.com"),
     ("Requires-Python", ">=3.10,<4"),
     *(("Classifier", value) for value in CLASSIFIERS),
+    ("Requires-Dist", "PyJWT (>=2.14,<3)"),
     ("Requires-Dist", "httpx (>=0.27,<1)"),
     ("Requires-Dist", "openbb-core (>=1.6.10,<2.0.0)"),
     ("Project-URL", "Documentation, https://seiche.info/developers"),
@@ -156,7 +157,7 @@ EXPECTED_PROJECT = {
     ],
     "classifiers": list(CLASSIFIERS),
     "requires-python": ">=3.10,<4",
-    "dependencies": ["httpx>=0.27,<1", "openbb-core>=1.6.10,<2.0.0"],
+    "dependencies": ["httpx>=0.27,<1", "openbb-core>=1.6.10,<2.0.0", "PyJWT>=2.14,<3"],
     "urls": {
         "Homepage": "https://seiche.info",
         "Documentation": "https://seiche.info/developers",
