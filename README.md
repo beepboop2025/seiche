@@ -509,3 +509,7 @@ The human desk is <https://seiche.info/#RESEARCH>. Telegram readers can use
 Catalog rows are references, not permission to redistribute source values or
 change a score. Source clocks, rights and missingness remain attached. The
 retrieved catalog hash is a byte identity, not a producer attestation.
+
+## Quant research agent integrations
+
+[Native framework tools and cited quant pipeline captures](https://seiche.info/agents/quant/) connect Seiche funding, LiquiLens bank diagnostics and Undertow market liquidity through compact read-only tables. LangChain/LangGraph, CrewAI, OpenAI Agents and Pydantic AI share one evidence contract and repeat-call revision tokens. Current published history is not an as-published vintage archive. No execution authority or institutional-adoption claim is implied.
