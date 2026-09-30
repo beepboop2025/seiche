@@ -21,6 +21,7 @@ INPUTS = [
     "backend/seiche/__init__.py",
     "backend/seiche/stateful_control.py",
     "backend/seiche/stateful_migration.py",
+    "backend/seiche/recovery_inspection_io.py",
     "ops/railway/retry_read.py",
     "ops/railway/wait_production_ready.py",
 ]
