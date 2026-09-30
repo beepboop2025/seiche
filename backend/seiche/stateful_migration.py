@@ -24,8 +24,11 @@ import subprocess
 import sys
 import tarfile
 import time
+from contextlib import ExitStack, closing
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping, NamedTuple
+
+from seiche.recovery_inspection_io import InspectionIO, InspectionTarFile
 
 REQUEST_SCHEMA = "seiche.railway-stateful-shadow-request.v1"
 RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v4"
@@ -837,13 +840,19 @@ def validate_tar_contract(
     expected_roots: frozenset[str],
     maximum_members: int = 2_000_000,
     maximum_expanded_bytes: int = 100 * 1024**3,
+    inspection_io: InspectionIO | None = None,
 ) -> tuple[tarfile.TarInfo, ...]:
-    try:
-        archive = tarfile.open(path, mode="r:gz")
-    except (OSError, tarfile.TarError) as exc:
-        raise MigrationContractError("backup archive cannot be opened") from exc
-    with archive:
-        members = archive.getmembers()
+    with ExitStack() as stack:
+        try:
+            if inspection_io is None:
+                archive = tarfile.open(path, mode="r:gz")
+            else:
+                source = stack.enter_context(inspection_io.reader(path))
+                archive = tarfile.open(fileobj=source, mode="r:gz")
+        except (OSError, tarfile.TarError) as exc:
+            raise MigrationContractError("backup archive cannot be opened") from exc
+        with archive:
+            members = archive.getmembers()
     if not members or len(members) > maximum_members:
         raise MigrationContractError("backup archive member count is invalid")
     names: set[str] = set()
@@ -907,15 +916,27 @@ def extract_validated_tar(
     destination: Path,
     *,
     expected_roots: frozenset[str],
+    inspection_io: InspectionIO | None = None,
 ) -> None:
-    validate_tar_contract(path, expected_roots=expected_roots)
+    validate_tar_contract(
+        path, expected_roots=expected_roots, inspection_io=inspection_io
+    )
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     try:
-        with tarfile.open(path, mode="r:gz") as archive:
-            archive.extractall(
-                path=destination,
-                filter=_root_owned_tar_filter,
-            )
+        if inspection_io is None:
+            with tarfile.open(path, mode="r:gz") as archive:
+                archive.extractall(
+                    path=destination,
+                    filter=_root_owned_tar_filter,
+                )
+        else:
+            with inspection_io.reader(path) as source:
+                with InspectionTarFile.open(fileobj=source, mode="r:gz") as archive:
+                    archive.inspection_io = inspection_io
+                    archive.extractall(
+                        path=destination,
+                        filter=_root_owned_tar_filter,
+                    )
     except (OSError, tarfile.TarError) as exc:
         raise MigrationContractError(
             "validated backup archive extraction failed"
@@ -944,7 +965,7 @@ def _walk_real_tree(root: Path) -> list[Path]:
     return paths
 
 
-def hash_tree(root: Path) -> str:
+def hash_tree(root: Path, *, inspection_io: InspectionIO | None = None) -> str:
     digest = hashlib.sha256()
     for path in _walk_real_tree(root):
         relative = "." if path == root else path.relative_to(root).as_posix()
@@ -960,7 +981,12 @@ def hash_tree(root: Path) -> str:
                 f"{metadata.st_size}\0"
             ).encode()
         )
-        digest.update(sha256_file(path).encode("ascii") + b"\n")
+        file_digest = (
+            sha256_file(path)
+            if inspection_io is None
+            else inspection_io.sha256_file(path)
+        )
+        digest.update(file_digest.encode("ascii") + b"\n")
     return digest.hexdigest()
 
 
@@ -984,7 +1010,7 @@ def _validate_sqlite(path: Path) -> None:
     metadata = path.lstat()
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
         raise MigrationContractError("restored API SQLite database is unsafe")
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as database:
+    with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as database:
         if database.execute("PRAGMA quick_check").fetchone() != ("ok",):
             raise MigrationContractError("restored API SQLite database is corrupt")
 
@@ -1232,6 +1258,7 @@ def restore_filesystem_generation(
     runtime_uid: int,
     runtime_gid: int,
     agent_room_audit_out: dict[str, Any] | None = None,
+    inspection_io: InspectionIO | None = None,
 ) -> tuple[str, Mapping[str, str]]:
     state_stage = staging / "state-archive"
     api_stage = staging / "api-archive"
@@ -1240,17 +1267,20 @@ def restore_filesystem_generation(
         bundle.root / "var-lib-seiche.tgz",
         state_stage,
         expected_roots=frozenset({"seiche", "seiche-nbs"}),
+        inspection_io=inspection_io,
     )
     extract_validated_tar(
         bundle.root / "api-data.tgz",
         api_stage,
         expected_roots=frozenset({"api-data"}),
+        inspection_io=inspection_io,
     )
     if bundle.schema == BACKUP_SCHEMA:
         extract_validated_tar(
             bundle.root / "palimpsest-china.tgz",
             palimpsest_stage,
             expected_roots=frozenset({"seiche-palimpsest-china"}),
+            inspection_io=inspection_io,
         )
         palimpsest = palimpsest_stage / "seiche-palimpsest-china"
         try:
@@ -1309,7 +1339,14 @@ def restore_filesystem_generation(
     nbs = state_stage / "seiche-nbs"
     api_data = api_stage / "api-data"
     _validate_sqlite(api_data / "seiche.sqlite")
+    if inspection_io is not None:
+        inspection_io.release_audited_file(api_data / "seiche.sqlite")
     agent_room_audit = audit_agent_room_state(api_data)
+    if (
+        inspection_io is not None
+        and (api_data / "_agent_room/agent-room.sqlite").exists()
+    ):
+        inspection_io.release_audited_file(api_data / "_agent_room/agent-room.sqlite")
     if agent_room_audit_out is not None:
         agent_room_audit_out.clear()
         agent_room_audit_out.update(agent_room_audit)
@@ -1329,7 +1366,7 @@ def restore_filesystem_generation(
     shutil.rmtree(api_stage)
     shutil.rmtree(palimpsest_stage)
     digests = {
-        name: hash_tree(generation / name)
+        name: hash_tree(generation / name, inspection_io=inspection_io)
         for name in ("market", "nbs", "api", "palimpsest-china")
     }
     return nbs_result, digests

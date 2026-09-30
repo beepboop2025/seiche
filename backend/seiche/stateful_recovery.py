@@ -28,6 +28,7 @@ from typing import Any, Mapping, NamedTuple
 
 from seiche import stateful_cutover as cutover
 from seiche import stateful_migration as migration
+from seiche.recovery_inspection_io import InspectionIO
 
 REQUEST_SCHEMA = "seiche.railway-recovery-export-request.v2"
 RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v4"
@@ -1278,13 +1279,21 @@ def _restored_filesystem_identity(
     try:
         try:
             agent_room_audit: dict[str, Any] = {}
-            nbs_result, tree_digests = migration.restore_filesystem_generation(
-                bundle,
+            archive_names = ["var-lib-seiche.tgz", "api-data.tgz"]
+            if bundle.schema == migration.BACKUP_SCHEMA:
+                archive_names.append("palimpsest-china.tgz")
+            with InspectionIO(
                 scratch,
-                runtime_uid=runtime_uid,
-                runtime_gid=runtime_gid,
-                agent_room_audit_out=agent_room_audit,
-            )
+                tuple(bundle.root / name for name in archive_names),
+            ) as inspection_io:
+                nbs_result, tree_digests = migration.restore_filesystem_generation(
+                    bundle,
+                    scratch,
+                    runtime_uid=runtime_uid,
+                    runtime_gid=runtime_gid,
+                    agent_room_audit_out=agent_room_audit,
+                    inspection_io=inspection_io,
+                )
             return nbs_result, tree_digests, agent_room_audit
         except migration.MigrationContractError as exc:
             raise RecoveryContractError(str(exc)) from exc

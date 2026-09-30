@@ -774,10 +774,18 @@ def test_recovery_export_rejects_active_candidate_state_drift(
         )
 
 
+@pytest.mark.parametrize("schema", [migration.BACKUP_SCHEMA, migration.LEGACY_BACKUP_SCHEMA])
 def test_recovery_restore_probe_propagates_production_runtime_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    schema: str,
 ) -> None:
+    (tmp_path / "bundle").mkdir()
+    archive_names = ["var-lib-seiche.tgz", "api-data.tgz"]
+    if schema == migration.BACKUP_SCHEMA:
+        archive_names.append("palimpsest-china.tgz")
+    for name in archive_names:
+        (tmp_path / "bundle" / name).write_bytes(b"registered archive")
     bundle = migration.BackupBundle(
         root=tmp_path / "bundle",
         snapshot_id="20260824T010203Z",
@@ -787,7 +795,7 @@ def test_recovery_restore_probe_propagates_production_runtime_identity(
         member_sha256={},
         counts_floor=(1, 2, 3, 4),
         total_bytes=1,
-        schema=migration.BACKUP_SCHEMA,
+        schema=schema,
         palimpsest_china_state_audit={},
     )
     observed: dict[str, object] = {}
@@ -799,7 +807,9 @@ def test_recovery_restore_probe_propagates_production_runtime_identity(
         runtime_uid: int,
         runtime_gid: int,
         agent_room_audit_out: dict[str, object] | None = None,
+        inspection_io: object = None,
     ) -> tuple[str, dict[str, str]]:
+        assert inspection_io is not None
         observed.update(
             {
                 "bundle": received,
