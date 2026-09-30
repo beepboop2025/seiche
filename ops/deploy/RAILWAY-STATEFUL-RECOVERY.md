@@ -80,6 +80,15 @@ The scheduled attestation requires protected environment variable
 inputs. The retired `RAILWAY_STATEFUL_PHASE6_ENABLED` scheduling flag no longer
 starts a GitHub monitor or export.
 
+A manual monitor or export may explicitly name the still-running signed
+`source_sha` while a newer recovery controller is on `main`. The controller
+checkout must equal the dispatched main commit, remote main must still match,
+and both commits must verify against the controller's release signer policy.
+The runtime must be an ancestor of that controller. Both production edges must
+report the requested runtime source. Receipt provenance continues to identify
+the main-branch controller separately from the application being backed up;
+this does not authorize a feature-branch workflow or a runtime deployment.
+
 ## Protected environments and secrets
 
 Require human reviewers on `railway-stateful-recovery-admin`: it changes native

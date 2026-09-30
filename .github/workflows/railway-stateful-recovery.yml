@@ -29,7 +29,7 @@ on:
         required: false
         type: string
       source_sha:
-        description: "Optional exact current main SHA for reviewed native-backup or monitor repairs"
+        description: "Optional exact signed live runtime SHA; monitor/export may verify an ancestor of main"
         required: false
         type: string
       confirmation:
@@ -884,9 +884,15 @@ jobs:
       - name: Check out the exact default-branch identity
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify signed workflow and runtime identities
+        env:
+          RECOVERY_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: python3 -I -S ops/railway/verify_recovery_source.py
 
       - name: Install the checksum-pinned Railway CLI
         run: |
@@ -984,13 +990,7 @@ jobs:
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-monitor
         run: |
           set -euo pipefail
-          [[ "$RECOVERY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$RECOVERY_SOURCE_SHA"
-          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$RECOVERY_SOURCE_SHA"
-          if test "$GITHUB_REF" != refs/heads/main; then
-            test "$GITHUB_EVENT_NAME" = workflow_dispatch
-            test -n "$REQUESTED_SOURCE_SHA"
-          fi
+          python3 -I -S "$GITHUB_WORKSPACE/ops/railway/verify_recovery_source.py"
           for value in \
             "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" \
             "$RAILWAY_ENVIRONMENT_ID" "$RAILWAY_SERVICE_ID" \
@@ -1206,7 +1206,7 @@ jobs:
           required = {
               "x-seiche-railway-authority": "production",
               "x-seiche-railway-deployment": origin.get("x-seiche-railway-deployment"),
-              "x-seiche-release-sha": origin.get("x-seiche-release-sha"),
+              "x-seiche-release-sha": os.environ["RECOVERY_SOURCE_SHA"],
           }
           if any(origin.get(key) != value or public.get(key) != value for key, value in required.items()):
               raise SystemExit("origin and public production identities differ")
