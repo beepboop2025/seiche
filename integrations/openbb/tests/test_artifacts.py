@@ -32,7 +32,7 @@ EPOCH = 1_787_351_583
 README = b"# OpenBB artifact fixture\n"
 VALID_PYPROJECT = b"""[project]
 name = "openbb-seiche"
-version = "0.1.0"
+version = "0.1.1"
 description = "Seiche funding-liquidity and world-markets evidence provider for OpenBB"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -62,6 +62,7 @@ requires-python = ">=3.10,<4"
 dependencies = [
     "httpx>=0.27,<1",
     "openbb-core>=1.6.10,<2.0.0",
+    "PyJWT>=2.14,<3",
 ]
 
 [project.urls]
@@ -351,7 +352,7 @@ def test_valid_artifacts_and_cli(tmp_path: Path, capsys: pytest.CaptureFixture[s
         == 0
     )
     output = capsys.readouterr()
-    assert "verified openbb_seiche-0.1.0-py3-none-any.whl sha256:" in output.out
+    assert "verified openbb_seiche-0.1.1-py3-none-any.whl sha256:" in output.out
     assert output.err == ""
 
 
@@ -536,6 +537,16 @@ def test_rejects_noncanonical_record_csv_quoting(tmp_path: Path):
     record = payloads[verifier.RECORD_PATH].replace(first, b'"' + first + b'"', 1)
     _write_wheel(fixture, record=record)
     with pytest.raises(verifier.ArtifactVerificationError, match="serialization"):
+        verifier.verify_artifacts(fixture.dist, fixture.source, EPOCH)
+
+
+def test_rejects_artifacts_without_pyjwt_security_floor(tmp_path: Path):
+    fixture = _make_fixture(tmp_path)
+    unsafe = _metadata().replace(b"Requires-Dist: PyJWT (>=2.14,<3)\n", b"")
+    assert unsafe != _metadata()
+    _write_wheel(fixture, metadata=unsafe)
+    _write_sdist(fixture, metadata=unsafe)
+    with pytest.raises(verifier.ArtifactVerificationError, match="metadata headers"):
         verifier.verify_artifacts(fixture.dist, fixture.source, EPOCH)
 
 

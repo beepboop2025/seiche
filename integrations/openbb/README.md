@@ -11,6 +11,14 @@ pip install openbb openbb-seiche
 openbb-build
 ```
 
+Version 0.1.1 requires PyJWT 2.14 or later within the 2.x series, including
+when it is installed into an existing OpenBB environment. For an older
+`openbb-seiche` installation, update that dependency explicitly:
+
+```bash
+python -m pip install --upgrade "PyJWT>=2.14,<3"
+```
+
 During development from the Seiche repository:
 
 ```bash
