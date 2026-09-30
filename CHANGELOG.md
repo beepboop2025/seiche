@@ -11,6 +11,19 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.13] - 2026-09-30
+
+### Fixed
+
+- Bound private backup-inspection cache use while preserving complete archive,
+  database, receipt, and availability validation.
+- Require patched PyJWT in optional OpenBB provider 0.1.1.
+
+### Changed
+
+- Bind the new application source to corpus receipt `r23`; the independently
+  versioned corpus and its original evidence clocks are unchanged.
+
 ## [0.13.12] - 2026-09-30
 
 ### Fixed
@@ -536,7 +549,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.12...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.13.13...HEAD
+[0.13.13]: https://github.com/beepboop2025/seiche/compare/v0.13.12...v0.13.13
 [0.13.12]: https://github.com/beepboop2025/seiche/compare/v0.13.11...v0.13.12
 [0.13.11]: https://github.com/beepboop2025/seiche/compare/v0.13.10...v0.13.11
 [0.13.10]: https://github.com/beepboop2025/seiche/compare/v0.13.9...v0.13.10

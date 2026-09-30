@@ -73,9 +73,9 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.12; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.13; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.13.12 estuary** restores dated public institutional-flow delivery across the hosted API boundary.
+Version **0.13.13 estuary** bounds backup inspection cache use and updates the optional OpenBB provider dependency floor.
 New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding
 observations can reach the daily review without waiting through the previous
 four-to-twelve-hour cache windows. Failed refreshes retain the original source
