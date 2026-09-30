@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
+import ctypes
 import errno
 import hashlib
 import io
@@ -16,6 +17,7 @@ import logging
 import os
 from pathlib import Path
 import stat
+import sys
 import tarfile
 from threading import Lock
 from typing import BinaryIO, Iterator
@@ -26,6 +28,20 @@ WINDOW_BYTES = 16 * CHUNK_BYTES
 SMALL_WORKERS = 4
 SMALL_FD_LIMIT = 32
 SMALL_PENDING_BYTES = 16 * CHUNK_BYTES
+RANGE_WRITEBACK_FLAGS = 1 | 2 | 4  # WAIT_BEFORE | WRITE | WAIT_AFTER
+
+
+def _linux_range_sync():
+    """Use libc's 64-bit Linux wrapper, never architecture-specific syscall IDs."""
+    if sys.platform != "linux" or ctypes.sizeof(ctypes.c_void_p) != 8:
+        return None
+    try:
+        function = ctypes.CDLL(None, use_errno=True).sync_file_range
+    except (AttributeError, OSError):
+        return None
+    function.argtypes = [ctypes.c_int, ctypes.c_int64, ctypes.c_int64, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    return function
 
 
 class InspectionIOError(OSError):
@@ -54,6 +70,8 @@ class InspectionIO:
         )
         self._fallback_reported = False
         self._fallback_lock = Lock()
+        self._range_sync = _linux_range_sync()
+        self._range_fallback_reported = False
         # Admission belongs to the single extraction thread. The executor's
         # queue is bounded by these retained futures, including running work.
         self._executor: ThreadPoolExecutor | None = None
@@ -289,9 +307,44 @@ class InspectionIO:
             self._check_root()
             if self._identity(os.fstat(descriptor))[:3] != identity:
                 raise InspectionIOError("inspection output identity changed")
-            self._sync_discard(handle, 0, identity[2])
+            if not 0 <= identity[2] < CHUNK_BYTES:
+                raise InspectionIOError("small inspection output size is invalid")
+            self._sync_small_output(handle, 0, identity[2])
             if self._identity(os.fstat(descriptor))[:3] != identity:
                 raise InspectionIOError("inspection output identity changed")
+
+    def _sync_small_output(self, handle: BinaryIO, start: int, end: int) -> None:
+        """Write back disposable small-copy data, without claiming durability.
+
+        Only _sync_small calls this after authorizing a completed private inode.
+        Backup archives, sealing, large/sparse writes and audited SQLite copies
+        retain their existing fsync/fdatasync operations.
+        """
+        handle.flush()
+        function = self._range_sync
+        if function is not None and end > start:
+            ctypes.set_errno(0)
+            result = function(
+                handle.fileno(), start, end - start, RANGE_WRITEBACK_FLAGS
+            )
+            if result == 0:
+                self._discard(handle, start, end)
+                return
+            error = ctypes.get_errno() or errno.EIO
+            if error not in {errno.ENOSYS, errno.EOPNOTSUPP}:
+                # Includes EINTR: propagate InterruptedError rather than retrying
+                # around deadline/signals. Python signal exceptions also escape.
+                raise OSError(error, "private inspection range writeback failed")
+            self._range_sync = None
+        if function is None or self._range_sync is None:
+            with self._fallback_lock:
+                if not self._range_fallback_reported:
+                    LOG.warning(
+                        "Private inspection range writeback unavailable; "
+                        "using fdatasync for disposable small copies"
+                    )
+                    self._range_fallback_reported = True
+        self._sync_discard(handle, start, end)
 
     def drain(self) -> None:
         """Join all admitted work before a new phase, including on failure."""

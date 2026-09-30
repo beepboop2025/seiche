@@ -306,7 +306,7 @@ def test_small_queue_applies_fd_and_page_rounded_byte_backpressure(
     running = peak_running = 0
     descriptors = []
     errors = []
-    original_sync = policy._sync_discard
+    original_sync = policy._sync_small_output
     original_admit = policy._admit_small
 
     def sync(handle, start, end):
@@ -342,7 +342,7 @@ def test_small_queue_applies_fd_and_page_rounded_byte_backpressure(
         except BaseException as exc:
             errors.append(exc)
 
-    monkeypatch.setattr(policy, "_sync_discard", sync)
+    monkeypatch.setattr(policy, "_sync_small_output", sync)
     monkeypatch.setattr(policy, "_admit_small", admit)
     producer = threading.Thread(target=produce)
     producer.start()
@@ -383,7 +383,7 @@ def test_worker_failure_joins_other_work_closes_fds_and_stops_admission(
     release = threading.Event()
     descriptors = []
     errors = []
-    original_sync = policy._sync_discard
+    original_sync = policy._sync_small_output
 
     def sync(handle, start, end):
         descriptor = handle.fileno()
@@ -394,7 +394,7 @@ def test_worker_failure_joins_other_work_closes_fds_and_stops_admission(
             raise OSError(errno.EIO, "small writeback failed")
         original_sync(handle, start, end)
 
-    monkeypatch.setattr(policy, "_sync_discard", sync)
+    monkeypatch.setattr(policy, "_sync_small_output", sync)
     for number in range(4):
         small_member(policy, private / str(number))
     started.wait(timeout=10)
@@ -437,7 +437,7 @@ def test_hash_waits_for_small_writeback_and_large_member_drains_first(
     started = threading.Event()
     read_opened = threading.Event()
     result = []
-    original_sync = policy._sync_discard
+    original_sync = policy._sync_small_output
     original_open = policy._open_scratch
 
     def sync(handle, start, end):
@@ -451,7 +451,7 @@ def test_hash_waits_for_small_writeback_and_large_member_drains_first(
             read_opened.set()
         return original_open(path, create=create)
 
-    monkeypatch.setattr(policy, "_sync_discard", sync)
+    monkeypatch.setattr(policy, "_sync_small_output", sync)
     monkeypatch.setattr(policy, "_open_scratch", opened)
     small_member(policy, private / "small")
     assert started.wait(10)
@@ -482,14 +482,14 @@ def test_extraction_error_drains_and_shutdown_closes_owned_handles(
     release = threading.Event()
     started = threading.Event()
     errors = []
-    original_sync = policy._sync_discard
+    original_sync = policy._sync_small_output
 
     def sync(handle, start, end):
         started.set()
         assert release.wait(10)
         original_sync(handle, start, end)
 
-    monkeypatch.setattr(policy, "_sync_discard", sync)
+    monkeypatch.setattr(policy, "_sync_small_output", sync)
     small_member(policy, private / "first")
     assert started.wait(10)
     member = tarfile.TarInfo("truncated")
@@ -620,3 +620,290 @@ def test_parallel_unsupported_advice_is_reported_once(tmp_path, monkeypatch, cap
             )
         policy.drain()
         assert caplog.text.count("cache advice unavailable") == 1
+
+
+@pytest.mark.parametrize("unsupported", ["platform", "word_size", "symbol", "library"])
+def test_range_wrapper_is_only_loaded_for_supported_64bit_linux(
+    monkeypatch, unsupported
+):
+    import ctypes
+
+    calls = []
+
+    def loader(*args, **kwargs):
+        calls.append((args, kwargs))
+        if unsupported == "library":
+            raise OSError("libc unavailable")
+        return object()
+
+    monkeypatch.setattr(
+        bounded.sys, "platform", "darwin" if unsupported == "platform" else "linux"
+    )
+    monkeypatch.setattr(
+        ctypes, "sizeof", lambda value: 4 if unsupported == "word_size" else 8
+    )
+    monkeypatch.setattr(ctypes, "CDLL", loader)
+    assert bounded._linux_range_sync() is None
+    assert len(calls) == (0 if unsupported in {"platform", "word_size"} else 1)
+    if calls:
+        assert calls[0] == ((None,), {"use_errno": True})
+
+
+def test_range_wrapper_pins_libc_argument_and_return_types(monkeypatch):
+    import ctypes
+
+    class Function:
+        pass
+
+    function = Function()
+    library = type("Libc", (), {"sync_file_range": function})()
+    monkeypatch.setattr(bounded.sys, "platform", "linux")
+    monkeypatch.setattr(ctypes, "sizeof", lambda value: 8)
+    monkeypatch.setattr(ctypes, "CDLL", lambda name, use_errno: library)
+    assert bounded._linux_range_sync() is function
+    assert function.argtypes == [
+        ctypes.c_int,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_uint,
+    ]
+    assert function.restype is ctypes.c_int
+
+
+def test_completed_small_private_payload_uses_range_then_advice(tmp_path, monkeypatch):
+    private = scratch(tmp_path)
+    events = []
+    with bounded.InspectionIO(private, ()) as policy:
+
+        def writeback(fd, offset, size, flags):
+            metadata = os.fstat(fd)
+            assert metadata.st_size == size == 8193
+            assert metadata.st_ino == (private / "file").stat().st_ino
+            events.append(("writeback", offset, size, flags))
+            return 0
+
+        def forbidden_fsync(fd):
+            raise AssertionError("successful range path fell through to fdatasync")
+
+        monkeypatch.setattr(policy, "_range_sync", writeback)
+        monkeypatch.setattr(os, "fdatasync", forbidden_fsync, raising=False)
+        monkeypatch.setattr(
+            policy,
+            "_discard",
+            lambda handle, start, end: events.append(("advice", start, end)),
+        )
+        small_member(policy, private / "file")
+        policy.drain()
+        assert events == [("writeback", 0, 8193, 7), ("advice", 0, 8193)]
+    assert (private / "file").read_bytes() == b"s" * 8193
+
+
+@pytest.mark.parametrize("error", [None, errno.ENOSYS, errno.EOPNOTSUPP])
+def test_unsupported_range_uses_existing_fdatasync_before_advice(
+    tmp_path, monkeypatch, caplog, error
+):
+    import ctypes
+
+    private = scratch(tmp_path)
+    events = []
+    real_sync = getattr(os, "fdatasync", os.fsync)
+    with bounded.InspectionIO(private, ()) as policy:
+
+        def unsupported(*args):
+            ctypes.set_errno(error)
+            events.append("unsupported")
+            return -1
+
+        def sync(fd):
+            real_sync(fd)
+            events.append("fdatasync")
+
+        monkeypatch.setattr(
+            policy, "_range_sync", None if error is None else unsupported
+        )
+        monkeypatch.setattr(os, "fdatasync", sync, raising=False)
+        monkeypatch.setattr(policy, "_discard", lambda *args: events.append("advice"))
+        for number in range(2):
+            small_member(policy, private / str(number))
+            policy.drain()
+        assert (
+            events
+            == ([] if error is None else ["unsupported"]) + ["fdatasync", "advice"] * 2
+        )
+        assert caplog.text.count("range writeback unavailable") == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        errno.EIO,
+        errno.ENOSPC,
+        errno.ENOMEM,
+        errno.EBADF,
+        errno.ESPIPE,
+        errno.EINVAL,
+        errno.EINTR,
+    ],
+)
+def test_range_failures_propagate_without_fallback_or_advice_and_close(
+    tmp_path, monkeypatch, error
+):
+    import ctypes
+
+    private = scratch(tmp_path)
+    policy = bounded.InspectionIO(private, ())
+    descriptors = []
+    forbidden = []
+
+    def fail(fd, start, size, flags):
+        descriptors.append(fd)
+        ctypes.set_errno(error)
+        return -1
+
+    monkeypatch.setattr(policy, "_range_sync", fail)
+    monkeypatch.setattr(
+        os, "fdatasync", lambda *args: forbidden.append("fallback"), raising=False
+    )
+    monkeypatch.setattr(policy, "_discard", lambda *args: forbidden.append("advice"))
+    small_member(policy, private / "file")
+    with pytest.raises(OSError) as caught:
+        policy.close()
+    assert caught.value.errno == error
+    if error == errno.EINTR:
+        assert isinstance(caught.value, InterruptedError)
+    assert forbidden == [] and len(descriptors) == 1
+    assert policy._root_fd == -1 and not policy._pending
+    assert all(not worker.is_alive() for worker in policy._executor._threads)
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+
+
+def test_python_signal_exception_is_not_swallowed_or_retried(tmp_path, monkeypatch):
+    policy = bounded.InspectionIO(scratch(tmp_path), ())
+    calls = []
+
+    def interrupted(*args):
+        calls.append(args)
+        raise KeyboardInterrupt("deadline signal")
+
+    monkeypatch.setattr(policy, "_range_sync", interrupted)
+    small_member(policy, policy.scratch / "file")
+    with pytest.raises(KeyboardInterrupt, match="deadline signal"):
+        policy.close()
+    assert len(calls) == 1 and policy._root_fd == -1 and not policy._pending
+
+
+def test_range_never_replaces_large_sparse_audit_or_archive_operations(
+    tmp_path, monkeypatch
+):
+    private = scratch(tmp_path)
+    archive, _ = archive_fixture(tmp_path, 100)
+    real_sync = getattr(os, "fdatasync", os.fsync)
+    synced = []
+    with bounded.InspectionIO(private, (archive,)) as policy:
+
+        def forbidden(*args):
+            raise AssertionError("range writeback escaped the small private worker")
+
+        def sync(fd):
+            synced.append(os.fstat(fd).st_ino)
+            real_sync(fd)
+
+        monkeypatch.setattr(policy, "_range_sync", forbidden)
+        monkeypatch.setattr(os, "fdatasync", sync, raising=False)
+        small_member(policy, private / "large", bounded.CHUNK_BYTES)
+        member = tarfile.TarInfo("sparse")
+        member.size, member.offset_data, member.sparse = 1024, 0, [(50, 3)]
+        source = type("Archive", (), {"fileobj": io.BytesIO(b"abc")})()
+        policy.makefile(source, member, str(private / "sparse"))
+        policy.release_audited_file(private / "large")
+        assert (
+            policy.sha256_file(archive)
+            == hashlib.sha256(archive.read_bytes()).hexdigest()
+        )
+        with pytest.raises(bounded.InspectionIOError, match="outside"):
+            policy.release_audited_file(archive)
+    assert len(synced) == 4
+
+
+def test_disposable_inspection_returns_only_identity_and_removes_private_copies(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    from seiche import stateful_recovery as recovery
+
+    bundle_root = tmp_path / "retained"
+    bundle_root.mkdir()
+    archives = [
+        bundle_root / name
+        for name in ("var-lib-seiche.tgz", "api-data.tgz", "palimpsest-china.tgz")
+    ]
+    for path in archives:
+        path.write_bytes(b"retained immutable archive")
+    parent = tmp_path / "inspections"
+    parent.mkdir()
+    calls = []
+    policies = []
+
+    def writeback(fd, offset, size, flags):
+        candidates = list(parent.glob(".recovery-inspect.*/copy"))
+        assert (
+            len(candidates) == 1 and candidates[0].stat().st_ino == os.fstat(fd).st_ino
+        )
+        calls.append((offset, size, flags))
+        return 0
+
+    def restore(bundle, staging, *, inspection_io, agent_room_audit_out, **kwargs):
+        policies.append(inspection_io)
+        small_member(inspection_io, staging / "copy")
+        value = inspection_io.sha256_file(staging / "copy")
+        agent_room_audit_out["synthetic"] = True
+        return "verified_head", {"synthetic": value}
+
+    monkeypatch.setattr(bounded, "_linux_range_sync", lambda: writeback)
+    monkeypatch.setattr(recovery.migration, "restore_filesystem_generation", restore)
+    bundle = SimpleNamespace(root=bundle_root, schema=migration.BACKUP_SCHEMA)
+    result = recovery._restored_filesystem_identity(bundle, scratch_parent=parent)
+    assert result == (
+        "verified_head",
+        {"synthetic": hashlib.sha256(b"s" * 8193).hexdigest()},
+        {"synthetic": True},
+    )
+    assert calls == [(0, 8193, 7)]
+    assert list(parent.iterdir()) == []
+    assert all(path.read_bytes() == b"retained immutable archive" for path in archives)
+    assert policies[0]._root_fd == -1 and not policies[0]._pending
+
+
+@pytest.mark.skipif(
+    bounded.sys.platform != "linux"
+    or bounded.ctypes.sizeof(bounded.ctypes.c_void_p) != 8,
+    reason="Requires the actual64-bit Linux libc range-writeback interface",
+)
+def test_actual_linux_range_writeback_preserves_complete_small_files(
+    tmp_path, monkeypatch
+):
+    private = scratch(tmp_path)
+    with bounded.InspectionIO(private, ()) as policy:
+        actual = policy._range_sync
+        assert actual is not None, "Qualified Linux image must expose the libc wrapper"
+        calls = []
+
+        def observed(fd, start, length, flags):
+            result = actual(fd, start, length, flags)
+            assert result == 0, bounded.ctypes.get_errno()
+            calls.append((start, length, flags))
+            return result
+
+        monkeypatch.setattr(policy, "_range_sync", observed)
+        for number in range(20):
+            small_member(policy, private / str(number), 16385 + number)
+        policy.drain()
+        assert len(calls) == 20 and all(
+            start == 0 and flags == 7 for start, _, flags in calls
+        )
+        for number in range(20):
+            assert (
+                policy.sha256_file(private / str(number))
+                == hashlib.sha256(b"s" * (16385 + number)).hexdigest()
+            )
