@@ -18,7 +18,7 @@ FINGERPRINT = "SHA256:yhoa/PIDMM6M/ZennILp8jtRJy5pArncJRARbQssTMI"
 RECOVERY_HASH = "f10919a2dc77d6a73cff45ecfc00941a7aff529b115a9588474811e185d930a2"
 OFFSITE_HASH = "0c0093b0afcc5c8e7233fdbb6f8e916d3d4600160286e21bfacca1ac86bdda68"
 METADATA = ("activation-receipt.json", "candidate-receipt.json", "shadow-receipt.json", "request.json", "recovery-receipt.json", "offsite-receipt.json")
-FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md", "recurring.py", "attest.py", "test_attest.py", "test_recurring.py", "health_probe.py", "test_health_probe.py", "native_installation_gate.py", "test_native_installation_gate.py")
+FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md", "recurring.py", "attest.py", "test_attest.py", "test_recurring.py", "health_probe.py", "test_health_probe.py", "native_installation_gate.py", "test_native_installation_gate.py", "test_prepare_timing.py")
 
 
 def digest(body):
@@ -70,7 +70,24 @@ def continuity_transport(body):
     return body
 
 
-def recurring_scripts(document):
+def workflow_timing(document):
+    """Read bounded timing from the reviewed workflow, not a stale adapter."""
+    job = document["jobs"]["export-recovery"]
+    minutes = job.get("timeout-minutes")
+    export = [step["run"] for step in job["steps"]
+              if step.get("name") == RECURRING_STEPS["export-native.sh"]]
+    if type(minutes) is not int or not 1 <= minutes <= 120 or len(export) != 1:
+        raise ValueError("reviewed export job timing is invalid")
+    matches = re.findall(r"recovery_ready_deadline=\$\(\(SECONDS \+ ([0-9]+)\)\)", export[0])
+    if len(matches) != 1:
+        raise ValueError("reviewed receipt readiness timing is ambiguous")
+    readiness = int(matches[0])
+    if not 0 < readiness <= 4500 or readiness >= minutes * 60:
+        raise ValueError("reviewed receipt readiness exceeds the export job")
+    return {"job_seconds": minutes * 60, "readiness_seconds": readiness}
+
+
+def recurring_scripts(document, *, timing=None):
     """Adapt execution names, private headers and continuity transport only."""
     steps = {step["name"]: step["run"] for step in document["jobs"]["export-recovery"]["steps"] if "run" in step}
     result = {}
@@ -86,6 +103,12 @@ def recurring_scripts(document):
         if filename == "export-native.sh":
             body = private_download_transport(body)
             body = continuity_transport(body)
+            if timing is not None:
+                original = "recovery_ready_deadline=$((SECONDS + 2700))"
+                if body.count(original) != 1:
+                    raise ValueError("original receipt readiness timing changed")
+                body = body.replace(original, "recovery_ready_deadline=$((SECONDS + "
+                                    + str(timing["readiness_seconds"]) + "))")
         if "GITHUB_" in body or "${{" in body:
             raise ValueError("unmapped GitHub execution input in the native recovery body")
         result[filename] = body
@@ -131,7 +154,7 @@ def prepare(repository, output, case, target, public_key):
     if (output / "restore.sh").read_text() != expected_restore:
         raise ValueError("native restore differs from the original body beyond its separate output name")
     names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", ORIGINAL_SOURCE, "backend"], text=True).splitlines()
-    names += ["ops/railway/resume_recovery.py", "ops/deploy/seiche-s3-object-lock.sh", *RECOVERY_GOVERNANCE]
+    names += ["ops/railway/resume_recovery.py", "ops/deploy/seiche-s3-object-lock.sh", *RECOVERY_GOVERNANCE, WORKFLOW]
     for name in names:
         destination = output / "trusted" / name
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -157,7 +180,7 @@ RECOVERY_GOVERNANCE = ("governance/railway-control-signers.json",)
 
 
 def admitted_source_paths(names):
-    return {name for name in names if name in (*RECOVERY_HELPERS, *RECOVERY_GOVERNANCE) or
+    return {name for name in names if name in (*RECOVERY_HELPERS, *RECOVERY_GOVERNANCE, WORKFLOW) or
             (name.startswith("backend/") and not name.startswith("backend/tests/")
              and not name.startswith("backend/seiche/dispatches/"))}
 
@@ -171,7 +194,8 @@ def add_recurring_assembly(repository, output, revision, target_path, public_key
         raise ValueError("native evidence public key must be one raw Ed25519 key")
     source = lambda path: subprocess.check_output(["git", "-C", str(repository), "show", revision + ":" + path])
     original = yaml.safe_load(subprocess.check_output(["git", "-C", str(repository), "show", ORIGINAL_SOURCE + ":" + WORKFLOW]))
-    for name, body in recurring_scripts(original).items():
+    timing = workflow_timing(yaml.safe_load(source(WORKFLOW)))
+    for name, body in recurring_scripts(original, timing=timing).items():
         (output / name).write_text(body)
     target = json.loads(target_path.read_text())
     # The reused monitor validates the fixed production IDs/origin and controller signature.
@@ -180,13 +204,14 @@ def add_recurring_assembly(repository, output, revision, target_path, public_key
                     "--output", str(output / "monitor"), "--target", str(target_path),
                     "--signer-public-key", str(signer_public_key)], check=True)
     names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", revision, "backend"], text=True).splitlines()
-    names += [*RECOVERY_HELPERS, *RECOVERY_GOVERNANCE]
+    names += [*RECOVERY_HELPERS, *RECOVERY_GOVERNANCE, WORKFLOW]
     for name in names:
         destination = output / "trusted" / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(source(name))
     policy = json.loads((output / "policy.json").read_text())
     policy.update(operation="export-recurring", source=revision, production_target=target,
+                  export_timing=timing,
                   execution_public_key=public_hex,
                   controller_project_id="9c094747-8662-4ba7-8d6b-5a4fa7ca27eb",
                   controller_environment_id="e16a2d28-22b0-4028-9a6e-e67710ecbe5e",

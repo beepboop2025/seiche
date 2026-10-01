@@ -24,7 +24,9 @@ class ExportReached(Exception):
 class SourceRegistryTests(unittest.TestCase):
     def test_current_source_requires_the_same_control_registry(self):
         registry = "governance/railway-control-signers.json"
-        contents = {"backend/seiche/example.py": b"pass\n", registry: b"reviewed signers\n"}
+        workflow = ".github/workflows/railway-stateful-recovery.yml"
+        contents = {"backend/seiche/example.py": b"pass\n", registry: b"reviewed signers\n",
+                    workflow: b"reviewed timing\n"}
         policy = {"trusted_source_sha256": {name: verify.digest(body) for name, body in contents.items()}}
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -59,6 +61,11 @@ class SourceRegistryTests(unittest.TestCase):
                 commit()
                 with self.assertRaisesRegex(ValueError, "input path set changed"):
                     recurring.source_identity(policy, root)
+                (repository / registry).write_bytes(contents[registry])
+                (repository / workflow).write_bytes(b"unreviewed timing\n")
+                commit()
+                with self.assertRaisesRegex(ValueError, "reviewed recovery source changed"):
+                    recurring.source_identity(policy, root)
 
 
 class NativeAdmissionTests(unittest.TestCase):
@@ -75,6 +82,7 @@ class NativeAdmissionTests(unittest.TestCase):
                   "RAILWAY_STATEFUL_SERVICE_ID": self.uuid, "RAILWAY_STATEFUL_VOLUME_ID": self.uuid,
                   "RAILWAY_STATEFUL_ORIGIN": attest.ORIGIN}
         self.policy = {"operation": "export-recurring", "controller_source": "c" * 40,
+                       "export_timing": {"job_seconds": 7200, "readiness_seconds": 4500},
                        "controller_project_id": self.uuid, "controller_environment_id": self.uuid,
                        "controller_service_id": self.uuid, "execution_public_key": "e" * 64,
                        "production_target": target, "trusted_source_sha256": {},
@@ -139,6 +147,25 @@ class NativeAdmissionTests(unittest.TestCase):
         self.assertEqual(self.trace, ["keys", "source", "monitor", "location", "bucket", "runtime", "index", "export"])
         self.assertTrue(self.index.call_args.kwargs["allow_missing"])
         self.stage.assert_called_once()
+
+    def test_export_receives_remaining_job_time_instead_of_old_45_minute_cap(self):
+        with mock.patch.object(recurring.time, "monotonic", side_effect=[1000, 1005]), \
+                self.assertRaises(ExportReached):
+            recurring.main()
+        self.assertEqual(self.stage.call_args.args[2], 7195)
+
+    def test_invalid_timing_cannot_reach_signers_or_export(self):
+        for timing in (None, {}, {"job_seconds": True, "readiness_seconds": 4500},
+                       {"job_seconds": 7201, "readiness_seconds": 4500},
+                       {"job_seconds": 7200, "readiness_seconds": 4501},
+                       {"job_seconds": 4500, "readiness_seconds": 4500}):
+            with self.subTest(timing=timing):
+                self.policy["export_timing"] = timing
+                self.write_policy()
+                with self.assertRaisesRegex(ValueError, "export timing"):
+                    recurring.main()
+                self.keys.assert_not_called()
+                self.stage.assert_not_called()
 
     def test_invalid_key_stops_before_any_source_monitor_storage_or_production_stage(self):
         self.keys.side_effect = ValueError("wrong registered or evidence key")
@@ -218,6 +245,16 @@ class NativeAdmissionTests(unittest.TestCase):
             recurring.main()
         self.stage.assert_not_called()
         self.events.assert_not_called()
+
+
+class JobDeadlineTests(unittest.TestCase):
+    def test_slow_export_leaves_only_remaining_time_for_later_stages(self):
+        with mock.patch.object(recurring.time, "monotonic", side_effect=[0, 3600, 6100, 7200]):
+            deadline = recurring.time.monotonic() + 7200
+            self.assertEqual(recurring.stage_budget(deadline, 7200), 3600)
+            self.assertEqual(recurring.stage_budget(deadline, 1800), 1100)
+            with self.assertRaisesRegex(RuntimeError, "deadline expired"):
+                recurring.stage_budget(deadline, 2700)
 
 
 class FinalHealthTests(unittest.TestCase):

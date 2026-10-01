@@ -11,6 +11,16 @@ diagnostics identify the endpoint, timings and curl status without credentials.
 The assembler requires the exact original probe commands before substituting
 this transport; upstream workflow drift is rejected.
 
+Recurring assembly reads receipt-readiness and total-job timing from the signed
+current recovery workflow and pins that workflow in runtime source admission.
+The reviewed limits are 75 minutes for receipt readiness and 120 minutes for the
+whole export job. The original export adapter receives that readiness value;
+its former 45-minute parent-process cutoff is removed. Preflight, download,
+restore and sealing share one decreasing job budget. A new stage never resets
+that deadline, and no integrity, continuity or freshness check is skipped.
+The recurring service must retain its explicit 7,200-second outer command;
+the Docker default remains the historical read-only qualification command.
+
 The existing pinned Python and PostgreSQL image manifests are fetched from
 Docker's ECR Public publisher. Their manifest bytes were verified against the
 same Docker Hub digests; base versions and restore behavior are unchanged.
@@ -88,7 +98,8 @@ production recovery policy, objects, keys and original workflow remain available
 `prepare.py --recurring-source <full SHA> --production-target <private JSON>
 --execution-public-key <public hex file>` adds the original governed export,
 restore, and Object Lock scripts from `fff0eabb26088292451edaef10bdd203c074a992`.
-Only execution-variable names and private authentication-header transport differ.
+Execution-variable names, private authentication-header transport and the
+explicitly reviewed receipt-readiness duration differ as described above.
 GitHub's mask directive is replaced by a private bearer header file, so native
 logs and child arguments never carry the download bearer. Current
 main is read as data: the complete executable backend/helper input set and all

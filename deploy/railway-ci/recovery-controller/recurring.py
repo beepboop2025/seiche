@@ -34,7 +34,7 @@ def source_identity(policy, private):
     source = git("rev-parse", "FETCH_HEAD").decode().strip()
     if re.fullmatch(r"[0-9a-f]{40}", source) is None:
         raise ValueError("current source is not an immutable Git identity")
-    current_paths = admitted_source_paths(git("ls-tree", "-r", "--name-only", source, "backend", "ops", "governance").decode().splitlines())
+    current_paths = admitted_source_paths(git("ls-tree", "-r", "--name-only", source, "backend", "ops", "governance", ".github/workflows").decode().splitlines())
     if current_paths != set(policy["trusted_source_sha256"]):
         raise ValueError("current recovery source input path set changed")
     for name, expected in policy["trusted_source_sha256"].items():
@@ -163,6 +163,17 @@ def stage_budget(deadline, maximum):
     return min(maximum, seconds)
 
 
+def export_job_seconds(policy):
+    timing = policy.get("export_timing")
+    if not isinstance(timing, dict) or set(timing) != {"job_seconds", "readiness_seconds"}:
+        raise ValueError("reviewed export timing is missing")
+    job, readiness = timing["job_seconds"], timing["readiness_seconds"]
+    if (type(job) is not int or type(readiness) is not int
+            or not 0 < readiness <= 4500 or not readiness < job <= 7200):
+        raise ValueError("reviewed export timing is invalid")
+    return job
+
+
 def healthy_runtime_after_export(policy, environment, expected, deadline):
     """Allow resumed collectors to converge without relaxing final evidence."""
     import attest
@@ -214,6 +225,8 @@ def run_locked():
     policy = json.loads((ROOT / "policy.json").read_text())
     if policy.get("operation") != "export-recurring":
         raise ValueError("this assembly does not admit recurring production export")
+    job_seconds = export_job_seconds(policy)
+    export_deadline = time.monotonic() + job_seconds
     native = {name: os.environ[name] for name in ("RAILWAY_PROJECT_ID", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_SERVICE_ID",
                                                 "RAILWAY_DEPLOYMENT_ID", "RAILWAY_REPLICA_ID")}
     for field in ("project", "environment", "service"):
@@ -294,8 +307,7 @@ def run_locked():
                      "GITHUB_WORKSPACE": str(TRUSTED), "NATIVE_OUTPUT": str(private / "export.outputs"),
                      "NATIVE_SUMMARY": str(private / "summary"), "EVIDENCE_ROOT": str(work)}
         (private / "edge-header").write_text("X-Seiche-Edge-Token: " + monitor_inputs["RAILWAY_EDGE_TOKEN"] + "\n")
-        export_deadline = time.monotonic() + 5400
-        run_original_stage("export-native.sh", stage_env, stage_budget(export_deadline, 2700))
+        run_original_stage("export-native.sh", stage_env, stage_budget(export_deadline, job_seconds))
         identity = outputs(private / "export.outputs", {"snapshot_id", "request_id", "receipt_sha256", "receipt_path", "evidence_root"})
         if identity["evidence_root"] != str(work) or identity["receipt_path"] != str(work / "recovery-receipt.json"):
             raise ValueError("native export output path escaped its private stage")
