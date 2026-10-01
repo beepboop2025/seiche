@@ -1,10 +1,11 @@
-import {readJSON, record, visibleRefresh} from './core';
-import {seriesModel, type EconomicSeries} from './seriesModel';
+import {readJSON, visibleRefresh} from './core';
+import {type EconomicSeries} from './seriesModel';
+import {FUNDING_KEYS, publishedFunding, refreshFunding, retainFunding} from './fundingHistory';
 import {chartCard, dashboard, stats, selectControl, el, number, difference, changes, windowPoints, type Point, type Series, type ChartSpec} from './analyticsCharts';
 import './analytics.css';
 
 const API = 'https://api.seiche.info';
-export const FUNDING_KEYS = ['SOFR', 'EFFR', 'IORB', 'TGCR', 'BGCR', 'WRESBAL', 'TGA_LONG', 'RRPONTSYD', 'WALCL', 'CP_FIN_3M', 'CP_NONFIN_3M', 'DGS3M', 'DGS2', 'DGS10', 'DGS30', 'MMF_REPO_FED', 'MMF_REPO_FICC', 'MMF_REPO_TOT'];
+export {FUNDING_KEYS} from './fundingHistory';
 const MMF_REMOTE_IDS: Record<string, string> = {MMF_REPO_TOT: 'MMF-MMF_RP_TOT-M', MMF_REPO_FED: 'MMF-MMF_RP_wFR-M', MMF_REPO_FICC: 'MMF-MMF_RP_wFICC-M'};
 export function fundingPoints(model: EconomicSeries | undefined, unit: string, divisor = 1, cutoff = Date.now()): Point[] {
   if (!model || model.unit !== unit) return [];
@@ -59,7 +60,7 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
 
 export function mountFundingAnalytics(target: HTMLElement): () => void {
   const view = dashboard(target, {eyebrow: 'SEICHE / FUNDING OBSERVATORY', title: 'Follow the pressure through the system.', description: 'From the overnight corridor to reserves, Treasury cash and money-fund repo. Ten analytical views preserve the clocks and definitions behind the funding picture.'});
-  let models = new Map<string, EconomicSeries>(), days: number | null = 365, request: AbortController | null = null, disposed = false;
+  let models = new Map<string, EconomicSeries>(), days: number | null = 365, request: AbortController | null = null, disposed = false, liveAttempted = false;
   const render = () => {
     view.grid.replaceChildren(...fundingSpecs(models, days).map(chartCard));
     const latest = (key: string) => models.get(key)?.points.filter(p => Date.parse(p.date + 'T00:00:00Z') <= Date.now()).at(-1);
@@ -75,25 +76,34 @@ export function mountFundingAnalytics(target: HTMLElement): () => void {
   const link = el('a', 'Explore the funding workbench →'); link.href = '#workbench'; view.controls.append(link);
   async function refresh() {
     if (request) return; const controller = new AbortController(); request = controller; refreshButton.disabled = true;
-    const timer = setTimeout(() => controller.abort(), 45000), next = new Map<string, EconomicSeries>();
+    liveAttempted = true;
+    const timer = setTimeout(() => controller.abort(), 45000);
     view.status.textContent = 'Checking source dates and histories…';
     try {
-      const catalog = await readJSON(`${API}/api/series/index.json`, controller.signal);
-      if (!record(catalog) || catalog.schema !== 'seiche.series-index.v1' || !Array.isArray(catalog.series)) throw new Error('Series catalog unavailable');
-      const entries: unknown[] = catalog.series;
-      for (let i = 0; i < FUNDING_KEYS.length; i += 3) {
-        await Promise.all(FUNDING_KEYS.slice(i, i + 3).map(async key => {
-          const entry = entries.find(row => record(row) && row.mnemonic === key);
-          if (!record(entry) || entry.available !== true || entry.csv_restricted || entry.json !== `/api/series/${key}`) return;
-          try {next.set(key, seriesModel(await readJSON(`${API}${entry.json}?n=520`, controller.signal), entry));} catch { /* This source stays explicitly unavailable. */ }
-        }));
-      }
-      if (disposed) return; models = next; render();
-      view.status.textContent = `${models.size} / ${FUNDING_KEYS.length} source histories loaded. Each chart carries its own observation dates.`;
+      const next = await refreshFunding(models, controller.signal);
+      if (disposed) return; models = next.models; render();
+      const kept = models.size - next.refreshed;
+      view.status.textContent = `${next.refreshed} / ${FUNDING_KEYS.length} source histories refreshed.${kept ? ` ${kept} previously verified histories retained while their refresh is unavailable.` : ''} Each chart carries its own observation dates.`;
     } catch {
-      if (!disposed) {models.clear(); render(); view.status.textContent = 'Sources could not be verified. Retry to load dated funding observations.';}
+      if (!disposed) {
+        models = retainFunding(models); render();
+        view.status.textContent = models.size
+          ? 'Live refresh is unavailable. Previously verified histories remain visible with their original observation dates.'
+          : 'Sources could not be verified. Retry to load dated funding observations.';
+      }
     } finally {clearTimeout(timer); request = null; if (!disposed) refreshButton.disabled = false;}
   }
   refreshButton.addEventListener('click', () => void refresh()); render();
-  const stop = visibleRefresh(refresh); return () => {disposed = true; stop(); request?.abort();};
+  const published = new AbortController();
+  const publishedTimer = setTimeout(() => published.abort(), 4000);
+  let stop = () => {};
+  void readJSON('/data/funding-series.json', published.signal).then(value => {
+    if (disposed || liveAttempted) return;
+    const snapshot = publishedFunding(value); models = snapshot.models; render();
+    view.status.textContent = `Published source histories assembled ${snapshot.generatedAt}. Observation dates remain unchanged.`;
+  }).catch(() => { /* Live loading still works before the first history publication. */ }).finally(() => {
+    clearTimeout(publishedTimer);
+    if (!disposed) stop = visibleRefresh(refresh);
+  });
+  return () => {disposed = true; stop(); clearTimeout(publishedTimer); published.abort(); request?.abort();};
 }
