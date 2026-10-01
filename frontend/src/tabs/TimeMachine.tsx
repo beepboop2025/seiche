@@ -101,7 +101,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
             <Stat k="EFFR" blk={replay.headline.effr_pct} unit="%" />
             <Stat k="Reserves" blk={replay.headline.reserves_b} unit="B" d={0} />
             <Stat k="ON RRP" blk={replay.headline.rrp_b} unit="B" d={0} />
-            <Stat k="TGA" blk={replay.headline.tga_b} unit="B" d={0} />
+            <Stat k="TGA OPEN" blk={replay.headline.tga_b} unit="B" d={0} />
             <Stat k="SRF" blk={replay.headline.srf_accepted_b} unit="B" />
           </div>
           <div className="grid">

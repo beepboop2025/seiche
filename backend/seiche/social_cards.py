@@ -74,7 +74,7 @@ _HEADLINE_LABELS = {
     "iorb_pct": ("IORB", "%"),
     "sofr_iorb_bp": ("SOFR - IORB", "bp"),
     "reserves_b": ("Reserve balances", "$B"),
-    "tga_b": ("Treasury General Account", "$B"),
+    "tga_b": ("TGA opening balance", "$B"),
     "rrp_b": ("Overnight reverse repo", "$B"),
     "vix": ("VIX", "index"),
     "hy_oas_pct": ("High-yield OAS", "%"),

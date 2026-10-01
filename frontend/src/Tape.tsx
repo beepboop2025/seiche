@@ -39,7 +39,7 @@ function buildItems(snap: Any): Item[] {
     },
     { k: "RESERVES", v: `$${fmt(val(h.reserves_b), 0, "B")}` },
     { k: "ON RRP", v: `$${fmt(val(h.rrp_b), 1, "B")}` },
-    { k: "TGA", v: `$${fmt(val(h.tga_b), 0, "B")}` },
+    { k: "TGA OPEN", v: `$${fmt(val(h.tga_b), 0, "B")}` },
     {
       k: "SRF",
       v: `$${fmt(srf, 1, "B")}`,

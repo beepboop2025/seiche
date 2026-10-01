@@ -73,9 +73,11 @@ async def fetch_tga_daily(client: httpx.AsyncClient, start: str = TGA_START) -> 
         "Treasury General Account (TGA)": 1,
         "Federal Reserve Account": 2,
     }
-    df["prio"] = df["account_type"].map(priority).fillna(9)
+    # A cached or unexpectedly broad response may also contain closing rows.
+    # Their value is in open_today_bal too: the account label selects the basis.
+    df["prio"] = df["account_type"].map(priority)
     tga = (
-        df.dropna(subset=["open_today_bal"])
+        df.dropna(subset=["open_today_bal", "prio"])
         .sort_values(["record_date", "prio"])
         .drop_duplicates("record_date")
         .set_index("record_date")["open_today_bal"]

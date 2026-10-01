@@ -1242,7 +1242,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         series_map["SOFR-IORB"] = ("SOFR-IORB spread", "bp", drv["spread_bp"])
         series_map["SOFR_TAIL"] = ("SOFR P99-P50 tail", "bp", drv["tail_bp"])
         series_map["SRF"] = ("SRF accepted", "$B", drv["srf"])
-        series_map["TGA"] = ("Treasury General Account", "$B", drv["tga"])
+        series_map["TGA"] = ("Treasury General Account opening balance", "$B", drv["tga"])
         for m, s in ((src.get("crypto") or {}).get("candles") or {}).items():
             spec = ALL_SERIES.get(m)
             series_map[m] = (spec.label if spec else m, spec.unit if spec else "", s.points.dropna())

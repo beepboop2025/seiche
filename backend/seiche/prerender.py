@@ -78,7 +78,7 @@ HEADLINE_ROWS = [
     ("iorb_pct", "IORB", "%", 2),
     ("reserves_b", "Reserve balances", "$B", 0),
     ("rrp_b", "ON RRP", "$B", 1),
-    ("tga_b", "Treasury General Account", "$B", 0),
+    ("tga_b", "Treasury General Account opening balance", "$B", 0),
     ("srf_accepted_b", "SRF accepted", "$B", 2),
     ("dw_b", "Discount window", "$B", 1),
     ("vix", "VIX", "pts", 2),
