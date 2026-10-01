@@ -290,7 +290,7 @@ def test_world_markets_selector_results_match_the_advertised_schema(
     jsonschema.Draft202012Validator(schema).validate(result["structuredContent"])
 
 
-def test_world_markets_unavailable_and_invalid_results_match_schema(
+def test_world_markets_unavailable_result_and_invalid_parameter_envelope(
     plugin_runtime, monkeypatch
 ):
     descriptor = next(
@@ -317,6 +317,9 @@ def test_world_markets_unavailable_and_invalid_results_match_schema(
     )
     assert invalid["error"]["code"] == mcp.INVALID_PARAMS
     assert "arguments.section must be one of" in invalid["error"]["message"]
+    assert invalid["jsonrpc"] == "2.0"
+    assert invalid["id"] == 1
+    assert "result" not in invalid
 
     try:
         import jsonschema
@@ -324,7 +327,6 @@ def test_world_markets_unavailable_and_invalid_results_match_schema(
         return
     validator = jsonschema.Draft202012Validator(schema)
     validator.validate(unavailable["structuredContent"])
-    validator.validate(invalid["structuredContent"])
 
 
 def test_structured_failure_matches_the_advertised_failure_arm(monkeypatch):
