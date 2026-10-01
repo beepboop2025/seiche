@@ -11,6 +11,21 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.15] - 2026-10-01
+
+### Fixed
+
+- Exclude the officially discontinued TED spread from the current Trade Safety
+  evidence clock after 31 January 2022. Keep its history, original dates and
+  staleness counts, and disclose that it has no direct replacement.
+- Require the exact FRED TEDRATE identity and reject observations dated after
+  its final published observation on 21 January 2022.
+
+### Changed
+
+- Bind this application source to corpus receipt `r25`; corpus data, independent
+  versions, rights and original evidence clocks remain unchanged.
+
 ## [0.13.14] - 2026-10-01
 
 ### Fixed

@@ -39,6 +39,10 @@ _RETIRED_CLOCK_POLICIES = {
         "last_observation": "2021-07-28", "retired_from": "2021-07-29",
         "replacement": "IORB", "source_url": "https://fred.stlouisfed.org/series/IOER",
     },
+    ("fred", "TED", "TEDRATE", "D"): {
+        "last_observation": "2022-01-21", "retired_from": "2022-01-31",
+        "replacement": "none", "source_url": "https://fred.stlouisfed.org/series/TEDRATE",
+    },
 }
 _LIMITATIONS = (
     "public_metadata_context_only_not_licensed_for_real_money_execution",
@@ -399,7 +403,7 @@ def project(
             "basis": (
                 "oldest valid non-retired public provenance evidence clock; bounded FRED IORB "
                 "date-only forward effective values use their prior collection time; rows "
-                "without observation clocks remain unknown; officially retired splice legs "
+                "without observation clocks remain unknown; officially retired series "
                 "are disclosed separately and retained in provenance staleness counts"
             ),
         },

@@ -150,6 +150,58 @@ def test_retired_ioer_is_disclosed_without_aging_current_evidence() -> None:
     assert payload["staleness"]["total"] == 6
 
 
+def test_retired_ted_history_does_not_age_current_evidence_or_claim_a_replacement() -> None:
+    snapshot = _snapshot()
+    snapshot["provenance"].extend([
+        {"source": "fred", "mnemonic": "IOER", "remote_id": "IOER", "freq": "D",
+         "asof": "2021-07-28", "freshness_grace_days": 4},
+        {"source": "fred", "mnemonic": "TED", "remote_id": "TEDRATE", "freq": "D",
+         "asof": "2022-01-21", "freshness_grace_days": 4},
+    ])
+    before = copy.deepcopy(snapshot)
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+    assert snapshot == before
+    assert payload["clocks"]["evidence_as_of"] == "2026-08-28T00:00:00Z"
+    assert payload["clocks"]["all_provenance_as_of"] == "2021-07-28T00:00:00Z"
+    assert payload["clocks"]["retired_sources"][1] == {
+        "source": "fred", "mnemonic": "TED", "as_of": "2022-01-21T00:00:00Z",
+        "last_observation": "2022-01-21", "retired_from": "2022-01-31",
+        "replacement": "none", "source_url": "https://fred.stlouisfed.org/series/TEDRATE",
+    }
+    assert payload["staleness"]["dead"] == 3
+    assert payload["staleness"]["total"] == 7
+
+
+@pytest.mark.parametrize("change", [
+    {"source": "other"}, {"remote_id": "OTHER"}, {"mnemonic": "OTHER"}, {"freq": "M"},
+])
+def test_ted_retirement_requires_exact_identity(change) -> None:
+    snapshot = _snapshot()
+    snapshot["provenance"].append({
+        "source": "fred", "mnemonic": "TED", "remote_id": "TEDRATE", "freq": "D",
+        "asof": "2022-01-21", **change,
+    })
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+    assert payload["clocks"]["evidence_as_of"] == "2022-01-21T00:00:00Z"
+    assert payload["clocks"]["retired_sources"] == []
+
+
+def test_ted_retirement_preserves_historical_dates_and_rejects_future_observations() -> None:
+    snapshot = _snapshot()
+    snapshot["provenance"] = [{
+        "source": "fred", "mnemonic": "TED", "remote_id": "TEDRATE", "freq": "D",
+        "asof": "2022-01-21",
+    }]
+    snapshot["generated_at"] = "2022-01-28T12:00:00Z"
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+    assert payload["clocks"]["evidence_as_of"] == "2022-01-21T00:00:00Z"
+    assert payload["clocks"]["retired_sources"] == []
+    snapshot["generated_at"] = "2026-09-02T11:30:00Z"
+    assert trade_safety.project(snapshot, evaluation_at=NOW)["reason"] == "evidence_clock_unavailable"
+    snapshot["provenance"][0]["asof"] = "2026-09-01"
+    assert trade_safety.project(snapshot, evaluation_at=NOW)["reason"] == "invalid_retired_source_clock"
+
+
 @pytest.mark.parametrize("change", [{"source": "other"}, {"remote_id": "OTHER"}, {"mnemonic": "OTHER"}])
 def test_retirement_requires_exact_identity(change) -> None:
     snapshot = _snapshot()
