@@ -11,6 +11,26 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.14] - 2026-10-01
+
+### Fixed
+
+- Exclude the officially retired IOER series from current evidence-age clocks
+  after validating its identity and historical dates; retain its provenance.
+- Label the daily Treasury General Account series as the opening balance
+  across the money-market API, website, replay and social cards. Reject closing
+  rows from the opening series even when they appear in a cached response.
+
+### Added
+
+- Cited agent and quant integration guides with native framework examples and
+  explicit source, freshness and research limits.
+
+### Changed
+
+- Bind this application source to corpus receipt `r24`; the corpus version,
+  data, source clocks and rights remain unchanged.
+
 ## [0.13.13] - 2026-09-30
 
 ### Fixed
