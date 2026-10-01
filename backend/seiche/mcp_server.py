@@ -2321,11 +2321,25 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
                     "evaluated_at",
                     "snapshot_age_seconds",
                     "evidence_age_seconds",
+                    "all_provenance_as_of",
+                    "retired_sources",
                     "basis",
                 ],
                 "properties": {
                     "snapshot_generated_at": _STRING_OR_NULL,
                     "evidence_as_of": _STRING_OR_NULL,
+                    "all_provenance_as_of": _STRING_OR_NULL,
+                    "retired_sources": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["source", "mnemonic", "as_of", "last_observation", "retired_from", "replacement", "source_url"],
+                            "properties": {key: {"type": "string"} for key in (
+                                "source", "mnemonic", "as_of", "last_observation", "retired_from", "replacement", "source_url"
+                            )},
+                            "additionalProperties": False,
+                        },
+                    },
                     "evaluated_at": _STRING_OR_NULL,
                     "snapshot_age_seconds": {
                         "type": ["integer", "null"],

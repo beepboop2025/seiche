@@ -95,6 +95,8 @@ def test_projection_is_deterministic_conservative_and_non_executable() -> None:
     assert first["clocks"]["evaluated_at"] == "2026-09-02T12:00:00Z"
     assert first["clocks"]["snapshot_age_seconds"] == 1_800
     assert first["clocks"]["evidence_age_seconds"] == 475_200
+    assert first["clocks"]["all_provenance_as_of"] == first["clocks"]["evidence_as_of"]
+    assert first["clocks"]["retired_sources"] == []
     for key in (
         "executable",
         "executable_quote",
@@ -132,6 +134,45 @@ def test_projection_is_deterministic_conservative_and_non_executable() -> None:
             "verified stream attestation is not per-order execution authority."
         ),
     }
+
+
+def test_retired_ioer_is_disclosed_without_aging_current_evidence() -> None:
+    snapshot = _snapshot()
+    snapshot["provenance"].append({
+        "source": "fred", "mnemonic": "IOER", "remote_id": "IOER", "freq": "D",
+        "asof": "2021-07-28", "freshness_grace_days": 4,
+    })
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+    assert payload["clocks"]["evidence_as_of"] == "2026-08-28T00:00:00Z"
+    assert payload["clocks"]["all_provenance_as_of"] == "2021-07-28T00:00:00Z"
+    assert payload["clocks"]["retired_sources"][0]["replacement"] == "IORB"
+    assert payload["staleness"]["dead"] == 2
+    assert payload["staleness"]["total"] == 6
+
+
+@pytest.mark.parametrize("change", [{"source": "other"}, {"remote_id": "OTHER"}, {"mnemonic": "OTHER"}])
+def test_retirement_requires_exact_identity(change) -> None:
+    snapshot = _snapshot()
+    snapshot["provenance"] = [{
+        "source": "fred", "mnemonic": "IOER", "remote_id": "IOER", "freq": "D",
+        "asof": "2021-07-28", **change,
+    }]
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+    assert payload["clocks"]["evidence_as_of"] == "2021-07-28T00:00:00Z"
+    assert payload["clocks"]["retired_sources"] == []
+
+
+def test_retired_clock_policy_preserves_history_and_rejects_post_retirement_observations() -> None:
+    snapshot = _snapshot()
+    snapshot["provenance"] = [{
+        "source": "fred", "mnemonic": "IOER", "remote_id": "IOER", "freq": "D", "asof": "2021-07-28",
+    }]
+    snapshot["generated_at"] = "2021-07-28T12:00:00Z"
+    assert trade_safety.project(snapshot, evaluation_at=NOW)["clocks"]["evidence_as_of"] == "2021-07-28T00:00:00Z"
+    snapshot["generated_at"] = "2026-09-02T11:30:00Z"
+    assert trade_safety.project(snapshot, evaluation_at=NOW)["reason"] == "evidence_clock_unavailable"
+    snapshot["provenance"][0]["asof"] = "2026-09-01"
+    assert trade_safety.project(snapshot, evaluation_at=NOW)["reason"] == "invalid_retired_source_clock"
 
 
 @pytest.mark.parametrize(

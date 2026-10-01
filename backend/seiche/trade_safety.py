@@ -34,10 +34,17 @@ _ATTESTATION_DISCLOSURE = (
 _FORWARD_EFFECTIVE_CLOCK_POLICIES = {
     ("fred", "IORB", "IORB", "D"): ("America/New_York", 14),
 }
+_RETIRED_CLOCK_POLICIES = {
+    ("fred", "IOER", "IOER", "D"): {
+        "last_observation": "2021-07-28", "retired_from": "2021-07-29",
+        "replacement": "IORB", "source_url": "https://fred.stlouisfed.org/series/IOER",
+    },
+}
 _LIMITATIONS = (
     "public_metadata_context_only_not_licensed_for_real_money_execution",
     "not_order_bound_and_cannot_authorize_or_route_an_order",
-    "evidence_as_of_is_the_oldest_valid_observation_clock_in_public_provenance",
+    "evidence_as_of_is_the_oldest_valid_observation_clock_among_non_retired_sources",
+    "retired_source_clocks_remain_disclosed_and_in_provenance_staleness_counts",
     "bounded_iorb_forward_effective_values_use_their_prior_collection_clock",
     "rows_without_observation_clocks_remain_unknown_and_are_not_treated_as_current",
     _ATTESTATION_LIMITATION,
@@ -238,8 +245,10 @@ def _base(*, ok: bool, status: str, reason: str | None) -> dict[str, Any]:
             "evaluated_at": None,
             "snapshot_age_seconds": None,
             "evidence_age_seconds": None,
+            "all_provenance_as_of": None,
+            "retired_sources": [],
             "basis": (
-                "oldest valid public provenance evidence clock; bounded FRED IORB "
+                "oldest valid non-retired public provenance evidence clock; bounded FRED IORB "
                 "date-only forward effective values use their prior collection time"
             ),
         },
@@ -346,6 +355,8 @@ def project(
         return unavailable("invalid_completed_snapshot")
 
     evidence_dates: list[datetime] = []
+    all_dates: list[datetime] = []
+    retired_sources: list[dict[str, str]] = []
     for row in rows:
         raw_asof = row.get("asof")
         if raw_asof is None:
@@ -353,6 +364,17 @@ def project(
         evidence_clock = _evidence_clock(row, snapshot_at=snapshot_at)
         if evidence_clock is None:
             return unavailable("invalid_evidence_clock")
+        all_dates.append(evidence_clock)
+        identity = tuple(row.get(field) for field in ("source", "mnemonic", "remote_id", "freq"))
+        retirement = _RETIRED_CLOCK_POLICIES.get(identity)
+        if retirement and snapshot_at.date().isoformat() >= retirement["retired_from"]:
+            if evidence_clock.date().isoformat() > retirement["last_observation"]:
+                return unavailable("invalid_retired_source_clock")
+            retired_sources.append({
+                "source": str(row["source"]), "mnemonic": str(row["mnemonic"]),
+                "as_of": _utc_text(evidence_clock), **retirement,
+            })
+            continue
         evidence_dates.append(evidence_clock)
     if not evidence_dates:
         return unavailable("evidence_clock_unavailable")
@@ -372,10 +394,13 @@ def project(
             "evaluated_at": _utc_text(evaluated),
             "snapshot_age_seconds": int((evaluated - snapshot_at).total_seconds()),
             "evidence_age_seconds": int((evaluated - evidence_at).total_seconds()),
+            "all_provenance_as_of": _utc_text(min(all_dates)),
+            "retired_sources": retired_sources,
             "basis": (
-                "oldest valid public provenance evidence clock; bounded FRED IORB "
+                "oldest valid non-retired public provenance evidence clock; bounded FRED IORB "
                 "date-only forward effective values use their prior collection time; rows "
-                "without observation clocks remain unknown"
+                "without observation clocks remain unknown; officially retired splice legs "
+                "are disclosed separately and retained in provenance staleness counts"
             ),
         },
     )
