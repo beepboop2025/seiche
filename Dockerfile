@@ -11,7 +11,7 @@ COPY frontend/src ./src
 RUN npm run build
 
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:cd42e3e78f19faffe161fccf60af83503ee3851dd12efdae7d2488148e2fcd49 AS python-build
+FROM cgr.dev/chainguard/python:latest-dev@sha256:85c70fe9ec4313b5c8b1adcb4f0e7fa45d171ae203d2c64c69c4ea3eb96fb7dc AS python-build
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -30,7 +30,7 @@ RUN python -m pip install ./backend \
     && mkdir -p /home/nonroot/runtime/app/backend/data
 
 
-FROM cgr.dev/chainguard/python:latest@sha256:53757bfb153c99eb7005963b7e4ea3a8ba488badceab8487d3ba982ad54f2047 AS runtime
+FROM cgr.dev/chainguard/python:latest@sha256:1e64347fb2a3f1a57a8839fa05df8f0cb8c2c050ac85f3ee6b24d442ae282fd9 AS runtime
 
 # The pinned distroless base includes CPython's package bootstrap module even
 # though it includes no pip executable. Remove that bootstrap as root during
@@ -54,7 +54,7 @@ LABEL org.opencontainers.image.title="Seiche" \
       org.opencontainers.image.created="${CREATED}" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.base.name="cgr.dev/chainguard/python:latest" \
-      org.opencontainers.image.base.digest="sha256:53757bfb153c99eb7005963b7e4ea3a8ba488badceab8487d3ba982ad54f2047"
+      org.opencontainers.image.base.digest="sha256:1e64347fb2a3f1a57a8839fa05df8f0cb8c2c050ac85f3ee6b24d442ae282fd9"
 
 ENV PATH="/home/nonroot/venv/bin:${PATH}" \
     PYTHONPATH=/app/backend \
