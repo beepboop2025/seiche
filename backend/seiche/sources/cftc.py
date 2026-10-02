@@ -8,6 +8,7 @@ Weekly (Tuesday positions, published Friday) — honest T+3 provenance.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 import httpx
 import pandas as pd
@@ -26,6 +27,7 @@ from seiche.config import (
     UST_CONTRACTS,
 )
 from seiche.sources.base import SourceFault, utcnow_iso
+from seiche.sources.publication import cftc_positions_refresh_due
 
 BASE = f"https://publicreporting.cftc.gov/resource/{TFF_DATASET}.json"
 DISAGG_BASE = (
@@ -131,21 +133,42 @@ async def _fetch_rows(
 
 
 def _match_contract(name: str) -> str | None:
-    up = (name or "").upper()
-    for key in UST_CONTRACTS:
-        if key in up:
-            return key
+    up = (name or "").strip().upper()
+    if up in UST_CONTRACTS:
+        return up
+    # A full upstream title can include an exchange suffix. More specific
+    # configured names win: ULTRA UST BOND also contains UST BOND. Distinct
+    # unrelated matches are ambiguous and must not create a wrong join.
+    matches = [key for key in UST_CONTRACTS if key in up]
+    specific = [key for key in matches if not any(key != other and key in other for other in matches)]
+    if matches:
+        return specific[0] if len(specific) == 1 else None
     # Crowding-panel extras need EXACT matches: "FED FUNDS" as a substring
     # would also catch hypothetical variants, and "E-MINI S&P 500" must not
     # swallow "MICRO E-MINI S&P 500 INDEX".
-    if up.strip() in CROWD_EXTRA_CONTRACTS:
-        return up.strip()
+    if up in CROWD_EXTRA_CONTRACTS:
+        return up
     return None
+
+
+def _cache_crossed_release(cached: dict, *, commodities: bool = False) -> bool:
+    # Check the configured engine contracts independently: one new report
+    # must not hide a missing/lagging contract or an incomplete response.
+    expected = set(_BALLAST_BY_CODE) if commodities else set(UST_CONTRACTS) | set(CROWD_EXTRA_CONTRACTS)
+    latest = dict.fromkeys(expected)
+    for row in cached.get("rows", []):
+        contract = row.get("cftc_contract_market_code") if commodities else _match_contract(row.get("contract_market_name"))
+        raw = row.get("report_date_as_yyyy_mm_dd")
+        if contract in latest and isinstance(raw, str):
+            latest[contract] = max(latest[contract] or "", raw[:10])
+    return cftc_positions_refresh_due(list(latest.values()), cached.get("fetched_at"), now=datetime.now(UTC))
 
 
 async def fetch_tff_ust(client: httpx.AsyncClient, start: str = CFTC_START) -> dict:
     key = "cftc_tff_ust"
     cached = await run_store(store.load_blob, key, CFTC_TTL_MIN)
+    if cached is not None and _cache_crossed_release(cached):
+        cached = None
     if cached is None:
         try:
             extra = " OR ".join(
@@ -205,6 +228,8 @@ async def fetch_disaggregated_commodities(
 
     key = "cftc_disagg_ballast"
     cached = await run_store(store.load_blob, key, CFTC_TTL_MIN)
+    if cached is not None and _cache_crossed_release(cached, commodities=True):
+        cached = None
     if cached is None:
         try:
             code_filter = " OR ".join(

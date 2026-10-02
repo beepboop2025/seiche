@@ -115,7 +115,7 @@ async def fetch_pd_positions(client: httpx.AsyncClient) -> dict:
     key = "nyfed_pd_positions"
     cached = await run_store(store.load_blob, key, PD_TTL_MIN)
     if cached is not None:
-        # A twelve-hour fetch TTL must not hide a weekly release that appeared
+        # The fetch TTL must not hide a weekly release that appeared
         # just after the last fetch. Check every bucket, not only the newest.
         asofs = [
             max((row[0] for row in cached.get("series", {}).get(keyid, [])

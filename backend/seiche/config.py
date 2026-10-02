@@ -530,11 +530,11 @@ WINDFETCH_TTL_MIN = 360
 
 # NY Fed + FiscalData + CFTC are fetched through dedicated collectors
 # (structured payloads, not single series). TTLs below.
-NYFED_TTL_MIN = 240        # rates with percentiles, SRF ops
-FISCAL_TTL_MIN = 360       # auctions
+NYFED_TTL_MIN = 60         # FX swap results; rates and SRF also poll hourly
+FISCAL_TTL_MIN = 60        # auction announcements/results can arrive intraday
 TGA_TTL_MIN = 60           # poll releases hourly; daily observations remain daily
-CFTC_TTL_MIN = 1440        # COT is weekly; daily check is plenty
-PD_TTL_MIN = 720           # primary dealer stats are weekly (Thu 4:15pm ET)
+CFTC_TTL_MIN = 60         # bound shifted releases too; nominal boundary checks sooner
+PD_TTL_MIN = 60            # nominal Thu 16:15 boundary plus hourly special-release polling
 
 # History starts. Extended in v2 so the Time Machine and backtests can replay
 # Sep-2019. (DTS covers TGA from 2019; auctions_query goes back decades.)
