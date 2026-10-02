@@ -27,7 +27,7 @@ test('streamed response bound rejects oversized source before JSON parsing',asyn
  const fetcher=(async()=>new Response(' '.repeat(1048577))) as typeof fetch;assert.equal((await fetchSource(SOURCES[0],fetcher,NOW)).reason,'source_too_large');
 });
 test('fixed source URLs and no redirects are enforced',async()=>{
- let seen=0;const f=sourceFetcher();const wrapped=(async(u: Parameters<typeof fetch>[0], init?:RequestInit)=>{assert.equal(init?.redirect,'error');assert.ok(SOURCES.some(s=>s.url===String(u)));seen++;return f(u,init)}) as typeof fetch;
+ let seen=0;const f=sourceFetcher();const wrapped=(async(u: Parameters<typeof fetch>[0], init?:RequestInit)=>{assert.equal(init?.redirect,'manual');assert.ok(SOURCES.some(s=>s.url===String(u)));seen++;return f(u,init)}) as typeof fetch;
  await assemble(wrapped,NOW);assert.equal(seen,5);
 });
 test('malformed scalar, unknown publication clock and future knowledge clock withhold numeric observations',async()=>{
@@ -36,4 +36,8 @@ test('malformed scalar, unknown publication clock and future knowledge clock wit
   const section=d.sections.find(s=>s.id==='money_markets')!;const benchmark=(section.content!.markets as any[])[0].benchmark;
   assert.equal(benchmark.numeric_observation_included,false);assert.equal('value' in benchmark,false);
  }
+});
+test('manual redirect mode preserves fixed-origin no-follow policy on Workers',async()=>{
+ let requests=0;const fetcher=(async(_u:Parameters<typeof fetch>[0],init?:RequestInit)=>{requests++;assert.equal(init?.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://outside.example/secret'}})}) as typeof fetch;
+ const s=await fetchSource(SOURCES[0],fetcher,NOW);assert.equal(s.status,'UNAVAILABLE');assert.equal(s.reason,'upstream_http_302');assert.equal(requests,1);assert.equal(s.data,null);
 });

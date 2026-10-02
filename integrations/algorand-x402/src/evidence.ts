@@ -61,7 +61,7 @@ async function readBounded(response: Response): Promise<Uint8Array> {
 export async function fetchSource(source: typeof SOURCES[number], fetcher: Fetcher = fetch, now = new Date()): Promise<SourceResult> {
   const out: SourceResult = { id: source.id, product: source.product, url: source.url, status: 'UNAVAILABLE', captured_at: now.toISOString(), source_clock: null, source_age_seconds: null, reason: null, http_status: null, raw_sha256: null, data: null };
   try {
-    const res = await fetcher(source.url, { headers: { Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const res = await fetcher(source.url, { headers: { Accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS) });
     out.http_status = res.status;
     if (!res.ok) { out.reason = `upstream_http_${res.status}`; await res.body?.cancel(); return out; }
     const bytes = await readBounded(res);
