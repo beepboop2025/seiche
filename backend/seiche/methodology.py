@@ -55,6 +55,17 @@ FREQ_DESC = {
     "QL": ("quarterly, lagged", "publishes about two quarters after the reference period by design"),
 }
 
+
+def _source_cadence(source: str, remote_id: str, freq: str) -> tuple[str, str]:
+    from seiche.sources.publication import H10_DAILY_REMOTE_IDS, H41_WEEKLY_REMOTE_IDS
+
+    if source == "fred" and freq == "D" and remote_id in H10_DAILY_REMOTE_IDS:
+        return ("daily observations, weekly publication",
+                "H.10 publishes the previous week's observations Monday at 16:15 New York time; federal holidays delay publication")
+    if source == "fred" and freq == "W" and remote_id in H41_WEEKLY_REMOTE_IDS:
+        return ("weekly", "H.4.1 is scheduled Thursday at 16:30 New York time for Wednesday observations; federal holidays may delay publication")
+    return FREQ_DESC.get(freq, (freq, "cadence unlisted"))
+
 # Bulk export is opt-IN by upstream, not opt-out by exception.
 #
 # The board reads from eight upstreams and only some of them let us hand their
@@ -135,7 +146,7 @@ def render_series_csv(s) -> str:
     spec = ALL_SERIES.get(s.mnemonic)
     unit = spec.unit if spec else (s.unit or "?")
     freq = spec.freq if spec else (s.freq or "D")
-    cadence, lag = FREQ_DESC.get(freq, (freq, "cadence unlisted"))
+    cadence, lag = _source_cadence(s.source, s.remote_id, freq)
     lines = [
         f"# Seiche series {s.mnemonic}: {s.label}",
         f"# source: {s.source} (remote id {s.remote_id}), unit: {unit}, "
@@ -175,7 +186,7 @@ def series_index() -> dict:
     have = _fetched_mnemonics()
     rows = []
     for m, spec in sorted(ALL_SERIES.items()):
-        cadence, lag = FREQ_DESC.get(spec.freq, (spec.freq, "cadence unlisted"))
+        cadence, lag = _source_cadence(spec.source, spec.remote_id, spec.freq)
         # One licence answer for both formats: the CSV export and the JSON
         # twin enforce csv_restriction, so the catalog must not advertise a
         # link either route will 403. This also covers source-restricted

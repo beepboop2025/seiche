@@ -11,6 +11,23 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.13.16] - 2026-10-02
+
+### Fixed
+
+- Refresh weekly Federal Reserve H.4.1 inputs when the scheduled release crosses
+  a cached fetch, instead of retaining the previous observation for twelve hours.
+  Retry a delayed FRED mirror hourly while preserving source and fetch clocks.
+- Evaluate H.4.1 freshness against Thursday publication, including federal
+  holidays and New York daylight saving time, across short and long history aliases.
+- Describe H.10 FX exports as daily observations released weekly, consistently
+  with the existing source freshness policy.
+
+### Changed
+
+- Bind this application source to corpus receipt `r26`; independent corpus data,
+  versions, rights and original evidence clocks remain unchanged.
+
 ## [0.13.15] - 2026-10-01
 
 ### Fixed

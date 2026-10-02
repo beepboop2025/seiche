@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import io
 import random
+from datetime import UTC, datetime
 
 import httpx
 import pandas as pd
@@ -18,6 +19,7 @@ from seiche import store
 from seiche.sources._async_store import run_store
 from seiche.config import ALL_SERIES, SeriesSpec
 from seiche.sources.base import Series, SourceFault, utcnow_iso
+from seiche.sources.publication import H41_WEEKLY_REMOTE_IDS, publication_refresh_due
 
 BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
@@ -29,7 +31,12 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str |
     if await run_store(store.is_fresh, spec.mnemonic, spec.ttl_minutes):
         cached = await run_store(store.load_series, spec.mnemonic)
         if cached is not None:
-            return cached
+            scheduled_weekly = spec.freq == "W" and spec.remote_id in H41_WEEKLY_REMOTE_IDS
+            if not scheduled_weekly or not publication_refresh_due(
+                spec.source, spec.remote_id, spec.freq, cached.asof,
+                cached.fetched_at, now=datetime.now(UTC),
+            ):
+                return cached
     try:
         r = None
         last_exc: Exception | None = None
