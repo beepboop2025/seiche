@@ -15,6 +15,7 @@ from pandas.tseries.holiday import USFederalHolidayCalendar
 
 H10_SOURCE_URL = "https://www.federalreserve.gov/releases/h10/"
 H41_SOURCE_URL = "https://www.federalreserve.gov/releases/h41/"
+NYFED_PD_SOURCE_URL = "https://www.newyorkfed.org/markets/counterparties/primary-dealers-statistics"
 # Only H.4.1 series with Wednesday observation dates. Match the upstream
 # identity so short and long history aliases use the same release clock.
 H41_WEEKLY_REMOTE_IDS = frozenset({
@@ -191,6 +192,42 @@ def publication_refresh_due(
     if policy["staleness"] == "fresh":
         return False
     due = datetime.fromisoformat(policy["publication_schedule"]["latest_due_at"])
+    return fetched < due or now - fetched >= timedelta(hours=1)
+
+
+def pd_positions_refresh_due(
+    asofs: list[object], fetched_at: object, *, now: datetime,
+) -> bool:
+    """Recheck a PD cache across the nominal Thursday 16:15 New York release.
+
+    NY Fed publishes the previous week's statistics. The position histories
+    have Wednesday observation dates, eight days before their normal release.
+    This is a polling deadline, not evidence that publication occurred. The
+    source does not document a holiday/special-release adjustment here, so do
+    not infer one or change observed dates. If a successful post-deadline
+    response still lacks the expected week, recheck hourly instead of waiting
+    another twelve hours. Normal cache TTL and failure fallback still apply.
+    """
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("publication evaluation time must be timezone-aware")
+    local_now = now.astimezone(_NEW_YORK)
+    monday = local_now.date() - timedelta(days=local_now.weekday())
+    due = datetime.combine(monday + timedelta(days=3), time(16, 15), _NEW_YORK)
+    if local_now < due:
+        due -= timedelta(weeks=1)
+    expected = due.date() - timedelta(days=8)
+    try:
+        fetched = datetime.fromisoformat(fetched_at) if isinstance(fetched_at, str) else None
+    except ValueError:
+        fetched = None
+    if fetched is None or fetched.tzinfo is None or fetched.utcoffset() is None or fetched > now:
+        return True
+    try:
+        observed = [date.fromisoformat(value) if isinstance(value, str) else None for value in asofs]
+    except ValueError:
+        observed = []
+    if observed and all(value is not None and expected <= value <= local_now.date() for value in observed):
+        return False
     return fetched < due or now - fetched >= timedelta(hours=1)
 
 

@@ -9,6 +9,8 @@ Pulls:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 import pandas as pd
 
@@ -22,6 +24,7 @@ from seiche.config import (
     USER_AGENT,
 )
 from seiche.sources.base import SourceFault, utcnow_iso
+from seiche.sources.publication import pd_positions_refresh_due
 
 BASE = "https://markets.newyorkfed.org/api"
 
@@ -111,6 +114,17 @@ async def fetch_pd_positions(client: httpx.AsyncClient) -> dict:
     """
     key = "nyfed_pd_positions"
     cached = await run_store(store.load_blob, key, PD_TTL_MIN)
+    if cached is not None:
+        # A twelve-hour fetch TTL must not hide a weekly release that appeared
+        # just after the last fetch. Check every bucket, not only the newest.
+        asofs = [
+            max((row[0] for row in cached.get("series", {}).get(keyid, [])
+                 if isinstance(row, (list, tuple)) and row and isinstance(row[0], str)),
+                default=None)
+            for keyid in PD_POSITION_SERIES
+        ]
+        if pd_positions_refresh_due(asofs, cached.get("fetched_at"), now=datetime.now(UTC)):
+            cached = None
     if cached is None:
         try:
             out: dict[str, list] = {}
