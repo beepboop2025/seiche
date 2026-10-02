@@ -17,6 +17,10 @@ H10_SOURCE_URL = "https://www.federalreserve.gov/releases/h10/"
 H41_SOURCE_URL = "https://www.federalreserve.gov/releases/h41/"
 NYFED_PD_SOURCE_URL = "https://www.newyorkfed.org/markets/counterparties/primary-dealers-statistics"
 CFTC_RELEASE_SOURCE_URL = "https://www.cftc.gov/MarketReports/CommitmentsofTraders/ReleaseSchedule/index.htm"
+CBUAE_FX_SOURCE_URL = "https://centralbank.ae/en/forex-eibor/exchange-rates/"
+CBUAE_FX_REMOTE_IDS = frozenset(
+    f"VAT/AED_PER_{currency}" for currency in ("USD", "INR", "EUR", "GBP", "JPY", "CHF", "SGD")
+)
 # Only H.4.1 series with Wednesday observation dates. Match the upstream
 # identity so short and long history aliases use the same release clock.
 H41_WEEKLY_REMOTE_IDS = frozenset({
@@ -266,6 +270,44 @@ def cftc_positions_refresh_due(
     return fetched < due or now - fetched >= timedelta(hours=1)
 
 
+def cbuae_fx_freshness(asof: object, *, now: datetime) -> dict:
+    """Conservative daily table age; no unverified UAE release calendar.
+
+    The publisher describes daily reference rates, but its table-update label
+    is not a fixing clock or a guaranteed publication deadline. Do not exempt
+    holidays or invent missed-release counts from a polling schedule.
+    """
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("publication evaluation time must be timezone-aware")
+    local_day = now.astimezone(ZoneInfo("Asia/Dubai")).date()
+    age = None
+    status = "dead" if asof is None else "unknown"
+    try:
+        observed = date.fromisoformat(asof) if isinstance(asof, str) else None
+    except ValueError:
+        observed = None
+    if observed is not None and date(2018, 1, 1) <= observed <= local_day:
+        age = (local_day - observed).days
+        status = "fresh" if age == 0 else "aging" if age == 1 else "stale"
+    return {
+        "staleness": status,
+        "age_days": age,
+        "publication_frequency": "D",
+        "freshness_policy": "cbuae-vat-fx-calendar-age-v1",
+        "freshness_grace_days": 0,
+        "freshness_basis": "Publisher table date: same Dubai calendar day fresh, one day aging, older stale; no verified publication calendar.",
+        "publication_schedule": {
+            "source_url": CBUAE_FX_SOURCE_URL,
+            "timezone": "Asia/Dubai",
+            "rule": "Publisher describes daily updates; exact publication time and holiday calendar are not verified.",
+            "clock_precision": "unknown",
+            "latest_due_at": None,
+            "actual_published_at": None,
+            "missed_publication_opportunities": None,
+        },
+    }
+
+
 def publication_freshness(
     source: object,
     remote_id: object,
@@ -281,6 +323,8 @@ def publication_freshness(
     one is aging, two through five are stale, and six or more are dead. A fresh
     week does not attest completeness of daily prints or their publication time.
     """
+    if source == "cbuae_fx" and freq == "D" and isinstance(remote_id, str) and remote_id in CBUAE_FX_REMOTE_IDS:
+        return cbuae_fx_freshness(asof, now=now)
     if source == "fred" and freq == "W" and isinstance(remote_id, str) and remote_id in H41_WEEKLY_REMOTE_IDS:
         return _h41_freshness(asof, now=now)
     if (

@@ -477,7 +477,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "url": "https://api.seiche.info/mcp",
                 "authentication": {
                     "type": "none",
-                    "scope": "fourteen anonymous public evidence tools",
+                    "scope": "sixteen anonymous public evidence tools",
                 },
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
@@ -1142,7 +1142,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the fourteen public tools",
+            "authentication": "none for the sixteen public tools",
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
@@ -1192,6 +1192,8 @@ def api_index() -> dict[str, Any]:
             "health": "/api/health",
             "research_network": "/api/v2/research-network",
             "market_workbench": "/api/v2/market-workbench",
+            "gift_city": "/api/v2/gift-city",
+            "gold_inventory_carry": "/api/v2/gift-city/gold-carry",
             "series_catalog": "/api/series/index.json",
             "realtime_venue": "/undertow/live/quotes.json",
         },
@@ -1723,6 +1725,8 @@ def _public_openapi_document() -> dict[str, Any]:
         },
         "paths": {
             **paths,
+            "/api/v2/gift-city": {"get": {"summary": "Dated India–UAE funding, FX and gold evidence", "responses": {"200": object_response}}},
+            "/api/v2/gift-city/gold-carry": {"post": {"summary": "Gold inventory financing scenario from caller assumptions", "requestBody": {"required": True, "content": {"application/json": {"schema": mcp_server.gift_city.CARRY_INPUT_SCHEMA}}}, "responses": {"200": object_response, "422": {"description": "Invalid scenario inputs"}}}},
             "/api/v2/market-workbench": {"get": {
                 "operationId": "getMarketWorkbench",
                 "summary": "Read structured FX and Palimpsest China economic evidence",
@@ -2426,6 +2430,27 @@ def market_workbench_v2(request: Request, response: Response, provider: str = "h
         raise HTTPException(422, str(exc)) from exc
     response.headers["Cache-Control"] = "public, max-age=60"
     return result
+
+
+@app.get("/api/v2/gift-city")
+def gift_city_v2(request: Request, response: Response):
+    if request.query_params:
+        raise HTTPException(422, "gift-city takes no query parameters")
+    if not _market_series_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return mcp_server.tool_gift_city({}, True)
+
+
+@app.post("/api/v2/gift-city/gold-carry")
+def gold_carry_v2(request: Request, response: Response, payload: dict = Body(...)):
+    if not _market_series_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "scenario request limit exceeded", headers={"Retry-After": "60"})
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return mcp_server.tool_gold_carry(payload, True)
+    except mcp_server.ToolError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/v2/world-markets")

@@ -72,6 +72,15 @@ ECB_FX_SERIES = [
     for currency in ECB_FX_CURRENCIES
 ]
 
+# CBUAE's own dated VAT valuation references; this grant is dataset-specific.
+CBUAE_FX_CURRENCIES = ("USD", "INR", "EUR", "GBP", "JPY", "CHF", "SGD")
+CBUAE_FX_SERIES = [
+    SeriesSpec(f"CBUAEFX_{currency}", "cbuae_fx", f"VAT/AED_PER_{currency}",
+               f"CBUAE AED per {currency} VAT reference", f"AED/{currency}", "D", 360,
+               start="2026-10-02")
+    for currency in CBUAE_FX_CURRENCIES
+]
+
 GLOBAL_FRED_SERIES = [
     SeriesSpec("ECB_DFR", "fred", "ECBDFR", "ECB deposit facility rate", "%", "D", 720),
     SeriesSpec("SONIA", "fred", "IUDSOIA", "SONIA (UK overnight rate)", "%", "D", 360),
@@ -594,7 +603,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     + EIA_INVENTORY_SERIES
     + ESTUARY_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + BOJ_SERIES
-    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + ECB_FX_SERIES + CRYPTO_SERIES + BIS_SERIES
+    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + ECB_FX_SERIES + CBUAE_FX_SERIES + CRYPTO_SERIES + BIS_SERIES
     + REFEREE_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below

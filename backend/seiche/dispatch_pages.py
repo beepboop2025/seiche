@@ -50,6 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_URLS = [
     ("/", "daily", "1.0"),
     ("/developers", "monthly", "0.9"),
+    ("/gift-city/", "monthly", "0.9"),
     ("/use-cases", "monthly", "0.9"),
     ("/use-cases/money-market-research/", "monthly", "0.9"),
     ("/use-cases/capital-market-transmission/", "monthly", "0.9"),
@@ -77,6 +78,7 @@ BASE_URLS = [
 # Editorial market pages have their own reviewed publication clocks. Keep
 # those dates stable when the sitemap is rebuilt after a newer daily dispatch.
 BASE_LASTMODS = {
+    "/gift-city/": "2026-10-02",
     "/use-cases/money-market-research/": "2026-08-24",
     "/use-cases/capital-market-transmission/": "2026-08-24",
     "/use-cases/china-economy-evidence/": "2026-08-24",
@@ -715,12 +717,14 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Thirteen tools answer with no auth at all:
+over MCP at https://api.seiche.info/mcp. Sixteen tools answer with no auth at all:
 latest_article, funding_stress_now, trade_safety_risk_context, historical_analogs, proof_backtest, data_health,
 crypto_stress_record, institutional_flows, oil_funding_context,
 fx_materials_passage, the section-selectable money_market_context and the
 money/forex/capital section-selectable world_markets_context, and the paginated
-Palimpsest-to-Seiche research_network, structured FX and China market_workbench, metered
+Palimpsest-to-Seiche research_network, structured FX and China market_workbench,
+dated India-UAE funding and gold gift_city_context, and caller-assumption
+gold_inventory_carry financing scenarios, metered
 per IP per day. Five more
 read the derived engines and want a bearer token: funding_stress_forecast,
 replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
@@ -731,6 +735,13 @@ the eligibility flags beside it. It is not validated-backtest evidence. Its
 stated competence boundary is narrower: stress that builds inside the plumbing
 can be investigated historically; shocks that arrive from outside it cannot be
 claimed as early warnings.
+
+The GIFT City treasury research guide is at {SITE}/gift-city/. It connects
+India-UAE funding, separately dated ECB and CBUAE reference FX, weekly COMEX
+gold positioning and caller-input gold financing scenarios. The interactive
+desk is at {SITE}/#gift%20city; its data contract is
+https://api.seiche.info/api/v2/gift-city. The guide preserves source gaps and
+does not determine venue participation, import eligibility or trade approval.
 
 The global money-market evidence map is at {SITE}/money-markets/. Its fixed
 21 August 2026 receipt separates 11 registered packs into six redistributable

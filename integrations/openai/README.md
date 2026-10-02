@@ -10,11 +10,12 @@ Seiche's universal production endpoint is:
 https://api.seiche.info/mcp
 ```
 
-An anonymous scan sees fourteen read-only public tools: `latest_article`,
+An anonymous scan sees sixteen read-only public tools: `latest_article`,
 `funding_stress_now`, `trade_safety_risk_context`, `historical_analogs`,
 `proof_backtest`, `data_health`, `crypto_stress_record`,
 `institutional_flows`, `oil_funding_context`, `fx_materials_passage`,
-`money_market_context`, `world_markets_context`, and `research_network`. The endpoint requires no
+`money_market_context`, `world_markets_context`, `research_network`,
+`market_workbench`, `gift_city_context` and `gold_inventory_carry`. The endpoint requires no
 account or API key for that surface and permits 200 tool calls per IP per UTC
 day. Five analysis tools and five private Agent Room preview tools remain
 bearer-token gated and are not part of the anonymous plugin draft.
@@ -62,3 +63,11 @@ verified publisher, and policy attestations. The owner-only and portal-only
 steps are recorded honestly in `SUBMISSION.md`.
 
 The public `market_workbench` tool accepts `provider` (`h10` or `ecb`), `base`, `quote`, `days` (30–3650), and optional `china_series`. It reads cached, dated reference FX and owner-accepted annual Palimpsest China evidence; the WORKBENCH tab and `/api/v2/market-workbench` use the same contract. It never collects during a request or creates executable quotes.
+
+
+`gift_city_context` returns dated India–UAE funding, separate ECB and CBUAE VAT
+FX references, and weekly COMEX gold positioning. Preserve source dates and
+unavailable inputs. `gold_inventory_carry` computes a non-persistent financing
+scenario from explicit decimal-string prices, rates, FX, quantity, fineness and
+fees. Neither tool verifies a quote, determines import eligibility or executes
+a transaction.

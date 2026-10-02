@@ -19,7 +19,7 @@ export default function WorkspaceNavigation({ tab, goTab, openCommands, openHelp
     goTab(target);
   }}>{tabLabel(target)}</a>;
   return <nav className="workspace-tabs research-desk-tabs" aria-label="Funding desk tools">
-    {(["TODAY", "MONEY MARKETS", "WORKBENCH", "CORPUS", "RESEARCH"] as TerminalTab[]).map(link)}
+    {(["TODAY", "MONEY MARKETS", "GIFT CITY", "WORKBENCH", "CORPUS", "RESEARCH"] as TerminalTab[]).map(link)}
     <details className="workspace-tools" ref={menu} onKeyDown={(event) => { if (event.key === "Escape" && menu.current) { menu.current.open = false; menu.current.querySelector("summary")?.focus(); } }}>
       <summary>{groups.some((group) => group.tabs.includes(tab)) ? tabLabel(tab) : "All tools"}</summary>
       <div className="workspace-tools__menu">{groups.map((group) => <section key={group.title}><h2>{group.title}</h2>{group.tabs.map(link)}{group.title === "Evidence and settings" && <><a href={contextLink("/markets/")}>World markets</a><a href={contextLink("/articles/")}>Published research</a><a href={contextLink("/use-cases")}>Use cases</a><a href={contextLink("/guide")}>How to read the evidence</a></>}</section>)}</div>

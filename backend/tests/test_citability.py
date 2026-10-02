@@ -227,9 +227,9 @@ def test_csv_export_is_allowlisted_by_upstream():
 
 def test_every_restricted_series_is_refused_by_the_route(client):
     from seiche import methodology as m
-    from seiche.config import ALL_SERIES, ECB_FX_SERIES
+    from seiche.config import ALL_SERIES, ECB_FX_SERIES, CBUAE_FX_SERIES
     for mnemonic, spec in ALL_SERIES.items():
-        if spec in ECB_FX_SERIES and mnemonic not in m.CSV_RESTRICTED:
+        if spec in (*ECB_FX_SERIES, *CBUAE_FX_SERIES) and mnemonic not in m.CSV_RESTRICTED:
             assert m.csv_restriction(mnemonic) is None, mnemonic
             continue
         if spec.source not in m.CSV_ALLOWED_SOURCES or mnemonic in m.CSV_RESTRICTED:

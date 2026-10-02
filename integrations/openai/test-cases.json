@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "plugin": "Seiche",
   "mcp_url": "https://api.seiche.info/mcp",
-  "surface": "anonymous_public_fourteen_tools",
+  "surface": "anonymous_public_sixteen_tools",
   "test_cases": [
     {
       "id": "positive-current-funding-and-freshness",
@@ -177,6 +177,36 @@
         "Includes the Seiche funding-context freshness state",
         "Preserves gated or unknown rights and paginates without claiming omitted entries are absent",
         "Never infers access to restricted records or trading authority"
+      ]
+    },
+    {
+      "id": "positive-gift-india-uae-evidence",
+      "kind": "positive",
+      "prompt": "Show the GIFT City India–UAE funding and gold context, with the dates and gaps kept visible.",
+      "expected_tool_calls": [
+        "gift_city_context"
+      ],
+      "expected_behavior": "Preserve USD/INR funding clocks, separate ECB reference FX from CBUAE VAT rates, and identify CFTC positioning as weekly COMEX evidence. State unavailable IIBX or UAE market data explicitly.",
+      "pass_criteria": [
+        "Keeps each source date and freshness state",
+        "Does not describe VAT rates as executable quotes",
+        "Does not equate COMEX positioning with IIBX inventory or UAE depth",
+        "Does not infer import or collateral eligibility"
+      ]
+    },
+    {
+      "id": "positive-gold-inventory-carry-scenario",
+      "kind": "positive",
+      "prompt": "For a hypothetical 1 kg gold lot at 0.995 fineness, USD 3000 per troy ounce, 6% annual financing for 30 days on ACT/360, INR 85 per USD and USD 100 fees, calculate financing cost and INR per fine gram.",
+      "expected_tool_calls": [
+        "gold_inventory_carry(quantity_kg=\"1\",fineness=\"0.995\",price_usd_per_oz=\"3000\",annual_rate_pct=\"6\",fx_inr_per_usd=\"85\",fees_usd=\"100\",days=30,day_count=360)"
+      ],
+      "expected_behavior": "Use only the supplied assumptions. Identify the result as a scenario, preserve fine-gold units and simple-interest basis, and disclose that unentered duties, taxes, delivery, insurance and hedging costs are excluded.",
+      "pass_criteria": [
+        "Supplies decimal-string inputs and integer days",
+        "Labels output as hypothetical rather than a verified market quote",
+        "Keeps gross kilograms separate from fine grams and troy ounces",
+        "Does not claim execution or regulatory eligibility"
       ]
     }
   ]

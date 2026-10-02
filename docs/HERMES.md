@@ -67,11 +67,14 @@ Then make the toolset available to your platform (`platform_toolsets:` in
 the same file) and confirm with `hermes tools` that the seiche tools
 appear.
 
-The hosted anonymous surface is exactly fourteen tools: `latest_article`,
+The hosted anonymous surface is exactly sixteen tools: `latest_article`,
 `funding_stress_now`, `historical_analogs`, `proof_backtest`, `data_health`,
 `crypto_stress_record`, `institutional_flows`, `money_market_context`,
 `world_markets_context`, `trade_safety_risk_context`, `oil_funding_context`, and
-`fx_materials_passage`, plus `research_network` for connected source discovery.
+`fx_materials_passage`, plus `research_network`, `market_workbench`,
+`gift_city_context` and `gold_inventory_carry`. The GIFT desk preserves separate
+funding, reference FX and weekly gold clocks; the carry tool uses explicit
+caller assumptions and does not store them.
 The bootstrap checks this list before it schedules
 work. A bearer token adds five subscriber analysis tools and may expose five
 private Agent Room preview tools; it must never remove or silently replace the

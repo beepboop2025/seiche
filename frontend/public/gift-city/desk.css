@@ -1,0 +1,29 @@
+:root { --signal: #e7c995; --void: #080a0b; --panel: #101215; --line: #343b43; }
+body { background: var(--void); }
+.hero { grid-template-columns: minmax(0, 1.4fr) minmax(260px, .6fr); }
+h1 { font-size: clamp(42px, 6vw, 74px); line-height: 1.04; }
+.receipt { border-radius: 0; background: var(--panel); }
+.receipt strong { font-size: clamp(24px, 3vw, 34px); }
+.desk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 30px; }
+.desk-primary { display: inline-flex; justify-content: space-between; gap: 30px; background: var(--signal); padding: 14px 18px; color: var(--void); font-weight: 650; text-decoration: none; }
+.desk-primary:hover { color: #000; background: #f2dbb2; }
+.desk-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.desk-grid article { border-top: 2px solid var(--line); padding: 24px 0; }
+.desk-grid p, .desk-steps, .desk-note, .desk-footer { color: var(--muted); }
+.desk-grid h3 { line-height: 1.35; }
+.desk-table { overflow-x: auto; border: 1px solid var(--line); }
+.desk-table table { width: 100%; min-width: 620px; border-collapse: collapse; text-align: left; }
+.desk-table caption { text-align: left; padding: 16px; color: var(--muted); font-size: 12px; }
+.desk-table th, .desk-table td { padding: 18px; border-top: 1px solid var(--line); vertical-align: top; }
+.desk-table th { font-weight: 550; }
+.desk-table thead { color: var(--signal); }
+.desk-table td { color: var(--muted); }
+.desk-steps { max-width: 900px; padding-left: 24px; }
+.desk-steps li { padding: 10px 0 10px 12px; }
+.desk-steps strong { color: var(--ink); }
+.desk-note { max-width: 900px; font-size: 13px; padding-top: 15px; }
+.desk-footer { padding: 25px 0; border-top: 1px solid var(--line); font-size: 12px; }
+a:focus-visible { outline: 2px solid var(--signal); outline-offset: 5px; }
+code { overflow-wrap: anywhere; }
+@media (max-width: 760px) { .hero, .desk-grid, .section-head { grid-template-columns: 1fr; gap: 25px; } .hero { padding-top: 48px; } .topbar { align-items: flex-start; } .desk-table th, .desk-table td { padding: 14px; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

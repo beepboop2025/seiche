@@ -77,7 +77,7 @@ DISAGG_FIELDS = [
 
 _BALLAST_BY_CODE = {
     str(spec["cftc_code"]): key for key, spec in BALLAST_CONTRACTS.items()
-}
+} | {"088691": "GOLD"}  # CFTC COMEX gold; positioning only, no licensed price leg.
 
 
 def _retryable(exc: Exception) -> bool:

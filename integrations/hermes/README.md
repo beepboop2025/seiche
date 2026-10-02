@@ -48,12 +48,15 @@ Works against any of the three Seiche MCP wirings: local stdio
 
 ## Anonymous tool contract
 
-The hosted endpoint exposes these fourteen tools without a token. The list is
+The hosted endpoint exposes these sixteen tools without a token. The list is
 tested against the server registry so a runtime change cannot leave this kit
 silently teaching an obsolete surface.
 
 | Tool | Hermes uses it for |
 |---|---|
+| `gift_city_context` | India–UAE funding, separate reference FX clocks and weekly COMEX gold positioning |
+| `gold_inventory_carry` | Fine-gold financing scenarios from explicit inputs; no stored assumptions or executable quotes |
+| `market_workbench` | Dated FX crosses and accepted China evidence |
 | `research_network` | Palimpsest source discovery, Seiche funding context and explicit next steps across the product family |
 | `latest_article` | Exact published editorial, evidence clock, and publication receipt |
 | `funding_stress_now` | Current regime, composite, decomposition, and Tell |

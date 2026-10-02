@@ -491,7 +491,7 @@ def project(
     }
 
 
-def read(args: object = None) -> dict:
+def read(args: object = None, *, include_china: bool = True) -> dict:
     query = selection({} if args is None else args)
     now = datetime.now(UTC)
     mnemonics = FX_MNEMONICS if query["provider"] == "h10" else ECB_MNEMONICS
@@ -526,7 +526,9 @@ def read(args: object = None) -> dict:
         failure = "The cached source window could not be verified."
     # Invalid configured acceptance/rights raises; it must never masquerade as
     # an accepted empty or refreshed economic panel.
-    china = context_views.public_china_economic_context()
+    # Other desks reuse verified FX without depending on an unrelated China
+    # intake. The public workbench retains its original strict intake contract.
+    china = context_views.public_china_economic_context() if include_china else None
     result = project(cached, query, china_context=china, evaluated_at=now)
     if failure:
         result["forex"]["reason"] = failure

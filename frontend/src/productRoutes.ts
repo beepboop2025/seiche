@@ -1,7 +1,7 @@
 /** Named terminal routes stay stable as the public entry becomes a product page. */
 export const TERMINAL_TABS = [
   "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "WORKBENCH", "CORPUS", "RESEARCH", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
-  "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
+  "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT", "GIFT CITY",
 ] as const;
 
 export type TerminalTab = (typeof TERMINAL_TABS)[number];
@@ -16,6 +16,6 @@ export function terminalTabFromHash(hash: string): TerminalTab | null {
 }
 
 const LABELS: Partial<Record<TerminalTab, string>> = {
-  TODAY: "Today", BOARD: "Funding board", CORPUS: "Market atlas", "FX×MATERIALS": "FX and materials", "OIL×FUNDING": "Oil and funding",
+  TODAY: "Today", BOARD: "Funding board", CORPUS: "Market atlas", "GIFT CITY": "GIFT City", "FX×MATERIALS": "FX and materials", "OIL×FUNDING": "Oil and funding",
 };
 export const tabLabel = (tab: TerminalTab): string => LABELS[tab] ?? tab.toLowerCase().replace(/(^| )\S/g, (letter) => letter.toUpperCase());

@@ -43,6 +43,7 @@ const UI_TAB_SHARE_PATHS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export const UNSHAREABLE_UI_TABS: Readonly<Record<string, string>> = Object.freeze({
+  "GIFT CITY": "caller-owned gold funding assumptions and arbitrary scenario output",
   WORKBENCH: "arbitrary query-selected reference histories and structural evidence",
   CORPUS: "unbounded rights-aware dataset registry",
   "TIME MACHINE": "arbitrary request-time historical reconstruction",

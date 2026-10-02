@@ -62,10 +62,13 @@ It is metadata-only derived context, never an executable or real-money-eligible
 claim, and does not inspect the attestation ledger. Stream attestations are
 verified separately and never confer per-order execution authority.
 
-Fourteen evidence/context tools are anonymous: the current funding-stress read,
+Sixteen evidence/context tools are anonymous: the current funding-stress read,
 cache-only Trade Safety context, historical analogs, public backtest, data
 health, crypto record, institutional flows, oil/funding, FX/materials, US money
-markets, world markets, connected research (`research_network`), structured FX and China (`market_workbench`), and the latest article. Five higher-cost forecast,
+markets, world markets, connected research (`research_network`), structured FX
+and China (`market_workbench`), the latest article, India–UAE funding and gold
+(`gift_city_context`), and explicit
+gold financing scenarios (`gold_inventory_carry`). Five higher-cost forecast,
 replay, positioning, prose, and LLM tools
 require an account and are omitted from anonymous `tools/list` responses.
 

@@ -35,6 +35,7 @@ const Today = lazy(() => import("./tabs/Today"));
 const Board = lazy(() => import("./tabs/Board"));
 const MoneyMarkets = lazy(() => import("./tabs/MoneyMarkets"));
 const MarketWorkbench = lazy(() => import("./tabs/MarketWorkbench"));
+const GiftCity = lazy(() => import("./tabs/GiftCity"));
 const Corpus = lazy(() => import("./tabs/Corpus"));
 const Research = lazy(() => import("./tabs/Research"));
 const Forecast = lazy(() => import("./tabs/Forecast"));
@@ -291,6 +292,12 @@ function AppInner() {
 
   // Fully open: the whole terminal renders for everyone, no sign in.
   // Accounts exist only for optional email alerts (ACCOUNT tab).
+  // This desk owns its evidence request. Keep its form mounted when the
+  // unrelated overview finishes loading or its background refresh changes.
+  if (tab === "GIFT CITY") {
+    return <main className="app research-app" id="main" data-tab={tab} data-share-disabled="true">
+      <Suspense fallback={<TabSkeleton />}><GiftCity /></Suspense></main>;
+  }
   if (tab === "WORKBENCH" && (!snap || err)) {
     return <main className="app research-app" id="main" data-tab={tab}>
       <Suspense fallback={<TabSkeleton />}><MarketWorkbench /></Suspense></main>;

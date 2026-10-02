@@ -23,7 +23,7 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the fourteen tools flagged ``is_public`` in
+Surface: the *public* surface is the sixteen tools flagged ``is_public`` in
 ``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
@@ -71,6 +71,7 @@ from seiche import agent_room
 from seiche.config import DATA_DIR
 from seiche import research_network
 from seiche import market_workbench
+from seiche import gift_city
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
 from seiche.engines import money_market as money_market_engine
 from seiche.markets.world import (
@@ -1332,6 +1333,19 @@ def tool_market_workbench(args: dict, _public: bool) -> Any:
         raise ToolError(str(exc)) from exc
 
 
+def tool_gift_city(args: dict, _public: bool) -> Any:
+    if not isinstance(args, dict) or args:
+        raise ToolError("gift_city_context takes no arguments")
+    return gift_city.read()
+
+
+def tool_gold_carry(args: dict, _public: bool) -> Any:
+    try:
+        return gift_city.gold_carry(args)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
 def tool_research_network(args: dict, _public: bool) -> Any:
     """Read the published source catalog and attach completed funding context."""
     try:
@@ -1580,6 +1594,16 @@ _AGENT_ROOM_EVENT_INPUT_SCHEMA = {
 
 # name -> (title, description, input JSON Schema, handler, is_public)
 TOOLS: dict[str, tuple] = {
+    "gift_city_context": (
+        "GIFT City and India–UAE funding desk",
+        "Read dated USD/INR funding, separate ECB and CBUAE VAT FX references, and CFTC COMEX gold positioning. Cache-only research with source clocks; no executable prices or regulatory eligibility determination.",
+        {"type": "object", "properties": {}, "additionalProperties": False}, tool_gift_city, True,
+    ),
+    "gold_inventory_carry": (
+        "Gold inventory financing scenario",
+        "Calculate fine gold, simple financing cost and INR per fine gram from explicit decimal-string assumptions. All inputs are caller supplied, no quote is verified, and inputs are not persisted.",
+        gift_city.CARRY_INPUT_SCHEMA, tool_gold_carry, True,
+    ),
     "market_workbench": (
         "Structured money-market, forex and China research",
         "Read cached official FX reference histories and same-date currency crosses, "
@@ -3026,6 +3050,23 @@ OUTPUT_SCHEMAS["market_workbench"] = _output_schema(
      "china": {"type": "object"}, "money_markets": {"type": "object"}, "eligibility": {"type": "object"}},
     (("schema", "status", "generated_at", "context_only", "selection", "forex", "china", "money_markets", "eligibility"),
      {"schema": market_workbench.SCHEMA, "context_only": True}),
+)
+OUTPUT_SCHEMAS["gift_city_context"] = _output_schema(
+    "Dated India–UAE funding, FX and gold evidence.",
+    {"schema": {"type": "string"}, "status": {"type": "string"}, "generated_at": {"type": "string"},
+     "context_only": {"type": "boolean"}, "funding": {"type": "array", "items": {"type": "object"}},
+     "forex": {"type": "object"}, "gold": {"type": "object"}, "sources": {"type": "array", "items": {"type": "object"}},
+     "methodology": {"type": "array", "items": {"type": "string"}}, "eligibility": {"type": "object"}},
+    (("schema", "status", "generated_at", "context_only", "funding", "forex", "gold", "sources", "methodology", "eligibility"),
+     {"schema": gift_city.SCHEMA, "context_only": True}),
+)
+OUTPUT_SCHEMAS["gold_inventory_carry"] = _output_schema(
+    "Explicit caller-assumption gold financing scenario.",
+    {"schema": {"type": "string"}, "status": {"type": "string"}, "context_only": {"type": "boolean"},
+     "inputs": {"type": "object"}, "outputs": {"type": "object"}, "assumptions": {"type": "array", "items": {"type": "string"}},
+     "eligibility": {"type": "object"}, "persisted": {"type": "boolean"}},
+    (("schema", "status", "context_only", "inputs", "outputs", "assumptions", "eligibility", "persisted"),
+     {"schema": gift_city.CARRY_SCHEMA, "status": "scenario", "context_only": True, "persisted": False}),
 )
 STRUCTURED_OUTPUT_TOOLS = frozenset(OUTPUT_SCHEMAS)
 

@@ -1,5 +1,7 @@
 """INR reference pack implementing the requested semantic mappings."""
 
+from dataclasses import replace
+
 from seiche.domain.observation import (
     CanonicalUnit,
     ConnectorClassification,
@@ -36,6 +38,16 @@ _CLOCK = PublicationClock(
     "Asia/Kolkata", None, 0, PublicationClockPrecision.UPSTREAM_NATIVE,
     CALENDAR.calendar_id,
 )
+# RBI Communication Policy, Annex 5 (Daily Releases), distinguishes MMO's
+# previous-day observations from same-day liquidity-operation announcements:
+# https://www.rbi.org.in/Scripts/CommunicationPolicy.aspx
+# This is an expected release lag on the Mumbai calendar, not a publication
+# receipt. Intraday timing stays native/estimated; historical row clocks stay
+# untouched. RBI-home policy repo/T-bill observations keep their own clock.
+_MMO_FRESHNESS_CLOCK = PublicationClock(
+    "Asia/Kolkata", None, 1, PublicationClockPrecision.UPSTREAM_NATIVE,
+    CALENDAR.calendar_id,
+)
 _ACT_365 = DayCountConvention.ACT_365
 
 
@@ -61,6 +73,10 @@ PACK = MarketPack(
         SourceAdapterSpec(
             "rbi_official", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
             RedistributionStatus.ALLOWED,
+            # The rolling MMO page may arrive after a collection attempt.
+            # Retry acquisition hourly without changing its daily observation
+            # cadence, inferred publication clock, or first-seen knowledge time.
+            collection_cadence="PT1H",
         ),
         SourceAdapterSpec(
             "ccil_market", ConnectorClassification.LICENSED, "P1D", _CLOCK,
@@ -76,10 +92,10 @@ PACK = MarketPack(
         ),
     ),
     instruments=(
-        rate_instrument("IN.RBI.SDF", "RBI_SDF", SemanticRole.POLICY_FLOOR, "rbi_official", _ACT_365),
+        replace(rate_instrument("IN.RBI.SDF", "RBI_SDF", SemanticRole.POLICY_FLOOR, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         rate_instrument("IN.RBI.POLICY_REPO", "RBI_POLICY_REPO", SemanticRole.POLICY_TARGET, "rbi_official", _ACT_365),
-        rate_instrument("IN.RBI.MSF", "RBI_MSF", SemanticRole.POLICY_CEILING, "rbi_official", _ACT_365),
-        rate_instrument("IN.MARKET.CALL_WAR", "CALL_WAR", SemanticRole.UNSECURED_OVERNIGHT, "rbi_official", _ACT_365),
+        replace(rate_instrument("IN.RBI.MSF", "RBI_MSF", SemanticRole.POLICY_CEILING, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
+        replace(rate_instrument("IN.MARKET.CALL_WAR", "CALL_WAR", SemanticRole.UNSECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         rate_instrument("IN.FBIL.MIBOR", "MIBOR", SemanticRole.UNSECURED_OVERNIGHT, "licensed_inr_market", _ACT_365),
         rate_instrument("IN.CCIL.TREPS", "TREPS", SemanticRole.SECURED_OVERNIGHT, "ccil_market", _ACT_365),
         rate_instrument("IN.MARKET.CP_3M", "IN_CP_3M", SemanticRole.CP_3M, "licensed_inr_market", _ACT_365),
@@ -89,25 +105,30 @@ PACK = MarketPack(
         InstrumentSpec(
             "IN.RBI.SYSTEM_LIQUIDITY", "RBI_SYSTEM_LIQUIDITY", SemanticRole.SYSTEM_LIQUIDITY,
             "rbi_official", "INR crore", CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+            freshness_clock=_MMO_FRESHNESS_CLOCK,
         ),
         InstrumentSpec(
             "IN.RBI.CASH_BALANCES", "RBI_CASH_BALANCES", SemanticRole.RESERVE_BALANCES,
             "rbi_official", "INR crore", CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+            freshness_clock=_MMO_FRESHNESS_CLOCK,
         ),
         InstrumentSpec(
             "IN.RBI.TRIPARTY_REPO_VOLUME", "RBI_TRIPARTY_REPO_VOLUME",
             SemanticRole.REPO_VOLUME, "rbi_official", "INR crore",
             CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+            freshness_clock=_MMO_FRESHNESS_CLOCK,
         ),
         InstrumentSpec(
             "IN.RBI.FACILITY_TAKEUP", "RBI_FACILITY_TAKEUP",
             SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP, "rbi_official", "INR crore",
             CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+            freshness_clock=_MMO_FRESHNESS_CLOCK,
         ),
         InstrumentSpec(
             "IN.GOVERNMENT.CASH_BALANCE", "IN_GOVERNMENT_CASH",
             SemanticRole.GOVERNMENT_CASH_BALANCE, "rbi_official", "INR crore",
             CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+            freshness_clock=_MMO_FRESHNESS_CLOCK,
         ),
     ),
     capabilities=pre_support_capabilities(

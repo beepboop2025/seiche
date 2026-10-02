@@ -598,6 +598,8 @@ def test_money_market_tool_publishes_the_exact_bounded_selector_contract():
 
 
 PUBLIC_TOOLS = {
+    "gift_city_context",
+    "gold_inventory_carry",
     "market_workbench",
     "research_network",
     "latest_article",

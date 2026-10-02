@@ -826,7 +826,8 @@ def test_old_exact_overlap_spread_is_aged_and_excluded_from_current_prose():
     spread = market["policy_relative_spread"]
 
     assert market["benchmark"]["status"] == "FRESH"
-    assert market["policy_anchor"]["status"] == "FRESH"
+    assert market["policy_anchor"]["status"] == "AGING"
+    assert market["policy_anchor"]["missed_publication_opportunities"] == 1
     assert spread["status"] == "DEAD"
     assert spread["current_for_prose"] is False
     assert spread["observation_age_days"] == 100.0
@@ -916,7 +917,7 @@ def test_publication_clock_respects_weekends_holidays_and_china_working_weekends
         if item["id"] == "CN.PBC.OMO_7D"
     )
     assert china_metric["missed_publication_opportunities"] == 1
-    assert china_metric["status"] == "FRESH"
+    assert china_metric["status"] == "AGING"
 
 
 def test_invalid_calendar_fails_loud_unknown_and_stored_staleness_is_lower_bound():

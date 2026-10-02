@@ -20,7 +20,8 @@ and report each step:
    `historical_analogs`, `proof_backtest`, `data_health`,
    `crypto_stress_record`, `institutional_flows`, `money_market_context`,
    `world_markets_context`, `trade_safety_risk_context`, `oil_funding_context`, and
-   `fx_materials_passage`, plus `research_network`. Extra subscriber tools are allowed only when the
+   `fx_materials_passage`, plus `research_network`, `market_workbench`,
+   `gift_city_context` and `gold_inventory_carry`. Extra subscriber tools are allowed only when the
    configured bearer token exposes them. Then call `data_health` and
    `funding_stress_now`. Quote the board timestamp, index, and regime. If any
    of this fails, stop and tell me exactly what failed; do not continue.

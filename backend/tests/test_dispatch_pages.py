@@ -83,10 +83,17 @@ def test_sitemap_has_base_pages_and_letters(repo):
     build_all(repo_root=root)
     sm = (root / "frontend" / "public" / "sitemap.xml").read_text()
     for loc in ("https://seiche.info/", "https://seiche.info/guide",
+                "https://seiche.info/gift-city/",
                 "https://seiche.info/dispatches/",
                 f"https://seiche.info/dispatches/{d['slug']}"):
         assert f"<loc>{loc}</loc>" in sm
     assert f"<lastmod>{d['date']}</lastmod>" in sm
+    from xml.etree import ElementTree
+    namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    gift = next(node for node in ElementTree.fromstring(sm).findall("s:url", namespace)
+                if node.findtext("s:loc", namespaces=namespace) == "https://seiche.info/gift-city/")
+    assert gift.findtext("s:lastmod", namespaces=namespace) == "2026-10-02"
+    assert gift.findtext("s:changefreq", namespaces=namespace) == "monthly"
 
 
 def test_missing_markdown_fails_loud(repo):
@@ -106,6 +113,7 @@ def test_llms_txt_lists_letters_with_markdown_links(repo):
     build_all(repo_root=root)
     llms = (root / "frontend" / "public" / "llms.txt").read_text()
     assert llms.startswith("# Seiche")
+    assert "https://seiche.info/gift-city/" in llms
     assert f"https://seiche.info/dispatches/{d['slug']}.md" in llms
     assert "search and AI input but does not grant model training" in llms
 

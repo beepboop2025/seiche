@@ -50,14 +50,16 @@ staring at dashboards.
 
 ## Tool map (Seiche MCP server)
 
-Public (fourteen anonymous tools): `latest_article`, `funding_stress_now`,
+Public (sixteen anonymous tools): `latest_article`, `funding_stress_now`,
 `trade_safety_risk_context`,
 `historical_analogs`, `proof_backtest`, `data_health`,
 `crypto_stress_record` (the Wrecks table: crypto episodes vs the board,
 transmission vs specificity stated honestly), `institutional_flows`,
 `money_market_context`, `world_markets_context`, `oil_funding_context`,
 `fx_materials_passage`, `market_workbench`, `research_network` (connected source discovery with
-source-owned rights and availability).
+source-owned rights and availability), `gift_city_context` (dated India–UAE
+funding, FX and gold evidence), and `gold_inventory_carry` (explicit caller-input
+financing scenarios, never live quotes or eligibility decisions).
 
 Subscriber (five bearer-token tools): `funding_stress_forecast`,
 `replay_asof`, `desk_brief`, `positioning_book`, `ask_desk`.

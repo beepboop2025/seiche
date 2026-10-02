@@ -306,6 +306,7 @@ def test_build_emits_real_views_unique_editorial_cards_and_fail_closed_states(
         "TIME MACHINE",
         "ACCOUNT",
         "WORKBENCH",
+        "GIFT CITY",
     }
     assert "unbounded" in manifest["known_gap"]
     assert "download=null" in manifest["known_gap"]

@@ -11,6 +11,19 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.14.0 release candidate
+
+- Add a GIFT City treasury desk with INR/USD funding, source-separated CBUAE
+  VAT-purpose and ECB reference FX, and dated COMEX gold CFTC positioning.
+- Add exact-decimal gold inventory carrying-cost scenarios, JSON evidence exports,
+  REST routes and the public `gift_city_context` / `gold_inventory_carry` MCP tools.
+- Poll RBI hourly while preserving daily observations; apply its previous-business-day
+  reporting convention and distinguish fresh, one-release aging and stale daily evidence.
+- Admit only the reviewed CBUAE dataset with attribution, source-clock checks, atomic
+  raw capture and provenance. AED DONIA and executable bullion quotes remain explicit gaps.
+- Bind candidate publication metadata to new corpus receipt `r27`; corpus identity,
+  data hashes and original evidence clocks remain unchanged.
+
 ## [0.13.16] - 2026-10-02
 
 ### Fixed

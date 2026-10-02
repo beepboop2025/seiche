@@ -73,9 +73,9 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.13.16; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.14.0; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.13.16 estuary** refreshes weekly Federal Reserve inputs when H.4.1 is due and reports missing releases against the source schedule. CSV and catalog descriptions distinguish daily H.10 observations from weekly publication. Retired TED and IOER history retains its original clocks.
+Version **0.14.0 estuary** adds the [GIFT City treasury desk](docs/GIFT_CITY_DESK.md): India/USD funding, source-separated UAE and ECB reference FX, weekly COMEX gold positioning, and a gold inventory carrying-cost calculator with explicit assumptions. RBI collection retries hourly; freshness follows the previous-business-day reporting convention. Sixteen public MCP tools expose the same evidence and arithmetic. This is a release candidate until the signed deployment and publication receipts pass.
 New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding
 observations can reach the daily review without waiting through the previous
 four-to-twelve-hour cache windows. Failed refreshes retain the original source
@@ -91,7 +91,7 @@ capture evidence and missing states. Numerical China context requires its
 independent signed acceptance. Verify deployment and package availability from
 the release receipts and linked registries.
 
-Fourteen evidence tools remain anonymous and free. Five compute-heavy tools are
+Sixteen evidence tools remain anonymous and free. Five compute-heavy tools are
 account-gated; client and catalog copy must preserve that boundary. See the
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.
@@ -345,7 +345,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Fourteen tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Sixteen tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -367,6 +367,8 @@ The copy-paste quickstart and live tool runner are at
 | `crypto_stress_record` | labelled crypto episodes replayed against the funding board |
 | `institutional_flows` | who is positioned where, from public prints |
 | `money_market_context` | compact, chartless USD desk summary or one requested section, plus sources/methodology selectors |
+| `gift_city_context` | bounded INR/USD funding, CBUAE and ECB reference FX, and weekly gold positioning with source clocks |
+| `gold_inventory_carry` | caller-assumption fine-gold carrying costs, simple interest and INR breakeven; no quote retrieval |
 | `market_workbench` | selectable official FX providers, matching-date crosses, dated histories and accepted Palimpsest China structural evidence |
 | `world_markets_context` | bounded summary or money, forex, capital, source and methodology sections with canonical citation URLs |
 | `oil_funding_context` | observed oil/funding and Ballast evidence, live-vs-reference market structure, plus clearly separated scenarios |
@@ -484,7 +486,7 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-The fourteen-tool public evidence surface needs no account and does not depend on
+The sixteen-tool public evidence surface needs no account and does not depend on
 paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
 Five compute-heavy forecast, replay, positioning, prose and LLM tools are
 account-gated. Seiche does not claim intraday-tick coverage: daily cadence plus

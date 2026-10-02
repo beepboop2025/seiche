@@ -23,7 +23,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from seiche.config import ALL_SERIES, COMPOSITE_WEIGHTS, DB_PATH, REGIMES, ECB_FX_SERIES
+from seiche.config import ALL_SERIES, COMPOSITE_WEIGHTS, DB_PATH, REGIMES, ECB_FX_SERIES, CBUAE_FX_SERIES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENGINES_DIR = Path(__file__).resolve().parent / "engines"
@@ -127,7 +127,7 @@ def csv_restriction(mnemonic: str) -> str | None:
                 f"bulk redistribution is not ours to grant. Pull the raw "
                 f"history from the upstream source; the board publishes only "
                 f"derived readings of it.")
-    if spec is not None and spec in ECB_FX_SERIES:
+    if spec is not None and spec in ECB_FX_SERIES + CBUAE_FX_SERIES:
         # This exact ECB-produced FX reference panel has a reviewed reuse
         # contract. It does not grant rights to unrelated ECB/third-party data.
         return None
@@ -161,6 +161,8 @@ def render_series_csv(s) -> str:
     ]
     if spec in ECB_FX_SERIES:
         lines.insert(-1, "# Source: European Central Bank. Reference data is freely available from the ECB; not executable quotes. https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html")
+    if spec in CBUAE_FX_SERIES:
+        lines.insert(-1, "# Source: Central Bank of the UAE. VAT valuation references, not executable quotes. https://centralbank.ae/en/forex-eibor/exchange-rates/ ; reuse: https://centralbank.ae/en/open-data-landing/open-data-policy/")
     for idx, v in s.points.dropna().items():
         lines.append(f"{idx.date().isoformat()},{_plain(v)}")
     return "\n".join(lines) + "\n"

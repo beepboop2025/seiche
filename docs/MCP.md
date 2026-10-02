@@ -90,21 +90,22 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → fourteen tools, named so you can check this against the
+- **Anonymous** (no token) → sixteen tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
   `institutional_flows`, plus `money_market_context`, `oil_funding_context` and
   `fx_materials_passage`, `world_markets_context`, `trade_safety_risk_context`,
-  plus `latest_article`, `research_network` and `market_workbench`. The editorial, conclusion, precedent, track record with its
+  plus `latest_article`, `research_network`, `market_workbench`,
+  `gift_city_context` and `gold_inventory_carry`. The editorial, conclusion, precedent, track record with its
   misses, freshness, crypto transmission record, positioning read, granular USD
   money-market evidence, unified money/FX/capital context, and cross-market oil/FX/material context. Capped per IP
   per day. Zero setup, and it stays free.
-- **Subscriber** (bearer token) → the same fourteen plus five analysis tools that
+- **Subscriber** (bearer token) → the same sixteen plus five analysis tools that
   read derived engines: `funding_stress_forecast`, `replay_asof`,
   `positioning_book`, `desk_brief`, `ask_desk`; and five private Agent Room
   preview tools: `agent_room_register_key`, `agent_room_create`,
   `agent_room_append_event`, `agent_room_list_events`, `agent_room_verify`.
-  The authenticated hosted catalog is 24 tools. Agent Room identity always
+  The authenticated hosted catalog is 26 tools. Agent Room identity always
   comes from the bearer and every room/event is non-executable.
 
 `tools/list` returns exactly what the caller can run, so an anonymous agent
@@ -126,6 +127,7 @@ curl https://api.seiche.info/api/v2/world-markets
 curl 'https://api.seiche.info/api/v2/world-markets?section=china_macro'
 curl https://api.seiche.info/api/oil-funding
 curl https://api.seiche.info/api/estuary
+curl https://api.seiche.info/api/v2/gift-city
 ```
 
 `/api/money-markets` is the full seven-section USD desk. The public
@@ -293,6 +295,10 @@ recorded in the `provisions` table for audit.
 | `world_markets_context` | Chartless money, FX, capital and metadata-only China macro context with selector-specific citation URLs; China is an unsigned structural catalog unless a restricted response carries verified Seiche owner-attested provenance | public |
 | `oil_funding_context` | WTI/Brent and funding evidence; Ballast's CFTC WTI/Henry Hub gross cash-displacement, concentration and EIA inventory ledger; live Cushing/Brent−WTI observations separated from dated capacity, benchmark and chokepoint references; change-on-change coupling; explicitly scenario-only cargo/margin/India arithmetic | public |
 | `fx_materials_passage` | Upstream FX/material pressure versus funding priced, with the Passage's discovery/holdout ledger and settlement scenarios | public |
+| `research_network` | Connected source discovery with original rights, clocks and next research routes | public |
+| `market_workbench` | Cached reference FX crosses and rights-aware China context | public |
+| `gift_city_context` | Dated USD/INR funding, separate ECB and UAE VAT FX references, and COMEX gold positioning | public |
+| `gold_inventory_carry` | Fine-gold financing arithmetic from explicit caller assumptions; no stored inputs or verified quotes | public |
 | `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | subscriber |
 | `replay_asof` | The Time Machine: the whole board reconstructed point-in-time on a past date (`date: YYYY-MM-DD`) | subscriber |
 | `desk_brief` | Today's full desk note as markdown | subscriber |
@@ -313,7 +319,7 @@ caveats in every successful projection.
 
 ## Machine-native support (x402) — dormant by design
 
-Seiche's fourteen evidence tools are a permanent free public good. Five
+Seiche's sixteen evidence tools are a permanent free public good. Five
 compute-heavy tools are separately account-gated to cover operator cost. The
 codebase also carries a dormant
 [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
@@ -382,7 +388,7 @@ contract and mandatory activation checklist are documented in
 ## Public vs. authenticated surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same fourteen the hosted endpoint gives an anonymous caller, so a local run and a
+the same sixteen the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -403,6 +409,10 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 | `world_markets_context` | yes | bounded chartless money, FX, capital and metadata-only China macro context with selector-specific citations and explicit partial/unavailable states |
 | `oil_funding_context` | yes | compact observed transmission, Ballast futures-cash context and live-vs-reference oil-market structure; bounded derivations and scenarios stay labelled and separate |
 | `fx_materials_passage` | yes | compact upstream gap plus the untouched-holdout ledger |
+| `research_network` | yes | connected evidence retains source rights and availability |
+| `market_workbench` | yes | dated reference FX and accepted China evidence |
+| `gift_city_context` | yes | India–UAE funding, FX and gold context with source clocks |
+| `gold_inventory_carry` | yes | explicit financing assumptions, no saved inputs or execution |
 | `funding_stress_forecast` | no | six modelled views of forward event odds |
 | `replay_asof` | no | full point-in-time board reconstruction |
 | `positioning_book` | no | sleeves, weights, `p_ensemble`, tcost |
@@ -445,3 +455,18 @@ is now always the public surface. If you change `is_public`, change this table.
   agents are instructed to cite it.
 
 The public `market_workbench` tool accepts `provider` (`h10` or `ecb`), `base`, `quote`, `days` (30–3650), and optional `china_series`. It reads cached, dated reference FX and owner-accepted annual Palimpsest China evidence; the WORKBENCH tab and `/api/v2/market-workbench` use the same contract. It never collects during a request or creates executable quotes.
+
+
+`gift_city_context` takes no arguments and shares `/api/v2/gift-city` with the
+GIFT desk. It reads completed USD/INR funding, ECB reference FX, separately dated
+CBUAE VAT exchange rates and weekly CFTC COMEX gold positioning. Preserve each
+source clock and missing-data state; a VAT reference is not a tradable UAE FX
+quote, and COMEX positioning is not IIBX physical inventory or UAE market depth.
+
+`gold_inventory_carry` takes decimal strings for `quantity_kg`, `fineness`,
+`price_usd_per_oz`, `annual_rate_pct`, `fx_inr_per_usd` and `fees_usd`, plus integer
+`days` and optional `day_count` (360 or 365). It returns a non-persistent scenario
+of fine gold, simple financing cost and INR per fine gram. Prices and fees come
+from the caller; include any taxes, delivery, insurance or hedging costs you
+intend to model. The calculation does not establish import or collateral
+eligibility and does not affect Seiche's score.

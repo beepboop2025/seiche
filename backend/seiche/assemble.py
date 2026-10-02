@@ -140,7 +140,7 @@ from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
 from seiche import editorial
-from seiche.sources import bis, boj, cftc, crypto, ecb, ecb_fx, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
+from seiche.sources import bis, boj, cbuae_fx, cftc, crypto, ecb, ecb_fx, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -380,7 +380,7 @@ _build_generation = 0  # completed build/lock epochs; restores do not advance it
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.13.16"
+VERSION = "0.14.0"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
@@ -421,6 +421,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("windfetch", windfetch.fetch_all(client, faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
             guard("ecb_fx", ecb_fx.fetch(client, faults)),
+            guard("cbuae_fx", cbuae_fx.fetch(client, faults)),
             guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
             guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),

@@ -11,12 +11,13 @@ vm.runInNewContext(output.outputText, context);
 const { TERMINAL_TABS, terminalTabFromHash } = context.exports;
 
 test("every existing named desk route retains identity, encoded labels and subroutes", () => {
-  assert.equal(TERMINAL_TABS.length, 24);
+  assert.equal(TERMINAL_TABS.length, 25);
   for (const tab of TERMINAL_TABS) {
     assert.equal(terminalTabFromHash(`#${tab.toLowerCase()}`), tab);
     assert.equal(terminalTabFromHash(`#${encodeURIComponent(tab.toLowerCase())}/detail`), tab);
   }
   assert.equal(terminalTabFromHash("#time%20machine/2019-09-16"), "TIME MACHINE");
+  assert.equal(terminalTabFromHash("#gift%20city/gold"), "GIFT CITY");
 });
 
 test("product anchors and malformed hashes stay on the product entry", () => {

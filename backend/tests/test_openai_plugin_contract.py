@@ -19,6 +19,12 @@ PUBLIC_STRUCTURED_CALLS = {
     "world_markets_context": {},
     "research_network": {},
     "market_workbench": {},
+    "gift_city_context": {},
+    "gold_inventory_carry": {
+        "quantity_kg": "1", "fineness": "0.995", "price_usd_per_oz": "3000",
+        "annual_rate_pct": "6", "fx_inr_per_usd": "85", "fees_usd": "100",
+        "days": 30, "day_count": 360,
+    },
     "historical_analogs": {},
     "proof_backtest": {},
     "data_health": {},
@@ -174,9 +180,9 @@ def test_tool_descriptors_publish_complete_openai_contracts():
     authenticated_by_name = {tool["name"]: tool for tool in authenticated}
     public_by_name = {tool["name"]: tool for tool in public}
 
-    assert len(analysis) == 19
-    assert len(authenticated) == 24
-    assert len(public) == 14
+    assert len(analysis) == 21
+    assert len(authenticated) == 26
+    assert len(public) == 16
     assert set(public_by_name) == set(PUBLIC_STRUCTURED_CALLS)
     assert set(mcp.STRUCTURED_OUTPUT_TOOLS) == set(mcp.TOOLS) - {"desk_brief"}
     assert {
@@ -359,7 +365,7 @@ def test_submission_pack_has_review_cases_without_fake_portal_evidence():
 
     assert len(positive) >= 5
     assert len(negative) >= 3
-    assert cases["surface"] == "anonymous_public_fourteen_tools"
+    assert cases["surface"] == "anonymous_public_sixteen_tools"
     assert any(
         any(
             call.startswith("world_markets_context")

@@ -1325,7 +1325,9 @@ def _publication_opportunity_clock(
             f"calendar unavailable ({type(exc).__name__})",
         )
 
-    strict_daily = latest.market_id == "US-USD" and adapter.expected_cadence == "P1D"
+    # A missed daily release means the latest expected observation is absent,
+    # regardless of currency. Collection success cannot grant extra fresh days.
+    strict_daily = adapter.expected_cadence == "P1D"
     aged = (
         StalenessState.FRESH
         if missed <= (0 if strict_daily else 2)
@@ -1348,7 +1350,13 @@ def _publication_opportunity_clock(
         effective,
         missed,
         next_due,
-        "pack business calendar + adapter publication lag/cadence; stored state is a lower bound",
+        "pack business calendar + adapter publication lag/cadence; "
+        + (
+            "native publication clock inferred from retained row; schedule is estimated, not a publication receipt; "
+            if adapter.publication_clock.local_time is None
+            else "declared publication schedule, not a publication receipt; "
+        )
+        + "stored state is a lower bound",
     )
 
 

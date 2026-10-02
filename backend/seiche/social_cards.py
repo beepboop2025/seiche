@@ -1669,6 +1669,7 @@ def build(site_dir: Path) -> dict[str, Any]:
                 "CORPUS": "unbounded rights-aware dataset registry",
                 "TIME MACHINE": "arbitrary request-time historical reconstruction",
                 "WORKBENCH": "arbitrary query-selected reference histories and structural evidence",
+                "GIFT CITY": "caller-supplied gold inventory and financing assumptions",
                 "ACCOUNT": "private viewer and credential state",
             },
             "reason": (
