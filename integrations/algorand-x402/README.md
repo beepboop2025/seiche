@@ -57,7 +57,7 @@ npm run preflight
 
 `preflight` only reads public evidence, facilitator support and the configured
 public account's USDC opt-in. It does not sign or submit transactions. Set the
-three public environment variables shown in `.env.example` to run that check.
+three public environment variables shown in `config.example.env` to run that check.
 No service private key, mnemonic or facilitator credential is needed.
 
 The entrypoint is `src/worker.ts`, compiled to `dist/server/index.js`, exporting
