@@ -9,7 +9,7 @@ export const SOURCES = [
   { id: 'risk_context', product: 'Seiche', url: 'https://api.seiche.info/api/trade-safety/risk-context', clock: 'clocks.snapshot_generated_at', maxAgeSeconds: 7200 },
   { id: 'money_markets', product: 'Seiche', url: 'https://api.seiche.info/api/v2/money-markets', clock: 'generated_at', maxAgeSeconds: 7200 },
   { id: 'liquidity', product: 'Undertow', url: 'https://api.seiche.info/undertow/x402/summary', clock: 'asof', maxAgeSeconds: 172800 },
-  { id: 'institutions', product: 'LiquiLens', url: 'https://api.liquilens.in/api/failure-radar/board', clock: 'asof', maxAgeSeconds: 172800 },
+  { id: 'institutions', product: 'LiquiLens', url: 'https://api.liquilens.in/api/failure-radar/board', clock: 'as_of', maxAgeSeconds: 172800 },
 ] as const;
 export type SourceId = typeof SOURCES[number]['id'];
 export interface SourceResult {
@@ -107,7 +107,7 @@ function compact(id: SourceId, data: RecordJson, now: Date): RecordJson {
   if (id === 'liquidity') return pick(data, ['asof','funding_regime','segments','segment_reports','report_scope','evidence_url','full_fidelity','disclaimer']);
   if (id === 'institutions') {
     // Institution rows can contain private/mixed-rights numerics. Preserve public aggregate status only.
-    return { source_status: data.status ?? 'PUBLISHED', tiers: data.tiers, row_count: (data.rows as Json[]).length, detail_policy: 'Open the source for institution-level evidence; no raw institution financial data is redistributed.' };
+    return { ...pick(data, ['as_of', 'historical_evidence', 'method_note', 'quadrant_rule']), scope: 'India failure-radar public aggregate metadata only', tiers: data.tiers, row_count: (data.rows as Json[]).length, excluded_stale_count: Array.isArray(data.excluded_stale) ? data.excluded_stale.length : null, excluded_invalid_evidence_count: Array.isArray(data.excluded_invalid_evidence) ? data.excluded_invalid_evidence.length : null, detail_policy: 'Open the source for institution-level evidence; no raw institution financial data is redistributed.' };
   }
   return {
     ...pick(data, ['schema','generated_at','status','coverage','methodology','caveats','legal_notices']),

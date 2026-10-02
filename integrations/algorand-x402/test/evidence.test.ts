@@ -41,3 +41,7 @@ test('manual redirect mode preserves fixed-origin no-follow policy on Workers',a
  let requests=0;const fetcher=(async(_u:Parameters<typeof fetch>[0],init?:RequestInit)=>{requests++;assert.equal(init?.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://outside.example/secret'}})}) as typeof fetch;
  const s=await fetchSource(SOURCES[0],fetcher,NOW);assert.equal(s.status,'UNAVAILABLE');assert.equal(s.reason,'upstream_http_302');assert.equal(requests,1);assert.equal(s.data,null);
 });
+test('LiquiLens uses its public as_of contract and preserves historical limitations without institution rows',async()=>{
+ const d=await assemble(sourceFetcher(),NOW);const s=d.sections.find(s=>s.id==='institutions')!;assert.equal(s.status,'AVAILABLE');assert.equal(s.source_clock,'2026-10-02');assert.equal(s.content?.scope,'India failure-radar public aggregate metadata only');assert.equal((s.content?.historical_evidence as any).validated_backtest_eligible,false);assert.equal('rows' in s.content!,false);
+ const f=fixtures();delete (f.institutions as any).as_of;(f.institutions as any).asof='2026-10-02';const bad=await fetchSource(SOURCES[4],sourceFetcher(f),NOW);assert.equal(bad.status,'UNAVAILABLE');
+});

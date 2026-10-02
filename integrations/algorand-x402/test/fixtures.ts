@@ -9,7 +9,7 @@ export function fixtures() {
  risk_context: { schema:'seiche.risk-context.v1',context_only:true, can_authorize_order:false,real_money_eligible:false,clocks:{snapshot_generated_at:NOW.toISOString(),evidence_as_of:'2026-01-01',retired_sources:[{mnemonic:'TED',as_of:'2022-01-21'}]},attestation:{status:'not_evaluated'},limitations:['fixture'] },
  money_markets: { schema:'seiche.global-money-markets.v1',generated_at:NOW.toISOString(),status:'PARTIAL',coverage:{declared_markets:1},markets:[{market_id:'US-USD',status:'LIVE',benchmark:metric,metrics:[{...metric,id:'restricted',redistribution_status:'licensed',value:777},{...metric,id:'stale',status:'STALE',value:888}]}] },
  liquidity: { asof:'2026-10-02',segments:{EQUITY:'PARTIAL'},segment_reports:[{segment:'EQUITY',tier:'PARTIAL',coverage:{blockers:[{code:'FAILED_NEGATIVE_CONTROL'}]}}],report_scope:'public subset' },
- institutions: { asof:'2026-10-02',rows:[{secret_unapproved_numeric:999}],tiers:{UNKNOWN:1} },
+ institutions: { as_of:'2026-10-02',historical_evidence:{validated_backtest_eligible:false,reason:'fixture_limits'},rows:[{secret_unapproved_numeric:999}],tiers:{UNKNOWN:1} },
  };
 }
 export function sourceFetcher(values: Record<string, unknown> = fixtures(), failures: Record<string,number> = {}): Fetcher {

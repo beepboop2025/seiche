@@ -95,7 +95,7 @@ No private key exists in the fixtures and no real chain is contacted.
 | Risk context | https://api.seiche.info/api/trade-safety/risk-context | Public metadata-only/context projection; retain retired-source disclosures, original evidence clock, no execution eligibility and unevaluated attestation |
 | Money markets | https://api.seiche.info/api/v2/money-markets | Compact only explicit `redistribution_status=allowed` observations with finite values and valid nonfuture source clocks; no raw histories, licensed benchmark values or inferred/forward-filled values |
 | Liquidity | https://api.seiche.info/undertow/x402/summary | Already-public observation subset; preserve per-segment withheld tiers, failed validations, observation dates and full-fidelity paid source link |
-| Institutions | https://api.liquilens.in/api/failure-radar/board | Only public aggregate tiers/row count when schema/clock valid; no institution financial rows; 403 stays unavailable with no alternate-access attempt |
+| Institutions | https://api.liquilens.in/api/failure-radar/board | Uses the public `as_of` board clock; only India failure-radar aggregate tiers/row count and historical-evidence limits when schema/clock valid; no institution financial rows; 403 stays unavailable with no alternate-access attempt |
 
 Source adapters use fixed allowlisted URLs, reject redirects, cap streamed bodies
 at 1 MiB each and time out after 12 seconds. Successful assembled responses are
