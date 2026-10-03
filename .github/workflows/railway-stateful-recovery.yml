@@ -623,8 +623,12 @@ jobs:
                   os.kill(int(pid_file.read_text()), signal.SIGTERM)
               except ProcessLookupError:
                   pass
+          def vanished(function, path, error):
+              # ssh-agent may unlink its socket after SIGTERM.
+              if not isinstance(error, FileNotFoundError):
+                  raise error
           if root.exists():
-              shutil.rmtree(root)
+              shutil.rmtree(root, onexc=vanished)
           PYCLEAN
 
       - name: Retain the private native-backup evidence
@@ -1357,8 +1361,12 @@ jobs:
                   os.kill(int(pid_file.read_text()), signal.SIGTERM)
               except ProcessLookupError:
                   pass
+          def vanished(function, path, error):
+              # ssh-agent may unlink its socket after SIGTERM.
+              if not isinstance(error, FileNotFoundError):
+                  raise error
           if root.exists():
-              shutil.rmtree(root)
+              shutil.rmtree(root, onexc=vanished)
           PYCLEAN
 
   export-recovery:

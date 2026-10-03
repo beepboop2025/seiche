@@ -8,6 +8,7 @@ import json
 import os
 import re
 import runpy
+import shutil
 import signal
 import subprocess
 import sys
@@ -147,6 +148,60 @@ def test_postgres_probe_refuses_wrong_project_before_writing_key(tmp_path, monke
     with pytest.raises(AssertionError):
         exec(compile(setup, "probe-setup", "exec"), {})
     assert not (tmp_path / "postgres-health-probe").exists()
+
+
+def _probe_cleanup(index):
+    scripts = re.findall(r"<<'PYCLEAN'\n(.*?)\n          PYCLEAN", _workflow(RECOVERY), re.S)
+    assert len(scripts) == 2 and scripts[0] == scripts[1]
+    return compile(textwrap.dedent(scripts[index]), "probe-cleanup", "exec")
+
+
+@pytest.mark.parametrize("script_index", [0, 1])
+@pytest.mark.parametrize("error_type", [FileNotFoundError, PermissionError, OSError])
+def test_probe_cleanup_tolerates_only_disappeared_paths(
+    tmp_path, monkeypatch, script_index, error_type,
+):
+    root = tmp_path / "postgres-health-probe"
+    root.mkdir()
+    (root / "agent-pid").write_text("12345")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    killed = []
+    monkeypatch.setattr(os, "kill", lambda *args: killed.append(args))
+    failure = error_type("simulated private-file cleanup result")
+
+    def remove(path, *, onexc):
+        assert path == root
+        assert killed == [(12345, signal.SIGTERM)]
+        onexc(os.unlink, str(root / "agent.sock"), failure)
+
+    monkeypatch.setattr(shutil, "rmtree", remove)
+    if error_type is FileNotFoundError:
+        exec(_probe_cleanup(script_index), {})
+    else:
+        with pytest.raises(error_type) as result:
+            exec(_probe_cleanup(script_index), {})
+        assert result.value is failure
+
+
+@pytest.mark.parametrize("script_index", [0, 1])
+def test_probe_cleanup_removes_private_keys_after_agent_already_exited(
+    tmp_path, monkeypatch, script_index,
+):
+    root = tmp_path / "postgres-health-probe"
+    root.mkdir()
+    (root / "identity").write_text("fixture private key")
+    (root / "agent-pid").write_text("12345")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+
+    def exited(pid, signum):
+        assert (pid, signum) == (12345, signal.SIGTERM)
+        raise ProcessLookupError("agent has exited")
+
+    monkeypatch.setattr(os, "kill", exited)
+    exec(_probe_cleanup(script_index), {})
+    assert not root.exists()
+    # The always() cleanup also succeeds when setup never created its directory.
+    exec(_probe_cleanup(script_index), {})
 
 
 @pytest.fixture
