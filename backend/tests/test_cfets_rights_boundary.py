@@ -48,7 +48,7 @@ def _series(
 
 
 def _source_pack() -> dict:
-    cny = _series("CNY", source="fred")
+    cny = _series("CNY", source="fred", remote_id="DEXCHUS")
     shibor = _series("SHIBOR_ON", source="chinamoney")
     fdr007 = _series("CN_FDR007", source="palimpsest")
     parity = _series("CN_PARITY", source="palimpsest")
@@ -129,7 +129,9 @@ def test_rights_projection_is_non_mutating_and_preserves_h10_cny(monkeypatch) ->
     assert "chinamoney" in raw
 
     provenance = assemble._provenance(raw)
-    assert {row["mnemonic"] for row in provenance} == {
+    assert {
+        row["mnemonic"] for row in provenance if row["availability"] == "available"
+    } == {
         "CNY",
         "PALIMPSEST_FEAR",
         "PALIMPSEST_NEW",

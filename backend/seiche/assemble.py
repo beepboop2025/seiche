@@ -1925,18 +1925,90 @@ def _calendar(src: dict, engines: dict, deep: dict, drv: dict) -> dict:
 
 
 def _provenance(src: dict) -> list[dict]:
+    from seiche.methodology import csv_restriction
+
     src = _rights_eligible_sources(src)
     prov = []
-    for group in ("fred", "ofr", "ecb", "eia_petroleum", "eia_inventory"):
-        for s in (src.get(group) or {}).values():
-            prov.append(s.provenance())
-    for s in ((src.get("crypto") or {}).get("candles") or {}).values():
-        prov.append(s.provenance())
-    for s in ((src.get("palimpsest") or {}).get("series") or {}).values():
-        prov.append(s.provenance())
+    candidates: dict[str, list[Series]] = {}
+    invalid: set[str] = set()
+
+    def register(values: dict) -> None:
+        for mnemonic, series in values.items():
+            spec = ALL_SERIES.get(mnemonic)
+            if spec is None:
+                continue  # An unregistered alias cannot expand public coverage.
+            if (
+                not isinstance(series, Series)
+                or series.mnemonic != mnemonic
+                or series.source != spec.source
+                or series.remote_id != spec.remote_id
+                or series.unit != spec.unit
+                or series.freq != spec.freq
+            ):
+                invalid.add(mnemonic)
+                continue
+            candidates.setdefault(mnemonic, []).append(series)
+
+    for group in (
+        "fred", "fred_cp_rates", "fred_custody", "ofr", "ofr_gcf",
+        "ofr_pd_financing", "ecb", "ecb_fx", "cbuae_fx", "eia_petroleum",
+        "eia_inventory", "boj", "bis",
+    ):
+        register(src.get(group) or {})
+    register((src.get("crypto") or {}).get("candles") or {})
+    register((src.get("palimpsest") or {}).get("series") or {})
     st = store.load_series("STABLE_TOTAL")
     if st is not None:
-        prov.append(st.provenance())
+        register({"STABLE_TOTAL": st})
+
+    missing = []
+    for mnemonic, spec in ALL_SERIES.items():
+        matches = candidates.get(mnemonic, [])
+        restriction = csv_restriction(mnemonic)
+        metadata = {
+            "collection_ttl_minutes": spec.ttl_minutes,
+            "history_export_allowed": restriction is None,
+        }
+        if mnemonic == "GDP":
+            # The FRED CSV dates quarterly periods; it contains no publication
+            # clock proving whether a fetched vintage is the latest release.
+            metadata.update({
+                "observation_date_semantics": "quarter_start",
+                "official_publication_at": None,
+                "publication_freshness": "unknown",
+                "freshness_basis": (
+                    "age of the GDP quarter start; latest official publication "
+                    "or vintage is not established by this snapshot"
+                ),
+            })
+        if restriction is not None:
+            metadata["history_export_restriction"] = restriction
+        if mnemonic not in invalid and len(matches) == 1:
+            series = matches[0]
+            # Preserve the original per-series/native publication policy,
+            # including H.10 and the distinct ECB/CBUAE FX semantics.
+            prov.append({
+                **series.provenance(),
+                **metadata,
+                "availability": "empty" if series.points.empty else "available",
+            })
+        else:
+            reason = (
+                "source_identity_mismatch" if mnemonic in invalid
+                else "ambiguous_source" if len(matches) > 1
+                else "not_in_completed_source_snapshot"
+            )
+            missing.append({
+                "mnemonic": mnemonic, "source": spec.source,
+                "remote_id": spec.remote_id, "label": spec.label,
+                "unit": spec.unit, "freq": spec.freq,
+                "asof": None, "fetched_at": None, "n_obs": 0,
+                "staleness": "unknown", "age_days": None,
+                "freshness_grace_days": None,
+                "freshness_basis": "no admitted observation in this completed source snapshot",
+                "availability": "unavailable", "unavailable_reason": reason,
+                **metadata,
+            })
     for key, label in (
         ("nyfed_rates", "NY Fed secured rates"),
         ("nyfed_srf", "NY Fed repo ops"),
@@ -1947,27 +2019,32 @@ def _provenance(src: dict) -> list[dict]:
         ("upcoming", "Treasury upcoming auctions"),
         ("tff", "CFTC TFF"),
         ("commodity_cot", "CFTC commodity futures positioning"),
+        ("nyfed_rde", "NY Fed reserve demand elasticity"),
+        ("mspd", "Treasury debt maturity tables"),
+        ("llama_hacks", "DeFiLlama reported exploit events"),
+        ("windfetch", "Undertow current-affairs transmission pack"),
+        ("fedtext", "Federal Reserve statement text"),
+        ("gdelt", "GDELT public text samples"),
     ):
         blk = src.get(key)
-        if blk:
-            # These envelopes contain heterogeneous tables rather than one
-            # cadence-bearing Series.  A recent HTTP fetch proves transport
-            # health, not that every observation in the table is current.
-            # Keep the fetch clock, but do not manufacture an observation-
-            # freshness claim that the envelope cannot support.
-            prov.append({
-                "mnemonic": key,
-                "source": key.split("_")[0],
-                "label": label,
-                "asof": None,
-                "fetched_at": blk.get("fetched_at"),
-                "staleness": "unknown",
-                "age_days": None,
-                "freshness_grace_days": None,
-                "freshness_basis": (
-                    "fetch clock only; this table contains heterogeneous observation dates"
-                ),
-            })
+        # A table retrieval clock is not a clock for every observation.
+        # Missing envelopes remain visible and do not get a synthetic fetch.
+        prov.append({
+            "mnemonic": key,
+            "source": key.split("_")[0],
+            "label": label,
+            "asof": None,
+            "fetched_at": blk.get("fetched_at") if isinstance(blk, dict) else None,
+            "staleness": "unknown",
+            "age_days": None,
+            "freshness_grace_days": None,
+            "availability": "available" if blk else "unavailable",
+            "freshness_basis": (
+                "fetch clock only; this table contains heterogeneous observation dates"
+                if blk else "no completed source envelope; observation freshness is unknown"
+            ),
+        })
+    prov.extend(missing)
     return prov
 
 

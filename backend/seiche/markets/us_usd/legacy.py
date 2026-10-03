@@ -43,7 +43,7 @@ FRED_SERIES = [
         "Fed funds target range top (equals the SRF offering rate since Jul 2021)",
         "%",
         "D",
-        720,
+        _FUNDING_CACHE_MINUTES,
     ),
     SourceSeriesSpec(
         "WCURCIR",

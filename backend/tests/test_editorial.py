@@ -110,9 +110,10 @@ def test_fetch_only_table_is_not_mislabelled_as_observation_fresh(monkeypatch):
     rows = assemble._provenance({
         "nyfed_srf": {"fetched_at": "2026-08-06T07:20:00+00:00"},
     })
-    assert rows[0]["staleness"] == "unknown"
-    assert rows[0]["asof"] is None
-    assert "fetch clock only" in rows[0]["freshness_basis"]
+    row = next(row for row in rows if row["mnemonic"] == "nyfed_srf")
+    assert row["staleness"] == "unknown"
+    assert row["asof"] is None
+    assert "fetch clock only" in row["freshness_basis"]
 
 
 def test_dispatch_uses_the_same_editorial_object(fake_snap):
