@@ -4003,9 +4003,35 @@ def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
     }
 
 
+def _mcp_response_class(response: Any) -> str:
+    """Bounded protocol classification; it does not assess useful/fresh results."""
+    if not isinstance(response, dict):
+        return "invalid_response"
+    if "error" in response:
+        error = response["error"]
+        code = error.get("code") if isinstance(error, dict) else None
+        if type(code) is not int:
+            return "rpc_error"
+        return {
+            mcp_server.INVALID_REQUEST: "invalid_request",
+            mcp_server.METHOD_NOT_FOUND: "method_not_found",
+            mcp_server.INVALID_PARAMS: "invalid_params",
+            mcp_server.INTERNAL_ERROR: "internal_error",
+        }.get(code, "rpc_error")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        return "invalid_response"
+    return "tool_error" if result.get("isError") is True else "result"
+
+
 def _log_mcp_activation(message: Any, response: Any, surface: str, origin: str) -> None:
-    """Record the conversion event without caller data or tool arguments."""
-    if not (isinstance(message, dict) and message.get("method") == "tools/call"):
+    """Record replied tool calls without caller data, arguments or result text."""
+    if not (
+        isinstance(message, dict)
+        and message.get("method") == "tools/call"
+        and "id" in message
+        and response is not None
+    ):
         return
     params = message.get("params")
     requested = params.get("name") if isinstance(params, dict) else None
@@ -4014,18 +4040,14 @@ def _log_mcp_activation(message: Any, response: Any, surface: str, origin: str) 
         if isinstance(requested, str) and requested in mcp_server.TOOLS
         else "unknown"
     )
-    result = response.get("result") if isinstance(response, dict) else None
-    failed = (
-        not isinstance(response, dict)
-        or "error" in response
-        or (isinstance(result, dict) and result.get("isError") is True)
-    )
+    response_class = _mcp_response_class(response)
     _mcp_activation_log.info(
-        "mcp_activation product=seiche surface=%s tool=%s outcome=%s origin=%s",
+        "mcp_activation product=seiche surface=%s tool=%s outcome=%s origin=%s response_class=%s",
         surface,
         tool,
-        "error" if failed else "success",
+        "success" if response_class == "result" else "error",
         origin,
+        response_class,
     )
 
 

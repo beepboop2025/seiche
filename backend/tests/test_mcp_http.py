@@ -341,8 +341,120 @@ def test_successful_tool_call_emits_privacy_safe_activation_log(
     assert record.levelno == logging.INFO
     assert record.getMessage() == (
         "mcp_activation product=seiche surface=public "
-        "tool=data_health outcome=success origin=edge"
+        "tool=data_health outcome=success origin=edge response_class=result"
     )
+
+
+def test_tool_notifications_do_not_emit_completion_events(client, monkeypatch, caplog):
+    monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
+    tool_calls = []
+    monkeypatch.setitem(
+        mcp_server.TOOLS, "data_health", lambda **kwargs: tool_calls.append(kwargs)
+    )
+    with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
+        response = client.post(
+            "/mcp",
+            json=_rpc(
+                "tools/call", {"name": "data_health", "arguments": {}}, msg_id=None
+            ),
+        )
+    assert response.status_code == 202
+    assert tool_calls == []
+    assert not any("mcp_activation" in record.getMessage() for record in caplog.records)
+
+
+def test_batch_logs_only_replied_tool_call(client, monkeypatch, caplog):
+    monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
+    calls = [
+        _rpc("tools/call", {"name": "data_health", "arguments": {}}, msg_id=None),
+        _rpc("tools/call", {"name": "data_health", "arguments": {}}, msg_id=0),
+        _rpc("ping", msg_id=2),
+    ]
+    with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
+        response = client.post("/mcp", json=calls)
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()] == [0, 2]
+    assert response.headers["X-MCP-Usage-Used"] == "1"
+    events = [
+        record.getMessage()
+        for record in caplog.records
+        if "mcp_activation" in record.getMessage()
+    ]
+    assert events == [
+        "mcp_activation product=seiche surface=public tool=data_health "
+        "outcome=success origin=direct response_class=result"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("response", "classification"),
+    [
+        (
+            {
+                "result": {
+                    "content": [{"type": "text", "text": "HOLD private-result-marker"}]
+                }
+            },
+            "result",
+        ),
+        (
+            {
+                "result": {
+                    "isError": True,
+                    "content": [{"text": "private-result-marker"}],
+                }
+            },
+            "tool_error",
+        ),
+        (
+            {"error": {"code": -32600, "message": "private-error-marker"}},
+            "invalid_request",
+        ),
+        (
+            {"error": {"code": -32601, "message": "private-error-marker"}},
+            "method_not_found",
+        ),
+        (
+            {"error": {"code": -32602, "message": "private-error-marker"}},
+            "invalid_params",
+        ),
+        (
+            {"error": {"code": -32603, "message": "private-error-marker"}},
+            "internal_error",
+        ),
+        ({"error": {"code": -32099, "message": "private-error-marker"}}, "rpc_error"),
+        ({"error": {"code": True, "message": "private-error-marker"}}, "rpc_error"),
+        ({"error": "private-error-marker"}, "rpc_error"),
+        ({"result": "private-result-marker"}, "invalid_response"),
+        ({}, "invalid_response"),
+    ],
+)
+def test_completion_classification_is_bounded_and_private(
+    response, classification, caplog, monkeypatch
+):
+    monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
+    message = _rpc(
+        "tools/call",
+        {"name": "private-tool-marker", "arguments": {"secret": "private-arg-marker"}},
+    )
+    with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
+        api._log_mcp_activation(message, response, "public", "direct")
+    event = caplog.records[-1].getMessage()
+    outcome = "success" if classification == "result" else "error"
+    assert event == (
+        "mcp_activation product=seiche surface=public tool=unknown "
+        f"outcome={outcome} origin=direct response_class={classification}"
+    )
+    assert "private-" not in event
+
+
+def test_no_response_is_not_a_completion(caplog, monkeypatch):
+    monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
+    with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
+        api._log_mcp_activation(
+            _rpc("tools/call", {"name": "data_health"}), None, "public", "direct"
+        )
+    assert caplog.records == []
 
 
 def test_activation_logger_emits_info_without_root_configuration(monkeypatch):
@@ -433,7 +545,7 @@ def test_paid_x402_dispatch_logs_paid_surface(client, monkeypatch, caplog):
     assert events == [
         (
             "mcp_activation product=seiche surface=paid "
-            "tool=funding_stress_forecast outcome=success origin=direct"
+            "tool=funding_stress_forecast outcome=success origin=direct response_class=result"
         )
     ]
 
