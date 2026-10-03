@@ -83,15 +83,22 @@ export function normalizeGiftCity(value: unknown): GiftCityData {
   };
 }
 
+export class GoldInputError extends Error {
+  constructor(readonly field: keyof GoldForm, message: string) { super(message); }
+}
+const inputLabels: Record<keyof GoldForm, string> = {
+  quantity_kg: "gross weight in kilograms", fineness: "fineness as a fraction", price_usd_per_oz: "gold price in USD per fine troy ounce",
+  annual_rate_pct: "annual funding rate in percent", days: "funding days", fx_inr_per_usd: "INR per USD conversion", fees_usd: "included costs in USD", day_count: "day-count basis",
+};
 export function goldInputs(form: GoldForm): GoldInputs {
   const numeric = (key: keyof GoldForm, low: number, high: number, positive = false): string => {
     const value = form[key].trim();
     if (value.length > 25 || !/^[0-9]{1,12}(\.[0-9]{1,12})?$/.test(value) || !Number.isFinite(Number(value)) || Number(value) < low || Number(value) > high || (positive && Number(value) <= 0))
-      throw new Error(`Enter a valid ${key.replaceAll("_", " ")} (${positive ? "greater than " : "at least "}${low}, up to ${high}).`);
+      throw new GoldInputError(key, `Enter ${inputLabels[key]} ${positive ? "greater than " : "at least "}${low} and no more than ${high.toLocaleString("en-US")}. Use a plain decimal without commas or units.`);
     return value;
   };
-  if (!/^\d+$/.test(form.days) || Number(form.days) < 0 || Number(form.days) > 3660) throw new Error("Funding days must be a whole number from 0 to 3660.");
-  if (!["360", "365"].includes(form.day_count)) throw new Error("Choose ACT/360 or ACT/365.");
+  if (!/^\d+$/.test(form.days) || Number(form.days) < 0 || Number(form.days) > 3660) throw new GoldInputError("days", "Funding days must be a whole number from 0 to 3660.");
+  if (!["360", "365"].includes(form.day_count)) throw new GoldInputError("day_count", "Choose ACT/360 or ACT/365.");
   return { quantity_kg: numeric("quantity_kg", 0, 1e12, true), fineness: numeric("fineness", 0, 1, true),
     price_usd_per_oz: numeric("price_usd_per_oz", 0, 1e12, true), annual_rate_pct: numeric("annual_rate_pct", 0, 1000),
     days: Number(form.days), fx_inr_per_usd: numeric("fx_inr_per_usd", 0, 1e12, true), fees_usd: numeric("fees_usd", 0, 1e12), day_count: Number(form.day_count) };
@@ -102,7 +109,7 @@ export function normalizeGoldResult(value: unknown, expected?: GoldInputs): Gold
   const outputs = object(raw.outputs, "gold outputs");
   const inputs = object(raw.inputs, "gold inputs");
   if (expected && Object.entries(expected).some(([key, value]) => inputs[key] !== value)) throw new Error("The calculation response does not match your assumptions.");
-  for (const key of ["fine_troy_oz", "fine_grams", "metal_value_usd", "funding_cost_usd", "total_cost_usd", "all_in_inr_per_gram"]) {
+  for (const key of ["fine_troy_oz", "fine_grams", "metal_value_usd", "funding_cost_usd", "total_cost_usd", "total_cost_inr", "all_in_inr_per_gram"]) {
     if (typeof outputs[key] !== "string" || decimal(outputs[key]) === null) throw new Error("The gold calculation is missing a required result.");
   }
   return { schema: raw.schema, status: raw.status, inputs, outputs: outputs as Record<string, string>, assumptions: strings(raw.assumptions), raw };
@@ -114,6 +121,19 @@ export function stateTone(status: string): "good" | "warn" | "bad" {
   return "warn";
 }
 export function formatValue(value: unknown, digits = 4): string {
-  if ((typeof value !== "number" && typeof value !== "string") || value === "" || !Number.isFinite(Number(value))) return "—";
-  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits }).format(Number(value));
+  if (!Number.isInteger(digits) || digits < 0 || digits > 20) return "—";
+  if (typeof value === "number") return Number.isFinite(value)
+    ? new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits }).format(value) : "—";
+  if (typeof value !== "string" || value.length > 256 || !DECIMAL.test(value)) return "—";
+  // Scenario results are exact decimal strings. Round and group without a
+  // floating-point conversion, including totals beyond Number.MAX_SAFE_INTEGER.
+  const negative = value.startsWith("-");
+  const [whole, fraction = ""] = (negative ? value.slice(1) : value).split(".");
+  const scale = 10n ** BigInt(digits);
+  const padded = fraction.padEnd(digits + 1, "0");
+  let rounded = BigInt(whole || "0") * scale + BigInt(padded.slice(0, digits) || "0");
+  if (padded[digits] >= "5") rounded += 1n;
+  const integral = new Intl.NumberFormat("en-IN").format(rounded / scale);
+  const decimalPart = digits ? (rounded % scale).toString().padStart(digits, "0").replace(/0+$/, "") : "";
+  return `${negative && rounded !== 0n ? "-" : ""}${integral}${decimalPart ? "." + decimalPart : ""}`;
 }

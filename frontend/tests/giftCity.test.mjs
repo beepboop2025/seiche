@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../src/giftCity.ts", import.meta.url), "utf8");
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } });
-const { goldInputs, normalizeGiftCity, normalizeGoldResult, safeSourceUrl, stateTone, formatValue } = await import(`data:text/javascript;base64,${Buffer.from(code.outputText).toString("base64")}`);
+const { GoldInputError, goldInputs, normalizeGiftCity, normalizeGoldResult, safeSourceUrl, stateTone, formatValue } = await import(`data:text/javascript;base64,${Buffer.from(code.outputText).toString("base64")}`);
 const form = () => ({ quantity_kg: "1.0000", fineness: "0.9999", price_usd_per_oz: "2500.123456789012", annual_rate_pct: "5.25", days: "30", day_count: "360", fx_inr_per_usd: "85.012345678901", fees_usd: "0" });
 function evidence() {
   return { schema: "seiche.gift-city.v1", generated_at: "2026-10-02T19:00:00Z", status: "partial",
@@ -60,9 +60,35 @@ test("untrusted source links and invalid source values cannot become clickable e
 test("a calculation receipt must bind the displayed assumptions and return explicit decimal results", () => {
   const inputs = goldInputs(form());
   const receipt = { schema: "seiche.gold-carry.v1", status: "scenario", inputs,
-    outputs: { fine_troy_oz: "32.1", fine_grams: "999.9", metal_value_usd: "80250.12", funding_cost_usd: "351.1", total_cost_usd: "80601.22", all_in_inr_per_gram: "6852.44" }, assumptions: ["Simple interest"] };
+    outputs: { fine_troy_oz: "32.1", fine_grams: "999.9", metal_value_usd: "80250.12", funding_cost_usd: "351.1", total_cost_usd: "80601.22", total_cost_inr: "6851103.7", all_in_inr_per_gram: "6852.44" }, assumptions: ["Simple interest"] };
   assert.equal(normalizeGoldResult(receipt, inputs).outputs.fine_grams, "999.9");
   assert.throws(() => normalizeGoldResult({ ...receipt, inputs: { ...inputs, days: 31 } }, inputs));
   assert.throws(() => normalizeGoldResult({ ...receipt, status: "live_quote" }, inputs));
   assert.throws(() => normalizeGoldResult({ ...receipt, outputs: { ...receipt.outputs, funding_cost_usd: null } }, inputs));
+});
+
+
+test("validation identifies the field without changing accepted decimal boundaries", () => {
+  for (const [field, value] of [["fineness", "999.9"], ["days", "1.5"], ["day_count", "366"], ["price_usd_per_oz", ""]]) {
+    assert.throws(() => goldInputs({ ...form(), [field]: value }), (error) => error instanceof GoldInputError && error.field === field);
+  }
+});
+
+test("a missing or malformed total INR cannot appear as a valid review total", () => {
+  const inputs = goldInputs(form());
+  const outputs = { fine_troy_oz: "32.1", fine_grams: "999.9", metal_value_usd: "80250.12", funding_cost_usd: "351.1", total_cost_usd: "80601.22", all_in_inr_per_gram: "6852.44" };
+  for (const value of [undefined, null, "NaN", 6851103.7]) {
+    assert.throws(() => normalizeGoldResult({ schema: "seiche.gold-carry.v1", status: "scenario", inputs, outputs: { ...outputs, total_cost_inr: value } }, inputs));
+  }
+});
+
+test("exact result formatting preserves cents beyond floating-point precision", () => {
+  assert.equal(formatValue("100000000000000.01", 2), "10,00,00,00,00,00,000.01");
+  assert.equal(formatValue("9007199254740993.25", 2), "9,00,71,99,25,47,40,993.25");
+  assert.equal(formatValue("999.995", 2), "1,000");
+  assert.equal(formatValue("-0.005", 2), "-0.01");
+  assert.equal(formatValue("-0.004", 2), "0");
+  assert.equal(formatValue(".125", 2), "0.13");
+  assert.equal(formatValue("362700.00000000", 2), "3,62,700");
+  assert.equal(formatValue("31.10347680", 4), "31.1035");
 });
