@@ -67,7 +67,9 @@ FRED_SERIES = [
     SourceSeriesSpec(
         "SOFR", "fred", "SOFR", "Secured overnight financing rate", "%", "D", _FUNDING_CACHE_MINUTES
     ),
-    SourceSeriesSpec("GDP", "fred", "GDP", "Nominal GDP (SAAR)", "$B", "Q", 10080),
+    # Quarterly observations can be revised between quarter dates. Poll daily
+    # for the new vintage; the observation cadence remains quarterly.
+    SourceSeriesSpec("GDP", "fred", "GDP", "Nominal GDP (SAAR)", "$B", "Q", 1440),
     SourceSeriesSpec(
         "DISCOUNT_WINDOW",
         "fred",
