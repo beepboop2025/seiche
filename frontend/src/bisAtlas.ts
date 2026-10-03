@@ -344,7 +344,18 @@ export function bisValue(row: BisRecord): string {
     ?? row.dimensions.UNIT_MEASURE
     ?? row.attribute_labels.UNIT_MEASURE
     ?? row.attributes.UNIT_MEASURE;
-  return unit ? `${row.value_text} ${unit}` : row.value_text;
+  // Values are in the published scale. Keep exact decimal text and show the
+  // multiplier instead of silently presenting millions as individual units.
+  const multiplier = row.dimensions.UNIT_MULT ?? row.attributes.UNIT_MULT;
+  const namedScales: Record<string, string> = {
+    "3": "thousand", "6": "million", "9": "billion", "12": "trillion",
+  };
+  const scale = multiplier == null || multiplier === "" || multiplier === "0"
+    ? ""
+    : Object.prototype.hasOwnProperty.call(namedScales, multiplier)
+      ? namedScales[multiplier]
+      : (/^-?\d+$/.test(multiplier) ? `× 10^${multiplier}` : `[scale ${multiplier}]`);
+  return [row.value_text, scale, unit].filter(Boolean).join(" ");
 }
 
 export function bisDimensionPairs(row: BisRecord): Array<{

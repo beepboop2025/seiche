@@ -134,6 +134,33 @@ test("exact-decimal and missing values remain distinct without inventing zero", 
   assert.equal(model.bisValue(normalized.records[1]), "unavailable");
 });
 
+test("CPMI monetary values retain the published million-unit scale", () => {
+  const cpmi = record(1, {
+    value_text: "495033.975", dimensions: { FREQ: "A" }, dimension_labels: {},
+    attributes: { UNIT_MEASURE: "EUR", UNIT_MULT: "6" },
+    attribute_labels: { UNIT_MEASURE: "Euro", UNIT_MULT: "Millions" },
+  });
+  assert.equal(model.bisValue(cpmi), "495033.975 million Euro");
+  assert.equal(cpmi.value_text, "495033.975");
+});
+
+test("dimension multipliers, unscaled percentages and unknown scales remain explicit", () => {
+  assert.equal(model.bisValue(record(1, {
+    value_text: "1.000", dimensions: { UNIT_MEASURE: "USD", UNIT_MULT: "9" },
+    dimension_labels: {}, attributes: { UNIT_MULT: "6" },
+  })), "1.000 billion USD");
+  assert.equal(model.bisValue(record(1, { attributes: { UNIT_MULT: "0" } })),
+    "79.843 Percentage of GDP");
+  assert.equal(model.bisValue(record(1, { attributes: { UNIT_MULT: "-2" } })),
+    "79.843 × 10^-2 Percentage of GDP");
+  assert.equal(model.bisValue(record(1, { attributes: { UNIT_MULT: "UNKNOWN" } })),
+    "79.843 [scale UNKNOWN] Percentage of GDP");
+  assert.equal(model.bisValue(record(1, { attributes: { UNIT_MULT: "constructor" } })),
+    "79.843 [scale constructor] Percentage of GDP");
+  assert.equal(model.bisValue(record(1, { value_text: "", attributes: { UNIT_MULT: "6" } })),
+    "unavailable");
+});
+
 test("pagination binds flow and immutable artifact identity", () => {
   const first = model.normalizeBisPage(page([record(1)]), "WS_GLI");
   const second = model.normalizeBisPage(page([record(2)], { next_cursor: null }), "WS_GLI");
