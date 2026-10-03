@@ -1094,6 +1094,7 @@ def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
         "@origin_api_catalog",
         "@agent_room",
         "@event_analysis",
+        "@gold_inventory_carry",
         "@public",
         "@login",
         "@mcp",
@@ -1108,6 +1109,18 @@ def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
     assert "max_size 64KiB" in agent_room_route
     assert "import seiche_stateful_upstream" in agent_room_route
     assert "/api/agent-room/" not in caddy[caddy.index("@public {") :]
+    gold_route = caddy[
+        caddy.index("@gold_inventory_carry {") : caddy.index(
+            "# Remaining public POST routes"
+        )
+    ]
+    assert re.findall(r"(?m)^\s*method (.+)$", gold_route) == ["POST"]
+    assert re.findall(r"(?m)^\s*path (.+)$", gold_route) == [
+        "/api/v2/gift-city/gold-carry"
+    ]
+    assert "max_size 8KiB" in gold_route
+    assert 'header Cache-Control "no-store"' in gold_route
+    assert "import seiche_stateful_upstream" in gold_route
     mcp_route = caddy[caddy.index("handle @mcp {") : caddy.index("# Glama")]
     assert "max_size 1MiB" in mcp_route
     assert "import seiche_stateful_upstream" in mcp_route
