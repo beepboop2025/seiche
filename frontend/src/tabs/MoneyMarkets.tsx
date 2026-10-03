@@ -1595,6 +1595,7 @@ export default function MoneyMarkets({ snap }: Props) {
           <p>
             {clearingScope}, one evidence discipline. Seiche reads rates, collateral, liquidity and currency pressure in local conventions, then compares every market only with its own history.
           </p>
+          <p><a href="https://api.seiche.info/api/v2/research-data/?product=seiche" target="_blank" rel="noopener noreferrer">Explore repo collateral and tenor, money-fund counterparties, dealer fails and full reference-rate histories ↗</a></p>
         </div>
         <div className="mm-hero__status">
           <StatusPill value={mode === "live" ? atlas?.status || "live" : mode === "usd-fallback" ? "USD fallback" : loading ? "loading" : "unavailable"} />

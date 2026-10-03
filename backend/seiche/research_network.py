@@ -136,6 +136,10 @@ def research_steps(topic: str) -> list[dict]:
         _step("Seiche", "How do funding, currencies and capital-market conditions relate to this research?",
               "https://seiche.info/#MONEY%20MARKETS", "https://api.seiche.info/api/v2/world-markets?section=summary",
               "https://api.seiche.info/mcp", "world_markets_context", {"section": "summary"}, "https://t.me/seiche_desk_bot"),
+        _step("Seiche funding archive", "What do source-bound repo, money-fund and primary-dealer histories show?",
+              "https://api.seiche.info/api/v2/research-data/?product=seiche",
+              "https://api.seiche.info/api/v2/research-data/catalog?product=seiche",
+              "https://api.seiche.info/api/v2/research-data/mcp", "research_catalog", {"product": "seiche"}),
     ]
     if topic not in {"information_controls", "model_evaluations"}:
         steps.extend([
