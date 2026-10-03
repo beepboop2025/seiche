@@ -68,7 +68,7 @@
 .gc-form-note { margin: 23px 0 18px; color: var(--dim); font-size: 12px; line-height: 1.75; }
 .gc-primary { display: flex; justify-content: center; border-radius: 4px; min-height: 48px; gap: 22px; background: var(--gc-gold); color: #111820; border: 1px solid var(--gc-gold); padding: 13px 16px; width: 100%; font-size: 14px !important; font-weight: 550 !important; }
 .gc-form .gc-error { margin-top: 17px; }
-.gc-result { position: sticky; top: 140px; background: var(--panel); padding: clamp(20px, 2.8vw, 38px); display: flex; flex-direction: column; align-items: start; border-radius: 0 8px 8px 0; }
+.gc-result { scroll-margin-top: 20px; position: sticky; top: 140px; background: var(--panel); padding: clamp(20px, 2.8vw, 38px); display: flex; flex-direction: column; align-items: start; border-radius: 0 8px 8px 0; }
 .gc-result-empty { margin: 12px 0; max-width: 42ch; }
 .gc-gold-mark { font: 54px/1 var(--display); color: var(--gc-gold); display: block; border: 1px solid var(--gc-gold); width: 96px; text-align: center; padding: 17px 0 21px; margin-bottom: 28px; }
 .gc-result-empty h3 { font-size: 24px; line-height: 1.4; letter-spacing: -.025em; font-weight: 450; }
@@ -78,11 +78,11 @@
 .gc-formula span { color: var(--gc-gold); }
 .gc-formula strong { font-weight: 400; line-height: 1.6; }
 .gc-result-empty > small { font-size: 12px; color: var(--gc-gold); }
-.gc-result-lead { padding: 24px 0; width: 100%; border-bottom: 1px solid var(--gc-line); }
+.gc-result-lead { padding: 18px 0; width: 100%; border-bottom: 1px solid var(--gc-line); }
 .gc-result-lead small { display: block; font-size: 12px; color: var(--dim); }
 .gc-result-lead strong { display: block; font: clamp(30px, 3.4vw, 46px)/1.2 var(--mono); margin: 14px 0; font-weight: 400; overflow-wrap: anywhere; }
 .gc-result-lead p { color: var(--dim); font-size: 12px; line-height: 1.6; }
-.gc-results { display: grid; width: 100%; gap: 17px; padding: 24px 0; }
+.gc-results { display: grid; width: 100%; gap: 13px; padding: 20px 0; }
 .gc-results > div { display: flex; justify-content: space-between; gap: 20px; font-size: 12px; line-height: 1.5; }
 .gc-results dt { color: var(--dim); }
 .gc-results .gc-total { padding-bottom: 20px; border-bottom: 1px solid var(--gc-line); align-items: baseline; }

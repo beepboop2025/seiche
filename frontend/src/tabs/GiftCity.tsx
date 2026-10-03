@@ -65,7 +65,7 @@ function GoldCarry({ evidence }: { evidence: GiftCityData | null }) {
   useEffect(() => {
     if (!result) return;
     resultPanel.current?.focus({ preventScroll: true });
-    resultPanel.current?.scrollIntoView({ block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    resultPanel.current?.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [result]);
   const change = (key: keyof GoldForm, value: string) => {
     request.current?.abort(); request.current = null; setBusy(false); setResult(null); setResultEvidence(null); setError(null); setInvalidField(null);
