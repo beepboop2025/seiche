@@ -6,6 +6,7 @@ Only upstream responses and static fixture roots are replaced after adaptation;
 matchers, route order, rewrites, headers, and the default deny remain intact.
 """
 import copy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -49,6 +51,35 @@ class UndertowRoutingTest(unittest.TestCase):
         assert len(matches) == 1, 'expected one shared API origin'
         route = copy.deepcopy(matches[0])
 
+        # Consume real request bodies so Caddy's edge ceiling is exercised,
+        # rather than merely checking the adapted configuration contains it.
+        class BodyReader(BaseHTTPRequestHandler):
+            def do_POST(self):
+                expected = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(expected)
+                if len(body) != expected:
+                    return  # The proxy rejected the oversized body mid-stream.
+                response = json.dumps({'path': self.path, 'bytes': len(body)}).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, *args):
+                pass
+
+        upstream = ThreadingHTTPServer(('127.0.0.1', 0), BodyReader)
+        upstream.daemon_threads = True
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+
+        def stop_upstream():
+            upstream.shutdown()
+            upstream.server_close()
+            thread.join(timeout=5)
+        cls.addClassCleanup(stop_upstream)
+
         def fixtures(value):
             if isinstance(value, list):
                 for child in value:
@@ -56,6 +87,9 @@ class UndertowRoutingTest(unittest.TestCase):
             elif isinstance(value, dict):
                 if value.get('handler') == 'reverse_proxy':
                     target = value['upstreams'][0]['dial']
+                    if target == '127.0.0.1:8787':
+                        value['upstreams'][0]['dial'] = f'127.0.0.1:{upstream.server_port}'
+                        return
                     value.clear()
                     value.update(handler='static_response', status_code=200,
                                  body='proxy:' + target + ' {http.request.uri}')
@@ -98,9 +132,10 @@ class UndertowRoutingTest(unittest.TestCase):
         else:
             raise AssertionError('test Caddy did not open its loopback listener')
 
-    def request(self, path, method='GET'):
+    def request(self, path, method='GET', data=None):
         req = urllib.request.Request(f'http://127.0.0.1:{self.port}{path}',
-                                     headers={'Host': 'api.seiche.info'}, method=method)
+                                     headers={'Host': 'api.seiche.info'}, method=method,
+                                     data=data)
         try:
             response = urllib.request.urlopen(req, timeout=5)
         except urllib.error.HTTPError as error:
@@ -135,6 +170,33 @@ class UndertowRoutingTest(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertEqual(json.loads(body)['status'], 'DORMANT')
         self.assertEqual(self.request('/undertow/unpublished-private-file.json')[0], 404)
+
+    def test_gold_scenario_exact_post_route_has_private_response_headers(self):
+        path = '/api/v2/gift-city/gold-carry'
+        status, headers, body = self.request(path, 'POST', b'{}')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {'path': path, 'bytes': 2})
+        self.assertEqual(headers.get('Cache-Control'), 'no-store')
+        self.assertEqual(headers.get('Access-Control-Allow-Origin'), '*')
+        self.assertEqual(headers.get('X-Content-Type-Options'), 'nosniff')
+        self.assertEqual(self.request(path, 'OPTIONS')[0], 204)
+        for method, rejected in [('POST', path + '/'), ('POST', path + '/private'),
+                                 ('PUT', path), ('PATCH', path), ('DELETE', path)]:
+            with self.subTest(method=method, path=rejected):
+                self.assertEqual(self.request(rejected, method, b'{}')[0], 404)
+
+    def test_gold_body_ceiling_preserves_adjacent_post_contracts(self):
+        for path, length, expected in [
+            ('/api/v2/gift-city/gold-carry', 8192, 200),
+            ('/api/v2/gift-city/gold-carry', 8193, 413),
+            ('/api/event-analysis', 8193, 413),
+            ('/api/auth/login', 8193, 200),
+        ]:
+            with self.subTest(path=path, length=length):
+                status, _, body = self.request(path, 'POST', b'x' * length)
+                self.assertEqual(status, expected)
+                if expected == 200:
+                    self.assertEqual(json.loads(body), {'path': path, 'bytes': length})
 
 
 if __name__ == '__main__':
