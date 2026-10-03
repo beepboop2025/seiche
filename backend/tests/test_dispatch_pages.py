@@ -84,6 +84,7 @@ def test_sitemap_has_base_pages_and_letters(repo):
     sm = (root / "frontend" / "public" / "sitemap.xml").read_text()
     for loc in ("https://seiche.info/", "https://seiche.info/guide",
                 "https://seiche.info/gift-city/",
+                "https://seiche.info/agents/quant/",
                 "https://seiche.info/dispatches/",
                 f"https://seiche.info/dispatches/{d['slug']}"):
         assert f"<loc>{loc}</loc>" in sm
@@ -114,6 +115,7 @@ def test_llms_txt_lists_letters_with_markdown_links(repo):
     llms = (root / "frontend" / "public" / "llms.txt").read_text()
     assert llms.startswith("# Seiche")
     assert "https://seiche.info/gift-city/" in llms
+    assert "https://seiche.info/agents/quant/" in llms
     assert f"https://seiche.info/dispatches/{d['slug']}.md" in llms
     assert "search and AI input but does not grant model training" in llms
 

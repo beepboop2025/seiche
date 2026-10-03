@@ -50,6 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_URLS = [
     ("/", "daily", "1.0"),
     ("/developers", "monthly", "0.9"),
+    ("/agents/quant/", "monthly", "0.9"),
     ("/gift-city/", "monthly", "0.9"),
     ("/use-cases", "monthly", "0.9"),
     ("/use-cases/money-market-research/", "monthly", "0.9"),
@@ -823,6 +824,7 @@ same product; the callable contract remains the MCP server above.
 
 - [Plain English guide]({SITE}/guide): every engine and regime word explained without jargon
 - [API + MCP quickstart]({SITE}/developers): connect an agent or make the first public API call in under a minute
+- [Quant-agent integrations]({SITE}/agents/quant/): source-pinned framework tools, a runnable setup and cited research captures
 - [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
 - [Selection guide]({SITE}/use-cases): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
 - [Money-market research workflow]({SITE}/use-cases/money-market-research/): move from an exact benchmark through rights, native clocks and system cash before routing institution and exit questions
