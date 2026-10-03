@@ -101,6 +101,13 @@ def fault_category(
     if status_name in {"OVERDUE", "MISSING", "UNKNOWN"}:
         return PublicFaultCategory.WORKER_HEALTH
 
+    # Snapshot and API boundaries may project an already sanitized detail.
+    # Recognize only our exact fixed messages, never arbitrary diagnostic text.
+    if isinstance(value, str):
+        for category, detail in _PUBLIC_DETAILS.items():
+            if value == detail:
+                return category
+
     names = _type_names(value)
     if names and names[0].upper() in PublicFaultCategory._value2member_map_:
         return PublicFaultCategory(names[0].upper())
@@ -109,9 +116,15 @@ def fault_category(
         return PublicFaultCategory.ACCESS_POLICY
     if "deadline" in joined or "timeout" in joined:
         return PublicFaultCategory.TIMEOUT
-    if "httpstatus" in joined or "httperror" in joined:
+    if "httpstatus" in joined:
         return PublicFaultCategory.HTTP_ERROR
-    if any(token in joined for token in ("connect", "transport", "network", "oserror")):
+    # httpx transport exceptions also inherit HTTPError. Prefer their specific
+    # category, while HTTPError itself (including urllib's OSError) stays HTTP.
+    if any(token in joined for token in ("connect", "transport", "network")):
+        return PublicFaultCategory.TRANSPORT_ERROR
+    if "httperror" in joined:
+        return PublicFaultCategory.HTTP_ERROR
+    if "oserror" in joined:
         return PublicFaultCategory.TRANSPORT_ERROR
     if "persistence" in joined:
         return PublicFaultCategory.PERSISTENCE_ERROR
