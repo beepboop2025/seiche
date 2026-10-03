@@ -1321,6 +1321,91 @@ def _bind_deep_history_boundary(deep: dict, evidence: dict | None = None) -> dic
     return deep
 
 
+def _deep_cache_value(value):
+    """Lossless, typed model-input encoding; retrieval clocks are not inputs."""
+    from datetime import date, datetime
+
+    if value is pd.NA or value is pd.NaT:
+        return ["missing"]
+    if isinstance(value, Series):
+        return ["source_series", value.mnemonic, value.source, value.remote_id,
+                value.unit, value.freq, _deep_cache_value(value.points)]
+    if isinstance(value, pd.DataFrame):
+        return ["frame", _deep_cache_value(value.index),
+                _deep_cache_value(value.columns), [str(d) for d in value.dtypes],
+                [_deep_cache_value(row) for row in value.itertuples(index=False, name=None)]]
+    if isinstance(value, pd.Series):
+        return ["series", str(value.dtype), _deep_cache_value(value.name),
+                _deep_cache_value(value.index), _deep_cache_value(value.tolist())]
+    if isinstance(value, pd.Index):
+        return ["index", type(value).__name__, str(value.dtype),
+                _deep_cache_value(value.names), getattr(value, "freqstr", None),
+                _deep_cache_value(value.tolist())]
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return ["date", value.isoformat()]
+    if isinstance(value, (pd.Timedelta, np.timedelta64)):
+        return ["timedelta_ns", int(pd.Timedelta(value).value)]
+    if isinstance(value, np.generic):
+        return _deep_cache_value(value.item())
+    if isinstance(value, np.ndarray):
+        return ["array", str(value.dtype), list(value.shape), _deep_cache_value(value.tolist())]
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return ["float", value.hex()]
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("deep cache mapping keys must be strings")
+        return ["mapping", [[key, _deep_cache_value(item)] for key, item in sorted(value.items())]]
+    if isinstance(value, (list, tuple)):
+        return ["sequence", [_deep_cache_value(item) for item in value]]
+    raise TypeError("unsupported deep cache input type")
+
+
+def _deep_cache_inputs_sha256(src: dict, drv: dict, engines: dict, pit_records: list) -> str | None:
+    """Bind every external input consumed below, including Book's stored ledger.
+
+    Engine modules are otherwise pure over these inputs and release-pinned
+    configuration. Navigator and Model Court keep their separate contracts.
+    Unknown input types disable reuse rather than guessing a serialization.
+    """
+    fred_names = set(PLAYBOOK_OUTCOMES) | {
+        "VIX", "HY_OAS", "IG_OAS", "DGS10", "EFFR", "SOFR", "WRESBAL", "GDP",
+        "FED_ASSETS_LONG", "ECB_ASSETS", "BOJ_ASSETS", "EURUSD_LONG", "JPY_LONG",
+        "NASDAQ", "INDPRO", "TGA_LONG", "RRP_LONG", "INR", "TED", "DGS2", "SP500", "TB3M",
+    }
+    crypto_source = src.get("crypto") or {}
+    inputs = {
+        "schema": "seiche.deep-inputs.v1",
+        "fred": {key: (src.get("fred") or {}).get(key) for key in sorted(fred_names)},
+        "ofr_bgcr": (src.get("ofr") or {}).get("BGCR"),
+        "candles": {key: (crypto_source.get("candles") or {}).get(key)
+                    for key in PLAYBOOK_OUTCOMES},
+        "stable_total": (crypto_source.get("stable") or {}).get("total"),
+        "auctions": (src.get("auctions") or {}).get("auctions"),
+        "upcoming": (src.get("upcoming") or {}).get("upcoming"),
+        "derived": {key: drv.get(key) for key in (
+            "spread_bp", "tail_bp", "srf", "dw_b", "rrp", "res_gdp", "res_gdp_pctl",
+            "iorb", "tga", "usdt_peg_bp", "btc",
+        )},
+        "engine_inputs": {
+            "pair": engines.get("rvxray", {}).get("_pair_full"),
+            "digestion": engines.get("auctions", {}).get("_index_full"),
+            "damping": engines.get("undertow", {}).get("_damping_pctl"),
+            "composite_value": engines.get("composite", {}).get("value"),
+            "composite_regime": engines.get("composite", {}).get("regime"),
+        },
+        "pit_records": pit_records,
+    }
+    try:
+        encoded = json.dumps(_deep_cache_value(inputs), sort_keys=True,
+                             separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+    except (TypeError, ValueError, OverflowError):
+        logging.getLogger("seiche.assemble").warning("deep cache disabled for unsupported input")
+        return None
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def seed_prebuilt_deep_cache(payload: dict) -> str | None:
     """Reuse a verified Railway deep layer for its exact SOFR data-day.
 
@@ -1332,7 +1417,9 @@ def seed_prebuilt_deep_cache(payload: dict) -> str | None:
 
     A snapshot without a unique official SOFR date simply cannot seed this
     optimization; it remains a valid degraded snapshot and the host computes
-    the deep layer normally.
+    the deep layer normally. Public payloads that stripped the private input
+    digest cannot seed reusable model results: publication time is not an input
+    identity. A retained digest is still compared with actual local inputs.
     """
     deep = payload.get("deep")
     provenance = payload.get("provenance")
@@ -1340,6 +1427,8 @@ def seed_prebuilt_deep_cache(payload: dict) -> str | None:
         payload.get("version") != VERSION_LABEL
         or not isinstance(deep, dict)
         or not isinstance(provenance, (dict, list))
+        or not isinstance(deep.get("_inputs_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", deep["_inputs_sha256"]) is None
     ):
         return None
 
@@ -1414,6 +1503,18 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # VERSION in the key: a release that adds deep blocks (tidetables/swell/
     # stacker/book in v2.3) must not serve a pre-upgrade blob for up to 12h.
     cache_key = f"deep:{VERSION}:{spread.index[-1].date().isoformat()}"
+    # Read the Book's mutable ledger once: fingerprint and computation consume
+    # the same rows. A failed read must not turn into a cache hit or hide the
+    # original per-model failure envelope.
+    pit_error = None
+    try:
+        pit_records = store.load_pit_records()
+    except Exception as error:
+        pit_records, pit_error = [], error
+    inputs_sha256 = (
+        _deep_cache_inputs_sha256(src, drv, engines, pit_records)
+        if pit_error is None else None
+    )
     # Failure-aware cache: a blob computed with any failed layer only lives 30
     # minutes, so a transient fault can't poison the whole data-day (bit us
     # twice during the v2 build).
@@ -1423,7 +1524,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             "ignored deep cache containing restricted CFETS-derived data"
         )
         cached = None
-    if cached is not None:
+    if (cached is not None and inputs_sha256 is not None
+            and cached.get("_inputs_sha256") == inputs_sha256):
         ttl_min = DEEP_TTL_MIN if cached.get("_all_ok") else 30
         ts = cached.get("_computed_at")
         try:
@@ -1442,7 +1544,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             return _bind_deep_history_boundary(cached, evidence)
 
     fred_s = src.get("fred", {})
-    out: dict = {"ok": True}
+    out: dict = {"ok": True, "_inputs_sha256": inputs_sha256}
     try:
         pair_full = engines.get("rvxray", {}).get("_pair_full", pd.Series(dtype=float))
         dig_full = engines.get("auctions", {}).get("_index_full", pd.Series(dtype=float))
@@ -1795,6 +1897,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         stk = out.get("stacker", {})
         if not stk.get("ok"):
             return {"ok": False, "reason": f"stacker unavailable: {stk.get('reason')}"}
+        if pit_error is not None:
+            raise pit_error
         rets = eng_book.build_returns(
             dgs2=_pts(fred_s, "DGS2"),
             dgs10=_pts(fred_s, "DGS10"),
@@ -1804,7 +1908,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         )
         return eng_book.run(
             stk["_p"], stk["_member_probs"], stk["_dispersion"],
-            full_tell, rets, pit_records=store.load_pit_records(),
+            full_tell, rets, pit_records=pit_records,
         )
     run("book", _book)
 

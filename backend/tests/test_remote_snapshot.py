@@ -223,6 +223,7 @@ def test_verified_prebuild_seeds_exact_sofr_day_without_regressing_newer_cache(
         }
     ]
     payload["deep"]["modelcourt"] = {"ok": True, "verdict": "live-ledger"}
+    payload["deep"]["_inputs_sha256"] = "d" * 64
     writes: list[tuple[str, dict]] = []
     monkeypatch.setattr(assemble.store, "load_blob", lambda _key: None)
     monkeypatch.setattr(
