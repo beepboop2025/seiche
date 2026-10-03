@@ -3487,7 +3487,9 @@ def equivalence_repo(equivalence_template, tmp_path):
     }
 
 
-def _equivalence_prepare(fixture, *, include_signed_frontend=False):
+def _equivalence_prepare(
+    fixture, *, include_signed_frontend=False, include_reviewed_package=False
+):
     return front.prepare_source_equivalence(
         fixture["root"],
         expected_sha=_content_git(fixture["root"], "rev-parse", "HEAD"),
@@ -3495,14 +3497,23 @@ def _equivalence_prepare(fixture, *, include_signed_frontend=False):
         controller_root=fixture["controller_root"],
         signer_fingerprint=fixture["fingerprint"],
         include_signed_frontend=include_signed_frontend,
+        include_reviewed_package=include_reviewed_package,
     )
 
 
 def _equivalence_tag(
-    fixture, *, change=None, key=None, canonical=True, include_signed_frontend=False
+    fixture,
+    *,
+    change=None,
+    key=None,
+    canonical=True,
+    include_signed_frontend=False,
+    include_reviewed_package=False,
 ):
     payload, _, _ = _equivalence_prepare(
-        fixture, include_signed_frontend=include_signed_frontend
+        fixture,
+        include_signed_frontend=include_signed_frontend,
+        include_reviewed_package=include_reviewed_package,
     )
     if change:
         payload.update(change)
@@ -3953,3 +3964,268 @@ def test_equivalence_rejects_unrelated_controller_ancestry(equivalence_repo):
     )
     with pytest.raises(front.Error, match="unrelated controller ancestry"):
         _equivalence_prepare(f)
+
+
+@pytest.fixture
+def reviewed_package_repo(equivalence_repo, monkeypatch):
+    """Small synthetic hashes exercise the finite policy without network fixtures."""
+    f = equivalence_repo
+    bodies = (
+        {"integrations/openbb/pyproject.toml": "fixed dependency floor\n"},
+        {
+            ".github/workflows/publish-openbb.yml": "independent signed tag guard\n",
+            "integrations/openbb/pyproject.toml": "fixed dependency and independent version\n",
+        },
+    )
+    previous = {}
+    steps = []
+    for index, changes in enumerate(bodies):
+        steps.append(
+            {
+                "reviewedSource": str(index + 1) * 40,
+                "subject": f"reviewed package step {index}",
+                "changes": [
+                    {
+                        "path": path,
+                        "beforeMode": "100644" if path in previous else "000000",
+                        "afterMode": "100644",
+                        "beforeSha256": hashlib.sha256(
+                            previous[path].encode()
+                        ).hexdigest()
+                        if path in previous
+                        else None,
+                        "afterSha256": hashlib.sha256(body.encode()).hexdigest(),
+                    }
+                    for path, body in sorted(changes.items())
+                ],
+            }
+        )
+        previous.update(changes)
+    monkeypatch.setattr(front, "REVIEWED_PACKAGE_BASE", f["release"])
+    monkeypatch.setattr(front, "REVIEWED_PACKAGE_STEPS", steps)
+    return {**f, "package_bodies": bodies, "package_steps": steps}
+
+
+def _package_change(
+    fixture, index, *, extra=None, signed=True, author=None, subject=None
+):
+    changes = {**fixture["package_bodies"][index], **(extra or {})}
+    _content_commit(
+        fixture["root"],
+        changes,
+        author=author or "beepboop2025@users.noreply.github.com",
+        subject=subject or fixture["package_steps"][index]["subject"],
+    )
+    if signed:
+        _content_git(fixture["root"], "commit", "-q", "--amend", "-S", "--no-edit")
+    return _content_git(fixture["root"], "rev-parse", "HEAD")
+
+
+def test_reviewed_package_exact_signed_sequence_preserves_engine_and_desk_projection(
+    reviewed_package_repo,
+):
+    f = reviewed_package_repo
+    _package_change(f, 0)
+    _package_change(f, 1)
+    tag = _equivalence_tag(f, include_reviewed_package=True)
+    head = _content_commit(
+        f["root"], {"frontend/public/dispatches/package-day.md": "observed evidence\n"}
+    )
+    proof = _equivalence_verify(f, tag)
+    assert proof["currentSourceSha"] == head
+    assert proof["sourceEquivalence"]["schema"] == front.PACKAGE_EQUIVALENCE_SCHEMA
+    assert proof["sourceEquivalence"]["backendReleaseSha"] == f["release"]
+    excluded = proof["equivalentInputManifest"]["excludedPaths"]
+    for changes in f["package_bodies"]:
+        assert set(changes) <= set(excluded)
+        assert not set(changes) & {
+            row["path"] for row in proof["equivalentInputManifest"]["entries"]
+        }
+    assert [row["path"] for row in proof["deskOverlay"]["entries"]] == [
+        "frontend/public/dispatches/package-day.md"
+    ]
+
+
+def test_reviewed_package_requires_explicit_new_receipt_authority(
+    reviewed_package_repo,
+):
+    f = reviewed_package_repo
+    _package_change(f, 0)
+    _package_change(f, 1)
+    with pytest.raises(front.Error, match="explicit v3"):
+        _equivalence_prepare(f)
+    tag = _equivalence_tag(
+        f,
+        include_reviewed_package=True,
+        change={
+            "schema": front.EQUIVALENCE_SCHEMA,
+            "purpose": front.EQUIVALENCE_PURPOSE,
+        },
+    )
+    with pytest.raises(front.Error, match="explicit v3"):
+        _equivalence_verify(f, tag)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "incomplete",
+        "wrong-order",
+        "changed-bytes",
+        "unsigned",
+        "author",
+        "subject",
+        "mode",
+    ],
+)
+def test_reviewed_package_rejects_incomplete_or_unreviewed_transition(
+    reviewed_package_repo, mutation
+):
+    f = reviewed_package_repo
+    if mutation == "wrong-order":
+        _package_change(f, 1)
+    elif mutation != "missing":
+        extra = (
+            {"integrations/openbb/pyproject.toml": "unreviewed dependency\n"}
+            if mutation == "changed-bytes"
+            else None
+        )
+        _package_change(
+            f,
+            0,
+            extra=extra,
+            signed=mutation != "unsigned",
+            author="foreign@example.invalid" if mutation == "author" else None,
+            subject="unreviewed change" if mutation == "subject" else None,
+        )
+        if mutation == "mode":
+            (f["root"] / "integrations/openbb/pyproject.toml").chmod(0o755)
+            _content_git(f["root"], "add", ".")
+            _content_git(f["root"], "commit", "-q", "--amend", "-S", "--no-edit")
+        if mutation != "incomplete":
+            _package_change(f, 1)
+    with pytest.raises(front.Error, match="reviewed package"):
+        _equivalence_prepare(f, include_reviewed_package=True)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend/seiche/assemble.py",
+        "backend/pyproject.toml",
+        ".github/workflows/publish.yml",
+        "ops/release/verify_catalog_publication.py",
+        "frontend/package.json",
+        "integrations/openbb/unreviewed.py",
+    ],
+)
+def test_reviewed_package_never_admits_extra_runtime_or_build_changes(
+    reviewed_package_repo, path
+):
+    f = reviewed_package_repo
+    _package_change(f, 0, extra={path: "unauthorized input\n"})
+    _package_change(f, 1)
+    with pytest.raises(front.Error):
+        _equivalence_prepare(f, include_reviewed_package=True)
+
+
+def test_reviewed_package_cannot_repeat_or_revert_a_reviewed_path(
+    reviewed_package_repo,
+):
+    f = reviewed_package_repo
+    _package_change(f, 0)
+    _package_change(f, 1)
+    _frontend_change(
+        f["root"],
+        {"integrations/openbb/pyproject.toml": "temporary unauthorized change\n"},
+    )
+    _frontend_change(f["root"], f["package_bodies"][0])
+    with pytest.raises(front.Error, match="repeated"):
+        _equivalence_prepare(f, include_reviewed_package=True)
+
+
+def test_reviewed_package_does_not_override_the_original_backend_or_frontend_policy(
+    reviewed_package_repo, monkeypatch
+):
+    f = reviewed_package_repo
+    _package_change(f, 0)
+    _package_change(f, 1)
+    with pytest.raises(front.Error, match="exact original backend"):
+        _equivalence_prepare(
+            f, include_reviewed_package=True, include_signed_frontend=True
+        )
+    monkeypatch.setattr(front, "REVIEWED_PACKAGE_BASE", "f" * 40)
+    with pytest.raises(front.Error, match="exact original backend"):
+        _equivalence_prepare(f, include_reviewed_package=True)
+
+
+def test_reviewed_package_later_changes_cannot_reuse_a_signed_receipt(
+    reviewed_package_repo,
+):
+    f = reviewed_package_repo
+    _package_change(f, 0)
+    _package_change(f, 1)
+    tag = _equivalence_tag(f, include_reviewed_package=True)
+    _frontend_change(
+        f["root"], {"integrations/openbb/pyproject.toml": "future unreviewed release\n"}
+    )
+    with pytest.raises(front.Error, match="generated-content|input manifest"):
+        _equivalence_verify(f, tag)
+
+
+def test_reviewed_package_checks_before_hashes_not_only_final_bytes(
+    reviewed_package_repo, monkeypatch
+):
+    f = reviewed_package_repo
+    _package_change(f, 0)
+    _package_change(f, 1)
+    policy = copy.deepcopy(f["package_steps"])
+    policy[1]["changes"][1]["beforeSha256"] = "f" * 64
+    monkeypatch.setattr(front, "REVIEWED_PACKAGE_STEPS", policy)
+    with pytest.raises(front.Error, match="exact content"):
+        _equivalence_prepare(f, include_reviewed_package=True)
+
+
+def test_reviewed_package_rejects_oversized_blob_before_reading_body(
+    reviewed_package_repo,
+):
+    f = reviewed_package_repo
+    _package_change(
+        f, 0, extra={"integrations/openbb/pyproject.toml": "x" * (1024 * 1024 + 1)}
+    )
+    _package_change(f, 1)
+    with pytest.raises(front.Error, match="size bound"):
+        _equivalence_prepare(f, include_reviewed_package=True)
+
+
+def test_reviewed_package_rejects_merge_reinterpretation(reviewed_package_repo):
+    f = reviewed_package_repo
+    branch = _content_git(f["root"], "branch", "--show-current")
+    _content_git(f["root"], "checkout", "-q", "-b", "consumer-change")
+    _package_change(f, 0)
+    _package_change(f, 1)
+    _content_git(f["root"], "checkout", "-q", branch)
+    _content_git(
+        f["root"],
+        "merge",
+        "--no-ff",
+        "--no-gpg-sign",
+        "-m",
+        "merge package changes",
+        "consumer-change",
+    )
+    with pytest.raises(front.Error, match="linear ancestry"):
+        _equivalence_prepare(f, include_reviewed_package=True)
+
+
+def test_reviewed_package_keeps_reverted_runtime_edits_forbidden(reviewed_package_repo):
+    f = reviewed_package_repo
+    _package_change(f, 0)
+    _package_change(f, 1)
+    path = "backend/seiche/assemble.py"
+    original = (f["root"] / path).read_text()
+    _frontend_change(f["root"], {path: original + "\n# unreviewed runtime\n"})
+    _frontend_change(f["root"], {path: original})
+    with pytest.raises(front.Error, match="forbidden path"):
+        _equivalence_prepare(f, include_reviewed_package=True)

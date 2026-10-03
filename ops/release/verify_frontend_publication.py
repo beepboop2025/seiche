@@ -538,6 +538,79 @@ EQUIVALENCE_PURPOSE = "unchanged_signed_engine_with_validated_desk_overlay"
 FRONTEND_EQUIVALENCE_SCHEMA = "seiche.publication-source-equivalence.v2"
 FRONTEND_EQUIVALENCE_PURPOSE = "unchanged_signed_engine_with_separately_built_frontend"
 EQUIVALENCE_TAG_PREFIX = "publication-source-equivalence-"
+
+# Explicit finite consumer-package authority. No package code is built by the
+# full publisher: it continues to execute the original signed backend archive.
+# Every transition below is independently reviewed source content, not a path
+# permission. The original backend must authenticate this controller first.
+PACKAGE_EQUIVALENCE_SCHEMA = "seiche.publication-source-equivalence.v3"
+PACKAGE_EQUIVALENCE_PURPOSE = "exact_openbb_0_1_1_delta_no_runtime_activation"
+REVIEWED_PACKAGE_BASE = "c092985008406b8c98a12df769bb9948e9654539"
+REVIEWED_PACKAGE_STEPS = ({'reviewedSource': '5ffcfef9e10d46728374860a9f63d12413392767',
+  'subject': 'fix(openbb): require patched PyJWT in provider 0.1.1',
+  'changes': [{'path': '.github/workflows/distribution-contracts.yml',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': 'edb55f3f41c021ea009ecc1b500011faa08baadaace4fb69ac13af2fdff1b593',
+               'afterSha256': '0112770f19a28c64aa71b3b2cfaeab86e894a64f7ac35103db1a09c66acc7421'},
+              {'path': '.github/workflows/publish-openbb.yml',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': 'c435f3fe41c99d5dfa337efada98dfa515bd3d5af4cde3f29f013280c3882e87',
+               'afterSha256': '25688db9ea06fac612f521d6ca02b8e3de8907f78ae6b1c0f5767027eb3a1927'},
+              {'path': 'backend/tests/test_distribution_artifacts.py',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': '98bc28fd90298c559d88a6f4476eae6d6dd728c8ae88855a4aa8e48d17de3463',
+               'afterSha256': 'd7b37483c3c4dfc98fb8ee85cbf9f7e66ccf5d9f16067166867bc44ee822f9be'},
+              {'path': 'integrations/openbb/README.md',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': 'af5ef88b1f5811bf1e2a66c702d627bc981f680eddb5c6da8c1933e4ea6fdbfa',
+               'afterSha256': '643a4fae5d2934fa10feff40f2cbaa30e2860812faf284de724e03b58cc36050'},
+              {'path': 'integrations/openbb/openbb_seiche/models/_client.py',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': '30dc74a413662ddd7c6e561510d8829278456fc901f910b1bba223ca4257f0c5',
+               'afterSha256': '8c21c6d69fca508972cc49e080aef1b4da4572e752534b19cc9230c34c1460d6'},
+              {'path': 'integrations/openbb/pyproject.toml',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': '0711fd133a47ebe282e0203da60865ad09713df6c5909cbf42e3df728e1585fd',
+               'afterSha256': '9c78e4a5adf63984e1ec6e82171f3c76d056b086722b2170c0c3b66a1b8e03c3'},
+              {'path': 'integrations/openbb/tests/test_artifacts.py',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': 'daedf56ab64172072d7a9e8dddf4910b3cb2f79e7e72b429596364b653ad799c',
+               'afterSha256': '32f20fa9fae0e5e76839a92c1c02e017e9166d1d3bddac48300f8ec6b6b95644'},
+              {'path': 'integrations/openbb/tests/test_dependency_security.py',
+               'beforeMode': '000000',
+               'afterMode': '100644',
+               'beforeSha256': None,
+               'afterSha256': 'c87a6034f6f6d8ff18fa58c7f71ce7841039fd4e836b902583f2d88377e2ad2d'},
+              {'path': 'integrations/openbb/verify_artifacts.py',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': 'c6ef729b91078b82146b328026f2438baf818e486be6387f15b79c08fd0bd9b1',
+               'afterSha256': '2bbf8e07ac9b2be93c85398560dea6dcbfbf4b612eabaa2a8f4bc6fee01be758'}]},
+ {'reviewedSource': '84712419de1e6dd5f3882b85813ef08efddd909b',
+  'subject': 'feat(openbb): admit independently signed package release tags',
+  'changes': [{'path': '.github/workflows/distribution-contracts.yml',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': '0112770f19a28c64aa71b3b2cfaeab86e894a64f7ac35103db1a09c66acc7421',
+               'afterSha256': '540d8c01b9cf8f02492a56bb6d03b95ce178f5d89005cd568d2265cfdca38a0f'},
+              {'path': '.github/workflows/publish-openbb.yml',
+               'beforeMode': '100644',
+               'afterMode': '100644',
+               'beforeSha256': '25688db9ea06fac612f521d6ca02b8e3de8907f78ae6b1c0f5767027eb3a1927',
+               'afterSha256': 'dcf57f215d1867de61457c85d404bcee8d15e3f4d6fb6c00d10c884e86500ef0'},
+              {'path': 'backend/tests/test_openbb_release_identity.py',
+               'beforeMode': '000000',
+               'afterMode': '100644',
+               'beforeSha256': None,
+               'afterSha256': '89d0540e484039707ce8b25307ccac27802ae23f7e00d56fc5e692ab13627d0c'}]})
+
 MAX_OVERLAY_FILES = 20000
 MAX_OVERLAY_BYTES = 128 * 1024 * 1024
 MAX_OVERLAY_FILE_BYTES = 8 * 1024 * 1024
@@ -589,7 +662,60 @@ def _reject_renames(root: Path, parent: str, commit: str) -> None:
         raise Error("equivalence history contains a renamed input")
 
 
-def _equivalence_history(root: Path, controller: str, source: str) -> list[dict]:
+def _reviewed_package_commit(
+    root: Path, parent: str, commit: str, step: int, signer_fingerprint: str | None
+) -> None:
+    """Match one complete signed transition; never grant a reusable path exception."""
+    if step >= len(REVIEWED_PACKAGE_STEPS):
+        raise Error("reviewed package transition was repeated")
+    expected = REVIEWED_PACKAGE_STEPS[step]
+    raw = gate._run_git_bytes(
+        root, "diff-tree", "--raw", "-r", "-z", "--no-renames",
+        "--no-commit-id", "--no-abbrev", parent, commit, "--",
+    ).stdout.split(b"\0")
+    if len(raw) % 2 != 1 or raw[-1] != b"":
+        raise Error("reviewed package transition has an invalid change list")
+    if len(raw) != 2 * len(expected["changes"]) + 1:
+        raise Error("reviewed package transition differs from its exact content")
+    actual = []
+    for metadata, path_bytes, reviewed in zip(raw[:-1:2], raw[1:-1:2], expected["changes"]):
+        if REGULAR_CHANGE.fullmatch(metadata) is None:
+            raise Error("reviewed package transition changes a nonregular file")
+        path = path_bytes.decode("ascii")
+        before, after, _, _, _ = metadata.decode("ascii")[1:].split()
+        if (path, before, after) != (reviewed["path"], reviewed["beforeMode"], reviewed["afterMode"]):
+            raise Error("reviewed package transition differs from its exact content")
+        for revision, mode in ((parent, before), (commit, after)):
+            if mode != "000000" and int(_git(root, "cat-file", "-s", f"{revision}:{path}")) > 1024 * 1024:
+                raise Error("reviewed package transition exceeds its blob size bound")
+        actual.append({
+            "path": path,
+            "beforeMode": before,
+            "afterMode": after,
+            "beforeSha256": None if before == "000000" else hashlib.sha256(_blob(root, parent, path)).hexdigest(),
+            "afterSha256": None if after == "000000" else hashlib.sha256(_blob(root, commit, path)).hexdigest(),
+        })
+    if actual != expected["changes"]:
+        raise Error("reviewed package transition differs from its exact content")
+    author, subject = _git(
+        root, "show", "-s", "--no-show-signature", "--format=%ae%x00%s", commit
+    ).split("\0")
+    if author != "beepboop2025@users.noreply.github.com" or subject != expected["subject"]:
+        raise Error("reviewed package transition has a foreign author or subject")
+    if signer_fingerprint is None:
+        raise Error("reviewed package transition requires the pinned signer")
+    config = gate._signing_git_config(root, signer_fingerprint)
+    if gate._run_git(root, "-c", config, "verify-commit", commit, check=False).returncode:
+        raise Error("reviewed package transition has an invalid signature")
+    fingerprint = _git(root, "-c", config, "show", "-s", "--no-show-signature", "--format=%GF", commit)
+    if fingerprint != signer_fingerprint:
+        raise Error("reviewed package transition differs from the pinned signer")
+
+
+def _equivalence_history(
+    root: Path, controller: str, source: str, *,
+    include_reviewed_package: bool = False, signer_fingerprint: str | None = None,
+) -> list[dict]:
     """Classify every edge, preserving complete inherited desk provenance."""
     if gate._run_git(
         root, "merge-base", "--is-ancestor", controller, source, check=False
@@ -602,6 +728,8 @@ def _equivalence_history(root: Path, controller: str, source: str) -> list[dict]
         raise Error("equivalence history exceeds its commit bound")
     changes = []
     origins = {controller: frozenset()}
+    package_paths = {row["path"] for step in REVIEWED_PACKAGE_STEPS for row in step["changes"]}
+    package_step = 0
     for commit in commits:
         parents, author, subject = _git(
             root,
@@ -614,6 +742,17 @@ def _equivalence_history(root: Path, controller: str, source: str) -> list[dict]
         parents = parents.split()
         if not parents or any(parent not in origins for parent in parents):
             raise Error("equivalence history merges unrelated controller ancestry")
+        reviewed_package = False
+        for parent in parents:
+            names = set(_git(root, "diff-tree", "--name-only", "-r", "--no-renames", "--no-commit-id", parent, commit).splitlines())
+            if names & package_paths:
+                if not include_reviewed_package:
+                    raise Error("reviewed package changes require explicit v3 authority")
+                if len(parents) != 1:
+                    raise Error("reviewed package transitions require linear ancestry")
+                _reviewed_package_commit(root, parent, commit, package_step, signer_fingerprint)
+                package_step += 1
+                reviewed_package = True
         inherited_origins = frozenset().union(*(origins[parent] for parent in parents))
         inherited = len(parents) > 1 and any(
             origins[parent] == inherited_origins
@@ -649,7 +788,9 @@ def _equivalence_history(root: Path, controller: str, source: str) -> list[dict]
                     raise Error(
                         "equivalence history contains an unsupported path"
                     ) from exc
-                if path == "README.md" and metadata.endswith(b" M"):
+                if reviewed_package:
+                    kind = "reviewed_package_release"
+                elif path == "README.md" and metadata.endswith(b" M"):
                     kind = "root_readme"
                 elif DESK_PATH.fullmatch(path):
                     if len(parents) == 1:
@@ -686,6 +827,8 @@ def _equivalence_history(root: Path, controller: str, source: str) -> list[dict]
         origins[commit] = inherited_origins | (
             {commit} if len(parents) == 1 and desk_change else set()
         )
+    if include_reviewed_package and package_step != len(REVIEWED_PACKAGE_STEPS):
+        raise Error("reviewed package transition sequence is incomplete")
     return changes
 
 
@@ -734,6 +877,7 @@ def _equivalence_inputs(
     backend_root: Path,
     signer_fingerprint: str,
     include_signed_frontend: bool = False,
+    include_reviewed_package: bool = False,
 ) -> tuple[dict, dict, dict]:
     """Authenticate R and C before classifying D; do not perform live checks."""
     if gate.FINGERPRINT_RE.fullmatch(signer_fingerprint) is None:
@@ -751,6 +895,8 @@ def _equivalence_inputs(
         raise Error("equivalence source SHA is malformed")
     controller = _git(controller_root, "rev-parse", "HEAD")
     backend = _git(backend_root, "rev-parse", "HEAD")
+    if include_reviewed_package and (include_signed_frontend or backend != REVIEWED_PACKAGE_BASE):
+        raise Error("reviewed package authority requires only the exact original backend")
     for directory, revision in (
         (root, expected_sha),
         (controller_root, controller),
@@ -857,9 +1003,19 @@ def _equivalence_inputs(
         for change in bootstrap_changes
         if change["kind"] != "excluded_desk_content"
     }
+    source_changes = _equivalence_history(
+        root, controller, source_sha,
+        include_reviewed_package=include_reviewed_package,
+        signer_fingerprint=signer_fingerprint,
+    )
+    if include_reviewed_package:
+        excluded |= {
+            change["path"] for change in source_changes
+            if change["kind"] == "reviewed_package_release"
+        }
     history = {
         "controllerChanges": bootstrap_changes,
-        "sourceChanges": _equivalence_history(root, controller, source_sha),
+        "sourceChanges": source_changes,
     }
     manifest = {
         "excludedPaths": sorted(excluded),
@@ -880,8 +1036,8 @@ def _equivalence_inputs(
                 "equivalence publication input manifest differs from the signed backend"
             )
     payload = {
-        "schema": FRONTEND_EQUIVALENCE_SCHEMA if include_signed_frontend else EQUIVALENCE_SCHEMA,
-        "purpose": FRONTEND_EQUIVALENCE_PURPOSE if include_signed_frontend else EQUIVALENCE_PURPOSE,
+        "schema": PACKAGE_EQUIVALENCE_SCHEMA if include_reviewed_package else FRONTEND_EQUIVALENCE_SCHEMA if include_signed_frontend else EQUIVALENCE_SCHEMA,
+        "purpose": PACKAGE_EQUIVALENCE_PURPOSE if include_reviewed_package else FRONTEND_EQUIVALENCE_PURPOSE if include_signed_frontend else EQUIVALENCE_PURPOSE,
         "sourceSha": source_sha,
         "controllerSourceSha": controller,
         "controllerReceiptTag": controller_tag,
@@ -909,6 +1065,7 @@ def prepare_source_equivalence(
     backend_root: Path,
     signer_fingerprint: str,
     include_signed_frontend: bool = False,
+    include_reviewed_package: bool = False,
 ) -> tuple[dict, dict, dict]:
     """Unsigned D review inputs, after independent original-R bootstrap of C."""
     return _equivalence_inputs(
@@ -919,10 +1076,11 @@ def prepare_source_equivalence(
         backend_root=backend_root,
         signer_fingerprint=signer_fingerprint,
         include_signed_frontend=include_signed_frontend,
+        include_reviewed_package=include_reviewed_package,
     )
 
 
-def _equivalence_frontend_requested(root: Path, receipt_tag: str) -> bool:
+def _equivalence_authorities(root: Path, receipt_tag: str) -> tuple[bool, bool]:
     """Select a bounded receipt format; this is not signature authorization.
 
     The exact canonical payload and pinned SSH signature are verified after
@@ -937,9 +1095,11 @@ def _equivalence_frontend_requested(root: Path, receipt_tag: str) -> bool:
         raise Error("equivalence receipt is not an object")
     pair = (payload.get("schema"), payload.get("purpose"))
     if pair == (EQUIVALENCE_SCHEMA, EQUIVALENCE_PURPOSE):
-        return False
+        return False, False
     if pair == (FRONTEND_EQUIVALENCE_SCHEMA, FRONTEND_EQUIVALENCE_PURPOSE):
-        return True
+        return True, False
+    if pair == (PACKAGE_EQUIVALENCE_SCHEMA, PACKAGE_EQUIVALENCE_PURPOSE):
+        return False, True
     raise Error("equivalence receipt differs from the exact canonical schema and purpose")
 
 
@@ -960,7 +1120,7 @@ def verify_source_equivalence(
     if re.fullmatch(EQUIVALENCE_TAG_PREFIX + r"[0-9a-f]{40}", receipt_tag) is None:
         raise Error("equivalence receipt tag must name the exact source SHA")
     source = receipt_tag[len(EQUIVALENCE_TAG_PREFIX) :]
-    include_signed_frontend = _equivalence_frontend_requested(root, receipt_tag)
+    include_signed_frontend, include_reviewed_package = _equivalence_authorities(root, receipt_tag)
     payload, manifest, _ = _equivalence_inputs(
         root,
         expected_sha=expected_sha,
@@ -969,6 +1129,7 @@ def verify_source_equivalence(
         backend_root=backend_root,
         signer_fingerprint=signer_fingerprint,
         include_signed_frontend=include_signed_frontend,
+        include_reviewed_package=include_reviewed_package,
     )
     _verify_equivalence_tag(
         root, source=source, payload=payload, signer_fingerprint=signer_fingerprint
@@ -1245,6 +1406,8 @@ def main() -> int:
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--include-signed-frontend", action="store_true",
                         help="prepare explicit v2 authority for a separately built, original-R-approved frontend")
+    parser.add_argument("--include-reviewed-package", action="store_true",
+                        help="prepare explicit v3 authority for the exact reviewed OpenBB 0.1.1 transitions")
     parser.add_argument(
         "--source-equivalence",
         action="store_true",
@@ -1257,6 +1420,8 @@ def main() -> int:
     try:
         if args.include_signed_frontend and not (args.source_equivalence and args.prepare):
             raise Error("--include-signed-frontend requires --source-equivalence --prepare")
+        if args.include_reviewed_package and not (args.source_equivalence and args.prepare):
+            raise Error("--include-reviewed-package requires --source-equivalence --prepare")
         if args.source_equivalence:
             if args.controller_root is None or args.backend_root is None:
                 raise Error(
@@ -1274,6 +1439,7 @@ def main() -> int:
                     backend_root=args.backend_root,
                     signer_fingerprint=args.signer_fingerprint,
                     include_signed_frontend=args.include_signed_frontend,
+                    include_reviewed_package=args.include_reviewed_package,
                 )
                 tag = EQUIVALENCE_TAG_PREFIX + args.expected_sha
                 if (

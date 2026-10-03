@@ -103,3 +103,28 @@ files and caches still live in the disposable build directory. This lets the
 unchanged release-gate tests create private runtime directories without placing
 their trusted ancestry beneath world-writable `/tmp`. Linux image tests exercise
 the real builder UID and reject unsafe permissions, symlinks and `/tmp` ancestry.
+
+## Exact OpenBB 0.1.1 consumer release admission
+
+The optional v3 source-equivalence receipt admits only the two reviewed OpenBB
+0.1.1 transitions recorded in the authenticated controller verifier. Each whole
+commit must match its exact before/after SHA-256 hashes, regular file modes,
+owner, subject and pinned signature, in order, once. Its only backend subject is
+the signed c092985008406b8c98a12df769bb9948e9654539 release. Old v1/v2 receipts
+do not authorize this package exception; prepare v3 explicitly with
+`--source-equivalence --prepare --include-reviewed-package`.
+
+Bootstrap controller C first through that backend's original frontend verifier.
+Apply the reviewed package commits linearly after C to form source D; a merge,
+partial release, changed byte or additional runtime/build input is rejected.
+The new receipt excludes only those exact validated consumer paths from the
+equivalent engine-input manifest. The publisher still builds pristine c092 plus
+the bounded desk-data projection; no OpenBB package or changed workflow from D
+executes in that build. This v3 receipt cannot also authorize a frontend overlay.
+
+Before advancing main, separately qualify the C/R-pinned controller image and
+coordinate its signed receipts, one-writer schedule handoff, preparation, actual
+publication, durable recovery, both public origins and normal recurrence. Keep
+the original application and native recovery identities intact. No receipt,
+image or provider change is implied by merging review code or preparing unsigned
+inputs. Future package updates receive no general path or version exception.
