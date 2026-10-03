@@ -32,6 +32,7 @@ def _series(
     remote_id: str | None = None,
     values: pd.Series | None = None,
 ) -> Series:
+    spec = ALL_SERIES.get(mnemonic)
     points = values if values is not None else pd.Series(
         [1.0, 1.1], index=pd.date_range("2026-08-20", periods=2, freq="D")
     )
@@ -40,8 +41,8 @@ def _series(
         source=source,
         remote_id=remote_id or f"test:{mnemonic}",
         label=mnemonic,
-        unit="%",
-        freq="D",
+        unit=spec.unit if spec is not None else "%",
+        freq=spec.freq if spec is not None else "D",
         fetched_at="2026-08-22T00:00:00+00:00",
         points=points,
     )
