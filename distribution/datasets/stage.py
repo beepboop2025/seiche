@@ -20,16 +20,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-import tomllib
-
 KIT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = KIT_ROOT.parents[1]
 DATA_COMMONS_ROOT = REPO_ROOT / "integrations" / "datacommons"
 OBSERVATION_ROOT = DATA_COMMONS_ROOT / "input" / "observations"
 NOTEBOOK = REPO_ROOT / "notebooks" / "seiche_direct_ofr_research.ipynb"
-SOFTWARE_VERSION = tomllib.loads(
-    (REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
-)["project"]["version"]
 
 EXPECTED_FIELDS = (
     "entity",
@@ -44,6 +39,8 @@ EXPECTED_TOTAL_ROWS = 11_163
 EXPECTED_TOTAL_SERIES = 10
 EXPECTED_ENTITY = "country/USA"
 DATASET_VERSION = "0.1.0-draft"
+# This retained metadata release is independent of later software versions.
+METADATA_PUBLICATION_VERSION = "0.14.0"
 HUGGING_FACE_LICENSE_NAME = "us-government-work-ofr-credit-requested"
 EXPECTED_COMMIT = "93e83bbc592098fc2f6465ffb49c5e872d61c018"
 RAW_PREFIX = (
@@ -56,7 +53,7 @@ PINNED_SOURCE_TREE = (
 )
 METADATA_PUBLICATION_TREE = (
     "https://github.com/beepboop2025/seiche/tree/"
-    f"v{SOFTWARE_VERSION}/distribution/datasets"
+    f"v{METADATA_PUBLICATION_VERSION}/distribution/datasets"
 )
 
 REPO_VARIABLES = frozenset(

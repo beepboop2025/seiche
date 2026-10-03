@@ -11,6 +11,21 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.14.1 release candidate
+
+- Admit the exact gold inventory carrying-cost POST route through the gateway,
+  preserving the bounded request body, trusted origin headers and adjacent routes.
+- Tolerate vanished SSH-probe paths during recovery cleanup;
+  permission and other unexpected inspection errors still fail closed.
+- Preserve safe ECB timeout, HTTP and validation categories through isolated
+  collector and public error boundaries without exposing exception details.
+- Prepare corpus receipt `r28` for this new application source. Corpus data,
+  OpenBB artifacts and prior release receipts retain their original identities.
+- Validate the direct-OFR dataset against its retained metadata publication,
+  independently of later software version changes.
+- Keep deployment, four-lane source qualification and publication acceptance
+  pending; local checks and prepared metadata do not establish a release.
+
 ### 0.14.0 release candidate
 
 - Add a GIFT City treasury desk with INR/USD funding, source-separated CBUAE

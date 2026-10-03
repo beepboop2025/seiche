@@ -73,9 +73,9 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.14.0; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.14.1; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.14.0 estuary** adds the [GIFT City treasury desk](docs/GIFT_CITY_DESK.md): India/USD funding, source-separated UAE and ECB reference FX, weekly COMEX gold positioning, and a gold inventory carrying-cost calculator with explicit assumptions. RBI collection retries hourly; freshness follows the previous-business-day reporting convention. Sixteen public MCP tools expose the same evidence and arithmetic. This is a release candidate until the signed deployment and publication receipts pass.
+Version **0.14.1 estuary** is a candidate patch for the gold-carry gateway route, recovery SSH cleanup and safe ECB failure categories. It retains the [GIFT City treasury desk](docs/GIFT_CITY_DESK.md), its exact-decimal gold financing calculations, source-separated FX and dated positioning evidence. Sixteen public MCP tools expose the same evidence and arithmetic. Deployment and publication remain pending until their signed receipts pass.
 New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding
 observations can reach the daily review without waiting through the previous
 four-to-twelve-hour cache windows. Failed refreshes retain the original source

@@ -80,6 +80,46 @@ def test_source_revision_targets_a_real_immutable_tree():
     )
 
 
+def test_software_version_change_preserves_dataset_publication(monkeypatch):
+    original_read = Path.read_text
+    pyproject = ROOT / "backend" / "pyproject.toml"
+
+    def changed_software_version(path, *args, **kwargs):
+        text = original_read(path, *args, **kwargs)
+        if path.resolve() == pyproject.resolve():
+            return re.sub(r'(?m)^version = "[^"]+"$', 'version = "99.0.0"', text)
+        return text
+
+    monkeypatch.setattr(Path, "read_text", changed_software_version)
+    spec = importlib.util.spec_from_file_location("dataset_after_software_update", STAGE_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    updated_stage = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(updated_stage)
+
+    assert updated_stage.validate_kit()["status"] == "valid"
+    assert updated_stage.METADATA_PUBLICATION_TREE.endswith(
+        "/v0.14.0/distribution/datasets"
+    )
+
+
+@pytest.mark.parametrize("field", ["metadata_publication", "source_revision"])
+def test_dataset_publication_rejects_relabelled_provenance(monkeypatch, field):
+    original_load = stage._load_json
+
+    def relabelled_manifest(path):
+        document = original_load(path)
+        if path.name == "manifest.json":
+            document["provenance"][field] = (
+                "https://github.com/beepboop2025/seiche/tree/"
+                "v99.0.0/distribution/datasets"
+            )
+        return document
+
+    monkeypatch.setattr(stage, "_load_json", relabelled_manifest)
+    with pytest.raises(stage.ValidationError, match="kit source/publication provenance changed"):
+        stage.validate_kit()
+
+
 def test_hugging_face_card_is_native_schema_safe_and_publication_ready():
     card = (stage.KIT_ROOT / "huggingface" / "README.md").read_text(encoding="utf-8")
     frontmatter = card.split("---\n", maxsplit=2)[1]
