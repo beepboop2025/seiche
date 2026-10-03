@@ -91,7 +91,9 @@ def test_software_version_change_preserves_dataset_publication(monkeypatch):
         return text
 
     monkeypatch.setattr(Path, "read_text", changed_software_version)
-    spec = importlib.util.spec_from_file_location("dataset_after_software_update", STAGE_SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "dataset_after_software_update", STAGE_SCRIPT
+    )
     assert spec is not None and spec.loader is not None
     updated_stage = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(updated_stage)
@@ -116,7 +118,9 @@ def test_dataset_publication_rejects_relabelled_provenance(monkeypatch, field):
         return document
 
     monkeypatch.setattr(stage, "_load_json", relabelled_manifest)
-    with pytest.raises(stage.ValidationError, match="kit source/publication provenance changed"):
+    with pytest.raises(
+        stage.ValidationError, match="kit source/publication provenance changed"
+    ):
         stage.validate_kit()
 
 
