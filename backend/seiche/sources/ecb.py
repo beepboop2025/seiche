@@ -15,6 +15,7 @@ import pandas as pd
 from seiche import store
 from seiche.sources._async_store import run_store
 from seiche.config import ALL_SERIES, USER_AGENT, SeriesSpec
+from seiche.public_faults import sanitize_fault
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 BASE = "https://data-api.ecb.europa.eu/service/data"
@@ -51,7 +52,7 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str =
         cached = await run_store(store.load_series, spec.mnemonic)
         if cached is not None:
             return cached
-        raise SourceFault("ecb", f"{spec.remote_id}: {type(exc).__name__}: {exc}") from exc
+        raise SourceFault("ecb", sanitize_fault(exc, status="FAILED")) from exc
 
 
 async def fetch_many(

@@ -516,6 +516,21 @@ api.seiche.info {
         header X-Content-Type-Options "nosniff"
         import seiche_stateful_upstream
     }
+    # Seiche 0.14.0 caller-input gold scenario: exact public route, no persistence.
+    @gold_inventory_carry {
+        method POST
+        path /api/v2/gift-city/gold-carry
+    }
+    handle @gold_inventory_carry {
+        request_body {
+            max_size 8KiB
+        }
+        header Cache-Control "no-store"
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+        header X-Content-Type-Options "nosniff"
+        import seiche_stateful_upstream
+    }
     # Remaining public POST routes share the normal uncapped application
     # contract; the event-specific ceiling must not affect their payloads.
     @login {

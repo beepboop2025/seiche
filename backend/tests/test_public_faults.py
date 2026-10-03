@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from urllib.error import HTTPError
 
+import httpx
 import pytest
 
 from seiche import api, store
 from seiche.collectors import CollectorRunStatus, CollectorSupervisor
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.public_faults import (
+    PublicFaultCategory,
+    fault_category,
     project_public_fault,
+    public_fault_detail,
     safe_failure_envelope,
     sanitize_fault,
+    sanitize_fault_record,
     sanitize_public_fault_payload,
 )
 from seiche.sources.base import ObservationBatch
@@ -30,6 +36,51 @@ def _assert_redacted(value) -> None:
     assert "Bearer" not in serialized
     assert "<script>" not in serialized
     assert "/Users/" not in serialized
+
+
+@pytest.mark.parametrize("category", list(PublicFaultCategory))
+def test_fixed_public_details_keep_categories_through_repeated_projection(category):
+    record = {"source": "ecb", "detail": f"{category.value}: {public_fault_detail(category)}"}
+    expected = {
+        "source": "ecb", "status": "FAILED", "category": category.value,
+        "detail": public_fault_detail(category),
+    }
+    for _ in range(3):
+        record = json.loads(json.dumps(sanitize_fault_record(record)))
+        record = project_public_fault(record)
+        assert record == expected
+        assert sanitize_public_fault_payload({"faults": [record]}) == {"faults": [expected]}
+
+
+@pytest.mark.parametrize("detail", [
+    f"source collection timed out {_CREDENTIAL_URL}",
+    f"{_CREDENTIAL_URL} source collection timed out",
+    "SOURCE COLLECTION TIMED OUT",
+])
+def test_public_detail_recognition_is_exact_and_ignores_untrusted_category(detail):
+    projected = project_public_fault({"source": "ecb", "category": "TIMEOUT", "detail": detail})
+    assert projected["category"] == "INTERNAL_ERROR"
+    assert projected["detail"] == "collector failed"
+    _assert_redacted(projected)
+
+
+def test_worker_status_override_still_precedes_fixed_detail_category():
+    assert fault_category("source collection timed out", status="OVERDUE") == PublicFaultCategory.WORKER_HEALTH
+    assert fault_category("source collection timed out", status="CIRCUIT_OPEN") == PublicFaultCategory.CIRCUIT_OPEN
+
+
+@pytest.mark.parametrize(("error", "category"), [
+    (httpx.ConnectError(_CREDENTIAL_URL), PublicFaultCategory.TRANSPORT_ERROR),
+    (httpx.ReadError(_CREDENTIAL_URL), PublicFaultCategory.TRANSPORT_ERROR),
+    (httpx.HTTPError(_CREDENTIAL_URL), PublicFaultCategory.HTTP_ERROR),
+    (HTTPError(_CREDENTIAL_URL, 503, _SECRET, {}, None), PublicFaultCategory.HTTP_ERROR),
+    (OSError(_CREDENTIAL_URL), PublicFaultCategory.TRANSPORT_ERROR),
+    (ValueError("source collection timed out"), PublicFaultCategory.VALIDATION_ERROR),
+    (RuntimeError("source collection timed out"), PublicFaultCategory.INTERNAL_ERROR),
+])
+def test_specific_exception_types_win_over_generic_bases_and_message_text(error, category):
+    assert fault_category(error) == category
+    _assert_redacted(sanitize_fault(error))
 
 
 def test_sanitizer_never_formats_exception_text_or_follows_its_chain() -> None:
