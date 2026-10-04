@@ -13,8 +13,8 @@ test('conversion retains source identity and applies both fees in receiving curr
   assert.deepEqual(result.outputs,{gross_quote:'90000',variable_fee_quote:'900',fixed_fee_quote:'10',net_quote:'89090'});
   assert.equal(result.reference.as_of,ref.as_of); assert.equal(result.reference.provider,'ecb');
 });
-test('stale references remain dated historical scenarios; missing and restricted evidence is rejected', () => {
-  assert.equal(referenceConversion(fx,{...ref,status:'stale'}).reference.status,'stale');
+test('aging and stale references retain their age state; missing and restricted evidence is rejected', () => {
+  for (const status of ['aging', 'stale']) assert.equal(referenceConversion(fx,{...ref,status}).reference.status,status);
   for(const change of [{rate:null},{rate:0},{rate:Infinity},{status:'restricted'},{status:'unavailable'},{as_of:'2026-02-30'},{as_of:null},{provider:''}]) assert.throws(()=>referenceConversion(fx,{...ref,...change}));
 });
 test('large amounts retain decimal cents, and malformed inputs do not coerce to zero', () => {

@@ -26,7 +26,7 @@ export function referenceConversion(input: ConversionInputs, reference: Referenc
   currency(reference.base); currency(reference.quote);
   if (!reference.as_of || !/^\d{4}-\d{2}-\d{2}$/.test(reference.as_of)
       || !Number.isFinite(Date.parse(reference.as_of)) || new Date(reference.as_of).toISOString().slice(0, 10) !== reference.as_of
-      || !["fresh", "stale", "historical"].includes(reference.status.toLowerCase()) || !reference.provider
+      || !["fresh", "aging", "stale", "historical"].includes(reference.status.toLowerCase()) || !reference.provider
       || reference.rate === null || !Number.isFinite(reference.rate) || reference.rate <= 0 || reference.rate >= 1e12) {
     throw new Error("A dated, publicly available reference is required. Restricted or missing rates cannot be converted.");
   }
