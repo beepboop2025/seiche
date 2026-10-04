@@ -22,6 +22,8 @@ RUN mkdir /controller/native-bin && cp /controller/native_docker.py /controller/
     && chmod -R u=rwX,go=rX /controller \
     && cd /controller && python -c 'import verify; verify.modules()' \
     && /usr/bin/tini -s -- python -m unittest -v test_verify test_attest test_recurring test_health_probe test_native_installation_gate test_prepare_timing
+# Verify the embedded monitor on this same native image, with a separate receipt.
+RUN cd /controller/monitor && python test_monitor_roles.py
 WORKDIR /controller
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["timeout", "--signal=TERM", "--kill-after=30", "5400", "python", "-u", "/controller/verify.py"]

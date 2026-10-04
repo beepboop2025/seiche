@@ -7,7 +7,7 @@ readiness, matching origin/public identities, and a recent exact recovery/offsit
 receipt pair. It never requests an export, restores data, changes schedules,
 publishes an attestation or sends a Telegram message.
 
-`prepare.py` builds a small context from one reviewed source revision. The image
+`prepare.py` builds a small context from one reviewed application revision. The image
 contains the original probe/proof/cleanup scripts and the exact five required
 source helpers. At runtime, public main is fetched without credentials and its
 helpers and monitor script/environment definitions must match those reviewed
@@ -15,6 +15,20 @@ bytes. Only the three verified Python package files are materialized. Fetched
 application code cannot replace the controller, modify the read-only command
 allowlist or acquire the service's credentials. A monitor change fails closed
 until a new reviewed image is deployed.
+
+The application revision (`policy.source`) is the exact accepted runtime to
+monitor. It supplies `RECOVERY_SOURCE_SHA` and the proof's `source`; it is never
+inferred from a live response. The signed controller revision is recorded
+separately in `policy.controller_source`. Fetched main supplies `GITHUB_SHA` and
+the proof's `workflow_source`, after the unchanged helper and workflow checks.
+This permits a reviewed frontend-only main advance while the application still
+runs the earlier accepted revision. Both edges must match that pinned application
+revision, even when they agree with each other on some other revision. Missing
+or malformed application identities fail before admission or probing.
+
+When the application or governed monitor helpers change, prepare a new context
+with that explicitly accepted application revision and qualify its actual image.
+Do not reuse a context merely because its controller code has not changed.
 
 Supply a non-secret target JSON containing the six `TARGET_NAMES` in `monitor.py`:
 
@@ -60,3 +74,23 @@ unhealthy-PITR, split-edge and low-headroom evidence. They also verify rejected
 source drift, scrubbed Git environment, restricted probe environment and missing
 recovery-pair rejection. Run the tests during image build and inspect the live
 strict proof before retiring any schedule.
+
+`test_monitor.py` retains its original ten tests and original build-log output.
+`test_monitor_roles.py` runs separately during image build, including full monitor
+environment/proof tests against the unchanged workflow validator. Its detailed
+output is retained in `/controller/monitor-role-tests.log`; the matching JSON
+receipt records its exact test inventory, sources, prepared manifest and log
+hash. Only `RAILWAY_RECOVERY_MONITOR_ROLE_TESTS_PASS` reports this additional
+suite. It is not a live monitor result and does not replace the original ten-test
+image proof. Qualification must verify both results on the same actual image,
+retain their full logs, and separately accept a fresh strict runtime proof.
+
+The same role-test build step emits one `RAILWAY_RECOVERY_MONITOR_ROLE_LOG`
+record containing the complete detailed log as base64. Its explicit byte length,
+SHA-256, receipt SHA-256, application/controller identities and manifest bind it
+to the preceding role-test receipt. The complete encoded build record is limited
+to 8 KiB; an oversized log fails the build. A read-only verifier can recover the
+original bytes from the bounded build stream after the replica stops, without
+SSH or another execution. The encoded record does not introduce a second plain
+unittest summary into the original ten-test reader's stream. Local transport
+tests are separate from the unchanged ten original and thirteen role image tests.

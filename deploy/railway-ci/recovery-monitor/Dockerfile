@@ -17,6 +17,7 @@ RUN cp /controller/trusted/ops/railway/retry_read.py /usr/local/bin/railway \
     && chmod 0755 /usr/local/bin/railway \
     && chmod -R go-w /controller \
     && python /controller/test_monitor.py
+RUN python /controller/test_monitor_roles.py
 WORKDIR /controller
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["timeout", "--signal=TERM", "--kill-after=30", "1800", "python", "-u", "monitor.py"]

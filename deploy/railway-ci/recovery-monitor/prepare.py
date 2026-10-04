@@ -95,7 +95,8 @@ def prepare(repository, revision, output, target, signer_public_key):
     validator = proof.split('OUTPUT="$GITHUB_OUTPUT"', 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
     (output / "validator.py").write_text(validator + "\n")
     (output / "policy.json").write_text(json.dumps(policy, indent=2) + "\n")
-    for name in ("Dockerfile", "monitor.py", "prepare.py", "test_monitor.py", "requirements.lock"):
+    for name in ("Dockerfile", "monitor.py", "prepare.py", "test_monitor.py",
+                 "test_monitor_roles.py", "requirements.lock"):
         path = (here / name).relative_to(repository_root)
         body = subprocess.check_output(["git", "-C", str(here), "show", f"{controller_source}:{path}"])
         (output / name).write_bytes(body)

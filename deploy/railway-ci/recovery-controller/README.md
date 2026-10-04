@@ -166,3 +166,21 @@ validation-project API credential. The native controller remains the restore
 executor, and only GitHub's original attestation action supplies the GitHub OIDC
 issuer. An owner-signed installation receipt is installation-time evidence, not a
 claim of continuous live image inspection.
+
+## Application and workflow identities
+
+The embedded monitor pins its application identity to the recurring assembly's
+reviewed source. Current main supplies the workflow identity only after every
+trusted helper and monitor workflow step matches. A frontend-only advance can
+therefore retain the accepted application revision without treating main as a
+new running backend. Two endpoints agreeing on an unaccepted revision still
+fail the original validator. No runtime source environment override is added.
+
+The native Docker build runs the same thirteen monitor role checks as the
+standalone monitor, after the original native suite. The separate
+`RAILWAY_RECOVERY_MONITOR_ROLE_TESTS_PASS` and bounded complete-log record
+bind those checks to the embedded manifest and controller/application sources.
+They do not replace the original native suite, actual-image historical restore,
+signed installation, genuine-day export, strict monitor, or later recurrence.
+Qualification must accept both suites from the same actual image before
+activating a replacement. Existing P evidence does not qualify this new image.
