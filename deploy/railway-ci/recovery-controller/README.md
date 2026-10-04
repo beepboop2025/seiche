@@ -176,8 +176,11 @@ therefore retain the accepted application revision without treating main as a
 new running backend. Two endpoints agreeing on an unaccepted revision still
 fail the original validator. No runtime source environment override is added.
 
-The native Docker build runs the same thirteen monitor role checks as the
-standalone monitor, after the original native suite. The separate
+For an explicitly declared recurring assembly, the native Docker build requires
+the embedded monitor and runs its thirteen role checks after the original native
+suite. The original historical-only assembly has no operation field or embedded
+monitor; it retains the original native suite. Unknown declared modes fail the
+build. The separate
 `RAILWAY_RECOVERY_MONITOR_ROLE_TESTS_PASS` and bounded complete-log record
 bind those checks to the embedded manifest and controller/application sources.
 They do not replace the original native suite, actual-image historical restore,
