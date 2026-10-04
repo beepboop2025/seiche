@@ -187,3 +187,11 @@ They do not replace the original native suite, actual-image historical restore,
 signed installation, genuine-day export, strict monitor, or later recurrence.
 Qualification must accept both suites from the same actual image before
 activating a replacement. Existing P evidence does not qualify this new image.
+
+Recurring images also require the embedded monitor's separate seventeen-test
+health-wait suite and its `RAILWAY_RECOVERY_HEALTH_WAIT_TESTS_PASS` receipt plus
+bounded complete-log record. The 120-second wait is only for otherwise healthy
+old snapshots; the final original 15-minute freshness predicate is unchanged.
+Qualification accepts this additional suite on the same image while preserving
+the original eighty-eight native and thirteen role checks. Historical-only
+assemblies still have no embedded monitor or recurring health suite.

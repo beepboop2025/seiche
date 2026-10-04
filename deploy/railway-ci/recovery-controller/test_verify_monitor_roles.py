@@ -30,8 +30,22 @@ class EmbeddedMonitorTests(unittest.TestCase):
         monitor.mkdir()
         # Exercise a real child process and propagate its result.
         (monitor / "test_monitor_roles.py").write_text("raise SystemExit(0)\n")
+        (monitor / "test_health_wait.py").write_text("raise SystemExit(0)\n")
+        (monitor / "health_wait.py").write_text("# bounded monitor transport\n")
         self.assertTrue(roles.qualify(self.root))
         (monitor / "test_monitor_roles.py").write_text("raise SystemExit(1)\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            roles.qualify(self.root)
+
+    def test_recurring_health_suite_is_required_and_failure_propagates(self):
+        self.policy(operation="export-recurring")
+        monitor = self.root / "monitor"
+        monitor.mkdir()
+        (monitor / "test_monitor_roles.py").write_text("raise SystemExit(0)\n")
+        (monitor / "health_wait.py").write_text("# bounded monitor transport\n")
+        with self.assertRaisesRegex(ValueError, "lacks embedded"):
+            roles.qualify(self.root)
+        (monitor / "test_health_wait.py").write_text("raise SystemExit(1)\n")
         with self.assertRaises(subprocess.CalledProcessError):
             roles.qualify(self.root)
 

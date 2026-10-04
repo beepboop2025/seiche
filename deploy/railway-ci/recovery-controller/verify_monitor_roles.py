@@ -13,10 +13,11 @@ def qualify(root):
     if policy["operation"] != "export-recurring":
         raise ValueError("Unknown recovery image operation")
     monitor = root / "monitor"
-    tests = monitor / "test_monitor_roles.py"
-    if not tests.is_file():
-        raise ValueError("Recurring image lacks embedded monitor role tests")
-    subprocess.run([sys.executable, "-B", str(tests)], cwd=monitor, check=True)
+    tests = [monitor / name for name in ("test_monitor_roles.py", "test_health_wait.py")]
+    if not all(path.is_file() for path in tests) or not (monitor / "health_wait.py").is_file():
+        raise ValueError("Recurring image lacks embedded monitor role or health tests")
+    for path in tests:
+        subprocess.run([sys.executable, "-B", str(path)], cwd=monitor, check=True)
     return True
 
 

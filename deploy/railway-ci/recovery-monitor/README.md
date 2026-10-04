@@ -8,7 +8,7 @@ receipt pair. It never requests an export, restores data, changes schedules,
 publishes an attestation or sends a Telegram message.
 
 `prepare.py` builds a small context from one reviewed application revision. The image
-contains the original probe/proof/cleanup scripts and the exact five required
+contains the original probe/cleanup scripts, the proof described below and the required
 source helpers. At runtime, public main is fetched without credentials and its
 helpers and monitor script/environment definitions must match those reviewed
 bytes. Only the three verified Python package files are materialized. Fetched
@@ -94,3 +94,26 @@ original bytes from the bounded build stream after the replica stops, without
 SSH or another execution. The encoded record does not introduce a second plain
 unittest summary into the original ten-test reader's stream. Local transport
 tests are separate from the unchanged ten original and thirteen role image tests.
+
+The assembled proof replaces only its exact, checksum-pinned pair of health
+fetches with `health_wait.py`. It retains curl's original HTTPS endpoints, TLS
+requirements, private origin header, lack of redirects, and separate origin/public
+files. The final workflow validator remains byte-identical. A pair may be fetched
+again only when its sole defect is a generated snapshot older than 900 seconds;
+both endpoints must otherwise have the accepted source identity, a nonempty
+version and provenance list, and an empty faults list. Missing or malformed data,
+future timestamps, faults, transport errors and identity failures stop immediately.
+The helper uses a 120-second monotonic deadline and at most thirteen attempts,
+including requests and waits. Each request is capped by the remaining budget.
+It never alters a body, its timestamp, or the final inclusive 0–900 second check.
+
+Health diagnostics contain only the endpoint label, a fixed reason, normalized
+generated time, age, counts, version-presence flag and SHA-256 of the actual body.
+No body values, faults, provenance contents, credentials or transport stderr are
+printed. `test_health_wait.py` is an additional, separately recorded image suite
+in both standalone and recurring native builds. Its
+`RAILWAY_RECOVERY_HEALTH_WAIT_TESTS_PASS` receipt and
+`RAILWAY_RECOVERY_HEALTH_WAIT_LOG` bounded complete-log record bind seventeen
+tests to the same application/controller identities and monitor manifest. This
+adds qualification; it does not replace the original ten/thirteen tests, native
+eighty-eight tests, actual historical restore, or fresh strict runtime proof.
