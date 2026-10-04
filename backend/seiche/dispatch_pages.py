@@ -57,6 +57,9 @@ BASE_URLS = [
     ("/use-cases/capital-market-transmission/", "monthly", "0.9"),
     ("/use-cases/china-economy-evidence/", "monthly", "0.9"),
     ("/guide", "monthly", "0.8"),
+    ("/guides/dollar-funding-stress-indicators/", "monthly", "0.8"),
+    ("/guides/currency-conversion-reference-rates/", "monthly", "0.8"),
+    ("/guides/money-market-rates-and-funding-cost/", "monthly", "0.8"),
     ("/methodology", "monthly", "0.8"),
     ("/skeptic", "monthly", "0.8"),
     ("/ampleness", "daily", "0.8"),
@@ -79,7 +82,10 @@ BASE_URLS = [
 # Editorial market pages have their own reviewed publication clocks. Keep
 # those dates stable when the sitemap is rebuilt after a newer daily dispatch.
 BASE_LASTMODS = {
-    "/gift-city/": "2026-10-02",
+    "/guides/dollar-funding-stress-indicators/": "2026-10-04",
+    "/guides/currency-conversion-reference-rates/": "2026-10-04",
+    "/guides/money-market-rates-and-funding-cost/": "2026-10-04",
+    "/gift-city/": "2026-10-04",
     "/use-cases/money-market-research/": "2026-08-24",
     "/use-cases/capital-market-transmission/": "2026-08-24",
     "/use-cases/china-economy-evidence/": "2026-08-24",
@@ -827,6 +833,9 @@ same product; the callable contract remains the MCP server above.
 - [Quant-agent integrations]({SITE}/agents/quant/): source-pinned framework tools, a runnable setup and cited research captures
 - [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
 - [Selection guide]({SITE}/use-cases): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
+- [Dollar-funding stress reference guide]({SITE}/guides/dollar-funding-stress-indicators/): SOFR versus IORB, reserves, calendar pressure and observation dates, with hypothetical arithmetic rather than a current market call
+- [Currency conversion and FX references]({SITE}/guides/currency-conversion-reference-rates/): quotation direction, same-date crosses, fees and the local reference-amount calculator
+- [Money-market rates and funding cost]({SITE}/guides/money-market-rates-and-funding-cost/): benchmark identity, source dates and same-currency simple-interest comparisons with explicit fees and day counts
 - [Money-market research workflow]({SITE}/use-cases/money-market-research/): move from an exact benchmark through rights, native clocks and system cash before routing institution and exit questions
 - [Capital-market transmission workflow]({SITE}/use-cases/capital-market-transmission/): trace price, position, intermediary and funding links without treating co-movement as causality
 - [China economy evidence workflow]({SITE}/use-cases/china-economy-evidence/): use Palimpsest for revision-safe public observations and Seiche for structural macro identity, rights and transmission context

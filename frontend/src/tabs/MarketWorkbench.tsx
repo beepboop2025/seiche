@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
+import { FxReferenceCalculator, FundingCostCalculator } from "../ReferenceCalculators";
 import { API_BASE } from "../apiBase";
 import MarketSeriesExplorer from "./MarketSeriesExplorer";
 import {
@@ -112,6 +113,7 @@ function Forex({ data, query, setQuery, setQuote }: { data: MarketWorkbenchData;
       {row?.reason && <p className="wb-notice">{row.reason}</p>}
       <HistoryChart points={data.forex.history} title={`${data.selection.base}/${data.selection.quote} reference history`} unit={row?.unit ?? `${data.selection.quote} per ${data.selection.base}`} />
       {row && <ChangeComparison row={row} />}
+      {row && <FxReferenceCalculator reference={{ base: data.selection.base, quote: data.selection.quote, provider: data.selection.provider ?? "h10", rate: row.value, as_of: row.as_of, status: row.status }} />}
       <details className="wb-evidence"><summary>Source records and calculation method</summary>
         <p>These are official reference observations. They do not represent dealer bid/ask quotes or executable prices.</p>
         {row?.sources.map((source) => <div className="wb-source" key={`${source.mnemonic}-${source.source_id}`}><strong>{source.source_id}</strong><span>{source.raw_unit}</span><span>Retrieved {clock(source.fetched_at)}</span>{source.source_url && <a href={source.source_url} target="_blank" rel="noreferrer">Publisher series</a>}</div>)}
@@ -210,7 +212,7 @@ export default function MarketWorkbench() {
   return <div className="wb-shell">
     <header className="wb-heading"><div><h1>Market workbench</h1><p>Follow the observation. Compare the currency. Read the economic structure.</p></div><div className="wb-heading-meta"><span>Funding / FX / China</span><small>{data ? `Retrieved view ${clock(data.generated_at)}` : "Public source observations"}</small></div></header>
     <nav className="wb-view-nav" aria-label="Workbench views">{([ ["funding", "Funding", "Rates, volumes and distributions"], ["forex", "Forex", "Reference rates and currency crosses"], ["china", "China", "Economic structure and funding channels"] ] as const).map(([id, title, description]) => <button type="button" key={id} aria-pressed={view === id} className={view === id ? "is-active" : ""} onClick={() => changeView(id)}><strong>{title}</strong><span>{description}</span></button>)}</nav>
-    {view === "funding" ? <MarketSeriesExplorer /> : <>
+    {view === "funding" ? <><MarketSeriesExplorer /><FundingCostCalculator /></> : <>
       <div className="wb-toolbar">
         {view === "forex" ? <><label>Reference source<select value={provider} onChange={(event) => { setProvider(event.target.value as "h10" | "ecb"); setBase("USD"); setQuote("CNY"); }}><option value="h10">Federal Reserve H.10</option><option value="ecb">ECB references</option></select></label><label>Base currency<select value={base} onChange={(event) => { const next = event.target.value; setBase(next); if (next === quote) setQuote(base); }}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label><span className="wb-pair-slash" aria-hidden="true">/</span><label>Quote currency<select value={quote} onChange={(event) => setQuote(event.target.value)}>{currencies.filter((code) => code !== base).map((code) => <option key={code}>{code}</option>)}</select></label><label>History window<select value={days} onChange={(event) => setDays(Number(event.target.value))}>{WINDOWS.map((window) => <option value={window.days} key={window.days}>{window.label}</option>)}</select></label></>
           : <label className="wb-series-select">Economic indicator<select value={chinaSeries ?? data?.china.selected_series ?? ""} onChange={(event) => setChinaSeries(event.target.value || null)}><option value="">Featured indicator</option>{seriesOptions.map((series) => <option key={series.id} value={series.id}>{series.label}</option>)}</select></label>}

@@ -27,3 +27,5 @@ a:focus-visible { outline: 2px solid var(--signal); outline-offset: 5px; }
 code { overflow-wrap: anywhere; }
 @media (max-width: 760px) { .hero, .desk-grid, .section-head { grid-template-columns: 1fr; gap: 25px; } .hero { padding-top: 48px; } .topbar { align-items: flex-start; } .desk-table th, .desk-table td { padding: 14px; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+#gift-city-questions details{border-top:1px solid var(--line);padding:18px 0;line-height:1.7}#gift-city-questions summary{cursor:pointer;font-weight:600}#gift-city-questions details p{max-width:85ch;color:var(--muted)}

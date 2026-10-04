@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
+<title>How to convert currencies with dated reference rates and fees | Seiche</title>
+<meta name="description" content="Read FX quote direction, calculate same-date cross rates and compare converted amounts after fees. Use official references with their provider and date attached.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://seiche.info/guides/currency-conversion-reference-rates/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Seiche">
+<meta property="og:title" content="How to convert currencies with dated reference rates and fees">
+<meta property="og:description" content="Read FX quote direction, calculate same-date cross rates and compare converted amounts after fees. Use official references with their provider and date attached.">
+<meta property="og:url" content="https://seiche.info/guides/currency-conversion-reference-rates/">
+<meta property="article:published_time" content="2026-10-04">
+<meta property="article:modified_time" content="2026-10-04">
+<meta name="twitter:card" content="summary">
+<link rel="stylesheet" href="/markets/markets.css">
+<style>
+.reference-guide{width:min(920px,calc(100% - 40px));margin:0 auto;padding:52px 0 72px;color:inherit;font:16px/1.75 system-ui,sans-serif}
+.reference-guide h1{font-size:clamp(34px,5vw,58px);line-height:1.12;letter-spacing:-.035em;max-width:24ch;margin:18px 0 24px}
+.reference-guide h2{font-size:clamp(24px,3vw,32px);line-height:1.25;margin:0 0 20px;letter-spacing:-.02em}
+.reference-guide p,.reference-guide li{max-width:78ch}.reference-guide p{margin:0 0 20px}.reference-guide a{color:#8aafff;text-underline-offset:3px}
+.reference-guide .guide-meta{font-size:13px;color:#a7acba}.reference-guide .guide-answer{font-size:20px;border-left:3px solid #8aafff;padding:10px 0 10px 22px;margin:28px 0}
+.reference-guide section{padding:34px 0;border-top:1px solid #303644;scroll-margin-top:28px}.reference-guide li+li{margin-top:12px}
+.reference-guide .guide-toc{display:block;text-align:left;padding:22px;background:#10151e;border:1px solid #303644;margin:30px 0}
+.reference-guide .guide-toc ol{margin-bottom:0}.reference-guide .guide-toc a{font:15px/1.5 system-ui,sans-serif}
+.guide-table{overflow-x:auto;max-width:100%;margin:24px 0}.guide-table table{border-collapse:collapse;min-width:590px;width:100%;font-size:14px}
+.guide-table caption{text-align:left;font-size:13px;color:#a7acba;padding:0 0 12px}.guide-table th,.guide-table td{padding:15px;border:1px solid #303644;text-align:left;vertical-align:top}
+.guide-table th{background:#10151e}.reference-guide code{white-space:normal;overflow-wrap:anywhere;font-size:.9em;background:#10151e;padding:3px 5px}
+.guide-source-list{font-size:14px}.guide-citation{background:#10151e;border:1px solid #303644;padding:22px;overflow-wrap:anywhere}
+.guide-skip{position:absolute;left:-10000px;top:8px;z-index:100}.guide-skip:focus{left:12px;background:#fff;color:#000;padding:12px}
+.reference-guide :focus-visible{outline:3px solid #8aafff;outline-offset:4px}
+@media(max-width:600px){.reference-guide{width:calc(100% - 32px);padding-top:32px}.reference-guide h1{font-size:36px}.reference-guide .guide-answer{font-size:18px;padding-left:16px}}
+@media print{.research-header,.topbar,.guide-toc,.guide-skip{display:none}.reference-guide{width:100%;color:#111;background:white}.reference-guide a{color:#111}.reference-guide section{break-inside:avoid}}
+</style>
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "@id": "https://seiche.info/guides/currency-conversion-reference-rates/#article",
+  "headline": "How to convert currencies with dated reference rates and fees",
+  "description": "Read FX quote direction, calculate same-date cross rates and compare converted amounts after fees. Use official references with their provider and date attached.",
+  "url": "https://seiche.info/guides/currency-conversion-reference-rates/",
+  "mainEntityOfPage": "https://seiche.info/guides/currency-conversion-reference-rates/",
+  "datePublished": "2026-10-04",
+  "dateModified": "2026-10-04",
+  "inLanguage": "en",
+  "author": {
+    "@type": "Organization",
+    "name": "Seiche",
+    "url": "https://seiche.info/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Seiche",
+    "url": "https://seiche.info/"
+  },
+  "citation": [
+    "https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html",
+    "https://www.federalreserve.gov/releases/h10/"
+  ]
+}</script>
+</head>
+<body>
+<a class="guide-skip" href="#guide">Skip to guide</a>
+<header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary"><a href="/use-cases">Use cases</a><a href="/money-markets/">Evidence map</a><a href="/markets/">World markets</a><a href="/developers">API + MCP</a><a href="/methodology">Methods</a></nav>
+  </header>
+<main id="guide" class="reference-guide">
+<p class="guide-meta"><a href="/">Seiche</a> / Research guides</p>
+<h1>How to convert currencies with dated reference rates and fees</h1>
+<p class="guide-meta">By <a href="https://seiche.info/">Seiche</a> · Published and source-checked <time datetime="2026-10-04">4 October 2026</time> · Educational research</p>
+<p class="guide-answer">To convert a currency amount, establish which currency the rate prices, multiply or divide in the correct direction, and apply explicitly stated fees. For a reference-rate valuation, keep the provider and observation date with the result. A central-bank reference is useful context; it is not an offer to exchange money at that price.</p>
+<nav class="guide-toc" aria-label="On this page"><strong>In this guide</strong><ol><li><a href="#direction">Does USD/INR mean multiply or divide?</a></li><li><a href="#crosses">How do you calculate a same-date cross rate?</a></li><li><a href="#fees">Worked example: compare the amount after stated fees</a></li><li><a href="#use">Use the Seiche FX workbench</a></li><li><a href="#sources">Sources and citation</a></li></ol></nav>
+<section id="direction"><h2>Does USD/INR mean multiply or divide?</h2><p>In this guide, <strong>USD/INR means INR per one USD</strong>. If a hypothetical reference is 90 INR per USD, 1,000 USD has a reference value of 90,000 INR. Converting 90,000 INR back to USD divides by 90. The inverse rate is 1/90 USD per INR, not another independent observation.</p><p>Always read the source's unit labels. The <a href="https://www.federalreserve.gov/releases/h10/">Federal Reserve H.10 release</a> includes different quotation conventions for different currencies. A label copied without its unit can reverse the meaning of an appreciation or depreciation.</p></section>
+<section id="crosses"><h2>How do you calculate a same-date cross rate?</h2><p>If a provider reports both USD per EUR and INR per EUR for the same date, divide INR-per-EUR by USD-per-EUR to obtain INR per USD. For hypothetical inputs of 99 INR per EUR and 1.10 USD per EUR, the cross is 90 INR per USD. Both legs must come from the same provider, compatible fixing convention and observation date.</p><p>The <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html">ECB's euro reference-rate page</a> explains the publication and information-only purpose of its reference rates. A calculated cross remains a derived reference. Combining yesterday's leg with today's leg silently creates a different object.</p><p>Weekends, local holidays and publication timing can explain different last-observation dates. Keep an older observation labelled with its own date. A fresh download of an old record does not create a fresh FX observation.</p></section>
+<section id="fees"><h2>Worked example: compare the amount after stated fees</h2><p><strong>Hypothetical example, not a current quote.</strong> Convert 1,000 USD at 90 INR per USD. Gross reference value is 90,000 INR. A 100-basis-point charge is 1%, or 900 INR; an additional fixed receiving-currency charge of 10 INR leaves 89,090 INR.</p><p>The calculation is <code>net = amount × rate − amount × rate × fee_bps / 10,000 − fixed_receiving_currency_fee</code>. This formula assumes the percentage charge applies to the gross converted amount. A provider may charge differently or embed a spread in its quoted rate, so compare the actual charging terms before combining fees.</p><p>Do not count an embedded spread twice. Also keep transfer charges, taxes, correspondent deductions, settlement delays and minimum charges separate if they are not included. The result is only as complete as the stated inputs.</p></section>
+<section id="use"><h2>Use the Seiche FX workbench</h2><p>Open the <a href="/#workbench/forex">FX workbench</a>, choose an official provider and currency pair, and inspect the observation date, source records and history. The amount converter calculates a reference valuation after your entered fees. Results and the reference identity can be downloaded together; editing the pair or inputs clears the previous result.</p><p>For USD, INR and AED corridor questions, the <a href="/gift-city/">GIFT City desk</a> keeps ECB and CBUAE references separately identified. For a physical gold sale, use <a href="https://liquilens-undertow.com/gold/">Undertow's gold workbench</a> with an actual separately obtained bid and FX quote. Reference values do not establish available cash or market access.</p></section>
+<section id="sources"><h2>Sources and citation</h2><p>The linked primary sources support the definitions and context. The checklists and hypothetical examples are Seiche's editorial explanation, not instructions or endorsements from the cited institutions.</p><ol class="guide-source-list"><li><a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html">ECB: euro foreign exchange reference rates</a></li><li><a href="https://www.federalreserve.gov/releases/h10/">Federal Reserve: H.10 foreign exchange rates</a></li></ol>
+<p class="guide-citation">Suggested citation: Seiche. “How to convert currencies with dated reference rates and fees.” 4 October 2026. <a href="https://seiche.info/guides/currency-conversion-reference-rates/">https://seiche.info/guides/currency-conversion-reference-rates/</a>. Include your access date when citing this page.</p>
+<p class="guide-meta">This page explains a research method. It does not provide a current market assessment, investment advice, a credit rating or a regulatory determination. Contact <a href="mailto:mrinal@liquilens.in">mrinal@liquilens.in</a> with a source correction.</p></section>
+</main>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"534f08f7270a4f4f9a9a10f90d723ca7"}'></script>
+</body>
+</html>

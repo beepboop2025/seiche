@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
+<title>How to read dollar-funding stress: SOFR, reserves and the calendar | Seiche</title>
+<meta name="description" content="Understand SOFR versus IORB, reserve conditions, Treasury cash and funding calendars, with a dated-evidence workflow and a worked spread example.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://seiche.info/guides/dollar-funding-stress-indicators/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Seiche">
+<meta property="og:title" content="How to read dollar-funding stress: SOFR, reserves and the calendar">
+<meta property="og:description" content="Understand SOFR versus IORB, reserve conditions, Treasury cash and funding calendars, with a dated-evidence workflow and a worked spread example.">
+<meta property="og:url" content="https://seiche.info/guides/dollar-funding-stress-indicators/">
+<meta property="article:published_time" content="2026-10-04">
+<meta property="article:modified_time" content="2026-10-04">
+<meta name="twitter:card" content="summary">
+<link rel="stylesheet" href="/markets/markets.css">
+<style>
+.reference-guide{width:min(920px,calc(100% - 40px));margin:0 auto;padding:52px 0 72px;color:inherit;font:16px/1.75 system-ui,sans-serif}
+.reference-guide h1{font-size:clamp(34px,5vw,58px);line-height:1.12;letter-spacing:-.035em;max-width:24ch;margin:18px 0 24px}
+.reference-guide h2{font-size:clamp(24px,3vw,32px);line-height:1.25;margin:0 0 20px;letter-spacing:-.02em}
+.reference-guide p,.reference-guide li{max-width:78ch}.reference-guide p{margin:0 0 20px}.reference-guide a{color:#8aafff;text-underline-offset:3px}
+.reference-guide .guide-meta{font-size:13px;color:#a7acba}.reference-guide .guide-answer{font-size:20px;border-left:3px solid #8aafff;padding:10px 0 10px 22px;margin:28px 0}
+.reference-guide section{padding:34px 0;border-top:1px solid #303644;scroll-margin-top:28px}.reference-guide li+li{margin-top:12px}
+.reference-guide .guide-toc{display:block;text-align:left;padding:22px;background:#10151e;border:1px solid #303644;margin:30px 0}
+.reference-guide .guide-toc ol{margin-bottom:0}.reference-guide .guide-toc a{font:15px/1.5 system-ui,sans-serif}
+.guide-table{overflow-x:auto;max-width:100%;margin:24px 0}.guide-table table{border-collapse:collapse;min-width:590px;width:100%;font-size:14px}
+.guide-table caption{text-align:left;font-size:13px;color:#a7acba;padding:0 0 12px}.guide-table th,.guide-table td{padding:15px;border:1px solid #303644;text-align:left;vertical-align:top}
+.guide-table th{background:#10151e}.reference-guide code{white-space:normal;overflow-wrap:anywhere;font-size:.9em;background:#10151e;padding:3px 5px}
+.guide-source-list{font-size:14px}.guide-citation{background:#10151e;border:1px solid #303644;padding:22px;overflow-wrap:anywhere}
+.guide-skip{position:absolute;left:-10000px;top:8px;z-index:100}.guide-skip:focus{left:12px;background:#fff;color:#000;padding:12px}
+.reference-guide :focus-visible{outline:3px solid #8aafff;outline-offset:4px}
+@media(max-width:600px){.reference-guide{width:calc(100% - 32px);padding-top:32px}.reference-guide h1{font-size:36px}.reference-guide .guide-answer{font-size:18px;padding-left:16px}}
+@media print{.research-header,.topbar,.guide-toc,.guide-skip{display:none}.reference-guide{width:100%;color:#111;background:white}.reference-guide a{color:#111}.reference-guide section{break-inside:avoid}}
+</style>
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "@id": "https://seiche.info/guides/dollar-funding-stress-indicators/#article",
+  "headline": "How to read dollar-funding stress: SOFR, reserves and the calendar",
+  "description": "Understand SOFR versus IORB, reserve conditions, Treasury cash and funding calendars, with a dated-evidence workflow and a worked spread example.",
+  "url": "https://seiche.info/guides/dollar-funding-stress-indicators/",
+  "mainEntityOfPage": "https://seiche.info/guides/dollar-funding-stress-indicators/",
+  "datePublished": "2026-10-04",
+  "dateModified": "2026-10-04",
+  "inLanguage": "en",
+  "author": {
+    "@type": "Organization",
+    "name": "Seiche",
+    "url": "https://seiche.info/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Seiche",
+    "url": "https://seiche.info/"
+  },
+  "citation": [
+    "https://www.newyorkfed.org/markets/reference-rates/sofr",
+    "https://www.federalreserve.gov/monetarypolicy/reserve-balances.htm",
+    "https://www.newyorkfed.org/newsevents/speeches/2024/per240926",
+    "https://www.newyorkfed.org/newsevents/speeches/2025/per250509"
+  ]
+}</script>
+</head>
+<body>
+<a class="guide-skip" href="#guide">Skip to guide</a>
+<header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary"><a href="/use-cases">Use cases</a><a href="/money-markets/">Evidence map</a><a href="/markets/">World markets</a><a href="/developers">API + MCP</a><a href="/methodology">Methods</a></nav>
+  </header>
+<main id="guide" class="reference-guide">
+<p class="guide-meta"><a href="/">Seiche</a> / Research guides</p>
+<h1>How to read dollar-funding stress: SOFR, reserves and the calendar</h1>
+<p class="guide-meta">By <a href="https://seiche.info/">Seiche</a> · Published and source-checked <time datetime="2026-10-04">4 October 2026</time> · Educational research</p>
+<p class="guide-answer">Read dollar-funding stress through several separate observations: overnight borrowing rates relative to policy rates, reserve conditions, repo activity and upcoming cash demands. Align their dates before drawing a conclusion. One elevated rate, a lower reserve balance or a large settlement is a reason to investigate, not by itself proof of a system-wide funding shortage.</p>
+<nav class="guide-toc" aria-label="On this page"><strong>In this guide</strong><ol><li><a href="#rates">What do SOFR and IORB measure?</a></li><li><a href="#indicators">Which evidence belongs in a funding review?</a></li><li><a href="#calendar">How do you distinguish a calendar warning from realised stress?</a></li><li><a href="#workflow">A repeatable five-step funding review</a></li><li><a href="#use">Follow the evidence in Seiche</a></li><li><a href="#sources">Sources and citation</a></li></ol></nav>
+<section id="rates"><h2>What do SOFR and IORB measure?</h2><p><a href="https://www.newyorkfed.org/markets/reference-rates/sofr">SOFR</a> is the New York Fed's broad measure of overnight cash borrowing costs against Treasury collateral. <a href="https://www.federalreserve.gov/monetarypolicy/reserve-balances.htm">IORB</a> is the Federal Reserve's administered interest rate on eligible reserve balances. They describe different activities, so their difference needs interpretation rather than a universal good-or-bad threshold.</p><p><strong>Hypothetical arithmetic, not current rates:</strong> if SOFR is 4.91% and the IORB rate applicable to that observation date is 4.90%, the spread is <code>(4.91 − 4.90) × 100 = +1 basis point</code>. A rate in percentage points must be multiplied by 100 to express its difference in basis points. Using the previous policy rate across a rate change would give a misleading result.</p><p>Also distinguish the overnight SOFR observation from a compounded SOFR average and from a forward-looking term rate. Their horizons and construction differ. The publication time of an overnight reference rate is not the time at which the underlying borrowing occurred.</p></section>
+<section id="indicators"><h2>Which evidence belongs in a funding review?</h2><div class="guide-table"><table><caption>Separate the price, quantity and timing questions</caption><thead><tr><th scope="col">Evidence</th><th scope="col">Question</th><th scope="col">Interpretation limit</th></tr></thead><tbody><tr><th scope="row">SOFR, TGCR and EFFR relative to policy rates</th><td>Is overnight funding becoming more expensive?</td><td>Different markets, participants and collateral; one spread is not a complete diagnosis.</td></tr><tr><th scope="row">Reserve balances and their distribution</th><td>How much cash is held in the banking system, and where?</td><td>An aggregate does not reveal every institution's usable liquidity.</td></tr><tr><th scope="row">Repo and central-bank facility activity</th><td>Where is cash being supplied or demanded?</td><td>Read eligibility, transaction date and operation terms before explaining usage.</td></tr><tr><th scope="row">Treasury cash, tax dates and settlements</th><td>When might payment and financing needs change?</td><td>A prospective demand is not an observed funding disruption.</td></tr><tr><th scope="row">Market functioning</th><td>Are funding pressures accompanied by impaired trading conditions?</td><td>A coincident market move does not establish its cause.</td></tr></tbody></table></div><p>The New York Fed's <a href="https://www.newyorkfed.org/newsevents/speeches/2024/per240926">discussion of reserve conditions</a> explains why several prices and quantities matter, and why the reserve level consistent with ample conditions cannot be identified with certainty from a single fixed number. Its <a href="https://www.newyorkfed.org/newsevents/speeches/2025/per250509">review of liquidity and funding conditions</a> also distinguishes impaired liquidity from the ability of a market to continue functioning.</p></section>
+<section id="calendar"><h2>How do you distinguish a calendar warning from realised stress?</h2><p>Keep two statements separate: “a large financing need is approaching” and “funding is already difficult.” The first is a scenario to monitor. The second needs contemporaneous evidence. A settlement date can guide when to look more closely without establishing that a cash shortage will occur.</p><p>As an analyst's workflow, record the expected event, the evidence that would confirm pressure and the evidence that would weaken that interpretation. For example, a dated cash-demand hypothesis should be revisited alongside realised overnight rates and available operation data. Do not promote the hypothesis to an observed event merely because the calendar date arrived.</p><p>If the rate observation is daily but another series is weekly, display both native observation dates. Downloading both files today does not make them same-day evidence. Missing, delayed and revised observations should remain visible in the written conclusion.</p></section>
+<section id="workflow"><h2>A repeatable five-step funding review</h2><ol><li><strong>Resolve the exact series.</strong> Identify market, maturity, units, source and publication convention.</li><li><strong>Align comparisons.</strong> Pair each overnight rate with the policy rate effective on the observation date; keep mismatched clocks explicit.</li><li><strong>Inspect several channels.</strong> Look at prices, quantities, facilities and scheduled demands without treating a missing channel as calm.</li><li><strong>State the inference.</strong> Distinguish a source observation, a calculated spread, a model classification and an analyst hypothesis.</li><li><strong>Preserve a review record.</strong> Keep the source URLs, observation dates, retrieval time and the conditions that would change the conclusion.</li></ol></section>
+<section id="use"><h2>Follow the evidence in Seiche</h2><p>Open <a href="/">Seiche's funding terminal</a> for the available evidence and its clocks. The <a href="/money-markets/">money-market evidence map</a>, <a href="/methodology">methodology</a> and <a href="/use-cases/money-market-research/">research workflow</a> explain the boundaries of the published outputs. Any current classification belongs to its dated live receipt; this educational guide makes no current market call.</p><p>Use <a href="https://liquilens.in/use-cases/">LiquiLens</a> for a particular institution's disclosure record and <a href="https://liquilens-undertow.com/use-cases/">Undertow</a> for market liquidity and exit-size context. A system funding observation is not an institution default probability or an executable trade signal.</p></section>
+<section id="sources"><h2>Sources and citation</h2><p>The linked primary sources support the definitions and context. The checklists and hypothetical examples are Seiche's editorial explanation, not instructions or endorsements from the cited institutions.</p><ol class="guide-source-list"><li><a href="https://www.newyorkfed.org/markets/reference-rates/sofr">New York Fed: SOFR definition and data</a></li><li><a href="https://www.federalreserve.gov/monetarypolicy/reserve-balances.htm">Federal Reserve: interest on reserve balances</a></li><li><a href="https://www.newyorkfed.org/newsevents/speeches/2024/per240926">New York Fed: monitoring reserve conditions and repo pressure</a></li><li><a href="https://www.newyorkfed.org/newsevents/speeches/2025/per250509">New York Fed: liquidity and funding conditions</a></li></ol>
+<p class="guide-citation">Suggested citation: Seiche. “How to read dollar-funding stress: SOFR, reserves and the calendar.” 4 October 2026. <a href="https://seiche.info/guides/dollar-funding-stress-indicators/">https://seiche.info/guides/dollar-funding-stress-indicators/</a>. Include your access date when citing this page.</p>
+<p class="guide-meta">This page explains a research method. It does not provide a current market assessment, investment advice, a credit rating or a regulatory determination. Contact <a href="mailto:mrinal@liquilens.in">mrinal@liquilens.in</a> with a source correction.</p></section>
+</main>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"534f08f7270a4f4f9a9a10f90d723ca7"}'></script>
+</body>
+</html>
