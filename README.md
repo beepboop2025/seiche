@@ -275,6 +275,12 @@ model, training, scoring, execution or redistribution permission. See
   stage and verification date. Those rows are discovery metadata, not quotes.
   Query coverage, faults and per-market status for what is actually available
   now; the request never starts collection.
+- **`GET /api/v2/india-funding`** returns the [India funding desk](docs/INDIA_FUNDING_CURVE.md):
+  RBI liquidity and policy evidence, money-market rates, dated sovereign
+  benchmarks, monthly maturity spreads and separately labelled bond auctions.
+  MCP exposes the same chartless payload through `money_market_context` with
+  `section="india"`. Missing daily tenors remain explicit; India remains
+  reference context.
 
 Atlas state is explicit. `AVAILABLE` means a redistributable raw observation is
 present. `DERIVED_CONTEXT` means a restricted/derived-only input may contribute

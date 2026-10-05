@@ -9,6 +9,7 @@ single cross-country stress score and it never upsamples a slow series.
 from __future__ import annotations
 
 import math
+import calendar as civil_calendar
 import re
 import statistics
 from collections import defaultdict
@@ -42,6 +43,9 @@ _BENCHMARK_PRIORITY = (
     SemanticRole.UNSECURED_OVERNIGHT,
     SemanticRole.TERM_1W,
 )
+_BENCHMARK_BY_MARKET = {
+    "IN-INR": (SemanticRole.UNSECURED_OVERNIGHT, SemanticRole.SECURED_OVERNIGHT, SemanticRole.TERM_1W),
+}
 _POLICY_PRIORITY = (
     SemanticRole.POLICY_TARGET,
     SemanticRole.POLICY_FLOOR,
@@ -82,6 +86,14 @@ _SOURCE_URLS = {
     "cfets_rates": "https://www.chinamoney.com.cn/english/bmkshibor/",
     "pbc_operations": "https://www.pbc.gov.cn/en/3688229/index.html",
     "rbi_official": "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx",
+    "rbi_rates_weekly": "https://www.rbi.org.in/Scripts/BS_NSDPDisplay.aspx?param=4",
+    "rbi_sovereign": "https://www.rbi.org.in/",
+    "rbi_monthly_curve": "https://data.rbi.org.in/",
+    "rbi_auctions": "https://www.rbi.org.in/pressreleases_rss.xml",
+    "rbi_policy": "https://www.rbi.org.in/Scripts/annualpolicy.aspx",
+    "rbi_liquidity_weekly": "https://www.rbi.org.in/Scripts/BS_ViewWssExtract.aspx",
+    "rbi_credit_fortnightly": "https://www.rbi.org.in/Scripts/BS_ViewWssExtract.aspx",
+    "ccil_curve": "https://www.ccilindia.com/zero-rates",
     "hkma_official": "https://api.hkma.gov.hk/public/market-data-and-statistics/",
     "mas_sora": "https://eservices.mas.gov.sg/statistics/dir/DomesticInterestRates.aspx",
     "mas_rates": "https://eservices.mas.gov.sg/statistics/dir/DomesticInterestRates.aspx",
@@ -111,6 +123,14 @@ _SOURCE_PUBLISHERS = {
     "cfets_rates": "China Foreign Exchange Trade System",
     "pbc_operations": "People's Bank of China",
     "rbi_official": "Reserve Bank of India",
+    "rbi_rates_weekly": "Reserve Bank of India",
+    "rbi_sovereign": "Reserve Bank of India",
+    "rbi_monthly_curve": "Reserve Bank of India / RBI Innovation Hub archive",
+    "rbi_auctions": "Reserve Bank of India",
+    "rbi_policy": "Reserve Bank of India",
+    "rbi_liquidity_weekly": "Reserve Bank of India",
+    "rbi_credit_fortnightly": "Reserve Bank of India",
+    "ccil_curve": "Clearing Corporation of India Limited",
     "ccil_market": "Clearing Corporation of India Limited",
     "hkma_official": "Hong Kong Monetary Authority",
     "tma_benchmarks": "Treasury Markets Association",
@@ -1162,6 +1182,8 @@ def _periods_per_year(cadence: str) -> int:
     amount = max(int(cadence[1:-1]), 1)
     if cadence.endswith("W"):
         return max(1, round(52 / amount))
+    if cadence.endswith("M"):
+        return max(1, round(12 / amount))
     return max(1, round(252 / amount))
 
 
@@ -1222,6 +1244,12 @@ def _publication_due(
 
 def _next_event_day(event_day: date, cadence: str, calendar) -> date:
     amount = int(cadence[1:-1])
+    if cadence.endswith("M"):
+        index = event_day.year * 12 + event_day.month - 1 + amount
+        year, month = index // 12, index % 12 + 1
+        last = civil_calendar.monthrange(year, month)[1]
+        was_month_end = event_day.day == civil_calendar.monthrange(event_day.year, event_day.month)[1]
+        return date(year, month, last if was_month_end else min(event_day.day, last))
     if cadence.endswith("D"):
         return calendar.add_business_days(event_day, amount)
     return calendar.roll_forward(event_day + timedelta(weeks=amount))
@@ -1455,6 +1483,15 @@ def _metric(
     *,
     cutoff: datetime,
 ) -> dict[str, Any]:
+    if (instrument.semantic_role is SemanticRole.SOVEREIGN_YIELD and rows
+            and rows[-1].revision_id.startswith("bond:")):
+        # A benchmark replacement is not a price move in the previous bond.
+        # Keep statistics within the latest continuous security episode.
+        identity = rows[-1].revision_id.split("@capture-", 1)[0]
+        start = len(rows) - 1
+        while start > 0 and rows[start - 1].revision_id.split("@capture-", 1)[0] == identity:
+            start -= 1
+        rows = rows[start:]
     adapter = pack.adapter_map[instrument.source_adapter_id]
     public = _instrument_is_public(pack, instrument)
     derivable = _instrument_is_derivable(pack, instrument)
@@ -1675,6 +1712,17 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.TERM_1M: "A one-month funding rate that includes term and credit/liquidity premia.",
         SemanticRole.TERM_3M: "A three-month funding rate that carries expectations and term premia.",
         SemanticRole.TBILL_3M: "The sovereign three-month cash benchmark in this local market.",
+        SemanticRole.TBILL_6M: "The sovereign six-month bill reference in this local market.",
+        SemanticRole.TBILL_12M: "The sovereign twelve-month bill reference in this local market.",
+        SemanticRole.SOVEREIGN_YIELD: "The source-labelled sovereign yield; benchmark, monthly maturity and auction families remain separate.",
+        SemanticRole.TERM_FUNDING_RATE: "A source-native term funding rate or reported range, not a standardized three-month quote.",
+        SemanticRole.RESERVE_REQUIREMENT_RATIO: "The required reserve ratio as a share of the applicable reserve base.",
+        SemanticRole.RESERVE_REQUIREMENT: "The reported cash amount required over the stated reserve-maintenance period.",
+        SemanticRole.TERM_FUNDING_OUTSTANDING: "The reported stock of term funding outstanding.",
+        SemanticRole.TERM_FUNDING_ISSUANCE: "Term funding issued during the reported period.",
+        SemanticRole.CENTRAL_BANK_ASSET_TRANSACTIONS: "Central-bank outright asset purchases or sales; not a repo stock.",
+        SemanticRole.NET_LIQUIDITY_OPERATIONS: "Net liquidity operations: positive injection and negative absorption.",
+        SemanticRole.DURABLE_LIQUIDITY: "The authority's separately dated durable-liquidity estimate, retaining its native surplus/deficit sign.",
         SemanticRole.CP_3M: "Three-month corporate short-term borrowing cost.",
         SemanticRole.CD_3M: "Three-month bank certificate-of-deposit funding cost.",
         SemanticRole.RESERVE_BALANCES: "Settlement cash held by banks at the central bank.",
@@ -1895,9 +1943,10 @@ def _market_read(
     metrics: list[dict[str, Any]],
     spread: dict[str, Any] | None,
 ) -> tuple[str, str, str]:
-    benchmark = _first_metric(metrics, _BENCHMARK_PRIORITY)
+    priority = _BENCHMARK_BY_MARKET.get(pack.market_id, _BENCHMARK_PRIORITY)
+    benchmark = _first_metric(metrics, priority)
     if benchmark is None:
-        derived_benchmark = _first_derived_metric(metrics, _BENCHMARK_PRIORITY)
+        derived_benchmark = _first_derived_metric(metrics, priority)
         if derived_benchmark is not None:
             percentile = derived_benchmark.get("percentile_3y")
             derived_is_stale = derived_benchmark.get("status") not in {
@@ -2046,8 +2095,9 @@ def build_global_money_market_atlas(
             )
             for instrument in projected_instruments
         ]
-        benchmark = _first_metric(metrics, _BENCHMARK_PRIORITY)
-        derived_benchmark = _first_derived_metric(metrics, _BENCHMARK_PRIORITY)
+        priority = _BENCHMARK_BY_MARKET.get(pack.market_id, _BENCHMARK_PRIORITY)
+        benchmark = _first_metric(metrics, priority)
+        derived_benchmark = _first_derived_metric(metrics, priority)
         policy_anchor = _first_metric(metrics, _POLICY_PRIORITY)
         benchmark_spec = (
             pack.instrument_map.get(str(benchmark["id"]))
@@ -2211,6 +2261,10 @@ def build_global_money_market_atlas(
                 ],
             }
         )
+
+        if pack.market_id == "IN-INR":
+            from seiche.india_funding import build as build_india_funding
+            markets[-1]["funding_curve"] = build_india_funding(observations, now=cutoff)
 
     strongest = max(deviations, default=None)
     available_count = sum(market["benchmark"] is not None for market in markets)

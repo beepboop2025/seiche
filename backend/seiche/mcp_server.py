@@ -106,6 +106,7 @@ MONEY_MARKET_SECTION_IDS = (
 )
 MONEY_MARKET_SELECTORS = (
     "summary",
+    "india",
     "diagnostics",
     *MONEY_MARKET_SECTION_IDS,
     "sources",
@@ -1224,6 +1225,19 @@ def tool_money_market(args: dict, _public: bool) -> Any:
             "`section` must be one of: " + ", ".join(MONEY_MARKET_SELECTORS)
         )
 
+    if selector == "india":
+        from seiche import india_funding
+        india = india_funding.read(include_history=False)
+        out = _money_market_base({}, {"asof": india["asof"], "plain_language": india["headline"],
+                                      "coverage": india["coverage"], "caveats": india["caveats"]},
+                                 selector, ok=india["status"] != "unavailable")
+        out["india"] = india
+        out["sources"] = india["sources"]
+        out["section_catalog"] = [{"id": section["id"], "title": section["id"].replace("_", " ")}
+                                  for section in india["sections"]]
+        out["snapshot_generated_at"] = india["generated_at"]
+        return out
+
     raw_snap = _get_completed_snapshot()
     if raw_snap is None:
         return _money_market_unavailable(
@@ -1772,18 +1786,20 @@ TOOLS: dict[str, tuple] = {
         False,
     ),
     "money_market_context": (
-        "Institutional USD money-market desk",
+        "USD money-market and India funding desks",
         "Granular, descriptive USD money-market context from the already assembled "
         "desk: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions "
         "and tails; repo-segment rates and volumes; CP-Treasury spreads; bills and "
         "cash curve; liquidity buffers and Fed facilities; and MMF repo plumbing. "
-        "Use optional `section` to request a compact summary, one named desk section, "
+        "Use section='india' for the India funding, RBI liquidity, policy and sovereign-curve desk "
+        "from a bounded canonical observation read. It keeps benchmark identities, date alignment, "
+        "curve movements and mechanism hypotheses separate. Otherwise use optional `section` to request a compact summary, one named USD desk section, "
         "diagnostics, sources, methodology, or all context. Diagnostics count funding "
         "persistence, compare secured/unsecured benchmarks and show calendar cohorts "
         "with sample limits, without changing any score. Returns exact-date alignment, native-"
         "cadence changes, empirical own-history statistics, freshness, coverage, "
         "formulas, sources, and caveats as applicable. Chart history is always "
-        "omitted. Reads only an already completed cached or persisted snapshot; it "
+        "omitted. USD reads only an already completed cached or persisted snapshot; it "
         "never triggers collection or engine recomputation, while freshness is "
         "re-evaluated at response time. Context only: no causal, predictive, "
         "probability, or trade claim.",
@@ -2439,7 +2455,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
         additional_properties=False,
     ),
     "money_market_context": _output_schema(
-        "Chartless USD money-market desk envelope for every supported selector.",
+        "Chartless USD money-market and India funding envelopes for supported selectors.",
         {
             "ok": {"type": "boolean"},
             "schema": {"type": "string"},
@@ -2468,6 +2484,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "methodology": {"type": "object"},
             "formulas": {"type": "array"},
             "diagnostics": {"type": "object"},
+            "india": {"type": "object"},
         },
         (
             (

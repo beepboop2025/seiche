@@ -7,6 +7,7 @@ from seiche.domain.observation import (
     ConnectorClassification,
     DayCountConvention,
     RedistributionStatus,
+    RateCompounding,
     SemanticRole,
 )
 from seiche.markets.base import (
@@ -50,6 +51,43 @@ _MMO_FRESHNESS_CLOCK = PublicationClock(
 )
 _ACT_365 = DayCountConvention.ACT_365
 
+CURVE_TENORS = (1, 2, 3, 5, 7, 10, 14, 30, 40)
+BENCHMARK_TENORS = (1, 2, 3, 5, 7, 10, 14, 15, 30, 40)
+RBI_HOME_TENORS = (3, 5, 10, 15, 30)
+LIQUIDITY_SERIES = (
+    "SDF_TODAY", "MSF_TODAY", "VRR_TODAY", "VRRR_TODAY",
+    "FIXED_REPO_TODAY", "FIXED_REVERSE_REPO_TODAY",
+    "SDF_OUTSTANDING", "MSF_OUTSTANDING", "VRR_OUTSTANDING", "VRRR_OUTSTANDING",
+    "FIXED_REPO_OUTSTANDING", "FIXED_REVERSE_REPO_OUTSTANDING",
+    "NET_INJECTION_TODAY", "NET_INJECTION_OUTSTANDING", "SLF",
+    "DURABLE_LIQUIDITY", "RESERVE_REQUIREMENT",
+)
+
+
+def _amount(name: str, *, adapter: str = "rbi_official") -> InstrumentSpec:
+    role = SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP
+    if name.startswith(("NET_INJECTION", "WSS_NET_INJECTION")):
+        role = SemanticRole.NET_LIQUIDITY_OPERATIONS
+    elif name == "DURABLE_LIQUIDITY":
+        role = SemanticRole.DURABLE_LIQUIDITY
+    elif name == "RESERVE_REQUIREMENT":
+        role = SemanticRole.RESERVE_REQUIREMENT
+    elif name.startswith("OMO_"):
+        role = SemanticRole.CENTRAL_BANK_ASSET_TRANSACTIONS
+    elif name.startswith(("CD_", "CP_")):
+        role = SemanticRole.TERM_FUNDING_ISSUANCE if name.endswith("ISSUED") else SemanticRole.TERM_FUNDING_OUTSTANDING
+    return InstrumentSpec(
+        f"IN.RBI.{name}", f"RBI_{name}", role,
+        adapter, "INR crore", CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+        freshness_clock=_MMO_FRESHNESS_CLOCK if adapter == "rbi_official" else None,
+    )
+
+
+def _yield(instrument: str, mnemonic: str, adapter: str) -> InstrumentSpec:
+    return rate_instrument(instrument, mnemonic, SemanticRole.SOVEREIGN_YIELD,
+                           adapter, DayCountConvention.SOURCE_NATIVE,
+                           compounding=RateCompounding.SOURCE_NATIVE)
+
 
 PACK = MarketPack(
     market_id="IN-INR",
@@ -83,6 +121,38 @@ PACK = MarketPack(
             RedistributionStatus.DERIVED_ONLY,
         ),
         SourceAdapterSpec(
+            "rbi_rates_weekly", ConnectorClassification.OFFICIAL_OPEN, "P1W", _CLOCK,
+            RedistributionStatus.ALLOWED, collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
+            "rbi_policy", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
+            RedistributionStatus.ALLOWED,
+        ),
+        SourceAdapterSpec(
+            "rbi_liquidity_weekly", ConnectorClassification.OFFICIAL_OPEN, "P1W", _CLOCK,
+            RedistributionStatus.ALLOWED, collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
+            "rbi_credit_fortnightly", ConnectorClassification.OFFICIAL_OPEN, "P2W", _CLOCK,
+            RedistributionStatus.ALLOWED, collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
+            "rbi_sovereign", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
+            RedistributionStatus.ALLOWED,
+        ),
+        SourceAdapterSpec(
+            "rbi_monthly_curve", ConnectorClassification.OFFICIAL_OPEN, "P1M", _CLOCK,
+            RedistributionStatus.ALLOWED, collection_cadence="P1W",
+        ),
+        SourceAdapterSpec(
+            "rbi_auctions", ConnectorClassification.OFFICIAL_OPEN, "P1W", _CLOCK,
+            RedistributionStatus.ALLOWED, collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
+            "ccil_curve", ConnectorClassification.LICENSED, "P1D", _CLOCK,
+            RedistributionStatus.DERIVED_ONLY,
+        ),
+        SourceAdapterSpec(
             "licensed_inr_market", ConnectorClassification.LICENSED, "P1D", _CLOCK,
             RedistributionStatus.DERIVED_ONLY,
         ),
@@ -101,6 +171,34 @@ PACK = MarketPack(
         rate_instrument("IN.MARKET.CP_3M", "IN_CP_3M", SemanticRole.CP_3M, "licensed_inr_market", _ACT_365),
         rate_instrument("IN.MARKET.CD_3M", "IN_CD_3M", SemanticRole.CD_3M, "licensed_inr_market", _ACT_365),
         rate_instrument("IN.RBI.TBILL_3M", "IN_TBILL_3M", SemanticRole.TBILL_3M, "rbi_official", _ACT_365),
+        replace(rate_instrument("IN.RBI.TREPS_WAR", "RBI_TREPS_WAR", SemanticRole.SECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
+        replace(rate_instrument("IN.RBI.MARKET_REPO_WAR", "RBI_MARKET_REPO_WAR", SemanticRole.SECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
+        *(_amount(name) for name in LIQUIDITY_SERIES),
+        *(_amount(name, adapter="rbi_liquidity_weekly") for name in
+          ("OMO_SALES", "OMO_PURCHASES", "WSS_NET_INJECTION", "WSS_FIXED_REPO", "WSS_FIXED_REVERSE_REPO",
+           "WSS_VRR", "WSS_VRRR", "WSS_MSF", "WSS_SDF", "WSS_SLF")),
+        *(rate_instrument(f"IN.RBI.{kind}_RATE_{bound}", f"RBI_{kind}_RATE_{bound}", SemanticRole.TERM_FUNDING_RATE,
+                          "rbi_credit_fortnightly", DayCountConvention.SOURCE_NATIVE, compounding=RateCompounding.SOURCE_NATIVE)
+          for kind in ("CD", "CP") for bound in ("LOW", "HIGH")),
+        *(_amount(f"{kind}_{measure}", adapter="rbi_credit_fortnightly")
+          for kind in ("CD", "CP") for measure in ("ISSUED", "OUTSTANDING")),
+        rate_instrument("IN.RBI.POLICY_REPO_DECISION", "RBI_POLICY_REPO_DECISION", SemanticRole.POLICY_TARGET, "rbi_policy", _ACT_365),
+        rate_instrument("IN.RBI.SDF_DECISION", "RBI_SDF_DECISION", SemanticRole.POLICY_FLOOR, "rbi_policy", _ACT_365),
+        rate_instrument("IN.RBI.MSF_DECISION", "RBI_MSF_DECISION", SemanticRole.POLICY_CEILING, "rbi_policy", _ACT_365),
+        rate_instrument("IN.RBI.POLICY_REPO_WEEKLY", "RBI_POLICY_REPO_WEEKLY", SemanticRole.POLICY_TARGET, "rbi_rates_weekly", _ACT_365),
+        InstrumentSpec("IN.RBI.CRR", "RBI_CRR", SemanticRole.RESERVE_REQUIREMENT_RATIO,
+                       "rbi_rates_weekly", "percent", CanonicalUnit.BASIS_POINTS, 100),
+        *(rate_instrument(f"IN.RBI.TBILL_{tenor}D_WEEKLY", f"RBI_TBILL_{tenor}D_WEEKLY", role,
+                          "rbi_rates_weekly", _ACT_365)
+          for tenor, role in ((91, SemanticRole.TBILL_3M), (182, SemanticRole.TBILL_6M), (364, SemanticRole.TBILL_12M))),
+        *(_yield(f"IN.RBI.GSEC_BENCHMARK_{tenor}Y", f"RBI_GSEC_BENCHMARK_{tenor}Y", "rbi_sovereign")
+          for tenor in BENCHMARK_TENORS),
+        *(_yield(f"IN.RBI.SGL_MONTHLY_{tenor}Y", f"RBI_SGL_MONTHLY_{tenor}Y", "rbi_monthly_curve")
+          for tenor in CURVE_TENORS),
+        *(_yield(f"IN.RBI.GSEC_AUCTION_{tenor}Y", f"RBI_GSEC_AUCTION_{tenor}Y", "rbi_auctions")
+          for tenor in CURVE_TENORS),
+        *(_yield(f"IN.CCIL.ZERO_{tenor}Y", f"CCIL_ZERO_{tenor}Y", "ccil_curve")
+          for tenor in CURVE_TENORS),
         rate_instrument("IN.MARKET.FX_FORWARD_BASIS", "INR_FX_BASIS", SemanticRole.FX_SWAP_BASIS, "licensed_inr_market", _ACT_365),
         InstrumentSpec(
             "IN.RBI.SYSTEM_LIQUIDITY", "RBI_SYSTEM_LIQUIDITY", SemanticRole.SYSTEM_LIQUIDITY,

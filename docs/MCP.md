@@ -136,7 +136,13 @@ collecting data or performing a full rebuild. It deterministically re-evaluates
 freshness and the regime at request time, then returns no chart history. Its optional `section` is bounded to
 `summary`, `policy_corridor`, `secured_distributions`, `repo_segments`,
 `unsecured_funding`, `bills_cash_curve`, `liquidity_buffers`, `mmf_plumbing`,
-`sources`, `methodology`, or `all`.
+`sources`, `methodology`, `diagnostics`, `india`, or `all`.
+
+`section="india"` reads the bounded canonical IN-INR store and returns the
+[India funding and sovereign-curve desk](INDIA_FUNDING_CURVE.md). The `india`
+object is identical to `GET /api/v2/india-funding`, with chart history omitted.
+It keeps daily benchmarks, monthly SGL maturities and primary-auction yields
+separate. The other selectors, including `all`, retain their USD scope.
 
 `/api/v2/world-markets` and `world_markets_context` expose the same versioned,
 cache-only world-market projection. Both accept a `section` selector bounded to

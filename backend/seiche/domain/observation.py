@@ -28,6 +28,17 @@ class SemanticRole(StrEnum):
     TERM_1M = "TERM_1M"
     TERM_3M = "TERM_3M"
     TBILL_3M = "TBILL_3M"
+    TBILL_6M = "TBILL_6M"
+    TBILL_12M = "TBILL_12M"
+    SOVEREIGN_YIELD = "SOVEREIGN_YIELD"
+    TERM_FUNDING_RATE = "TERM_FUNDING_RATE"
+    RESERVE_REQUIREMENT_RATIO = "RESERVE_REQUIREMENT_RATIO"
+    RESERVE_REQUIREMENT = "RESERVE_REQUIREMENT"
+    TERM_FUNDING_OUTSTANDING = "TERM_FUNDING_OUTSTANDING"
+    TERM_FUNDING_ISSUANCE = "TERM_FUNDING_ISSUANCE"
+    CENTRAL_BANK_ASSET_TRANSACTIONS = "CENTRAL_BANK_ASSET_TRANSACTIONS"
+    NET_LIQUIDITY_OPERATIONS = "NET_LIQUIDITY_OPERATIONS"
+    DURABLE_LIQUIDITY = "DURABLE_LIQUIDITY"
     CP_3M = "CP_3M"
     CD_3M = "CD_3M"
     RESERVE_BALANCES = "RESERVE_BALANCES"
@@ -69,11 +80,13 @@ class CanonicalUnit(StrEnum):
 class RateCompounding(StrEnum):
     SIMPLE = "simple"
     COMPOUNDED = "compounded"
+    SOURCE_NATIVE = "source_native"
 
 
 class DayCountConvention(StrEnum):
     ACT_360 = "ACT/360"
     ACT_365 = "ACT/365"
+    SOURCE_NATIVE = "source_native"
 
 
 class ConnectorClassification(StrEnum):
@@ -120,6 +133,10 @@ RATE_ROLES = frozenset(
         SemanticRole.TERM_1M,
         SemanticRole.TERM_3M,
         SemanticRole.TBILL_3M,
+        SemanticRole.TBILL_6M,
+        SemanticRole.TBILL_12M,
+        SemanticRole.SOVEREIGN_YIELD,
+        SemanticRole.TERM_FUNDING_RATE,
         SemanticRole.CP_3M,
         SemanticRole.CD_3M,
         SemanticRole.CENTRAL_BANK_FACILITY_RATE,

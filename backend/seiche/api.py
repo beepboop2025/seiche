@@ -1193,6 +1193,7 @@ def api_index() -> dict[str, Any]:
             "research_network": "/api/v2/research-network",
             "market_workbench": "/api/v2/market-workbench",
             "gift_city": "/api/v2/gift-city",
+            "india_funding": "/api/v2/india-funding",
             "gold_inventory_carry": "/api/v2/gift-city/gold-carry",
             "series_catalog": "/api/series/index.json",
             "realtime_venue": "/undertow/live/quotes.json",
@@ -1726,6 +1727,7 @@ def _public_openapi_document() -> dict[str, Any]:
         "paths": {
             **paths,
             "/api/v2/gift-city": {"get": {"summary": "Dated India–UAE funding, FX and gold evidence", "responses": {"200": object_response}}},
+            "/api/v2/india-funding": {"get": {"summary": "Dated RBI funding, liquidity and India sovereign-curve evidence", "responses": {"200": object_response, "422": {"description": "No query parameters accepted"}}}},
             "/api/v2/gift-city/gold-carry": {"post": {"summary": "Gold inventory financing scenario from caller assumptions", "requestBody": {"required": True, "content": {"application/json": {"schema": mcp_server.gift_city.CARRY_INPUT_SCHEMA}}}, "responses": {"200": object_response, "422": {"description": "Invalid scenario inputs"}}}},
             "/api/v2/market-workbench": {"get": {
                 "operationId": "getMarketWorkbench",
@@ -2440,6 +2442,17 @@ def gift_city_v2(request: Request, response: Response):
         raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})
     response.headers["Cache-Control"] = "public, max-age=60"
     return mcp_server.tool_gift_city({}, True)
+
+
+@app.get("/api/v2/india-funding")
+def india_funding_v2(request: Request, response: Response):
+    """Dated India evidence; source acquisition stays in scheduled collectors."""
+    if request.query_params:
+        raise HTTPException(422, "india-funding takes no query parameters")
+    if not _market_series_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return mcp_server.tool_money_market({"section": "india"}, True)["india"]
 
 
 @app.post("/api/v2/gift-city/gold-carry")

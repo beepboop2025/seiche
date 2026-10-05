@@ -1836,6 +1836,10 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.mm-view-nav--6 {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 .mm-view-nav button {
   position: relative;
   display: grid;
@@ -2601,7 +2605,7 @@
 
 @media (max-width: 800px) {
   .mm-view-nav { position: relative; grid-template-columns: 1fr; }
-  .mm-view-nav button { grid-template-columns: 28px 105px 1fr; min-height: 48px; border-right: 0; border-bottom: 1px solid var(--panel-edge); }
+  .mm-view-nav button { grid-template-columns: 28px 105px minmax(0, 1fr); min-height: 48px; border-right: 0; border-bottom: 1px solid var(--panel-edge); }
   .mm-view-nav button:last-child { border-bottom: 0; }
   .mm-view-nav button > span { grid-row: auto; }
   .mm-view-nav button > small { align-self: center; }

@@ -260,8 +260,10 @@ class SourceAdapterSpec:
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", self.adapter_id):
             raise ValueError("adapter_id must be a lowercase path-safe identifier")
-        if not re.fullmatch(r"P(?:T\d+[HMS]|\d+D|\d+W)", self.expected_cadence):
+        if not re.fullmatch(r"P(?:T\d+[HMS]|\d+D|\d+W|[1-9]\d*M)", self.expected_cadence):
             raise ValueError("expected_cadence must be a simple ISO-8601 duration")
+        if self.expected_cadence.endswith("M") and not self.expected_cadence.startswith("PT") and self.collection_cadence is None:
+            raise ValueError("calendar-month sources require a fixed collection_cadence")
         if self.collection_cadence is not None and not re.fullmatch(
             r"P(?:T[1-9]\d*[HMS]|[1-9]\d*D|[1-9]\d*W)", self.collection_cadence
         ):

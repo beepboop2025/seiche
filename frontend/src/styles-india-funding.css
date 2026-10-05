@@ -1,0 +1,23 @@
+.mm-shell--india,.mm-shell--india .mm-view-stage{grid-template-columns:minmax(0,1fr)}
+.india-desk{min-width:0;padding:24px 0;color:var(--ink,#d7dfdd)}
+.india-heading>span,.india-summary article>span{font:11px var(--mono,monospace);letter-spacing:.08em;opacity:.7}
+.india-heading h2{font-size:clamp(24px,3vw,38px);max-width:900px;margin:12px 0}
+.india-desk p{line-height:1.65;max-width:95ch;opacity:.85}
+.india-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:24px 0}
+.india-summary article{padding:20px;border:1px solid #728c823d;border-radius:8px;background:#728c8208}
+.india-summary strong{display:block;font-size:25px;margin:16px 0}
+.india-desk small{display:block;font-size:11px;line-height:1.6;opacity:.65;max-width:50ch}
+.india-curve{padding:20px 0}.india-curve svg{width:100%;max-height:330px;overflow:visible}
+.india-curve svg text{fill:currentColor;font:11px monospace;opacity:.8}.india-curve circle{fill:#67bf9c}
+.india-grid{stroke:currentColor;opacity:.12}.india-scroll{overflow-x:auto;margin:16px 0 28px}
+.india-desk table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}
+.india-desk th,.india-desk td{padding:11px 14px;border-bottom:1px solid #728c822b;vertical-align:top}
+.india-desk thead th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.6}
+.india-desk caption{text-align:left;font-size:11px;padding:8px 14px;opacity:.6}
+.india-desk td:nth-child(2),.india-desk td:nth-child(3){font-variant-numeric:tabular-nums}
+.india-note{font-size:12px}.india-sections{display:flex;gap:8px;flex-wrap:wrap}
+.india-sections button{color:inherit;background:transparent;border:1px solid #728c8260;border-radius:5px;padding:8px 14px;cursor:pointer;text-transform:capitalize}
+.india-sections button[aria-pressed=true]{background:#67bf9c22;border-color:#67bf9c}
+.india-desk details{border-top:1px solid #728c8250;padding:20px 0;line-height:1.7;font-size:12px}
+.india-desk summary{cursor:pointer}.india-desk a{color:inherit;text-decoration:underline}
+@media(max-width:900px){.india-summary{grid-template-columns:1fr}.india-desk th,.india-desk td{padding:10px 8px}.india-heading h2{font-size:25px}}

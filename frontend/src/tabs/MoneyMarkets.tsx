@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "../apiBase";
 import { authHeaders } from "../auth";
 import Chart from "../Chart";
+import IndiaFunding, { type IndiaDesk } from "./IndiaFunding";
 import { P } from "../palette";
 import { moneyMarketSharePath } from "../shareRoutes";
 import { MAX_WATCHED_MARKETS, filterWatchedMarkets, missingWatchedMarkets } from "../moneyMarketWatchlist";
@@ -10,7 +11,7 @@ import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
 type FetchMode = "live" | "usd-fallback" | "unavailable";
-type DeskView = "briefing" | "world" | "lab" | "china" | "notes";
+type DeskView = "briefing" | "world" | "lab" | "china" | "india" | "notes";
 
 interface MoneyMarketMetric {
   id: string;
@@ -87,6 +88,7 @@ interface MarketAdapter {
 }
 
 interface MoneyMarket {
+  funding_curve?: IndiaDesk;
   market_id: string;
   monetary_area_id?: string;
   region: string;
@@ -1571,6 +1573,7 @@ export default function MoneyMarkets({ snap }: Props) {
   const viewItems: Array<{ id: DeskView; label: string; note: string }> = [
     { id: "briefing", label: "Briefing", note: "what matters now" },
     { id: "world", label: "World map", note: "compare clearing systems" },
+    { id: "india", label: "India funding", note: "RBI liquidity · sovereign curve" },
     { id: "lab", label: "Market lab", note: selected?.currency || "one market at a time" },
     ...(hasChinaDesk ? [{ id: "china" as DeskView, label: "China desk", note: "SHIBOR · FDR007 · CNY" }] : []),
     { id: "notes", label: "Data notes", note: "methods and coverage" },
@@ -1859,6 +1862,8 @@ export default function MoneyMarkets({ snap }: Props) {
           </>}
 
           {view === "china" && hasChinaDesk && <ChinaDesk engine={harborsEngine} market={chinaMarket} onOpenLab={() => openMarket("CN-CNY")} />}
+
+          {view === "india" && <IndiaFunding data={atlas.markets.find(market => market.market_id === "IN-INR")?.funding_curve} />}
 
           {view === "notes" && <>
           <section className="mm-notes-intro">

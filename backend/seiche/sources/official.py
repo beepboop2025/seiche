@@ -1327,82 +1327,11 @@ def _html_row_by_id(text: str, row_id: str) -> tuple[list[str], bytes] | None:
 
 
 def parse_rbi_html(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
-    text = document.payload.decode("utf-8-sig", errors="replace")
-    points: list[ParsedPoint] = []
-    if document.label == "rbi_home":
-        event_match = re.search(
-            r"(?:As at|as on)\s+(?:\d{1,2}[.:]\d{2}\s*(?:am|pm)\s+of\s+)?"
-            r"([A-Z][a-z]+\s+\d{1,2},\s+\d{4})",
-            _html_text(text),
-        )
-        event_day = _date(event_match.group(1), "%B %d, %Y") if event_match else None
-        if event_day is None:
-            return ()
-        plain = _html_text(text)
-        for label, instrument in (
-            ("Policy Repo Rate", "IN.RBI.POLICY_REPO"),
-            ("91 day T-bills", "IN.RBI.TBILL_3M"),
-        ):
-            match = re.search(
-                rf"{re.escape(label)}\s*(?::)?\s*([0-9]+(?:\.[0-9]+)?)\s*%?",
-                plain,
-                re.IGNORECASE,
-            )
-            if match:
-                points.append(
-                    ParsedPoint(
-                        instrument,
-                        event_day,
-                        match.group(1),
-                        _row_evidence(label, match.group(0)),
-                    )
-                )
-        return tuple(points)
+    from seiche.sources.rbi import parse_mmo
 
-    event_match = re.search(r"Money Market Operations as on\s+([^<]+)</b>", text, re.I)
-    event_day = (
-        _date(_html_text(event_match.group(1)), "%B %d, %Y") if event_match else None
-    )
-    if event_day is None:
-        raise ValueError("RBI page has no money-market event date")
-
-    def add_from_row(row_id: str, column: int, instrument: str) -> None:
-        found = _html_row_by_id(text, row_id)
-        if found is None:
-            return
-        cells, evidence = found
-        if column >= len(cells):
-            return
-        value = _number(cells[column])
-        if value is not None:
-            points.append(ParsedPoint(instrument, event_day, value, evidence))
-
-    add_from_row("OSCallMoney", 2, "IN.MARKET.CALL_WAR")
-    add_from_row("OSTriparty", 1, "IN.RBI.TRIPARTY_REPO_VOLUME")
-    add_from_row("MSF3", 5, "IN.RBI.MSF")
-    add_from_row("SDF2", 5, "IN.RBI.SDF")
-    add_from_row("Netliquidityinjectedoutstandingtoday", 4, "IN.RBI.SYSTEM_LIQUIDITY")
-    add_from_row("CashBalRBI", 2, "IN.RBI.CASH_BALANCES")
-    add_from_row("GovernmentIndiaSurplusCashBalance", 2, "IN.GOVERNMENT.CASH_BALANCE")
-
-    facility_rows = [
-        found
-        for row_id in ("MSF3", "SDF2")
-        if (found := _html_row_by_id(text, row_id)) is not None
-    ]
-    amounts = [_number(cells[4]) for cells, _ in facility_rows if len(cells) > 4]
-    if amounts and all(value is not None for value in amounts):
-        points.append(
-            ParsedPoint(
-                "IN.RBI.FACILITY_TAKEUP",
-                event_day,
-                sum(amounts, Decimal(0)),  # type: ignore[arg-type]
-                b"\n".join(evidence for _, evidence in facility_rows),
-            )
-        )
-    if not points:
-        raise ValueError("RBI page contains no mapped money-market rows")
-    return tuple(points)
+    # The homepage policy and bill rows have no applicable observation date.
+    # Separate dated weekly/policy/sovereign adapters own those series now.
+    return () if document.label == "rbi_home" else parse_mmo(document)
 
 
 _RBNZ_COLUMN_HEADINGS = {
@@ -2713,20 +2642,29 @@ def build_official_adapters(
         parse_hkma_json,
     )
 
-    async def fetch_rbi(client):
-        return await get_documents(
-            client,
-            (
-                (
-                    "rbi_mmo",
-                    "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx/Statistics.aspx",
-                    None,
-                ),
-                ("rbi_home", "https://www.rbi.org.in/", None),
-            ),
-        )
+    from seiche.sources import rbi
 
-    add("IN-INR", "rbi_official", "rbi_official", fetch_rbi, parse_rbi_html, 90)
+    async def fetch_rbi_rates(client):
+        return await get_documents(client, (("rbi_rates", rbi.RATES_URL, None),))
+
+    async def fetch_rbi_sovereign(client):
+        return await get_documents(client, (("rbi_sovereign", rbi.HOME_URL, None),))
+
+    add("IN-INR", "rbi_official", "rbi_official", rbi.fetch_money_market, rbi.parse_money_market_document, 90)
+    add("IN-INR", "rbi_rates_weekly", "rbi_rates_weekly", fetch_rbi_rates, rbi.parse_weekly_rates, 60)
+    add("IN-INR", "rbi_sovereign", "rbi_sovereign", fetch_rbi_sovereign, rbi.parse_sovereign, 60)
+    add("IN-INR", "rbi_monthly_curve", "rbi_monthly_curve", rbi.fetch_monthly_curve, rbi.parse_monthly_curve, 90)
+    add("IN-INR", "rbi_auctions", "rbi_auctions", rbi.fetch_auctions, rbi.parse_auctions, 90)
+    add("IN-INR", "rbi_policy", "rbi_policy", rbi.fetch_policy, rbi.parse_policy_document, 90)
+
+    async def fetch_rbi_liquidity(client):
+        return await rbi.fetch_wss(client, credit=False)
+
+    async def fetch_rbi_credit(client):
+        return await rbi.fetch_wss(client, credit=True)
+
+    add("IN-INR", "rbi_liquidity_weekly", "rbi_liquidity_weekly", fetch_rbi_liquidity, rbi.parse_wss, 90)
+    add("IN-INR", "rbi_credit_fortnightly", "rbi_credit_fortnightly", fetch_rbi_credit, rbi.parse_wss, 90)
 
     def rbnz_fetcher(label: str):
         async def fetch(client):
@@ -2805,6 +2743,13 @@ PRODUCTION_ADAPTER_KEYS = frozenset(
         ("CN-CNY", "cfets_rates"),
         ("HK-HKD", "hkma_official"),
         ("IN-INR", "rbi_official"),
+        ("IN-INR", "rbi_rates_weekly"),
+        ("IN-INR", "rbi_sovereign"),
+        ("IN-INR", "rbi_monthly_curve"),
+        ("IN-INR", "rbi_auctions"),
+        ("IN-INR", "rbi_policy"),
+        ("IN-INR", "rbi_liquidity_weekly"),
+        ("IN-INR", "rbi_credit_fortnightly"),
         ("AU-AUD", "rba_cash"),
         ("AU-AUD", "rba_policy"),
         ("NZ-NZD", "rbnz_policy"),
