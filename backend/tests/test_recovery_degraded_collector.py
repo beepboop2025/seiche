@@ -7,20 +7,27 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import textwrap
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _workflow():
-    return yaml.safe_load((ROOT / ".github/workflows/railway-stateful-recovery.yml").read_text())
+def _step(title):
+    workflow = (ROOT / ".github/workflows/railway-stateful-recovery.yml").read_text()
+    monitor = workflow.split("  monitor:\n", 1)[1].split("  export-recovery:\n", 1)[0]
+    marker = "      - name: " + title + "\n"
+    assert monitor.count(marker) == 1
+    return monitor.split(marker, 1)[1].split("      - name: ", 1)[0]
+
+
+def _program(title):
+    return textwrap.dedent(_step(title).split("        run: |\n", 1)[1])
 
 
 def _admit():
-    steps = _workflow()["jobs"]["monitor"]["steps"]
-    script = next(step["run"] for step in steps if step.get("id") == "proof")
+    script = _program("Prove native backups, PITR coverage, volume headroom, and both edges")
     start = script.index("def recovery_fault_admission(")
     end = script.index("\nnow = datetime.now(UTC)", start)
     namespace = {"json": json, "re": re}
@@ -79,20 +86,16 @@ def test_recovery_only_rejects_other_faults_even_with_matching_digest(faults):
 
 
 def test_degraded_evidence_is_distinct_from_strict_monitor_acceptance():
-    steps = _workflow()["jobs"]["monitor"]["steps"]
-    proof = next(step["run"] for step in steps if step.get("name") == "Record the accepted monitor identity")
+    proof = _program("Record the accepted monitor identity")
     assert 'proof["status"] = "recovery_only_degraded"' in proof
     assert 'proof["degraded_health_sha256"]' in proof
-    upload = next(step for step in steps if step.get("name") == "Retain the accepted monitor identity")
-    assert "recovery-only-degraded.json" in upload["with"]["path"]
+    assert "recovery-only-degraded.json" in _step("Retain the accepted monitor identity")
 
 
 @pytest.mark.parametrize("degraded", [False, True])
 @pytest.mark.parametrize("bootstrap", [False, True])
 def test_recorded_proof_preserves_recovery_only_status(tmp_path, degraded, bootstrap):
-    steps = _workflow()["jobs"]["monitor"]["steps"]
-    script = next(step["run"] for step in steps
-                  if step.get("name") == "Record the accepted monitor identity")
+    script = _program("Record the accepted monitor identity")
     program = script.split("<<'PYMONITOR'\n", 1)[1].split("\nPYMONITOR", 1)[0]
     root = tmp_path / "railway-recovery-monitor"
     root.mkdir()
