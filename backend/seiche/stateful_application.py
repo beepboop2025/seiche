@@ -774,6 +774,19 @@ def candidate_parent_release(
     environment: Mapping[str, str], *, process_release_sha: str
 ) -> str:
     """Bind candidate-only cache reads to the signed, recovered parent release."""
+    return candidate_parent_handoff(
+        environment, process_release_sha=process_release_sha
+    )[0]
+
+
+def candidate_parent_handoff(
+    environment: Mapping[str, str], *, process_release_sha: str
+) -> tuple[str, str | None]:
+    """Read a parent board, or an exactly approved prior board during repair.
+
+    Recovery-cache authority only admits a dated board in a read-only candidate.
+    It never promotes that board or grants production, rebuild or publication.
+    """
     candidate = validate_runtime(environment, production=False)
     request = validate_request(read_document(REQUEST_PATH), current=False)
     if (
@@ -782,4 +795,38 @@ def candidate_parent_release(
     ):
         raise ApplicationContractError("application cache request identity differs")
     parent = load_parent(request, current=True)
-    return parent["activation"]["commit"]
+    approval_path = (
+        migration.PLATFORM_ROOT / "application-approvals"
+        / f"{request['request_id']}.recovery-cache.json"
+    )
+    if not approval_path.exists():
+        return parent["activation"]["commit"], None
+    payload = _closed(
+        validate_approval(read_document(approval_path), "recovery_cache"),
+        {
+            "request_sha256", "deployment_id", "parent_activation_sha256",
+            "parent_recovery_sha256", "parent_offsite_sha256",
+            "recovery_monitor_sha256", "fault_sha256", "diagnosis_sha256",
+            "producer_sha", "handoff_id", "requested_at", "expires_at",
+            "confirmation",
+        },
+        "recovery cache approval",
+    )
+    _window(payload, now=None, current=True)
+    if (
+        payload["request_sha256"] != digest(request)
+        or payload["deployment_id"] != candidate["railway"]["deployment_id"]
+        or payload["parent_activation_sha256"] != digest(parent["activation"])
+        or payload["parent_recovery_sha256"] != digest(parent["recovery"])
+        or payload["parent_offsite_sha256"] != digest(parent["offsite"])
+        or payload["confirmation"] != "READ_ONLY_RECOVERY_CACHE_NO_RELEASE_ACCEPTANCE"
+        or cutover._utc(payload["expires_at"], label="cache expiry")
+        > cutover._utc(request["expires_at"], label="application expiry")
+    ):
+        raise ApplicationContractError("recovery cache approval binding differs")
+    for field in ("recovery_monitor_sha256", "fault_sha256", "diagnosis_sha256", "handoff_id"):
+        _hex(payload[field], 64, field)
+    producer = _hex(payload["producer_sha"], 40, "recovery cache producer")
+    if producer == request["commit"]:
+        raise ApplicationContractError("recovery cache cannot impersonate the successor")
+    return producer, payload["handoff_id"]

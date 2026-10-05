@@ -2804,15 +2804,15 @@ def _stateful_preactivation_read_only() -> bool:
     }
 
 
-def _application_parent_release() -> str | None:
+def _application_parent_handoff() -> tuple[str, str | None] | None:
     if (
         os.getenv("SEICHE_RAILWAY_STATEFUL_MODE") != "cutover_candidate"
         or not os.getenv("SEICHE_RAILWAY_APPLICATION_REQUEST_ID")
     ):
         return None
-    from seiche.stateful_application import candidate_parent_release
+    from seiche.stateful_application import candidate_parent_handoff
 
-    return candidate_parent_release(
+    return candidate_parent_handoff(
         os.environ, process_release_sha=capture_process_release_sha()
     )
 
@@ -2844,13 +2844,15 @@ def restore_cached_snapshot(*, read_only: bool = False) -> str | None:
         from seiche.repository import PostgresMarketRepository, get_repository
 
         repository = get_repository()
-        parent_sha = _application_parent_release()
-        if parent_sha is not None:
+        parent_handoff = _application_parent_handoff()
+        if parent_handoff is not None:
+            parent_sha, expected_handoff = parent_handoff
             if not isinstance(repository, PostgresMarketRepository):
                 raise ValueError("application parent handoff requires PostgreSQL")
             payload, receipt, producer_sha, handoff_id = _validated_handoff(
                 repository.load_active_release_handoff_read_only(),
                 expected_release_sha=parent_sha,
+                expected_handoff_id=expected_handoff,
             )
             # Reading the signed parent is not a rebuild by this application.
             # Retain the original envelope and clocks; no handoff is promoted.
@@ -3253,8 +3255,11 @@ def cached_application_parent_ready() -> bool:
     if payload is None:
         return False
     try:
-        parent_sha = _application_parent_release()
-        if parent_sha is None:
+        parent_handoff = _application_parent_handoff()
+        if parent_handoff is None:
+            return False
+        parent_sha, expected_handoff = parent_handoff
+        if expected_handoff is not None and expected_handoff != _cache.get("release_handoff_id"):
             return False
         envelope = {
             **_handoff_body(

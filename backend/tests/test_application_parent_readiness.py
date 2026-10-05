@@ -239,6 +239,92 @@ def test_candidate_hydration_rejects_broken_parent_binding(
     assert not assemble.cached_application_parent_ready()
 
 
+def _recovery_cache(parent_candidate, signed):
+    platform, _, request, candidate_path, envelope, _ = parent_candidate
+    previous = assemble._build_handoff(
+        envelope["payload"], envelope["release_receipt"], "c" * 40
+    )
+    envelope.clear()
+    envelope.update(previous)
+    now = datetime.now(UTC).replace(microsecond=0)
+    payload = {
+        "request_sha256": app.digest(request),
+        "deployment_id": app.read_document(candidate_path)["railway"]["deployment_id"],
+        "parent_activation_sha256": request["parent"]["activation_sha256"],
+        "parent_recovery_sha256": request["parent"]["recovery_sha256"],
+        "parent_offsite_sha256": request["parent"]["offsite_sha256"],
+        "recovery_monitor_sha256": "1" * 64, "fault_sha256": "2" * 64,
+        "diagnosis_sha256": "3" * 64, "producer_sha": envelope["producer_sha"],
+        "handoff_id": envelope["handoff_id"], "requested_at": iso(now),
+        "expires_at": request["expires_at"],
+        "confirmation": "READ_ONLY_RECOVERY_CACHE_NO_RELEASE_ACCEPTANCE",
+    }
+    path = platform / "application-approvals" / f"{request['request_id']}.recovery-cache.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(app.canonical(signed("recovery_cache", payload)))
+    return path, payload
+
+
+def test_signed_recovery_cache_preserves_old_board_without_writing_or_accepting_release(
+    parent_candidate, signed, monkeypatch,
+):
+    platform, environment, _, _, envelope, calls = parent_candidate
+    path, payload = _recovery_cache(parent_candidate, signed)
+    before = {str(p): p.read_bytes() for p in platform.rglob("*") if p.is_file()}
+    assert assemble.restore_cached_snapshot(read_only=True) == "application_parent"
+    assert calls == ["read_only"]
+    assert assemble.cached_snapshot() == envelope["payload"]
+    assert assemble._cache["producer_sha"] == "c" * 40
+    assert assemble._cache["release_handoff_id"] == envelope["handoff_id"]
+    assert assemble.cached_application_parent_ready()
+    assert not assemble.cached_snapshot_was_rebuilt()
+    assert assemble.cached_snapshot_release_handoff() is None
+    with TestClient(
+        api.app, headers={cutover.EDGE_HEADER: environment["SEICHE_RAILWAY_EDGE_TOKEN"]}
+    ) as client:
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/api/health?require_rebuilt=true").status_code == 503
+        assert client.get("/api/internal/v1/release-health").status_code == 503
+    assert {str(p): p.read_bytes() for p in platform.rglob("*") if p.is_file()} == before
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "production")
+    assert not assemble.cached_application_parent_ready()
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "cutover_candidate")
+    payload["requested_at"] = iso(datetime.now(UTC) - timedelta(minutes=50))
+    payload["expires_at"] = iso(datetime.now(UTC) - timedelta(minutes=1))
+    path.write_bytes(app.canonical(signed("recovery_cache", payload)))
+    assert not assemble.cached_application_parent_ready()
+
+
+@pytest.mark.parametrize("change", [
+    "request_sha256", "deployment_id", "parent_activation_sha256",
+    "parent_recovery_sha256", "parent_offsite_sha256", "recovery_monitor_sha256",
+    "fault_sha256", "diagnosis_sha256", "producer_sha", "handoff_id",
+    "successor", "signature", "purpose", "missing", "expired", "overlong",
+    "confirmation",
+])
+def test_recovery_cache_rejects_changed_signed_bindings(parent_candidate, signed, change):
+    path, payload = _recovery_cache(parent_candidate, signed)
+    if change == "successor":
+        payload["producer_sha"] = parent_candidate[2]["commit"]
+    elif change == "expired":
+        payload["requested_at"] = iso(datetime.now(UTC) - timedelta(minutes=50))
+        payload["expires_at"] = iso(datetime.now(UTC) - timedelta(minutes=1))
+    elif change == "overlong":
+        payload["expires_at"] = iso(datetime.now(UTC) + timedelta(minutes=50))
+    elif change not in {"signature", "purpose", "missing"}:
+        payload[change] = "f" * (40 if change == "producer_sha" else 64)
+        if change in {"recovery_monitor_sha256", "fault_sha256", "diagnosis_sha256"}:
+            payload[change] = "not-a-digest"
+    approval = signed("activate" if change == "purpose" else "recovery_cache", payload)
+    if change == "signature":
+        approval["signature"] = "unsigned"
+    path.write_bytes(app.canonical(approval))
+    if change == "missing":
+        path.unlink()
+    assert assemble.restore_cached_snapshot(read_only=True) is None
+    assert not assemble.cached_application_parent_ready()
+
+
 @pytest.mark.parametrize(
     "change",
     ["payload", "receipt", "handoff", "signature", "production", "shadow", "legacy"],

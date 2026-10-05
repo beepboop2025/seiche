@@ -62,6 +62,23 @@ ordinary fault-free activation, feature checks, recovery and strict monitor
 before release or schedule restoration. Without both explicit repair inputs,
 the existing fault-free health requirement is unchanged.
 
+If the faulty parent never promoted its data board, its successor cannot borrow
+that parent's nonexistent handoff. After independently accepting the parent's
+current recovery, the operator may sign a `recovery_cache` approval at
+`application-approvals/<request-id>.recovery-cache.json` before the candidate
+starts. `candidate_parent_handoff` requires the exact successor request and
+deployment, parent activation/recovery/offsite digests, recovery monitor, fault
+and diagnosis digests, and the original board's producer and handoff digest.
+The confirmation is `READ_ONLY_RECOVERY_CACHE_NO_RELEASE_ACCEPTANCE`; expiry
+cannot outlive the application's one-hour request window. Missing approval
+preserves normal parent-only behavior; invalid approval fails closed.
+
+The candidate reads only that exact controller-accepted board, preserving its
+source and dates. It cannot rebuild, promote the board or pass the strict
+rebuilt-health gate. Production ignores this startup approval and must rebuild
+and accept its own healthy board normally. Retain the signed cache approval
+and all referenced diagnosis/recovery evidence with the application receipt.
+
 ### Approval files
 
 Submit the context once to the existing service. Record the new deployment UUID
