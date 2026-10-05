@@ -48,6 +48,12 @@ EDITORIAL_CONNECT_AFTER = EDITORIAL_CONNECT_BEFORE[:-1] + " " + EDITORIAL_ORIGIN
 # Keep exact paths: this is not a general operations/runtime exception.
 EXCLUDED_MONITOR_PATHS = frozenset(
     {
+        # Independent discovery transport; never a renderer/runtime archive input.
+        ".github/workflows/discovery-transport.yml",
+        "ops/cloudflare/discovery-worker.mjs",
+        "ops/cloudflare/discovery-worker.test.mjs",
+        "ops/cloudflare/wrangler.discovery.jsonc",
+        "ops/cloudflare/DISCOVERY.md",
         ".github/workflows/market-platform-ci.yml",
         "deploy/railway-ci/editorial-controller/Dockerfile",
         "deploy/railway-ci/editorial-controller/README.md",
