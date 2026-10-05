@@ -143,6 +143,56 @@ def test_rejected_latest_row_cannot_refresh_an_older_accepted_observation() -> N
     assert all(not item.usable for item in aged)
 
 
+@pytest.mark.parametrize(
+    ("cutoff", "expected"),
+    [
+        ("2024-02-29T12:00:00+00:00", StalenessState.FRESH),
+        ("2024-02-29T12:00:01+00:00", StalenessState.AGING),
+        ("2024-04-30T12:00:00+00:00", StalenessState.AGING),
+        ("2024-04-30T12:00:01+00:00", StalenessState.STALE),
+        ("2024-08-31T12:00:00+00:00", StalenessState.STALE),
+        ("2024-08-31T12:00:01+00:00", StalenessState.DEAD),
+    ],
+)
+def test_monthly_observations_age_on_calendar_boundaries(cutoff, expected) -> None:
+    assert _source_state(
+        INDIA_PACK,
+        "IN.RBI.SGL_MONTHLY_5Y",
+        datetime.fromisoformat(cutoff),
+        datetime(2023, 12, 31, 12, tzinfo=UTC),
+    ) is expected
+    assert _source_state(
+        INDIA_PACK,
+        "IN.RBI.SGL_MONTHLY_5Y",
+        datetime.fromisoformat(cutoff),
+        datetime(2023, 12, 31, 12, tzinfo=UTC),
+        StalenessState.UNAVAILABLE,
+    ) is StalenessState.UNAVAILABLE
+
+
+def test_india_monthly_curve_can_materialize_from_canonical_rows(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "india-monthly.sqlite")
+    repository = SQLiteMarketRepository()
+    event = datetime(2026, 8, 31, tzinfo=UTC)
+    repository.save_observations([
+        _rate(
+            market_id="IN-INR", instrument_id=f"IN.RBI.SGL_MONTHLY_{tenor}Y",
+            role=SemanticRole.SOVEREIGN_YIELD, value=650 + tenor,
+            event_time=event, source="rbi_monthly_curve",
+        )
+        for tenor in (1, 2, 3, 5, 7, 10, 14, 30)
+    ])
+    result = materialize_market(
+        "IN-INR", repository=repository,
+        knowledge_time=datetime(2026, 10, 5, tzinfo=UTC),
+    )
+    assert set(result) == {"overview", "gauge"}
+    overview = repository.load_latest_market_snapshot("IN-INR", "overview")["payload"]
+    assert overview["event_cutoff"] == event.isoformat()
+    assert overview["evidence_eligibility"]["eligible"] is False
+    assert overview["data_coverage"]["canonical_observations"][0]["observations"] == 8
+
+
 def test_recent_successful_run_does_not_make_old_estr_publishable(
     tmp_path, monkeypatch
 ) -> None:

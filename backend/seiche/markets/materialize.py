@@ -172,14 +172,29 @@ def _source_state(
     instrument = pack.instrument_map[instrument_id]
     adapter = pack.adapter_map[instrument.source_adapter_id]
     age = max((cutoff - latest_event_time).total_seconds(), 0.0)
-    cadence = cadence_delta(adapter.expected_cadence).total_seconds()
+    if adapter.expected_cadence.endswith("M") and not adapter.expected_cadence.startswith("PT"):
+        # Match the atlas's calendar-month clock; fixed-day polling intervals
+        # must not replace the source's monthly observation cadence.
+        from seiche.markets.atlas import _next_event_day
+
+        months = int(adapter.expected_cadence[1:-1])
+        limits = []
+        for periods in (2, 4, 8):
+            day = _next_event_day(
+                latest_event_time.date(), f"P{months * periods}M", pack.settlement_calendar
+            )
+            deadline = latest_event_time.replace(year=day.year, month=day.month, day=day.day)
+            limits.append((deadline - latest_event_time).total_seconds())
+    else:
+        cadence = cadence_delta(adapter.expected_cadence).total_seconds()
+        limits = [cadence * periods for periods in (2, 4, 8)]
     aged_state = (
         StalenessState.FRESH
-        if age <= cadence * 2
+        if age <= limits[0]
         else StalenessState.AGING
-        if age <= cadence * 4
+        if age <= limits[1]
         else StalenessState.STALE
-        if age <= cadence * 8
+        if age <= limits[2]
         else StalenessState.DEAD
     )
     rank = {
