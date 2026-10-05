@@ -42,6 +42,18 @@ def doc(text, label="rbi_mmo"):
     return FetchedDocument("https://www.rbi.org.in/test", "text/html", text.encode(), label)
 
 
+@pytest.mark.parametrize("closing", ["</script >", "</SCRIPT\t>", "</script\n>"])
+def test_report_extraction_ignores_code_comments_and_style(closing):
+    page = (f'<script>"<tr><td>fake yield</td></tr>"{closing}'
+            '<!-- <tr><td>comment yield</td></tr> -->'
+            '<style>.value { content: "wrong date"; }</style >'
+            '<table><tr id="report"><td>6.5</td><td>Sep&nbsp;30</td></tr></table>')
+    rows = list(rbi._rows(page))
+    assert len(rows) == 1 and rows[0][:2] == (["report"], ["6.5", "Sep 30"])
+    assert rbi._text(page) == "6.5 Sep 30"
+    assert rbi._text("<script>unclosed code") == ""
+
+
 @pytest.mark.parametrize("short,long,expected", [
     (10, 4, "bear_flattening"), (4, 10, "bear_steepening"),
     (-10, -4, "bull_steepening"), (-4, -10, "bull_flattening"),

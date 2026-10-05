@@ -11,6 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin, urlsplit
@@ -30,13 +31,57 @@ RSS_URL = "https://www.rbi.org.in/pressreleases_rss.xml"
 AUCTION_REFERENCE_URL = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63517"
 
 
+class _ReportHTML(HTMLParser):
+    """Extract report content, ignoring comments and executable/style blocks.
+
+    This is an extraction step, not a sanitizer for rendering untrusted HTML.
+    Retained markup is used only to identify the source's table rows and IDs.
+    """
+
+    def __init__(self, *, keep_tags: bool):
+        super().__init__(convert_charrefs=False)
+        self.keep_tags = keep_tags
+        self.ignored_tag: str | None = None
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if self.ignored_tag is not None:
+            return
+        if tag in {"script", "style"}:
+            self.ignored_tag = tag
+        elif self.keep_tags:
+            self.parts.append(self.get_starttag_text())
+
+    def handle_endtag(self, tag):
+        if self.ignored_tag is not None:
+            if tag == self.ignored_tag:
+                self.ignored_tag = None
+        elif self.keep_tags:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if self.ignored_tag is None:
+            self.parts.append(data)
+
+    def handle_entityref(self, name):
+        self.handle_data(f"&{name};")
+
+    def handle_charref(self, name):
+        self.handle_data(f"&#{name};")
+
+
 def _clean(text: str) -> str:
-    text = re.sub(r"<!--.*?-->|<(?:script|style)\b[^>]*>.*?</(?:script|style)>", "", text, flags=re.I | re.S)
-    return text
+    parser = _ReportHTML(keep_tags=True)
+    parser.feed(text)
+    parser.close()
+    return "".join(parser.parts)
 
 
 def _text(text: str) -> str:
-    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", _clean(text))).split())
+    parser = _ReportHTML(keep_tags=False)
+    parser.feed(text)
+    parser.close()
+    return " ".join(html.unescape(" ".join(parser.parts)).split())
 
 
 def _rows(text: str):

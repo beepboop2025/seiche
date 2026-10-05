@@ -93,7 +93,7 @@ def _shell_without_prerender(doc: str) -> str:
 def test_source_shell_offers_navigation_without_inventing_a_live_board():
     shell = SHELL.read_text()
     text = prerender.body_text(shell)
-    assert "Follow the flow" in text and "of funding." in text
+    assert "Dollar funding." in text and "Money-market context." in text
     assert 'href="/money-markets/"' in shell
     assert 'href="/developers"' in shell
     assert "The composite reads" not in text
