@@ -40,6 +40,30 @@ the volume, checks current state and waits for its signed writer grant.
 
 ## Stopped-source and activation approvals
 
+### Recovery-only evidence for a collector repair
+
+A collector materialization error can prevent ordinary healthy-release
+acceptance while current state still needs a backup before repair. For this
+case only, the protected manual recovery workflow accepts `repair_source_sha`
+(the exact signed main successor) and `degraded_collector_fault_sha256` (SHA-256
+of the canonical observed fault list, including its trailing newline).
+Both public and origin health must report the same single `WORKER_HEALTH` /
+`official-market-collector` / `OVERDUE` fault. All source signatures, ancestry,
+provider identities, native backups, PITR, headroom, data capture, isolated
+restore, object retention, off-site readback and OIDC checks remain required.
+
+This produces `recovery_only_degraded` monitoring evidence and a separate copy
+of the observed fault. It is not strict monitor acceptance and cannot authorize
+normal publication. An operator must separately review and bind the exact repair
+source, fault diagnosis, current activation, and restored recovery chain before
+preparing its successor. Never mark the unhealthy parent accepted, alter its
+faults or replace code inside its running image. The successor still needs its
+ordinary fault-free activation, feature checks, recovery and strict monitor
+before release or schedule restoration. Without both explicit repair inputs,
+the existing fault-free health requirement is unchanged.
+
+### Approval files
+
 Submit the context once to the existing service. Record the new deployment UUID
 and replica from Railway; never infer either from a version or filename. Observe
 all predecessor instances as `EXITED`, `STOPPED`, or `REMOVED`, and verify the frozen Hetzner

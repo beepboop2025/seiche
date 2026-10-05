@@ -1,6 +1,7 @@
 """Dry production-stage admission and real Linux restore-wrapper boundaries."""
 
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import stat
@@ -19,6 +20,27 @@ import verify
 
 class ExportReached(Exception):
     """Fixture sentinel stops before the first real production stage can run."""
+
+
+class StrictMonitorAdmissionTests(unittest.TestCase):
+    def test_recovery_only_proof_cannot_start_scheduled_export(self):
+        policy = {"controller_source": "a" * 40}
+        with tempfile.TemporaryDirectory() as name:
+            for status in ("pass", "recovery_only_degraded"):
+                with self.subTest(status=status):
+                    proof = {"status": status, "bootstrap": False,
+                             "controller_source": policy["controller_source"]}
+
+                    def result(*args, **kwargs):
+                        kwargs["stdout"].write(("RAILWAY_RECOVERY_MONITOR_PASS " +
+                                                json.dumps(proof) + "\n").encode())
+
+                    with mock.patch.object(recurring.subprocess, "run", side_effect=result):
+                        if status == "pass":
+                            self.assertEqual(recurring.monitor(policy, {}, Path(name), {}), proof)
+                        else:
+                            with self.assertRaisesRegex(ValueError, "strict original monitor"):
+                                recurring.monitor(policy, {}, Path(name), {})
 
 
 class SourceRegistryTests(unittest.TestCase):

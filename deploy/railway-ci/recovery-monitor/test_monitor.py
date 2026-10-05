@@ -1,6 +1,7 @@
 """Exercise actual workflow validation against valid and adversarial evidence."""
 
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -48,7 +49,7 @@ def fixtures():
 
 
 class MonitorTests(unittest.TestCase):
-    def validate(self, evidence):
+    def validate(self, evidence, overrides=None):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
             for path, value in evidence.items():
@@ -57,9 +58,61 @@ class MonitorTests(unittest.TestCase):
             env.update({"EXPECTED_VOLUME_ID": "volume", "EXPECTED_ENVIRONMENT_ID": "environment",
                         "EXPECTED_SERVICE_ID": "service", "EXPECTED_POSTGRES_ID": "postgres",
                         "RAILWAY_PROJECT_ID": "project", "RECOVERY_SOURCE_SHA": RELEASE,
+                        "GITHUB_SHA": RELEASE, "GITHUB_EVENT_NAME": "schedule",
                         "OUTPUT": str(root / "outputs")})
-            return subprocess.run([sys.executable, "-I", "-S", str(ROOT / "validator.py")],
-                                  env=env, cwd=root, capture_output=True, text=True)
+            env.update(overrides or {})
+            result = subprocess.run([sys.executable, "-I", "-S", str(ROOT / "validator.py")],
+                                    env=env, cwd=root, capture_output=True, text=True)
+            degraded = root / "recovery-only-degraded.json"
+            result.degraded = json.loads(degraded.read_bytes()) if degraded.exists() else None
+            return result
+
+    def repair_fixture(self):
+        data = fixtures()
+        faults = [{"category": "WORKER_HEALTH", "source": "official-market-collector",
+                   "status": "OVERDUE", "heartbeat_at": data["origin.json"]["generated_at"]}]
+        data["origin.json"]["faults"] = faults
+        data["public.json"]["faults"] = copy.deepcopy(faults)
+        raw = (json.dumps(faults, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        env = {"GITHUB_SHA": "b" * 40, "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "REPAIR_SOURCE_SHA": "b" * 40, "RECOVERY_OPERATION": "export-recovery",
+               "DEGRADED_COLLECTOR_FAULT_SHA256": hashlib.sha256(raw).hexdigest()}
+        return data, env
+
+    def test_repair_records_both_faults_without_accepting_release(self):
+        data, env = self.repair_fixture()
+        result = self.validate(data, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.degraded["observed_faults"], {
+            name: data[name]["faults"] for name in ("origin.json", "public.json")})
+        self.assertEqual(result.degraded["runtime_source"], RELEASE)
+        self.assertEqual(result.degraded["repair_source"], "b" * 40)
+        self.assertIs(result.degraded["release_accepted"], False)
+        self.assertIs(result.degraded["publication_allowed"], False)
+
+    def test_repair_rejects_changed_or_disagreeing_faults(self):
+        for faults in ([], [{"category": "WORKER_HEALTH"}]):
+            with self.subTest(faults=faults):
+                data, env = self.repair_fixture()
+                data["public.json"]["faults"] = faults
+                self.assertNotEqual(self.validate(data, env).returncode, 0)
+
+    def test_repair_preserves_backup_pitr_clock_and_runtime_gates(self):
+        for invalid in ("backup", "pitr", "clock", "runtime", "schedule"):
+            with self.subTest(invalid=invalid):
+                data, env = self.repair_fixture()
+                stale = (datetime.now(timezone.utc) - timedelta(hours=27)).isoformat()
+                if invalid == "backup":
+                    data["native-proof.json"]["data"]["volumeInstanceBackupList"][0]["createdAt"] = stale
+                elif invalid == "pitr":
+                    data["pitr-status.json"]["live"]["archiverHealthy"] = False
+                elif invalid == "clock":
+                    data["origin.json"]["generated_at"] = stale
+                elif invalid == "runtime":
+                    data["runtime.json"]["mode"] = "candidate"
+                else:
+                    env["GITHUB_EVENT_NAME"] = "schedule"
+                self.assertNotEqual(self.validate(data, env).returncode, 0)
 
     def test_original_validator_accepts_complete_fresh_proof(self):
         result = self.validate(fixtures())

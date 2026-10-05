@@ -36,6 +36,14 @@ on:
         description: "Exact operation-specific confirmation"
         required: false
         type: string
+      repair_source_sha:
+        description: "Recovery-only repair: exact signed main successor; never a healthy-release acceptance"
+        required: false
+        type: string
+      degraded_collector_fault_sha256:
+        description: "Recovery-only repair: SHA-256 of the exact observed overdue official-collector fault list"
+        required: false
+        type: string
       durable_bootstrap_sha256:
         description: "export-recovery only: digest of the protected, time-bounded historical activation manifest"
         required: false
@@ -990,6 +998,9 @@ jobs:
           RAILWAY_POSTGRES_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_SERVICE_ID }}
           RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
           RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          REPAIR_SOURCE_SHA: ${{ inputs.repair_source_sha }}
+          DEGRADED_COLLECTOR_FAULT_SHA256: ${{ inputs.degraded_collector_fault_sha256 }}
+          RECOVERY_OPERATION: ${{ inputs.operation }}
           ALLOW_EMPTY_EXPORT_PROOF: ${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'export-recovery' || (inputs.operation == 'resume-offsite' && github.ref == 'refs/heads/main')) }}
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-monitor
         run: |
@@ -1136,6 +1147,30 @@ jobs:
                       result[key.strip().lower()] = value.strip()
               return result
 
+          def recovery_fault_admission(faults, *, expected_digest, repair_source, workflow_source,
+                                       runtime_source, operation, event):
+              """Permit one explicitly bound collector fault for recovery evidence only."""
+              if not expected_digest and not repair_source:
+                  if faults != []:
+                      raise ValueError("production API health is invalid")
+                  return False
+              if (event != "workflow_dispatch" or operation not in {"monitor", "export-recovery"}
+                  or not re.fullmatch(r"[0-9a-f]{64}", expected_digest or "")
+                  or not re.fullmatch(r"[0-9a-f]{40}", repair_source or "")
+                  or repair_source != workflow_source or repair_source == runtime_source):
+                  raise ValueError("recovery-only repair identity is invalid")
+              if (not isinstance(faults, list) or len(faults) != 1
+                  or not isinstance(faults[0], dict)
+                  or faults[0].get("category") != "WORKER_HEALTH"
+                  or faults[0].get("source") != "official-market-collector"
+                  or faults[0].get("status") != "OVERDUE"):
+                  raise ValueError("recovery-only repair cannot admit this fault")
+              import hashlib
+              raw = (json.dumps(faults, sort_keys=True, separators=(",", ":")) + "\n").encode()
+              if hashlib.sha256(raw).hexdigest() != expected_digest:
+                  raise ValueError("observed collector fault changed")
+              return True
+
           now = datetime.now(UTC)
           native = load("native-proof.json").get("data", {})
           environment = native.get("environment", {})
@@ -1228,18 +1263,39 @@ jobs:
               deployment or "",
           ) is None or re.fullmatch(r"[0-9a-f]{40}", release or "") is None:
               raise SystemExit("production edge identity is malformed")
+          degraded = {}
           for name in ("origin.json", "public.json"):
               body = load(name)
               generated = moment(body.get("generated_at"))
               if (
                   not isinstance(body.get("version"), str)
                   or not body["version"]
-                  or body.get("faults") != []
                   or not isinstance(body.get("provenance"), list)
                   or not body["provenance"]
                   or not timedelta(0) <= now - generated <= timedelta(minutes=15)
               ):
                   raise SystemExit("production API health is invalid")
+              if recovery_fault_admission(
+                  body.get("faults"),
+                  expected_digest=os.environ.get("DEGRADED_COLLECTOR_FAULT_SHA256", ""),
+                  repair_source=os.environ.get("REPAIR_SOURCE_SHA", ""),
+                  workflow_source=os.environ["GITHUB_SHA"], runtime_source=release,
+                  operation=os.environ.get("RECOVERY_OPERATION", ""),
+                  event=os.environ["GITHUB_EVENT_NAME"],
+              ):
+                  degraded[name] = body["faults"]
+          if degraded:
+              if set(degraded) != {"origin.json", "public.json"} or degraded["origin.json"] != degraded["public.json"]:
+                  raise SystemExit("recovery-only fault observations disagree")
+              Path("recovery-only-degraded.json").write_text(json.dumps({
+                  "schema": "seiche.recovery-only-degraded-health.v1",
+                  "status": "RECOVERY_ONLY_DEGRADED",
+                  "runtime_source": release, "deployment_id": deployment,
+                  "repair_source": os.environ["REPAIR_SOURCE_SHA"],
+                  "fault_sha256": os.environ["DEGRADED_COLLECTOR_FAULT_SHA256"],
+                  "observed_faults": degraded,
+                  "release_accepted": False, "publication_allowed": False,
+              }, sort_keys=True, separators=(",", ":")) + "\n")
           runtime = load("runtime.json")
           if runtime.get("status") != "ready" or runtime.get("mode") != "production":
               raise SystemExit("Railway activation-aware health is not ready")
@@ -1334,6 +1390,12 @@ jobs:
               **pair,
               "status": "pass",
           }
+          degraded_path = root / "recovery-only-degraded.json"
+          if degraded_path.exists():
+              import hashlib
+              proof["status"] = "recovery_only_degraded"
+              proof["degraded_health_sha256"] = hashlib.sha256(degraded_path.read_bytes()).hexdigest()
+              proof["repair_source_sha"] = json.loads(degraded_path.read_bytes())["repair_source"]
           destination = root / "monitor-proof.json"
           destination.write_text(json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n")
           PYMONITOR
@@ -1342,7 +1404,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: railway-recovery-monitor-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/railway-recovery-monitor/monitor-proof.json
+          path: |
+            ${{ runner.temp }}/railway-recovery-monitor/monitor-proof.json
+            ${{ runner.temp }}/railway-recovery-monitor/recovery-only-degraded.json
           if-no-files-found: error
           retention-days: 90
 
