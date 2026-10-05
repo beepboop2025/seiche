@@ -2152,7 +2152,9 @@ def test_frontend_receipt_classifies_independent_discovery_transport_only(
     frontend_repo, relative
 ):
     root, release, _ = frontend_repo
-    source = _frontend_change(root, {relative: "# separately deployed edge transport\n"})
+    source = _frontend_change(
+        root, {relative: "# separately deployed edge transport\n"}
+    )
     changes = front.compatibility_changes(root, release, source)
     assert {row["kind"] for row in changes} == {"excluded_monitor"}
     assert {row["path"] for row in changes} == {relative}
