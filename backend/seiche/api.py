@@ -1137,6 +1137,12 @@ def api_index() -> dict[str, Any]:
     """
     return {
         "product": "Seiche",
+        "company": {
+            "legal_name": "LIQUILENS PRIVATE LIMITED",
+            "profile_url": "https://liquilens.in/company-profile.json",
+            "investors_url": "https://liquilens.in/investors/",
+            "product_role": "Funding conditions",
+        },
         "job": "system-level US dollar funding-stress early warning",
         "developer_guide": "https://seiche.info/developers",
         "mcp": {
@@ -1712,6 +1718,12 @@ def _public_openapi_document() -> dict[str, Any]:
         "openapi": "3.1.0",
         "info": {
             "title": "Seiche Public API",
+            "x-liquilens-company": {
+                "legal_name": "LIQUILENS PRIVATE LIMITED",
+                "profile_url": "https://liquilens.in/company-profile.json",
+                "investors_url": "https://liquilens.in/investors/",
+                "product_role": "Funding conditions",
+            },
             "version": assemble.VERSION,
             "description": (
                 "Curated funding-stress data; v1 remains the US dollar alias. "

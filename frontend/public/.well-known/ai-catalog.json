@@ -422,6 +422,22 @@
         "recordCount": 11163,
         "distributionCount": 2
       }
+    },
+    {
+      "type": "application/json",
+      "url": "https://liquilens.in/company-profile.json",
+      "description": "Registered company profile: LiquiLens institution evidence, Seiche funding conditions and Undertow market liquidity. International access, market-specific coverage, public evidence and investor materials.",
+      "metadata": {
+        "role": "company-profile",
+        "investors_url": "https://liquilens.in/investors/"
+      },
+      "identifier": "urn:air:seiche.info:company:liquilens-profile",
+      "displayName": "LiquiLens registered company and connected products",
+      "representativeQueries": [
+        "What company builds LiquiLens, Seiche and Undertow?",
+        "How do institution, funding and market-liquidity research connect?",
+        "Where can investors inspect the company and product evidence?"
+      ]
     }
   ]
 }

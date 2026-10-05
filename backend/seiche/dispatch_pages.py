@@ -693,6 +693,18 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
 
 _LLMS_PREAMBLE = f"""# Seiche
 
+## Company and connected products
+
+Seiche is a product from LIQUILENS PRIVATE LIMITED, a registered company in India.
+LiquiLens examines institutions, Seiche provides funding conditions, and Undertow
+examines market liquidity and stated-size exits. International access is distinct
+from jurisdiction-specific coverage. Keep each product's clocks and scores separate.
+
+- Company and investors: https://liquilens.in/investors/
+- Company profile: https://liquilens.in/company-profile.json
+- Connected workflow: https://liquilens.in/start/
+
+
 > Seiche is free open source software (AGPL-3.0-or-later): a financial-market evidence
 > terminal connecting US dollar funding, an 11-pack global money-market atlas,
 > 22 registered public FX reference series, three dollar indexes, and capital-market
