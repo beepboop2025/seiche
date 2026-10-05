@@ -120,5 +120,7 @@ def test_workflow_takes_fresh_edge_samples_after_runtime_ready():
     step = step.split("- name: Remove the private PostgreSQL probe transport", 1)[0]
     assert step.index('wait_production_ready.py"') < step.index("origin_status=$(curl")
     assert "timedelta(minutes=15)" in step
-    assert 'body.get("faults") != []' in step
+    # The separate admission tests execute both strict and recovery-only cases.
+    # This workflow step must pass each freshly sampled body's faults to them.
+    assert 'if recovery_fault_admission(\n                  body.get("faults"),' in step
     assert 'runtime.get("mode") != "production"' in step
