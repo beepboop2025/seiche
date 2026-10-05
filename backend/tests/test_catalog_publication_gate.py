@@ -1996,6 +1996,10 @@ def test_frontend_merge_still_rejects_reverted_unauthorized_desk_history(fronten
         "backend/seiche/api.py",
         "backend/seiche/assemble.py",
         "backend/scripts/another-monitor.py",
+        "ops/cloudflare/other-worker.mjs",
+        "ops/cloudflare/discovery-worker-extra.mjs",
+        "ops/cloudflare/wrangler.other.jsonc",
+        ".github/workflows/discovery-transport-extra.yml",
         "ops/deploy/RAILWAY-STATEFUL-RECOVERY-extra.md",
         "ops/deploy/RAILWAY-STATEFUL-RECOVERY.py",
         "ops/railway-automation/other.sh",
@@ -2036,6 +2040,7 @@ def test_frontend_merge_still_rejects_reverted_unauthorized_desk_history(fronten
         "frontend/public/data/overview.json",
         "frontend/public/.well-known/ai-catalog.json",
         "frontend/public/_redirects",
+        "frontend/public/robots.txt",
         "ops/release/verify_catalog_publication.py",
         "ops/deploy/release-allowed-signers",
         ".github/workflows/publish.yml",
@@ -2131,6 +2136,26 @@ def test_frontend_receipt_accepts_reviewed_editorial_and_market_ci_paths(
         change["path"] == relative and change["kind"] == "excluded_monitor"
         for change in changes
     )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".github/workflows/discovery-transport.yml",
+        "ops/cloudflare/discovery-worker.mjs",
+        "ops/cloudflare/discovery-worker.test.mjs",
+        "ops/cloudflare/wrangler.discovery.jsonc",
+        "ops/cloudflare/DISCOVERY.md",
+    ],
+)
+def test_frontend_receipt_classifies_independent_discovery_transport_only(
+    frontend_repo, relative
+):
+    root, release, _ = frontend_repo
+    source = _frontend_change(root, {relative: "# separately deployed edge transport\n"})
+    changes = front.compatibility_changes(root, release, source)
+    assert {row["kind"] for row in changes} == {"excluded_monitor"}
+    assert {row["path"] for row in changes} == {relative}
 
 
 def test_unchanged_frontend_receipt_can_classify_isolated_recovery_changes(

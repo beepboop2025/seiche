@@ -44,6 +44,10 @@ branches, merges and reverted edits. This bounded contract permits:
 A receipt may also bind an unchanged frontend after changes only to those
 isolated operations paths and the other permitted review/controller files.
 It still requires a new exact-source owner signature and all live release gates.
+The four exact discovery-transport files under `ops/cloudflare` and its dedicated
+CI workflow are in this excluded class. A frontend receipt does not deploy the
+`seiche-discovery` Worker or modify its routes. It also does not admit changes to
+`frontend/public/robots.txt`, the sitemap, the AI catalog, or neighboring edge files.
 The compatibility inventory records that no frontend bytes changed; the receipt
 does not activate the separately deployed operations code. An unchanged source,
 or a history containing only review/controller files, is insufficient.
