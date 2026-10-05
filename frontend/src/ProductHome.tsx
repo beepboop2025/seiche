@@ -66,7 +66,7 @@ export default function ProductHome() {
     <main id="product-content">
       <section className="product-hero">
         <h1>Follow the flow<br/>of funding.</h1>
-        <p>Understand money markets and the pressure building beneath them. Funding evidence for treasury teams, risk reviewers and their AI agents.</p>
+        <p>Follow funding conditions across money markets, with a deep USD desk and a broader source-dated market atlas. Built for treasury teams, risk reviewers and AI agents working across borders.</p>
         <div className="product-actions"><a className="product-button" href="#today">Open the desk</a><a className="product-link" href="/developers">Connect an agent <span aria-hidden="true">↗</span></a></div>
         <FundingFlow />
       </section>
@@ -84,9 +84,10 @@ export default function ProductHome() {
         <div className="product-agent-diagram" role="img" aria-label="Seiche evidence flows to a reviewer, an AI agent, or an existing workflow"><div className="agent-source">Seiche<span>Funding evidence</span></div><div className="agent-outputs"><span>Risk review</span><span>AI agents</span><span>Your workflow</span></div></div>
       </section>
       <section className="product-section product-family" aria-labelledby="family-heading">
-        <h2 id="family-heading">A connected view<br/>of liquidity.</h2><div className="product-family__products"><a href="https://liquilens.in/"><h3>LiquiLens</h3><p>Review institution stress and default-risk evidence.</p><span>Explore LiquiLens ↗</span></a><div><h3>Seiche</h3><p>Understand system funding and money-market pressure.</p><span>You are here</span></div><a href="https://liquilens-undertow.com/"><h3>Undertow</h3><p>Inspect market depth and exit liquidity at a stated size.</p><span>Explore Undertow ↗</span></a></div>
+        <h2 id="family-heading">One exposure.<br/>Three connected questions.</h2><div className="product-family__products"><a href="https://liquilens.in/"><h3>LiquiLens</h3><p>What is changing at the bank or lender? Inspect its public disclosures and institution-risk evidence.</p><span>Explore LiquiLens ↗</span></a><div><h3>Seiche</h3><p>What funding environment surrounds it? Follow system funding and money-market pressure.</p><span>You are here</span></div><a href="https://liquilens-undertow.com/"><h3>Undertow</h3><p>What does liquidity look like at your size? Inspect market depth and stated-size exit evidence.</p><span>Explore Undertow ↗</span></a></div>
+        <p>Three products from one registered company, connected through browser, API and MCP workflows. Source clocks and market coverage stay separate. <a href="https://liquilens.in/start/">Build a connected review ↗</a></p>
       </section>
     </main>
-    <footer className="product-footer"><p>Seiche provides research context. It does not determine an institution’s regulatory compliance or promise a market outcome.</p><nav aria-label="Supporting information"><a href="/developers">API and MCP</a><a href="/support">Support</a><a href="/methodology">Methodology</a><a href="https://github.com/beepboop2025/seiche">Open source</a><a href="/privacy">Privacy</a></nav><span>Seiche · LiquiLens ecosystem</span></footer>
+    <footer className="product-footer"><p>Seiche provides research context. It does not determine an institution’s regulatory compliance or promise a market outcome.</p><nav aria-label="Supporting information"><a href="/developers">API and MCP</a><a href="/support">Support</a><a href="/methodology">Methodology</a><a href="https://github.com/beepboop2025/seiche">Open source</a><a href="/privacy">Privacy</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav><span>Seiche · LIQUILENS PRIVATE LIMITED · registered company in India</span></footer>
   </div>;
 }
