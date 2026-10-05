@@ -9,6 +9,13 @@ as UID10001 without deployment credentials; all descendants are stopped before
 bounded regular-file output is sealed. Git and Cloudflare writes are performed
 only by the immutable reviewed controller after fresh current-main checks.
 
+After a successful Pages upload, the full publisher waits 30 seconds for route
+propagation before entering the original strict public verifiers. This fixed
+pause remains within the existing total execution deadline. It does not retry or
+accept a mismatching HTTP 200 response; exact-byte, source and runtime checks
+still fail closed. A public readback failure leaves the success ledger and pending
+history uncommitted, even when the uploaded site later becomes visible.
+
 Sealed output lives in a new private directory under the trusted release
 checkout, so the original catalog verifier's root-containment and exact-byte
 checks apply unchanged. The checked-in catalog and release identity files are

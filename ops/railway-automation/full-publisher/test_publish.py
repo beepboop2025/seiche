@@ -20,6 +20,28 @@ spec.loader.exec_module(publisher)
 
 
 class PublisherBoundaryTests(unittest.TestCase):
+    def test_successful_pages_upload_settles_before_returning_to_verification(self):
+        events = []
+        credentials = {"CLOUDFLARE_API_TOKEN": "test-token", "CLOUDFLARE_ACCOUNT_ID": "test-account"}
+        def upload(command, cwd, environment):
+            self.assertEqual(command[-1], "a" * 40)
+            self.assertEqual(command[2:5], ["pages", "deploy", "/sealed/site"])
+            self.assertEqual(environment["CLOUDFLARE_ACCOUNT_ID"], "test-account")
+            events.append("uploaded")
+        with (patch.dict(os.environ, credentials), patch.object(publisher, "run", side_effect=upload),
+              patch.object(publisher.time, "sleep", side_effect=lambda seconds: events.append(("settled", seconds)))):
+            publisher.deploy_pages(Path("/sealed/site"), "a" * 40)
+        self.assertEqual(events, ["uploaded", ("settled", 30)])
+
+    def test_failed_pages_upload_does_not_enter_settle_or_verification_phase(self):
+        credentials = {"CLOUDFLARE_API_TOKEN": "test-token", "CLOUDFLARE_ACCOUNT_ID": "test-account"}
+        with (patch.dict(os.environ, credentials),
+              patch.object(publisher, "run", side_effect=RuntimeError("upload failed")),
+              patch.object(publisher.time, "sleep") as settle):
+            with self.assertRaisesRegex(RuntimeError, "upload failed"):
+                publisher.deploy_pages(Path("/sealed/site"), "a" * 40)
+            settle.assert_not_called()
+
     def test_apply_requires_each_credential_before_source_or_build_work(self):
         credentials = {name: "test-only" for name in (
             "SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}
