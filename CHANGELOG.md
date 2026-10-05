@@ -11,6 +11,21 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.15.0 release candidate
+
+- Add eight RBI collectors for policy rates, liquidity operations, daily money
+  markets, primary T-bills, weekly OMO, fortnightly CD/CP aggregates, daily named
+  government-bond benchmarks, monthly curves and dated auction references.
+- Expose the India funding and sovereign curve desk through Money Markets,
+  `/api/v2/india-funding` and `money_market_context(section="india")`.
+- Calculate 2s5s, 2s10s, 5s10s and 10s30s with aligned dates and security identities;
+  classify bull/bear flattening or steepening only when comparable observations exist.
+- Preserve daily, monthly and auction definitions, source dates, provenance,
+  rights and explicit gaps. Liquidity mechanisms remain supported interpretations,
+  and India remains reference context rather than a validated historical pack.
+- Prepare corpus receipt `r29` for the application successor without changing
+  the independent corpus or OpenBB release identities.
+
 ### 0.14.1 release candidate
 
 - Admit the exact gold inventory carrying-cost POST route through the gateway,
