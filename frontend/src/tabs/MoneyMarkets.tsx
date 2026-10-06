@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "../apiBase";
 import { authHeaders } from "../auth";
 import Chart from "../Chart";
@@ -1428,6 +1428,8 @@ export default function MoneyMarkets({ snap }: Props) {
     () => usdEngine ? fallbackAtlas(usdEngine, snap.generated_at) : null,
     [usdEngine, snap.generated_at],
   );
+  const latestFallback = useRef(usdFallback);
+  const activeRequest = useRef<{ controller: AbortController; timeout: number } | null>(null);
   const [atlas, setAtlas] = useState<MoneyMarketAtlas | null>(null);
   const [mode, setMode] = useState<FetchMode>("unavailable");
   const [loading, setLoading] = useState(true);
@@ -1439,10 +1441,24 @@ export default function MoneyMarkets({ snap }: Props) {
   const [expansionQuery, setExpansionQuery] = useState("");
   const hasChinaDesk = mode === "live" && Boolean(atlas?.markets.some((market) => market.market_id === "CN-CNY"));
 
+  useEffect(() => { latestFallback.current = usdFallback; }, [usdFallback]);
+
+  useEffect(() => () => {
+    const request = activeRequest.current;
+    activeRequest.current = null;
+    if (request) {
+      window.clearTimeout(request.timeout);
+      request.controller.abort();
+    }
+  }, []);
+
   useEffect(() => {
+    // Snapshot refreshes may request new data, but must let an existing atlas finish.
+    if (activeRequest.current) return;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 9000);
-    let disposed = false;
+    const timeout = window.setTimeout(() => controller.abort(), 25000);
+    const request = { controller, timeout };
+    activeRequest.current = request;
     setLoading(true);
     setError(null);
     fetch(API_BASE + "/api/v2/money-markets", {
@@ -1456,19 +1472,19 @@ export default function MoneyMarkets({ snap }: Props) {
         if (!response.ok || !contentType.includes("json")) throw new Error("global atlas endpoint unavailable");
         const parsed = parseAtlas(await response.json());
         if (!parsed) throw new Error("global atlas returned an invalid contract");
-        if (disposed) return;
+        if (activeRequest.current !== request) return;
         setAtlas(parsed);
         setMode("live");
       })
       .catch((reason: unknown) => {
-        if (disposed) return;
+        if (activeRequest.current !== request) return;
         if (controller.signal.aborted && reason instanceof DOMException && reason.name === "AbortError") {
           setError("global atlas timed out");
         } else {
           setError(reason instanceof Error ? reason.message : "global atlas unavailable");
         }
-        if (usdFallback) {
-          setAtlas(usdFallback);
+        if (latestFallback.current) {
+          setAtlas(latestFallback.current);
           setMode("usd-fallback");
         } else {
           setAtlas(null);
@@ -1477,13 +1493,11 @@ export default function MoneyMarkets({ snap }: Props) {
       })
       .finally(() => {
         window.clearTimeout(timeout);
-        if (!disposed) setLoading(false);
+        if (activeRequest.current === request) {
+          activeRequest.current = null;
+          setLoading(false);
+        }
       });
-    return () => {
-      disposed = true;
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
   }, [retryKey, usdFallback]);
 
   useEffect(() => {
