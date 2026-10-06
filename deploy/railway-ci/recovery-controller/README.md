@@ -109,6 +109,16 @@ command validator's default path. Backend tests and the existing dispatch conten
 are excluded from runtime admission. The original strict 26-hour monitor still
 runs first with its three existing isolated inputs.
 
+A replacement can be assembled with `--export-not-before YYYY-MM-DD`. This UTC
+date is part of the image manifest and therefore bound by the signed installation.
+It may defer the first export by at most one day. Before that date, installation,
+signer, source and strict monitor checks still run, then the controller records
+`RAILWAY_NATIVE_RECOVERY_READY_NO_EXPORT` and exits without accessing storage or
+requesting an export. This is readiness evidence only, never a recovery receipt
+or proof of recurrence. From the named date onward, all original storage, index,
+export, restore and sealing gates apply. The guard does not authorize replacing
+another installation's immutable daily index.
+
 Activation requires `RECOVERY_OPERATION=export-recurring` and
 `RECOVERY_CONFIRMATION=EXPORT_WITHOUT_AUTHORITY_CHANGE`. Before taking a lock or
 creating export evidence, the versioned installation gate requires owner-signed

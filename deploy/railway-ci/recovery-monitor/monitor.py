@@ -39,6 +39,14 @@ def checked(arguments, *, env, cwd=None):
     return result.stdout
 
 
+def application_source(policy):
+    """Read the reviewed application identity, never infer it from either edge."""
+    source = policy.get("source")
+    if not isinstance(source, str) or re.fullmatch(r"[0-9a-f]{40}", source) is None:
+        raise RuntimeError("Invalid reviewed application source identity")
+    return source
+
+
 def admit(source, policy, env):
     source.mkdir(mode=0o700)
     checked(["git", "init", "-q", str(source)], env=env)
@@ -97,6 +105,7 @@ def main():
             raise RuntimeError("Controller image content differs from reviewed manifest")
     controller_digest = hashlib.sha256(manifest_body).hexdigest()
     policy = json.loads((ROOT / "policy.json").read_text())
+    runtime_source = application_source(policy)
     credentials = {name: os.environ.pop("MONITOR_" + name) for name in SECRETS}
     if set(policy["target"]) != set(TARGET_NAMES):
         raise RuntimeError("Recovery target configuration differs from reviewed schema")
@@ -114,7 +123,7 @@ def main():
         temporary = Path(name)
         env = public_env(temporary)
         source = temporary / "source"
-        sha = admit(source, policy, env)
+        workflow_source = admit(source, policy, env)
         env.update(policy["target"])
         env.update(credentials)
         env.update({
@@ -123,8 +132,8 @@ def main():
             "RAILWAY_ORIGIN": env["RAILWAY_STATEFUL_ORIGIN"],
             "PROBE_SSH_KEY": env.pop("RAILWAY_RECOVERY_PROBE_SSH_KEY"),
             "RAILWAY_REAL_BIN": "/usr/local/bin/railway-real",
-            "RECOVERY_SOURCE_SHA": sha, "REQUESTED_SOURCE_SHA": "",
-            "GITHUB_SHA": sha, "GITHUB_REF": "refs/heads/main",
+            "RECOVERY_SOURCE_SHA": runtime_source, "REQUESTED_SOURCE_SHA": "",
+            "GITHUB_SHA": workflow_source, "GITHUB_REF": "refs/heads/main",
             "GITHUB_EVENT_NAME": "schedule", "GITHUB_WORKSPACE": str(source),
             "RUNNER_TEMP": str(temporary), "EVIDENCE_ROOT": str(evidence),
             "GITHUB_PATH": str(temporary / "paths"),
@@ -148,7 +157,8 @@ def main():
             pair = json.loads((evidence / "monitor-pair-identity.json").read_text())
             proof = {"schema": "seiche.railway-recovery-monitor-proof.v2",
                      "status": "pass", "repository": "beepboop2025/seiche",
-                     "source": sha, "controller_source": controller,
+                     "source": runtime_source, "controller_source": controller,
+                     "workflow_source": workflow_source,
                      "controller_digest": controller_digest,
                      "controller_inputs": policy["workflow_steps_sha256"],
                      "railway_deployment": deployment, "bootstrap": False,

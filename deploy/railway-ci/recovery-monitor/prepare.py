@@ -39,6 +39,21 @@ def digest(value):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def health_wait_proof(body):
+    """Replace only the exact reviewed fetch pair; keep the final validator intact."""
+    first = 'origin_status=$(curl --silent --show-error --proto'
+    last = 'test "$public_status" = 200'
+    if body.count(first) != 1 or body.count(last) != 1:
+        raise ValueError("Reviewed health fetch boundary changed")
+    start = body.index(first)
+    finish = body.index(last, start) + len(last)
+    original = body[start:finish]
+    if hashlib.sha256(original.encode()).hexdigest() != "02658664b62464004202549ddb88ecbdebc886f03bcf6e680534e3e460f32d32":
+        raise ValueError("Reviewed health fetch semantics changed")
+    replacement = 'python3 -I -S "$(dirname -- "${BASH_SOURCE[0]}")/health_wait.py"'
+    return body[:start] + replacement + body[finish:]
+
+
 def prepare(repository, revision, output, target, signer_public_key):
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("Selected source must be one full immutable commit SHA")
@@ -87,15 +102,14 @@ def prepare(repository, revision, output, target, signer_public_key):
     for name, title in scripts.items():
         body = by_name[title]["run"]
         if name == "proof.sh":
-            old = '--header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN"'
-            assert body.count(old) == 1
-            body = body.replace(old, '--header "@$RUNNER_TEMP/edge-header"')
+            body = health_wait_proof(body)
         (output / name).write_text("#!/usr/bin/env bash\n" + body)
     proof = by_name[scripts["proof.sh"]]["run"]
     validator = proof.split('OUTPUT="$GITHUB_OUTPUT"', 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
     (output / "validator.py").write_text(validator + "\n")
     (output / "policy.json").write_text(json.dumps(policy, indent=2) + "\n")
-    for name in ("Dockerfile", "monitor.py", "prepare.py", "test_monitor.py", "requirements.lock"):
+    for name in ("Dockerfile", "monitor.py", "prepare.py", "test_monitor.py",
+                 "test_monitor_roles.py", "health_wait.py", "test_health_wait.py", "requirements.lock"):
         path = (here / name).relative_to(repository_root)
         body = subprocess.check_output(["git", "-C", str(here), "show", f"{controller_source}:{path}"])
         (output / name).write_bytes(body)

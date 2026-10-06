@@ -1,6 +1,7 @@
 """Native timing follows the reviewed workflow without changing proof bodies."""
 
 import copy
+from datetime import date
 import json
 from pathlib import Path
 import unittest
@@ -20,6 +21,14 @@ def document(minutes=120, readiness=4500):
 
 
 class TimingTests(unittest.TestCase):
+    def test_export_start_date_is_canonical_bounded_and_reproducible_later(self):
+        self.assertIsNone(prepare.export_start_date(None, date(2026, 10, 6)))
+        for today in (date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)):
+            self.assertEqual(prepare.export_start_date("2026-10-07", today), date(2026, 10, 7))
+        for value in (True, 20261007, "", "2026-1-07", "20261007", "2026-02-30", "2026-10-08"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                prepare.export_start_date(value, date(2026, 10, 6))
+
     def test_real_reviewed_workflow_defines_the_native_timing_contract(self):
         path = verify.TRUSTED / prepare.WORKFLOW
         if not path.is_file():

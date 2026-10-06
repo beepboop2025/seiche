@@ -36,6 +36,7 @@ SOURCES = [
     {"title": "CBUAE DONIA methodology", "url": "https://centralbank.ae/media/kuqd0q5o/attachment-7_donia-term-sheet.pdf"},
     {"title": "RBI money market operations", "url": "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx"},
     {"title": "CFTC disaggregated commitments of traders", "url": "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"},
+    {"title": "CBUAE DONIA dated rate history", "url": "https://centralbank.ae/en/our-operations/monetary-policy-and-domestic-markets/"},
 ]
 
 
@@ -128,10 +129,8 @@ def _funding(now: datetime) -> list[dict]:
                      "source": metric.get("source"), "source_url": metric.get("source_url"),
                      "reason": "The canonical funding source could not be read." if market["market_id"] in failures else None,
                      "evidence": metric})
-    rows.append({"currency": "AED", "label": "UAE overnight funding", "instrument": "DONIA", "value": None,
-                 "unit": "%", "as_of": None, "status": "UNAVAILABLE", "source": "Central Bank of the UAE",
-                 "source_url": SOURCES[3]["url"], "missed_publication_opportunities": None,
-                 "reason": "DONIA is a mixed secured/unsecured overnight benchmark. A verified recurring rate feed is not yet admitted; USD rates and the AED peg are not substitutes."})
+    from seiche.sources import cbuae_donia
+    rows.append(cbuae_donia.read_reference(now=now))
     return rows
 
 
@@ -199,6 +198,7 @@ def read() -> dict:
             "sources": SOURCES,
             "methodology": ["Funding rows retain separate observation dates; a cross-country difference is not an executable arbitrage spread.",
                             "ECB and CBUAE FX references remain separate providers. Crosses join matching dates only.",
-                            "CBUAE references support VAT valuation context, not an executable dealer quote or FX hedge.",
+                            "CBUAE FX references support VAT valuation context, not an executable dealer quote or FX hedge.",
+                            "DONIA is a mixed secured/unsecured AED overnight reference using ACT/360. Its publisher chart date is retained; actual publication time is unknown.",
                             "Use IFSCA and venue documents for current participation and delivery requirements; this desk does not determine eligibility."],
             "eligibility": {"execution": False, "scoring": False}}

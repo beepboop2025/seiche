@@ -308,6 +308,20 @@ def cbuae_fx_freshness(asof: object, *, now: datetime) -> dict:
     }
 
 
+def cbuae_donia_freshness(asof: object, *, now: datetime) -> dict:
+    """Chart-date age, without inventing an actual release or holiday calendar."""
+    policy = cbuae_fx_freshness(asof, now=now)
+    policy.update(freshness_policy="cbuae-donia-chart-date-age-v1",
+                  freshness_basis="Publisher chart date: same Dubai calendar day fresh, one day aging, older stale; no verified holiday calendar.")
+    policy["publication_schedule"] = {
+        "source_url": "https://centralbank.ae/en/our-operations/monetary-policy-and-domestic-markets/",
+        "timezone": "Asia/Dubai", "rule": "CBUAE aims to publish DONIA by 09:30 on UAE business days; this is not an observed publication timestamp.",
+        "clock_precision": "unknown", "latest_due_at": None, "actual_published_at": None,
+        "missed_publication_opportunities": None,
+    }
+    return policy
+
+
 def publication_freshness(
     source: object,
     remote_id: object,
@@ -325,6 +339,8 @@ def publication_freshness(
     """
     if source == "cbuae_fx" and freq == "D" and isinstance(remote_id, str) and remote_id in CBUAE_FX_REMOTE_IDS:
         return cbuae_fx_freshness(asof, now=now)
+    if source == "cbuae_donia" and freq == "D" and remote_id == "UAE_INTEREST_RATES/DONIA":
+        return cbuae_donia_freshness(asof, now=now)
     if source == "fred" and freq == "W" and isinstance(remote_id, str) and remote_id in H41_WEEKLY_REMOTE_IDS:
         return _h41_freshness(asof, now=now)
     if (

@@ -11,6 +11,17 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.1 release candidate
+
+- Connect the GIFT City AED card to official CBUAE DONIA observations, with raw
+  evidence, dated history, revisions, attribution and explicit stale/unavailable states.
+- Keep country funding loading independent of overview refreshes and give the
+  bounded atlas request time to complete.
+- Separate backend and workflow identities in recovery monitoring; permit a
+  signed next-day export start with explicit readiness-only evidence.
+- Prepare corpus receipt `r31` while retaining `r30`; corpus data is unchanged.
+  Deployment and publication remain subject to their original acceptance gates.
+
 ### 0.16.0 release candidate
 
 - Add 34 country funding profiles using official public MOF, BoE, ECB, BIS,

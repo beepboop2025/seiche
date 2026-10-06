@@ -22,6 +22,9 @@ RUN mkdir /controller/native-bin && cp /controller/native_docker.py /controller/
     && chmod -R u=rwX,go=rX /controller \
     && cd /controller && python -c 'import verify; verify.modules()' \
     && /usr/bin/tini -s -- python -m unittest -v test_verify test_attest test_recurring test_health_probe test_native_installation_gate test_prepare_timing
+RUN if test -d /controller/monitor; then \
+      cd /controller/monitor && python -B -m unittest -v test_monitor test_monitor_roles test_health_wait; \
+    fi
 WORKDIR /controller
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["timeout", "--signal=TERM", "--kill-after=30", "5400", "python", "-u", "/controller/verify.py"]

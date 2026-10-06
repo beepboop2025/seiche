@@ -80,6 +80,10 @@ CBUAE_FX_SERIES = [
                start="2026-10-02")
     for currency in CBUAE_FX_CURRENCIES
 ]
+CBUAE_DONIA_SERIES = [
+    SeriesSpec("DONIA", "cbuae_donia", "UAE_INTEREST_RATES/DONIA",
+               "CBUAE DONIA mixed overnight funding reference", "%", "D", 60),
+]
 
 GLOBAL_FRED_SERIES = [
     SeriesSpec("ECB_DFR", "fred", "ECBDFR", "ECB deposit facility rate", "%", "D", 720),
@@ -603,7 +607,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     + EIA_INVENTORY_SERIES
     + ESTUARY_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + BOJ_SERIES
-    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + ECB_FX_SERIES + CBUAE_FX_SERIES + CRYPTO_SERIES + BIS_SERIES
+    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + ECB_FX_SERIES + CBUAE_FX_SERIES + CBUAE_DONIA_SERIES + CRYPTO_SERIES + BIS_SERIES
     + REFEREE_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below

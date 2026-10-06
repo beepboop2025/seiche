@@ -1,6 +1,7 @@
 """Assemble owner-signed verification code and the attested immutable recovery."""
 
 import argparse
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -185,10 +186,24 @@ def admitted_source_paths(names):
              and not name.startswith("backend/seiche/dispatches/"))}
 
 
-def add_recurring_assembly(repository, output, revision, target_path, public_key_path, signer_public_key):
+def export_start_date(value, today):
+    """An immutable first-export date can defer a replacement by at most one day."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+        raise ValueError("export start date must be canonical YYYY-MM-DD")
+    first = date.fromisoformat(value)
+    if first > today + timedelta(days=1):
+        raise ValueError("export start date cannot defer more than one UTC day")
+    return first
+
+
+def add_recurring_assembly(repository, output, revision, target_path, public_key_path, signer_public_key,
+                           export_not_before=None):
     """Add a disarmed native job around the original scripts and strict monitor."""
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("recurring source must be one immutable commit")
+    export_start_date(export_not_before, datetime.now(timezone.utc).date())
     public_hex = public_key_path.read_text().strip()
     if re.fullmatch(r"[0-9a-f]{64}", public_hex) is None:
         raise ValueError("native evidence public key must be one raw Ed25519 key")
@@ -216,6 +231,8 @@ def add_recurring_assembly(repository, output, revision, target_path, public_key
                   controller_project_id="9c094747-8662-4ba7-8d6b-5a4fa7ca27eb",
                   controller_environment_id="e16a2d28-22b0-4028-9a6e-e67710ecbe5e",
                   controller_service_id="1edc46a6-25e8-4497-941f-0903eb8f6e5d")
+    if export_not_before is not None:
+        policy["export_not_before"] = export_not_before
     policy["recurring_steps_sha256"] = digest(json.dumps(
         [{name: step[name] for name in ("name", "run", "env") if name in step}
          for step in original["jobs"]["export-recovery"]["steps"] if step.get("name") in RECURRING_STEPS.values()],
@@ -236,11 +253,15 @@ if __name__ == "__main__":
     parser.add_argument("--recurring-source")
     parser.add_argument("--production-target", type=Path)
     parser.add_argument("--execution-public-key", type=Path)
+    parser.add_argument("--export-not-before", help="First export UTC date; at most tomorrow")
     args = parser.parse_args()
+    if args.export_not_before and not args.recurring_source:
+        parser.error("an export start date requires a recurring assembly")
     prepare(args.repository, args.output, args.case, json.loads(args.target.read_text()), args.public_key)
 
     if args.recurring_source:
         if not args.production_target or not args.execution_public_key:
             parser.error("recurring preparation requires fixed production target and evidence public key")
         add_recurring_assembly(args.repository, args.output, args.recurring_source,
-                               args.production_target, args.execution_public_key, args.public_key)
+                               args.production_target, args.execution_public_key, args.public_key,
+                               args.export_not_before)
