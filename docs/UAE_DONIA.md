@@ -26,10 +26,12 @@ prove which underlying calculation route was used on that date.
 
 Dates in the chart remain the observation-date basis. The response does not
 establish each observation's actual publication timestamp or historical
-availability; those timestamps remain unknown. A same-Dubai-day chart date is
-fresh, one day old is aging and older is stale. This conservative calendar-age
-policy does not infer holidays or count missed publications. Re-fetching an old
-observation cannot make its date current.
+availability; those timestamps remain unknown. The latest chart date stays
+fresh until 09:30 Asia/Dubai on the next Monday to Friday, plus 90 minutes for
+the hourly collector. After that grace, one missed weekday is aging and two or
+more are stale. Saturday and Sunday stay on the Friday print because no DONIA
+publication is due. Public holidays are not verified and are not excused.
+Re-fetching an old observation cannot make its date current.
 
 The four bounded chart ranges (month, six months, year to date and one year)
 must agree. Only the one-year history is admitted: the publisher's separate

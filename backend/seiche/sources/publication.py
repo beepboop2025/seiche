@@ -308,18 +308,93 @@ def cbuae_fx_freshness(asof: object, *, now: datetime) -> dict:
     }
 
 
+_DUBAI = ZoneInfo("Asia/Dubai")
+_DONIA_PUBLICATION_AIM = time(9, 30)
+_DONIA_COLLECTOR_GRACE = timedelta(minutes=90)
+_DONIA_EARLIEST = date(2018, 1, 1)
+
+
+def _uae_weekday(day: date) -> bool:
+    """Monday to Friday. Public holidays are not verified and are not skipped."""
+    return day.weekday() < 5
+
+
+def _previous_uae_weekday(day: date) -> date:
+    cursor = day - timedelta(days=1)
+    while not _uae_weekday(cursor):
+        cursor -= timedelta(days=1)
+    return cursor
+
+
+def _donia_expected_chart_date(local_now: datetime) -> date:
+    day = local_now.date()
+    opens = datetime.combine(day, _DONIA_PUBLICATION_AIM, _DUBAI) + _DONIA_COLLECTOR_GRACE
+    if _uae_weekday(day) and local_now >= opens:
+        return day
+    return _previous_uae_weekday(day)
+
+
+def _donia_latest_aim(expected: date) -> datetime:
+    return datetime.combine(expected, _DONIA_PUBLICATION_AIM, _DUBAI)
+
+
+def _missed_uae_weekdays(observed: date, expected: date) -> int:
+    if observed >= expected:
+        return 0
+    missed = 0
+    cursor = observed
+    while cursor < expected:
+        cursor += timedelta(days=1)
+        if _uae_weekday(cursor):
+            missed += 1
+    return missed
+
+
 def cbuae_donia_freshness(asof: object, *, now: datetime) -> dict:
-    """Chart-date age, without inventing an actual release or holiday calendar."""
-    policy = cbuae_fx_freshness(asof, now=now)
-    policy.update(freshness_policy="cbuae-donia-chart-date-age-v1",
-                  freshness_basis="Publisher chart date: same Dubai calendar day fresh, one day aging, older stale; no verified holiday calendar.")
-    policy["publication_schedule"] = {
-        "source_url": "https://centralbank.ae/en/our-operations/monetary-policy-and-domestic-markets/",
-        "timezone": "Asia/Dubai", "rule": "CBUAE aims to publish DONIA by 09:30 on UAE business days; this is not an observed publication timestamp.",
-        "clock_precision": "unknown", "latest_due_at": None, "actual_published_at": None,
-        "missed_publication_opportunities": None,
+    """Keep the latest chart date fresh until the next aimed DONIA publication.
+
+    CBUAE aims to publish by 09:30 Dubai time on Monday to Friday. The chart
+    has no actual publication timestamp. The hourly collector has 90 minutes
+    after that aim before a missing weekday print is aging. One missed weekday
+    is aging. Two or more are stale. Weekend gaps stay fresh because no print
+    is due. Public holidays are not excused.
+    """
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("publication evaluation time must be timezone-aware")
+    local_now = now.astimezone(_DUBAI)
+    local_day = local_now.date()
+    age = None
+    status = "dead" if asof is None else "unknown"
+    expected = _donia_expected_chart_date(local_now)
+    try:
+        observed = date.fromisoformat(asof) if isinstance(asof, str) else None
+    except ValueError:
+        observed = None
+    if observed is not None and _DONIA_EARLIEST <= observed <= local_day:
+        age = (local_day - observed).days
+        missed = _missed_uae_weekdays(observed, expected)
+        status = "fresh" if missed == 0 else "aging" if missed == 1 else "stale"
+    return {
+        "staleness": status,
+        "age_days": age,
+        "publication_frequency": "D",
+        "freshness_policy": "cbuae-donia-publication-aim-v1",
+        "freshness_grace_days": None,
+        "freshness_basis": (
+            "Latest publisher chart date stays fresh until 09:30 Asia/Dubai on the next "
+            "Monday to Friday, plus 90 minutes for the hourly collector. Public holidays "
+            "are not verified. This aim is not an observed publication timestamp."
+        ),
+        "publication_schedule": {
+            "source_url": "https://centralbank.ae/en/our-operations/monetary-policy-and-domestic-markets/",
+            "timezone": "Asia/Dubai",
+            "rule": "CBUAE aims to publish DONIA by 09:30 on UAE business days; this is not an observed publication timestamp.",
+            "clock_precision": "unknown",
+            "latest_due_at": _donia_latest_aim(expected).isoformat(),
+            "actual_published_at": None,
+            "missed_publication_opportunities": None,
+        },
     }
-    return policy
 
 
 def publication_freshness(

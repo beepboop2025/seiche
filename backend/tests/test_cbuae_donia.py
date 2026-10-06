@@ -5,6 +5,7 @@ import io
 from threading import Event
 from dataclasses import replace
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 import hashlib
 import json
 from pathlib import Path
@@ -231,9 +232,39 @@ def test_freshness_never_invents_release_counts_or_actual_publication_time():
     assert publication_freshness("fred", source.REMOTE_ID, "D", observed, now=NOW) is None
     policy = publication_freshness(source.SOURCE, source.REMOTE_ID, "D", observed, now=NOW)
     assert policy["staleness"] == "fresh"
+    assert policy["freshness_policy"] == "cbuae-donia-publication-aim-v1"
     assert policy["publication_schedule"]["actual_published_at"] is None
     assert policy["publication_schedule"]["missed_publication_opportunities"] is None
+    assert policy["publication_schedule"]["latest_due_at"] == "2026-10-06T09:30:00+04:00"
     assert source.cbuae_donia_freshness("2026-10-07", now=NOW)["staleness"] == "unknown"
+
+
+def _dubai(moment: str) -> datetime:
+    return datetime.fromisoformat(moment).replace(tzinfo=ZoneInfo("Asia/Dubai"))
+
+
+@pytest.mark.parametrize("moment,asof,status", [
+    ("2026-10-07T02:23:00", "2026-10-06", "fresh"),
+    ("2026-10-07T10:59:00", "2026-10-06", "fresh"),
+    ("2026-10-07T11:00:00", "2026-10-06", "aging"),
+    ("2026-10-07T11:00:00", "2026-10-07", "fresh"),
+    ("2026-10-10T12:00:00", "2026-10-09", "fresh"),
+    ("2026-10-11T23:00:00", "2026-10-09", "fresh"),
+    ("2026-10-12T02:00:00", "2026-10-09", "fresh"),
+    ("2026-10-12T11:01:00", "2026-10-09", "aging"),
+    ("2026-10-13T11:01:00", "2026-10-09", "stale"),
+    ("2026-10-07T15:00:00", "2026-10-08", "unknown"),
+])
+def test_donia_stays_fresh_until_the_next_weekday_publication_aim(moment, asof, status):
+    policy = source.cbuae_donia_freshness(asof, now=_dubai(moment))
+    assert policy["staleness"] == status
+    assert policy["publication_schedule"]["actual_published_at"] is None
+    assert policy["publication_schedule"]["missed_publication_opportunities"] is None
+
+
+def test_donia_freshness_rejects_a_naive_clock():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        source.cbuae_donia_freshness("2026-10-06", now=datetime(2026, 10, 7, 2, 23))
 
 
 def test_donia_csv_carries_dataset_specific_attribution_and_convention():
