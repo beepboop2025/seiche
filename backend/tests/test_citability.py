@@ -129,6 +129,8 @@ def test_series_index_catalogs_every_registry_series(client):
     # (BIS, CFETS, exchanges) are marked too, not just the FRED-hosted four
     assert spx["json"] is None
     assert rows["SOFR"]["json"] == "/api/series/SOFR"
+    assert rows["DONIA"]["json"] == "/api/series/DONIA"
+    assert rows["DONIA"]["csv"] == "/api/series/DONIA.csv"
     for licensed in ("BTC_USD", "CREDIT_GAP_US"):
         row = rows[licensed]
         assert row["csv"] is None and row["json"] is None, licensed
@@ -227,18 +229,21 @@ def test_csv_export_is_allowlisted_by_upstream():
 
 def test_every_restricted_series_is_refused_by_the_route(client):
     from seiche import methodology as m
-    from seiche.config import ALL_SERIES, ECB_FX_SERIES, CBUAE_FX_SERIES
+    from seiche.config import ALL_SERIES, ECB_FX_SERIES, CBUAE_FX_SERIES, CBUAE_DONIA_SERIES
     for mnemonic, spec in ALL_SERIES.items():
-        if spec in (*ECB_FX_SERIES, *CBUAE_FX_SERIES) and mnemonic not in m.CSV_RESTRICTED:
+        if spec in (*ECB_FX_SERIES, *CBUAE_FX_SERIES, *CBUAE_DONIA_SERIES) and mnemonic not in m.CSV_RESTRICTED:
             assert m.csv_restriction(mnemonic) is None, mnemonic
             continue
         if spec.source not in m.CSV_ALLOWED_SOURCES or mnemonic in m.CSV_RESTRICTED:
             assert m.csv_restriction(mnemonic) is not None, mnemonic
 
 
-def test_explicit_restriction_overrides_reviewed_ecb_fx_allowlist(monkeypatch):
+@pytest.mark.parametrize("mnemonic", ["ECBFX_CNY", "DONIA"])
+def test_explicit_restriction_overrides_reviewed_dataset_allowlist(client, monkeypatch, mnemonic):
     from seiche import methodology as m
-    monkeypatch.setattr(m, "CSV_RESTRICTED", m.CSV_RESTRICTED | {"ECBFX_CNY"})
-    reason = m.csv_restriction("ECBFX_CNY")
+    monkeypatch.setattr(m, "CSV_RESTRICTED", m.CSV_RESTRICTED | {mnemonic})
+    reason = m.csv_restriction(mnemonic)
     assert reason and "restricted upstream data" in reason
+    assert client.get(f"/api/series/{mnemonic}").status_code == 403
+    assert client.get(f"/api/series/{mnemonic}.csv").status_code == 403
     assert m.csv_restriction("ECBFX_USD") is None
