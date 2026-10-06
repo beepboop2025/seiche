@@ -59,6 +59,24 @@ api.seiche.info {
     import accesslog
     import security_headers
 
+    # Robots is scoped to its hostname: the website's explanation-only Google
+    # permission must not expose Seiche data on this separate shared API host.
+    # Only Seiche namespaces are excluded; sibling product policy is unchanged.
+    @seiche_data_robots {
+        method GET HEAD
+        path /robots.txt
+    }
+    handle @seiche_data_robots {
+        header Content-Type "text/plain; charset=utf-8"
+        header Cache-Control "public, max-age=300, no-transform"
+        respond `User-agent: Google-Extended
+Disallow: /api
+Disallow: /mcp
+Disallow: /.well-known/mcp.json
+Disallow: /.well-known/api-catalog
+` 200
+    }
+
     # Riptide's paper-only public record. The origin binds loopback on 8797;
     # stripping /riptide keeps its REST, OpenAPI and stateless MCP paths rooted
     # at / while the public discovery documents retain the product namespace.

@@ -20,6 +20,13 @@ Terms and the generated LLM index state the same narrow permission. Other
 training crawlers retain their exclusions. Robots compliance is voluntary and
 does not establish actual model use or endorsement.
 
+The separate `api.seiche.info` host previously returned 404 for robots.txt, which
+did not carry the website's exclusion. Its Caddy GET/HEAD route now declares a
+Google-Extended exclusion for Seiche's `/api`, `/mcp` and two machine-discovery
+namespaces. The shared host's Undertow, Palimpsest and Riptide paths retain their
+existing policy. This robots declaration does not replace authentication or
+source-rights enforcement in the applications.
+
 ## Product updates
 
 The normal backend test suite compares the three complete page files and their
@@ -40,3 +47,10 @@ After a qualified release, compare public robots and terms to the staged source,
 check the three allowed paths and representative data/archive paths, and retain
 the release and readback receipts. The fleet monitor separately observes live
 Google-Extended policy; it does not grant permission or assert Gemini citations.
+
+The independent API edge change may be installed from reviewed signed source
+without activating application code. Preserve the currently installed Caddy
+configuration, apply only this exact robots handler, validate and retain a
+recovery copy before reloading. Do not install an unreleased full Caddyfile over
+the live shared configuration. Verify GET/HEAD, excluded Seiche paths and sibling
+route behavior separately from the held website publication.

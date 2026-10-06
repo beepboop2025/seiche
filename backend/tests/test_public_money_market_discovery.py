@@ -276,11 +276,12 @@ def test_robots_separates_retrieval_from_model_training():
     assert "Content-Signal: search=yes, ai-input=yes, ai-train=no" in robots
     assert "cannot override Cloudflare AI Crawl Control or WAF" in robots
     assert "used for search or user-directed AI retrieval with attribution" in terms
-    assert (
-        "Permission to use published pages for model training is not granted" in terms
-    )
+    assert "Model-training permission is excluded except for the limited Google permission" in terms
+    assert "This grant covers only original text owned by Seiche" in terms
+    assert "datasets, API responses, feeds, dispatches and all other pages" in terms
     assert "AI input or training material" not in terms
-    assert "does not grant model training" in dispatch_pages._LLMS_PREAMBLE
+    assert "exact explanatory pages" in dispatch_pages._LLMS_PREAMBLE
+    assert "do not carry a model-training grant" in dispatch_pages._LLMS_PREAMBLE
     for agent in (
         "OAI-SearchBot",
         "ChatGPT-User",
@@ -299,7 +300,6 @@ def test_robots_separates_retrieval_from_model_training():
         "GPTBot",
         "ClaudeBot",
         "anthropic-ai",
-        "Google-Extended",
         "CCBot",
         "meta-externalagent",
         "Applebot-Extended",
