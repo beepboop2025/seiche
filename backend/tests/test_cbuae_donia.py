@@ -44,8 +44,12 @@ def public_response(handler):
             return source.SOURCE_URL
     class Opener:
         def open(self, request, timeout):
+            assert request.full_url == "https://centralbank.ae/umbraco/surface/interestrate/GetKeyInterestRate"
             assert request.get_header("User-agent") == source.SOURCE_USER_AGENT
             assert request.get_header("Accept-language") == "en-US,en;q=0.9"
+            assert request.get_header("Accept") == "text/html, */*; q=0.01"
+            assert request.get_header("X-requested-with") == "XMLHttpRequest"
+            assert request.get_header("Referer") == "https://centralbank.ae/en/"
             assert request.get_header("Authorization") is None
             assert request.get_header("Cookie") is None
             assert timeout == 10

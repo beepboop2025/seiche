@@ -10,6 +10,9 @@ do not fetch the central bank.
 The source uses Python's standard HTTP transport in a dedicated worker, with a
 transparent Seiche user agent and an English language preference. It does not
 use authentication, browser impersonation, challenge solving or a proxy fallback.
+The URL casing, HTML Accept header, AJAX marker and homepage Referer follow the
+request published in the CBUAE homepage. A production-host probe verified this
+request; the generic request without that published context returned HTTP 403.
 Redirects, partial responses, access denials, oversized bodies and expired
 download deadlines fail without publishing a new observation.
 

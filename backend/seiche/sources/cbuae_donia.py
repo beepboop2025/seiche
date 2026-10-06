@@ -28,7 +28,7 @@ from seiche.sources.publication import cbuae_donia_freshness
 SOURCE = "cbuae_donia"
 MNEMONIC = "DONIA"
 REMOTE_ID = "UAE_INTEREST_RATES/DONIA"
-SOURCE_URL = "https://centralbank.ae/umbraco/Surface/InterestRate/GetKeyInterestRate"
+SOURCE_URL = "https://centralbank.ae/umbraco/surface/interestrate/GetKeyInterestRate"
 DATASET_URL = "https://centralbank.ae/en/our-operations/monetary-policy-and-domestic-markets/"
 TERMS_URL = "https://centralbank.ae/en/open-data-landing/open-data-policy/"
 METHODOLOGY_URL = "https://centralbank.ae/media/kuqd0q5o/attachment-7_donia-term-sheet.pdf"
@@ -208,8 +208,13 @@ def _download_sync(cancelled: Event):
     # This public endpoint accepts the standard-library transport. Keep its
     # source-specific request out of the API health and store executors.
     deadline = time.monotonic() + DOWNLOAD_DEADLINE_SECONDS
-    request = Request(SOURCE_URL, headers={"User-Agent": SOURCE_USER_AGENT,
-                                         "Accept-Language": "en-US,en;q=0.9"})
+    # Match the public homepage's documented HTML AJAX request. Keep the
+    # product identity transparent; no browser cookies or challenge handling.
+    request = Request(SOURCE_URL, headers={
+        "User-Agent": SOURCE_USER_AGENT, "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html, */*; q=0.01", "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://centralbank.ae/en/",
+    })
     if cancelled.is_set():
         raise TimeoutError("DONIA download cancelled")
     with build_opener(_NoRedirect()).open(request, timeout=10) as response:
