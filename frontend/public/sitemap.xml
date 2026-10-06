@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://seiche.info/gift-city/</loc><lastmod>2026-10-04</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
   <url><loc>https://seiche.info/agents/quant/</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
   <url>
     <loc>https://seiche.info/</loc>
@@ -363,4 +364,7 @@
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
+  <url><loc>https://seiche.info/guides/dollar-funding-stress-indicators/</loc><lastmod>2026-10-04</lastmod><changefreq>monthly</changefreq></url>
+  <url><loc>https://seiche.info/guides/currency-conversion-reference-rates/</loc><lastmod>2026-10-04</lastmod><changefreq>monthly</changefreq></url>
+  <url><loc>https://seiche.info/guides/money-market-rates-and-funding-cost/</loc><lastmod>2026-10-04</lastmod><changefreq>monthly</changefreq></url>
 </urlset>

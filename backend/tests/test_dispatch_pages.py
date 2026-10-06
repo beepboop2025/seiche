@@ -93,7 +93,7 @@ def test_sitemap_has_base_pages_and_letters(repo):
     namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
     gift = next(node for node in ElementTree.fromstring(sm).findall("s:url", namespace)
                 if node.findtext("s:loc", namespaces=namespace) == "https://seiche.info/gift-city/")
-    assert gift.findtext("s:lastmod", namespaces=namespace) == "2026-10-02"
+    assert gift.findtext("s:lastmod", namespaces=namespace) == "2026-10-04"
     assert gift.findtext("s:changefreq", namespaces=namespace) == "monthly"
 
 

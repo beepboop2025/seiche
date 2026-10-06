@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
+<title>Money-market rates: compare benchmarks and calculate funding cost | Seiche</title>
+<meta name="description" content="Understand overnight benchmarks, secured versus unsecured funding, observation dates and simple funding-cost scenarios with explicit fees and day counts.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://seiche.info/guides/money-market-rates-and-funding-cost/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Seiche">
+<meta property="og:title" content="Money-market rates: compare benchmarks and calculate funding cost">
+<meta property="og:description" content="Understand overnight benchmarks, secured versus unsecured funding, observation dates and simple funding-cost scenarios with explicit fees and day counts.">
+<meta property="og:url" content="https://seiche.info/guides/money-market-rates-and-funding-cost/">
+<meta property="article:published_time" content="2026-10-04">
+<meta property="article:modified_time" content="2026-10-04">
+<meta name="twitter:card" content="summary">
+<link rel="stylesheet" href="/markets/markets.css">
+<style>
+.reference-guide{width:min(920px,calc(100% - 40px));margin:0 auto;padding:52px 0 72px;color:inherit;font:16px/1.75 system-ui,sans-serif}
+.reference-guide h1{font-size:clamp(34px,5vw,58px);line-height:1.12;letter-spacing:-.035em;max-width:24ch;margin:18px 0 24px}
+.reference-guide h2{font-size:clamp(24px,3vw,32px);line-height:1.25;margin:0 0 20px;letter-spacing:-.02em}
+.reference-guide p,.reference-guide li{max-width:78ch}.reference-guide p{margin:0 0 20px}.reference-guide a{color:#8aafff;text-underline-offset:3px}
+.reference-guide .guide-meta{font-size:13px;color:#a7acba}.reference-guide .guide-answer{font-size:20px;border-left:3px solid #8aafff;padding:10px 0 10px 22px;margin:28px 0}
+.reference-guide section{padding:34px 0;border-top:1px solid #303644;scroll-margin-top:28px}.reference-guide li+li{margin-top:12px}
+.reference-guide .guide-toc{display:block;text-align:left;padding:22px;background:#10151e;border:1px solid #303644;margin:30px 0}
+.reference-guide .guide-toc ol{margin-bottom:0}.reference-guide .guide-toc a{font:15px/1.5 system-ui,sans-serif}
+.guide-table{overflow-x:auto;max-width:100%;margin:24px 0}.guide-table table{border-collapse:collapse;min-width:590px;width:100%;font-size:14px}
+.guide-table caption{text-align:left;font-size:13px;color:#a7acba;padding:0 0 12px}.guide-table th,.guide-table td{padding:15px;border:1px solid #303644;text-align:left;vertical-align:top}
+.guide-table th{background:#10151e}.reference-guide code{white-space:normal;overflow-wrap:anywhere;font-size:.9em;background:#10151e;padding:3px 5px}
+.guide-source-list{font-size:14px}.guide-citation{background:#10151e;border:1px solid #303644;padding:22px;overflow-wrap:anywhere}
+.guide-skip{position:absolute;left:-10000px;top:8px;z-index:100}.guide-skip:focus{left:12px;background:#fff;color:#000;padding:12px}
+.reference-guide :focus-visible{outline:3px solid #8aafff;outline-offset:4px}
+@media(max-width:600px){.reference-guide{width:calc(100% - 32px);padding-top:32px}.reference-guide h1{font-size:36px}.reference-guide .guide-answer{font-size:18px;padding-left:16px}}
+@media print{.research-header,.topbar,.guide-toc,.guide-skip{display:none}.reference-guide{width:100%;color:#111;background:white}.reference-guide a{color:#111}.reference-guide section{break-inside:avoid}}
+</style>
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "@id": "https://seiche.info/guides/money-market-rates-and-funding-cost/#article",
+  "headline": "Money-market rates: compare benchmarks and calculate funding cost",
+  "description": "Understand overnight benchmarks, secured versus unsecured funding, observation dates and simple funding-cost scenarios with explicit fees and day counts.",
+  "url": "https://seiche.info/guides/money-market-rates-and-funding-cost/",
+  "mainEntityOfPage": "https://seiche.info/guides/money-market-rates-and-funding-cost/",
+  "datePublished": "2026-10-04",
+  "dateModified": "2026-10-04",
+  "inLanguage": "en",
+  "author": {
+    "@type": "Organization",
+    "name": "Seiche",
+    "url": "https://seiche.info/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Seiche",
+    "url": "https://seiche.info/"
+  },
+  "citation": [
+    "https://www.newyorkfed.org/markets/reference-rates",
+    "https://www.bankofengland.co.uk/markets/sonia-benchmark",
+    "https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/euro_short-term_rate/html/index.en.html",
+    "https://www.newyorkfed.org/markets/reference-rates/additional-information-about-reference-rates"
+  ]
+}</script>
+</head>
+<body>
+<a class="guide-skip" href="#guide">Skip to guide</a>
+<header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary"><a href="/use-cases">Use cases</a><a href="/money-markets/">Evidence map</a><a href="/markets/">World markets</a><a href="/developers">API + MCP</a><a href="/methodology">Methods</a></nav>
+  </header>
+<main id="guide" class="reference-guide">
+<p class="guide-meta"><a href="/">Seiche</a> / Research guides</p>
+<h1>Money-market rates: compare benchmarks and calculate funding cost</h1>
+<p class="guide-meta">By <a href="https://seiche.info/">Seiche</a> · Published and source-checked <time datetime="2026-10-04">4 October 2026</time> · Educational research</p>
+<p class="guide-answer">Compare money-market rates only after identifying their currency, tenor, collateral, participants and observation date. A benchmark describes its underlying market; it is not a borrowing offer for every institution. To translate an annualised rate into a cost, state the principal, term, day-count convention, compounding method and included fees.</p>
+<nav class="guide-toc" aria-label="On this page"><strong>In this guide</strong><ol><li><a href="#benchmarks">Why are SOFR, SONIA and euro short-term rates different?</a></li><li><a href="#check">What should you check before comparing rates?</a></li><li><a href="#example">Worked example: the lowest rate need not give the lowest included cost</a></li><li><a href="#use">Compare funding assumptions in Seiche</a></li><li><a href="#sources">Sources and citation</a></li></ol></nav>
+<section id="benchmarks"><h2>Why are SOFR, SONIA and euro short-term rates different?</h2><p><a href="https://www.newyorkfed.org/markets/reference-rates">SOFR</a> describes overnight Treasury-secured dollar borrowing. The Bank of England's <a href="https://www.bankofengland.co.uk/markets/sonia-benchmark">SONIA</a> measures sterling overnight borrowing based on eligible transactions. The ECB publishes the <a href="https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/euro_short-term_rate/html/index.en.html">euro short-term rate, €STR</a>, with its own transaction, settlement and publication conventions.</p><p>These rates are not interchangeable merely because each is overnight and annualised. Currency, collateral and the eligible participants differ. A numerical gap between countries is not an immediately available arbitrage profit; funding access, hedging, balance-sheet costs and settlement matter.</p></section>
+<section id="check"><h2>What should you check before comparing rates?</h2><div class="guide-table"><table><caption>Keep the instrument identity with the number</caption><thead><tr><th scope="col">Check</th><th scope="col">Why it matters</th></tr></thead><tbody><tr><th scope="row">Currency and tenor</th><td>An overnight local-currency observation is not a three-month dollar financing offer.</td></tr><tr><th scope="row">Secured or unsecured</th><td>Collateral and counterparty exposures change the economics.</td></tr><tr><th scope="row">Policy rate or traded benchmark</th><td>An administered setting and an observed transaction measure describe different things.</td></tr><tr><th scope="row">Observation and publication dates</th><td>The day a number appears can follow the day of the underlying transactions.</td></tr><tr><th scope="row">Simple or compounded</th><td>Holding one rate constant is not the same as accumulating daily realised rates.</td></tr></tbody></table></div><p>Seiche's <a href="/money-markets/">money-market evidence map</a> routes the reader to source-defined instruments. A missing benchmark remains missing, even if a related policy rate or currency reference is available.</p></section>
+<section id="example"><h2>Worked example: the lowest rate need not give the lowest included cost</h2><p><strong>Hypothetical, same-currency financing scenarios.</strong> For principal of 1,000,000 units, a 6% annual simple rate over 30 actual days on a 360-day basis costs 5,000 units before fees. A 5% rate costs about 4,166.67 units; adding 1,000 units of fees raises that scenario's included cost to about 5,166.67.</p><p>The simple-interest formula is <code>principal × annual_rate_pct / 100 × actual_days / basis</code>. With a 365-day basis, the first scenario instead costs about 4,931.51. That difference comes from the convention, not a change in the headline rate.</p><p>The New York Fed's <a href="https://www.newyorkfed.org/markets/reference-rates/additional-information-about-reference-rates">reference-rate methodology</a> explains the separate treatment of daily compounding and non-business days in its published SOFR averages. A constant-rate simple-interest scenario does not reproduce those averages or the terms of an individual contract.</p></section>
+<section id="use"><h2>Compare funding assumptions in Seiche</h2><p>The <a href="/#workbench/funding">funding workbench</a> pairs source exploration with a local calculator for two financing scenarios. Enter a common currency, principal, annual rates, days, basis and fees. The output separates interest from total included cost and exports the assumptions with the comparison.</p><p>The same comparison is available in the <a href="/#gift%20city">GIFT City desk</a>, alongside gold-inventory financing and dated corridor evidence. For evidence of system pressure, continue with the <a href="/guides/dollar-funding-stress-indicators/">dollar-funding stress guide</a>. For a particular lender, use <a href="https://liquilens.in/guides/how-to-assess-bank-risk/">the institution disclosure review</a>.</p><p>A calculation can be complete for its declared inputs while the economic review remains incomplete. Unentered taxes, collateral terms, margin requirements, rollover exposure or hedging costs do not become zero by default.</p></section>
+<section id="sources"><h2>Sources and citation</h2><p>The linked primary sources support the definitions and context. The checklists and hypothetical examples are Seiche's editorial explanation, not instructions or endorsements from the cited institutions.</p><ol class="guide-source-list"><li><a href="https://www.newyorkfed.org/markets/reference-rates">New York Fed: reference-rate definitions</a></li><li><a href="https://www.bankofengland.co.uk/markets/sonia-benchmark">Bank of England: SONIA benchmark</a></li><li><a href="https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/euro_short-term_rate/html/index.en.html">ECB: euro short-term rate</a></li><li><a href="https://www.newyorkfed.org/markets/reference-rates/additional-information-about-reference-rates">New York Fed: reference-rate calculation conventions</a></li></ol>
+<p class="guide-citation">Suggested citation: Seiche. “Money-market rates: compare benchmarks and calculate funding cost.” 4 October 2026. <a href="https://seiche.info/guides/money-market-rates-and-funding-cost/">https://seiche.info/guides/money-market-rates-and-funding-cost/</a>. Include your access date when citing this page.</p>
+<p class="guide-meta">This page explains a research method. It does not provide a current market assessment, investment advice, a credit rating or a regulatory determination. Contact <a href="mailto:mrinal@liquilens.in">mrinal@liquilens.in</a> with a source correction.</p></section>
+</main>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"534f08f7270a4f4f9a9a10f90d723ca7"}'></script>
+</body>
+</html>
