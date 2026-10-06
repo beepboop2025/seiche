@@ -11,6 +11,18 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.1 release candidate
+
+- Limit Google-Extended grounding/training permission to three reviewed original
+  product explanations; keep source data, archives and other pages excluded.
+- Align terms and the generated discovery index with the scoped permission.
+- Require renewed review when an allowed explanation or its share script changes.
+- Declare Google-Extended exclusions on the separate Seiche API hostname and
+  verify the Caddy route without changing sibling product policies.
+- Prepare corpus receipt `r31` for this application source while retaining the
+  existing corpus identity, source dates, data and original release receipts.
+  Publication remains subject to the ordinary signed release and recovery gates.
+
 ### 0.16.0 release candidate
 
 - Add 34 country funding profiles using official public MOF, BoE, ECB, BIS,

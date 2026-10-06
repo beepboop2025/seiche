@@ -39,7 +39,10 @@ reviewed. No crawler permission is inferred from sitemap membership.
 
 ## Publication
 
-Use the existing signed application/static publication gates. This change also
+Use the existing signed application/static publication gates. The 0.16.1
+candidate and new `r31` corpus receipt bind this exact source; the 0.16.0
+application and `r30` receipt stay immutable. Complete the active 0.16.0 release
+before advancing main to this successor. This change also
 updates the generated LLM-index preamble, so a frontend-only receipt is not
 eligible. The discovery Worker is a transport proxy and must not replace Pages
 content or bypass a held publisher. A merged PR is not proof of live permission.
