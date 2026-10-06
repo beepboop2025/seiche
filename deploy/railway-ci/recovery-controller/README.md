@@ -166,3 +166,32 @@ validation-project API credential. The native controller remains the restore
 executor, and only GitHub's original attestation action supplies the GitHub OIDC
 issuer. An owner-signed installation receipt is installation-time evidence, not a
 claim of continuous live image inspection.
+
+## Application and workflow identities
+
+The embedded monitor pins its application identity to the recurring assembly's
+reviewed source. Current main supplies the workflow identity only after every
+trusted helper and monitor workflow step matches. A frontend-only advance can
+therefore retain the accepted application revision without treating main as a
+new running backend. Two endpoints agreeing on an unaccepted revision still
+fail the original validator. No runtime source environment override is added.
+
+For an explicitly declared recurring assembly, the native Docker build requires
+the embedded monitor and runs its thirteen role checks after the original native
+suite. The original historical-only assembly has no operation field or embedded
+monitor; it retains the original native suite. Unknown declared modes fail the
+build. The separate
+`RAILWAY_RECOVERY_MONITOR_ROLE_TESTS_PASS` and bounded complete-log record
+bind those checks to the embedded manifest and controller/application sources.
+They do not replace the original native suite, actual-image historical restore,
+signed installation, genuine-day export, strict monitor, or later recurrence.
+Qualification must accept both suites from the same actual image before
+activating a replacement. Existing P evidence does not qualify this new image.
+
+Recurring images also require the embedded monitor's separate seventeen-test
+health-wait suite and its `RAILWAY_RECOVERY_HEALTH_WAIT_TESTS_PASS` receipt plus
+bounded complete-log record. The 120-second wait is only for otherwise healthy
+old snapshots; the final original 15-minute freshness predicate is unchanged.
+Qualification accepts this additional suite on the same image while preserving
+the original eighty-eight native and thirteen role checks. Historical-only
+assemblies still have no embedded monitor or recurring health suite.
