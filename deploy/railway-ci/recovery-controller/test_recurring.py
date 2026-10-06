@@ -1,6 +1,6 @@
 """Dry production-stage admission and real Linux restore-wrapper boundaries."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -169,6 +169,69 @@ class NativeAdmissionTests(unittest.TestCase):
         self.assertEqual(self.trace, ["keys", "source", "monitor", "location", "bucket", "runtime", "index", "export"])
         self.assertTrue(self.index.call_args.kwargs["allow_missing"])
         self.stage.assert_called_once()
+
+    def defer_until_tomorrow(self):
+        self.policy["export_not_before"] = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+        self.write_policy()
+
+    def test_deferred_replacement_proves_readiness_without_any_storage_or_export(self):
+        self.defer_until_tomorrow()
+        recurring.main()
+        self.assertEqual(self.trace, ["keys", "source", "monitor"])
+        self.bucket.assert_not_called()
+        self.live.assert_not_called()
+        self.index.assert_not_called()
+        self.download.assert_not_called()
+        self.stage.assert_not_called()
+        self.events.assert_called_once()
+        self.assertEqual(self.events.call_args.args[0], "RAILWAY_NATIVE_RECOVERY_READY_NO_EXPORT")
+        proof = self.events.call_args.kwargs
+        self.assertEqual(proof["status"], "READINESS_ONLY")
+        self.assertFalse(proof["recovery_accepted"])
+        self.assertFalse(proof["production_export_requested"])
+        self.assertFalse(proof["storage_writes"])
+        self.assertEqual(proof["export_not_before"], self.policy["export_not_before"])
+        self.assertEqual(proof["runtime_source"], self.source)
+        retained = list((self.root / "evidence").rglob("readiness-only.json"))
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(json.loads(retained[0].read_bytes()), proof)
+
+    def test_deferred_replacement_still_requires_strict_monitor(self):
+        self.defer_until_tomorrow()
+        self.monitor.side_effect = ValueError("strict monitor rejected")
+        with self.assertRaises(ValueError):
+            recurring.main()
+        self.bucket.assert_not_called()
+        self.stage.assert_not_called()
+        self.events.assert_not_called()
+
+    def test_deferred_replacement_still_requires_current_source_admission(self):
+        self.defer_until_tomorrow()
+        self.source_check.side_effect = ValueError("current source rejected")
+        with self.assertRaises(ValueError):
+            recurring.main()
+        self.monitor.assert_not_called()
+        self.bucket.assert_not_called()
+        self.stage.assert_not_called()
+        self.events.assert_not_called()
+
+    def test_first_export_date_uses_all_original_preflights(self):
+        self.policy["export_not_before"] = datetime.now(timezone.utc).date().isoformat()
+        self.write_policy()
+        with self.assertRaises(ExportReached):
+            recurring.main()
+        self.assertEqual(self.trace, ["keys", "source", "monitor", "location", "bucket", "runtime", "index", "export"])
+        self.events.assert_not_called()
+
+    def test_invalid_export_start_date_fails_before_credentials_or_export(self):
+        for value in (True, "", "2026-1-01", "2026-02-30", "2099-01-01"):
+            with self.subTest(value=value):
+                self.policy["export_not_before"] = value
+                self.write_policy()
+                with self.assertRaises(ValueError):
+                    recurring.main()
+                self.keys.assert_not_called()
+                self.stage.assert_not_called()
 
     def test_export_receives_remaining_job_time_instead_of_old_45_minute_cap(self):
         with mock.patch.object(recurring.time, "monotonic", side_effect=[1000, 1005]), \

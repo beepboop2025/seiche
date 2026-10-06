@@ -218,6 +218,7 @@ def main():
 
 def run_locked():
     import attest
+    from prepare import export_start_date
     manifest_body = (ROOT / "manifest.json").read_bytes()
     for name, expected in json.loads(manifest_body).items():
         if verify.digest((ROOT / name).read_bytes()) != expected:
@@ -226,6 +227,7 @@ def run_locked():
     if policy.get("operation") != "export-recurring":
         raise ValueError("this assembly does not admit recurring production export")
     job_seconds = export_job_seconds(policy)
+    first_export = export_start_date(policy.get("export_not_before"), datetime.now(timezone.utc).date())
     export_deadline = time.monotonic() + job_seconds
     native = {name: os.environ[name] for name in ("RAILWAY_PROJECT_ID", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_SERVICE_ID",
                                                 "RAILWAY_DEPLOYMENT_ID", "RAILWAY_REPLICA_ID")}
@@ -257,6 +259,22 @@ def run_locked():
         current_source = source_identity(policy, private)
         monitor_proof = monitor(policy, monitor_inputs, private, native)
         (evidence / "monitor-proof.json").write_bytes(verify.canonical(monitor_proof))
+        observed = datetime.now(timezone.utc)
+        if first_export is not None and observed.date() < first_export:
+            readiness = {
+                "schema": "seiche.native-recovery-readiness.v1", "status": "READINESS_ONLY",
+                "observed_at": observed.isoformat(), "export_not_before": first_export.isoformat(),
+                "source": current_source, "runtime_source": monitor_proof["release_sha"],
+                "controller_source": policy["controller_source"],
+                "deployment": native["RAILWAY_DEPLOYMENT_ID"], "replica": native["RAILWAY_REPLICA_ID"],
+                "image": image_digest, "manifest": verify.digest(manifest_body),
+                "monitor_proof_sha256": verify.digest(verify.canonical(monitor_proof)),
+                "production_export_requested": False, "storage_writes": False,
+                "recovery_accepted": False, "authority_changed": False,
+            }
+            (evidence / "readiness-only.json").write_bytes(verify.canonical(readiness))
+            verify.event("RAILWAY_NATIVE_RECOVERY_READY_NO_EXPORT", **readiness)
+            return
         target = policy["production_target"]
         flat = {name: policy[name] for name in ("controller_source", "controller_project_id", "controller_environment_id", "controller_service_id", "execution_public_key")}
         flat.update(controller_manifest_sha256=verify.digest(manifest_body), controller_image_digest=image_digest,
