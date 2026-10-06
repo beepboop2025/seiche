@@ -703,7 +703,12 @@ _LLMS_PREAMBLE = f"""# Seiche
 > next to the hits. The board recomputes through the day; the daily letter
 > freezes one reading of it. Cite it as "Seiche" and link {SITE}. Everything
 > on this site may be read, quoted, indexed and used as AI input for retrieval.
-> The crawler policy permits search and AI input but does not grant model training.
+> The crawler policy permits search and AI input. Model training is excluded except
+> for Google's combined grounding/training use of Seiche's original text on three
+> exact explanatory pages listed in {SITE}/terms#google-original-text and robots.txt.
+> Third-party material, source data, datasets, API responses, feeds and dispatches
+> are excluded from that limited permission. This index and the full-text corpus
+> do not carry a model-training grant.
 
 Liquidity intelligence sits on two shelves. Official dashboards give you raw
 series and no view. A terminal that has a view runs about $32k a seat each

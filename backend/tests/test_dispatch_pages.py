@@ -117,7 +117,9 @@ def test_llms_txt_lists_letters_with_markdown_links(repo):
     assert "https://seiche.info/gift-city/" in llms
     assert "https://seiche.info/agents/quant/" in llms
     assert f"https://seiche.info/dispatches/{d['slug']}.md" in llms
-    assert "search and AI input but does not grant model training" in llms
+    assert "crawler policy permits search and AI input" in llms
+    assert "terms#google-original-text" in llms
+    assert "do not carry a model-training grant" in llms
 
 
 def test_llms_full_carries_complete_letters(repo):
