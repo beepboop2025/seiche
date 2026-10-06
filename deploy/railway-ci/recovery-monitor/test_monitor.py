@@ -57,6 +57,7 @@ class MonitorTests(unittest.TestCase):
             env.update({"EXPECTED_VOLUME_ID": "volume", "EXPECTED_ENVIRONMENT_ID": "environment",
                         "EXPECTED_SERVICE_ID": "service", "EXPECTED_POSTGRES_ID": "postgres",
                         "RAILWAY_PROJECT_ID": "project", "RECOVERY_SOURCE_SHA": RELEASE,
+                        "GITHUB_SHA": "b" * 40, "GITHUB_EVENT_NAME": "schedule",
                         "OUTPUT": str(root / "outputs")})
             return subprocess.run([sys.executable, "-I", "-S", str(ROOT / "validator.py")],
                                   env=env, cwd=root, capture_output=True, text=True)
@@ -64,6 +65,15 @@ class MonitorTests(unittest.TestCase):
     def test_original_validator_accepts_complete_fresh_proof(self):
         result = self.validate(fixtures())
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_scheduled_monitor_rejects_degraded_collector_health(self):
+        data = fixtures()
+        for name in ("origin.json", "public.json"):
+            data[name]["faults"] = [{"category": "WORKER_HEALTH",
+                "source": "official-market-collector", "status": "OVERDUE"}]
+        result = self.validate(data)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("production API health is invalid", result.stderr)
 
     def test_original_validator_rejects_stale_native_backup(self):
         data = fixtures()
