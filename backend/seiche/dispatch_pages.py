@@ -48,6 +48,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Base site URLs that always belong in the sitemap, with their cadence.
 BASE_URLS = [
+    ("/questions/", "monthly", "0.8"),
+    ("/questions/sofr-iorb-spread/", "monthly", "0.8"),
+    ("/questions/why-sofr-above-iorb/", "monthly", "0.8"),
+    ("/questions/are-bank-reserves-scarce/", "monthly", "0.8"),
     ("/", "daily", "1.0"),
     ("/developers", "monthly", "0.9"),
     ("/agents/quant/", "monthly", "0.9"),
@@ -79,6 +83,10 @@ BASE_URLS = [
 # Editorial market pages have their own reviewed publication clocks. Keep
 # those dates stable when the sitemap is rebuilt after a newer daily dispatch.
 BASE_LASTMODS = {
+    "/questions/": "2026-10-06",
+    "/questions/sofr-iorb-spread/": "2026-10-06",
+    "/questions/why-sofr-above-iorb/": "2026-10-06",
+    "/questions/are-bank-reserves-scarce/": "2026-10-06",
     "/gift-city/": "2026-10-02",
     "/use-cases/money-market-research/": "2026-08-24",
     "/use-cases/capital-market-transmission/": "2026-08-24",

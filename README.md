@@ -1,5 +1,9 @@
 # SEICHE
 
+Public US dollar funding research from source-dated Fed and Treasury observations. Live board: [seiche.info](https://seiche.info/).
+
+[Dated answers to common research questions](https://seiche.info/questions/) explain the numbers, source dates and limits.
+
 LiquiLens, Seiche and Undertow are connected research products from **LIQUILENS PRIVATE LIMITED**, a registered company in India. Built for international review workflows: institution evidence → funding conditions → market liquidity. Market coverage, source clocks and authority remain specific to each product. [Company and investors](https://liquilens.in/investors/) · [Company profile](https://liquilens.in/company-profile.json) · [Try the connected workflow](https://liquilens.in/start/).
 
 [![sealed record](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.seiche.info%2Fapi%2Fbadge%2Frecord)](https://api.seiche.info/api/notary)

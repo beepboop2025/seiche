@@ -1,5 +1,9 @@
 # Seiche
 
+Public US dollar funding research from source-dated Fed and Treasury observations. Live board: [seiche.info](https://seiche.info/).
+
+[Dated answers to common research questions](https://seiche.info/questions/) explain the numbers, source dates and limits.
+
 [![PyPI](https://img.shields.io/pypi/v/seiche)](https://pypi.org/project/seiche/)
 [![Python](https://img.shields.io/pypi/pyversions/seiche)](https://pypi.org/project/seiche/)
 [![MCP Registry](https://img.shields.io/badge/MCP-registry-6f42c1)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.beepboop2025%2Fseiche)

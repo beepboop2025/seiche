@@ -1,0 +1,64 @@
+{
+  "seiche": {
+    "source_url": "https://api.seiche.info/api/money-markets",
+    "retrieved_on": "2026-10-06",
+    "source_sha256": "90f801dfd79e72486f61229deaf74013ac44e1223bfc9aecf4c41a02b1a57ee6",
+    "metrics": [
+      {
+        "id": "policy.sofr",
+        "value": 3.88,
+        "unit": "%",
+        "asof": "2026-10-02",
+        "status": "available",
+        "freshness": "aging",
+        "source": "New York Fed SOFR via FRED",
+        "change_1w": null,
+        "change_4w": null
+      },
+      {
+        "id": "policy.iorb",
+        "value": 3.9,
+        "unit": "%",
+        "asof": "2026-10-02",
+        "status": "available",
+        "freshness": "aging",
+        "source": "Federal Reserve via FRED IORB/IOER splice",
+        "change_1w": null,
+        "change_4w": null
+      },
+      {
+        "id": "policy.sofr_minus_iorb",
+        "value": -2.0,
+        "unit": "bp",
+        "asof": "2026-10-02",
+        "status": "available",
+        "freshness": "aging",
+        "source": "NY Fed SOFR + Federal Reserve IORB",
+        "change_1w": null,
+        "change_4w": null
+      },
+      {
+        "id": "liquidity.reserves",
+        "value": 2948.09,
+        "unit": "$B",
+        "asof": "2026-09-30",
+        "status": "available",
+        "freshness": "fresh",
+        "source": "Federal Reserve H.4.1 via FRED WRESBAL",
+        "change_1w": 17.897,
+        "change_4w": 53.559
+      },
+      {
+        "id": "liquidity.srf",
+        "value": 0.0,
+        "unit": "$B",
+        "asof": "2026-10-02",
+        "status": "available",
+        "freshness": "aging",
+        "source": "NY Fed repo operation results",
+        "change_1w": null,
+        "change_4w": null
+      }
+    ]
+  }
+}
