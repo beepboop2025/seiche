@@ -22,6 +22,7 @@ from seiche.markets.base import (
 )
 from seiche.markets.calendars import japan_bank_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
+from seiche.markets.funding_reference import extend_reference_pack
 
 
 CALENDAR = BusinessCalendar(
@@ -38,7 +39,7 @@ _CLOCK = PublicationClock(
 )
 
 
-PACK = MarketPack(
+PACK = extend_reference_pack(MarketPack(
     market_id="JP-JPY",
     monetary_area_id="JP",
     display_name="Japanese yen",
@@ -91,4 +92,4 @@ PACK = MarketPack(
     calibration_id="jp-jpy-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
-)
+))

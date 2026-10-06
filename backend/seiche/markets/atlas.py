@@ -143,6 +143,11 @@ _SOURCE_PUBLISHERS = {
 }
 
 
+from seiche.markets.funding_reference import COUNTRIES, OTHER_EUROPE, SOURCE_REFERENCES as _FUNDING_SOURCES
+_SOURCE_URLS.update({key: value["source_url"] for key, value in _FUNDING_SOURCES.items()})
+_SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _FUNDING_SOURCES.items()})
+
+
 def market_source_reference(adapter_id: str) -> dict[str, str | None]:
     """Return the public publisher anchor declared for a canonical adapter.
 
@@ -295,7 +300,7 @@ def _expansion(
     }
 
 
-EXPANSION_LEDGER: tuple[dict[str, str | None], ...] = (
+_REVIEWED_DISCOVERY_LEDGER: tuple[dict[str, str | None], ...] = (
     _expansion(
         "CA-CAD",
         "Americas",
@@ -1025,6 +1030,14 @@ EXPANSION_LEDGER: tuple[dict[str, str | None], ...] = (
         "RESEARCH_QUEUE",
     ),
 )
+
+
+# Preserve the dated review above; countries with declared adapters move out
+# of the active discovery queue without being labelled complete or supported.
+EXPANSION_LEDGER = tuple(item for item in _REVIEWED_DISCOVERY_LEDGER
+                         if item["market_id"] not in {country.market_id for country in COUNTRIES})
+_REGIONS.update({country.market_id: "Europe" for country in COUNTRIES if country.code in OTHER_EUROPE})
+_REGIONS["TW-TWD"] = "East Asia"
 
 
 def _validate_expansion_ledger(
@@ -2051,6 +2064,8 @@ def build_global_money_market_atlas(
 ) -> dict[str, Any]:
     """Build a public, native-frequency atlas from already policy-filtered rows."""
 
+    packs = tuple(packs)
+
     cutoff = (as_of or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
     run_map: dict[tuple[str, str], dict[str, Any]] = {}
     run_order: dict[tuple[str, str], tuple[datetime, str]] = {}
@@ -2072,7 +2087,13 @@ def build_global_money_market_atlas(
     markets: list[dict[str, Any]] = []
     deviations: list[tuple[float, str, str, float]] = []
 
+    from seiche.markets.funding_reference import EURO_COUNTRIES
+    national_sovereign_ids = {code + "-EUR" for code in EURO_COUNTRIES}
     for pack in sorted(packs, key=lambda item: item.market_id):
+        # National sovereign issuers share euro-area funding; they are shown
+        # in country desks rather than counted again as clearing systems.
+        if pack.market_id in national_sovereign_ids:
+            continue
         observations = [
             row
             for row in observations_by_market.get(pack.market_id, ())
@@ -2293,7 +2314,11 @@ def build_global_money_market_atlas(
             "none has both enough canonical history and a non-stale benchmark for current comparison."
         )
 
-    expansion_ledger = _validate_expansion_ledger(EXPANSION_LEDGER)
+    declared_ids = {pack.market_id for pack in packs}
+    expansion_ledger = [item for item in _validate_expansion_ledger(EXPANSION_LEDGER)
+                        if item["market_id"] not in declared_ids]
+    from seiche.country_funding import build_collection
+    countries = build_collection(packs, observations_by_market, now=cutoff)
     expansion_statuses: defaultdict[str, int] = defaultdict(int)
     for item in expansion_ledger:
         expansion_statuses[item["status"]] += 1
@@ -2316,6 +2341,7 @@ def build_global_money_market_atlas(
         ),
         "coverage": {
             "declared_markets": len(markets),
+            "national_sovereign_references": len({p.market_id for p in packs} & national_sovereign_ids),
             "live_benchmarks": live_count,
             "available_benchmarks": available_count,
             "stale_benchmarks": stale_count,
@@ -2339,6 +2365,7 @@ def build_global_money_market_atlas(
             },
         },
         "markets": markets,
+        "country_funding": countries,
         "expansion_ledger": [dict(item) for item in expansion_ledger],
         "expansion_scope": {
             "definition": (

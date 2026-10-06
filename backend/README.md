@@ -20,6 +20,13 @@ a real-time quote service, execution venue, or investment adviser.
 - Hosted MCP server: `https://api.seiche.info/mcp`
 - Cache-only Trade Safety context: `https://api.seiche.info/api/trade-safety/risk-context`
 
+Country funding references are available through `money_market_context` with
+`section="countries"` (catalog) or `section="countries", country="JP"` (country
+observations). The REST equivalent is `/api/v2/country-funding/JP`. Coverage is
+partial: monthly references, daily curves, shared euro-area policy and national
+sovereign issuers retain their own identities and dates. See the
+[country methodology](https://github.com/beepboop2025/seiche/blob/main/docs/COUNTRY_FUNDING.md).
+
 ## Install and run
 
 Seiche requires Python 3.12 or newer.

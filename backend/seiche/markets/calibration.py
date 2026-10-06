@@ -81,6 +81,10 @@ class LocalCalibration:
         ids = [item.component_id for item in self.components]
         if len(ids) != len(set(ids)):
             raise ValueError("component IDs must be unique within a calibration")
+        if self.maturity == "REFERENCE_ONLY":
+            if self.components:
+                raise ValueError("reference-only products cannot have gauge components")
+            return
         if not any(item.required for item in self.components):
             raise ValueError("a local calibration needs at least one required component")
 
@@ -430,6 +434,16 @@ _CALIBRATIONS = {
         ),
     ),
 }
+
+
+from seiche.markets.funding_reference import additional_reference_packs
+
+# A versioned reference publication is explicit about having no calibrated
+# gauge. It must never inherit another country's weights or thresholds.
+_CALIBRATIONS.update({
+    pack.market_id: LocalCalibration(pack.calibration_id, pack.market_id, (), "REFERENCE_ONLY")
+    for pack in additional_reference_packs()
+})
 
 
 def get_local_calibration(market_id: str) -> LocalCalibration:

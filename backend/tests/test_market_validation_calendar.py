@@ -49,11 +49,17 @@ def test_built_in_pack_calendar_gate_passes_when_horizon_is_available(
     assert metrics["failed_fixture_ids"] == []
 
 
-def test_every_registered_pack_has_representative_calendar_evidence() -> None:
+def test_existing_packs_have_calendar_evidence_and_new_references_remain_unvalidated() -> None:
+    from seiche.markets.funding_reference import additional_reference_packs
     registered = {pack.market_id for pack in default_registry().list()}
+    references = {pack.market_id for pack in additional_reference_packs()}
 
-    assert set(REPRESENTATIVE_FIXTURES) == registered
-    assert all(REPRESENTATIVE_FIXTURES[market_id] for market_id in registered)
+    assert set(REPRESENTATIVE_FIXTURES) == registered - references
+    assert all(REPRESENTATIVE_FIXTURES.values())
+    for market in references:
+        result = assess_calendar_and_timezone(default_registry().get(market), as_of=AS_OF)
+        assert result["status"] != "PASS"
+        assert result["reasons"]
 
 
 def test_china_is_pending_when_next_official_calendar_is_not_published() -> None:

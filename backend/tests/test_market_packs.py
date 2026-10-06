@@ -32,6 +32,10 @@ def test_reference_registry_is_monetary_area_aware() -> None:
         "AU-AUD",
         "NZ-NZD",
         "SG-SGD",
+    } | {
+        "DE-EUR", "FR-EUR", "ES-EUR", "IT-EUR", "NL-EUR", "BE-EUR", "AT-EUR", "PT-EUR", "IE-EUR",
+        "FI-EUR", "GR-EUR", "SK-EUR", "SI-EUR", "LT-EUR", "LV-EUR", "EE-EUR", "HR-EUR", "CY-EUR",
+        "MT-EUR", "LU-EUR", "BG-EUR", "CH-CHF", "SE-SEK", "NO-NOK", "DK-DKK", "PL-PLN", "CZ-CZK", "HU-HUF", "TW-TWD",
     }
     euro = registry.get("EA-EUR")
     assert euro.monetary_area_id == "EA"

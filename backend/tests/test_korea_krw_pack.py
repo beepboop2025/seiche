@@ -91,6 +91,12 @@ def test_korea_pack_preserves_source_rights_cadence_and_rate_conventions() -> No
     assert all(
         instrument.day_count is DayCountConvention.ACT_365
         for instrument in pack.instruments
+        if instrument.source_adapter_id not in {"bis_policy_reference", "oecd_fred_reference"}
+    )
+    assert all(
+        instrument.day_count is DayCountConvention.SOURCE_NATIVE
+        for instrument in pack.instruments
+        if instrument.source_adapter_id in {"bis_policy_reference", "oecd_fred_reference"}
     )
     assert pack.instrument_map["KR.BOK.BASE_RATE"].normalize("2.75") == Decimal(
         "275.00"

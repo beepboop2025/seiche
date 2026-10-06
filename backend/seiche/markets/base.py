@@ -29,6 +29,7 @@ from seiche.domain.observation import (
 
 
 class PolicyRegime(StrEnum):
+    UNKNOWN = "unknown"
     FLOOR = "floor"
     CORRIDOR = "corridor"
     TIERED = "tiered"

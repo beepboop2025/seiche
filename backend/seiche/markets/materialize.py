@@ -48,6 +48,7 @@ from seiche.markets.calibration import (
     get_local_calibration,
 )
 from seiche.markets.publication import (
+    PublicationDecision,
     PublicationStatus,
     decide_local_gauge_publication,
 )
@@ -549,7 +550,8 @@ def build_local_products(
     observations = _public_observations(pack, observations)
     runs = _public_runs(pack, runs)
     aged = _age_observations(pack, observations, knowledge_limit)
-    panel = _selected_panel(pack, aged)
+    reference_only = calibration.maturity == "REFERENCE_ONLY"
+    panel = None if reference_only else _selected_panel(pack, aged)
     results: dict[str, KernelResult] = {}
     components: list[dict[str, Any]] = []
     if panel is not None:
@@ -570,7 +572,10 @@ def build_local_products(
                     "normalization": normalized,
                 }
             )
-    decision = decide_local_gauge_publication(
+    decision = PublicationDecision(
+        PublicationStatus.UNAVAILABLE, False,
+        "reference observations only; no local gauge calibration has been admitted",
+    ) if reference_only else decide_local_gauge_publication(
         results,
         calibration.required_components,
     )
@@ -609,7 +614,9 @@ def build_local_products(
     eligibility_reasons = []
     if pack.support_status is not PackSupportStatus.SUPPORTED:
         eligibility_reasons.append("pack validation status is not SUPPORTED")
-    if calibration.maturity != "VALIDATED":
+    if reference_only:
+        eligibility_reasons.append("reference-only pack has no calibrated gauge")
+    elif calibration.maturity != "VALIDATED":
         eligibility_reasons.append("calibration is forward-only")
     if not mature_required:
         eligibility_reasons.append("minimum own-history calibration has not accrued")
@@ -782,7 +789,11 @@ def materialize_global_tide(
     coverage: list[dict[str, Any]] = []
     all_observations: list[Observation] = []
     faults: list[dict[str, Any]] = []
+    from seiche.markets.funding_reference import EURO_COUNTRIES
+    national_sovereign_ids = {code + "-EUR" for code in EURO_COUNTRIES}
     for pack in markets.list():
+        if pack.market_id in national_sovereign_ids:
+            continue
         public_fx_ids = _public_instrument_ids(
             pack,
             role=SemanticRole.FX_SWAP_BASIS,

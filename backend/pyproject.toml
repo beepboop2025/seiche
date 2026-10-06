@@ -1,6 +1,6 @@
 [project]
 name = "seiche"
-version = "0.15.0"
+version = "0.16.0"
 description = "Funding-stress and leveraged-positioning research terminal with public, credentialed-official, licensed, and fail-closed market-data boundaries."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -73,6 +73,7 @@ notary = ["opentimestamps>=0.4"]   # Bitcoin anchoring for the record ledger
 collectors = [
     "pyarrow>=16",                 # immutable normalized Parquet partitions
     "openpyxl>=3.1",               # official RBA/RBNZ workbook adapters
+    "xlrd>=2.0.1",                # CBC Taiwan publishes official BIFF workbooks
 ]
 postgres = ["psycopg[binary]>=3.2"]  # canonical observation metadata + sealed snapshots
 

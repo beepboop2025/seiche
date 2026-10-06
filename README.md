@@ -75,9 +75,9 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.15.0; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.16.0; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.15.0 estuary** adds the [India funding and sovereign curve desk](docs/INDIA_FUNDING_CURVE.md): RBI money markets, policy rates, liquidity operations, dated government yields and aligned curve spreads. Daily benchmarks, monthly curves and auction references retain their own dates and definitions. The existing sixteen public MCP tools expose the India desk through `money_market_context(section="india")`. Deployment and publication remain pending until their signed receipts pass.
+Version **0.16.0 estuary** adds [country funding and sovereign references](docs/COUNTRY_FUNDING.md) for China, Japan, South Korea, Taiwan, Australia, the United Kingdom, all 21 euro-area countries and seven other European countries. Official public observations retain their source dates, native frequency and gaps. The existing sixteen public MCP tools expose the country catalog through `money_market_context(section="countries")`; add `country="JP"` for a country desk. The India desk remains available through `section="india"`. Deployment and publication remain pending until their signed receipts pass.
 New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding
 observations can reach the daily review without waiting through the previous
 four-to-twelve-hour cache windows. Failed refreshes retain the original source
@@ -122,7 +122,7 @@ and release invariants.
 | **Liquidity Weather** | What does the reserve path look like 6 weeks out — and which auction-settlement days land on thin ice? (TGA seasonal model + Fed drift + settlement calendar + backtested error bands) |
 | **Tail Seismograph** | Are the P99 tails of SOFR/TGCR/BGCR detaching from the median — the first tell of every squeeze? |
 | **USD Money Market Desk** ★ | Seven institutional-depth sections over the US cash system: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions and tails; repo-segment rates and volumes; CP−Treasury spreads; bills; liquidity buffers and Fed facilities; and MMF repo plumbing. Cross-source arithmetic uses exact common dates, repo aggregates require a fixed component set, and the descriptive NORMAL/WATCH/STRAIN/STRESS label uses a dependence-robust family-wise adjustment rather than an uncalibrated maximum. |
-| **Global Money Market Atlas** ★ | A licence-aware, native-frequency catalog and available-evidence comparison across 11 registered monetary-area packs, plus a dated source-audited discovery ledger of 52 additional monetary areas across nine regions. Registration and discovery are not live coverage. Each available market is compared only with its own history and can be `LIVE_REFERENCE`/`STALE_REFERENCE`, `DERIVED_CONTEXT`, `POLICY_ONLY`, or `DECLARED_UNAVAILABLE`; no global stress score is manufactured from unlike rate levels. |
+| **Global Money Market Atlas** ★ | A licence-aware, native-frequency catalog and available-evidence comparison across 19 registered monetary systems and 21 national sovereign-reference packs, plus a dated source-audited discovery ledger of 44 additional monetary areas across nine regions. Registration and discovery are not live coverage. Each available market is compared only with its own history and can be `LIVE_REFERENCE`/`STALE_REFERENCE`, `DERIVED_CONTEXT`, `POLICY_ONLY`, or `DECLARED_UNAVAILABLE`; no global stress score is manufactured from unlike rate levels. |
 | **Echo Engine** | Does today's 30-day trajectory rhyme with the run-up to any historical stress episode? |
 | **Tide Tables** ★ | What happened next, every time the water looked like this? Markets rhyme, so forecast like a tide table: the k nearest analogs of today's trailing state trajectory over ALL history (labeled or not, expanding-z — no look-ahead) publish their actual forward spread paths as a fan, the share followed by a funding event within 5bd (Wilson CI vs climatology), a NOVELTY gauge ("the board has never looked like this" is its own signal, and flags the fan as extrapolation), and a walk-forward hindcast that says honestly whether analogs beat the base rate. |
 | **RV X-Ray** | How big is the leveraged Treasury RV complex, and what does a 5/15/30bp shock do to it? |
@@ -270,11 +270,17 @@ model, training, scoring, execution or redistribution permission. See
 - **`GET /api/v2/money-markets`** returns the Global Money Market Atlas from
   already collected canonical observations for all **11 registered packs**.
   Eleven is a catalog count, not a claim of 11 live benchmarks or validated
-  markets. It also returns a **52-row source-audited expansion ledger** with
+  markets. It also returns a **44-row source-audited expansion ledger** with
   benchmark taxonomy, authority link, access/rights caveat, confidence, review
   stage and verification date. Those rows are discovery metadata, not quotes.
   Query coverage, faults and per-market status for what is actually available
   now; the request never starts collection.
+- **`GET /api/v2/country-funding`** lists country coverage; append `/JP`, `/CN`,
+  `/KR`, `/TW`, `/AU`, `/GB`, `/DE`, `/FR`, `/ES` or another catalog code for
+  dated policy, funding, liquidity and sovereign references. `UK` aliases `GB`.
+  MCP exposes the same chartless data through `money_market_context` with
+  `section="countries", country="JP"`. Shared euro-area policy is separate from
+  national sovereign debt. See [sources, dates and gaps](docs/COUNTRY_FUNDING.md).
 - **`GET /api/v2/india-funding`** returns the [India funding desk](docs/INDIA_FUNDING_CURVE.md):
   RBI liquidity and policy evidence, money-market rates, dated sovereign
   benchmarks, monthly maturity spreads and separately labelled bond auctions.

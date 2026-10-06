@@ -22,6 +22,7 @@ from seiche.markets.base import (
 )
 from seiche.markets.calendars import china_public_holidays, china_working_weekends
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
+from seiche.markets.funding_reference import extend_reference_pack
 
 
 # Mainland schedules include explicitly designated working weekends. 2026 is
@@ -42,7 +43,7 @@ _CLOCK = PublicationClock(
 )
 
 
-PACK = MarketPack(
+PACK = extend_reference_pack(MarketPack(
     market_id="CN-CNY",
     monetary_area_id="CN",
     display_name="Mainland Chinese renminbi",
@@ -108,4 +109,4 @@ PACK = MarketPack(
     calibration_id="cn-cny-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
-)
+))

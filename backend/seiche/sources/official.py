@@ -2720,10 +2720,16 @@ def build_official_adapters(
     add("SG-SGD", "mas_sora", "mas_sora", fetch_mas_sora, parse_mas_sora, 120)
     add("SG-SGD", "mas_rates", "mas_rates", fetch_mas_rates, parse_mas_rates, 120)
 
+    from seiche.sources.country_funding import build_country_adapters
+    adapters.extend(build_country_adapters(
+        registry=markets, repository=repository, backfill=backfill, clock=clock,
+    ))
     return tuple(adapters)
 
 
-PRODUCTION_ADAPTER_KEYS = frozenset(
+from seiche.sources.country_funding import PRODUCTION_KEYS as _COUNTRY_PRODUCTION_KEYS
+
+PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),

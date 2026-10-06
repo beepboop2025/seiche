@@ -107,6 +107,7 @@ MONEY_MARKET_SECTION_IDS = (
 MONEY_MARKET_SELECTORS = (
     "summary",
     "india",
+    "countries",
     "diagnostics",
     *MONEY_MARKET_SECTION_IDS,
     "sources",
@@ -1213,10 +1214,10 @@ def _money_market_unavailable(
 
 
 def tool_money_market(args: dict, _public: bool) -> Any:
-    """Serve a chartless USD desk only from already-completed evidence."""
+    """Serve chartless funding desks from completed or canonical evidence."""
     if not isinstance(args, dict):
         raise ToolError("arguments must be an object")
-    unknown = sorted(str(key) for key in args if key != "section")
+    unknown = sorted(str(key) for key in args if key not in {"section", "country"})
     if unknown:
         raise ToolError(f"unknown argument(s): {', '.join(unknown)}")
     selector = args.get("section", "summary")
@@ -1224,6 +1225,25 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         raise ToolError(
             "`section` must be one of: " + ", ".join(MONEY_MARKET_SELECTORS)
         )
+
+    if "country" in args and selector != "countries":
+        raise ToolError("`country` is supported only with section='countries'")
+    if selector == "countries":
+        from seiche import country_funding
+        try:
+            country = country_funding.country_code(args["country"]) if "country" in args else None
+            data = country_funding.read(country, include_history=False)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        out = _money_market_base({}, {
+            "asof": data.get("asof"),
+            "plain_language": data.get("headline", data.get("caveat")),
+            "coverage": data.get("coverage"), "caveats": data.get("caveats", []),
+        }, selector, ok=data["status"] != "unavailable")
+        out["countries"] = data
+        out["sources"] = data.get("sources", [])
+        out["snapshot_generated_at"] = data.get("generated_at")
+        return out
 
     if selector == "india":
         from seiche import india_funding
@@ -1786,7 +1806,10 @@ TOOLS: dict[str, tuple] = {
         False,
     ),
     "money_market_context": (
-        "USD money-market and India funding desks",
+        "USD, India and country funding desks",
+        "Use section='countries' for the public-source country catalog, or add country='JP' "
+        "(a supported ISO alpha-2 code; UK is an alias for GB) for dated policy, funding, liquidity and sovereign references. "
+        "Country coverage is partial and monthly references are explicitly separate from daily curves. "
         "Granular, descriptive USD money-market context from the already assembled "
         "desk: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions "
         "and tails; repo-segment rates and volumes; CP-Treasury spreads; bills and "
@@ -1813,7 +1836,11 @@ TOOLS: dict[str, tuple] = {
                     ),
                     "enum": list(MONEY_MARKET_SELECTORS),
                     "default": "summary",
-                }
+                },
+                "country": {
+                    "type": "string", "pattern": "^[A-Za-z]{2}$",
+                    "description": "Country code for section=countries only. Omit to list supported countries; UK aliases GB.",
+                },
             },
             "additionalProperties": False,
         },
@@ -2455,7 +2482,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
         additional_properties=False,
     ),
     "money_market_context": _output_schema(
-        "Chartless USD money-market and India funding envelopes for supported selectors.",
+        "Chartless USD, India and country funding envelopes for supported selectors.",
         {
             "ok": {"type": "boolean"},
             "schema": {"type": "string"},
@@ -2485,6 +2512,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "formulas": {"type": "array"},
             "diagnostics": {"type": "object"},
             "india": {"type": "object"},
+            "countries": {"type": "object"},
         },
         (
             (

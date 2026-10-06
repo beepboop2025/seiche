@@ -1,5 +1,7 @@
 """AUD reference pack; secured benchmark remains explicitly provisional."""
 
+from seiche.markets.funding_reference import extend_reference_pack
+
 from datetime import time
 
 from seiche.domain.observation import (
@@ -41,7 +43,7 @@ _CLOCK = PublicationClock(
 )
 
 
-PACK = MarketPack(
+PACK = extend_reference_pack(MarketPack(
     market_id="AU-AUD",
     monetary_area_id="AU",
     display_name="Australian dollar",
@@ -88,4 +90,4 @@ PACK = MarketPack(
     calibration_id="au-aud-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
-)
+))

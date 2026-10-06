@@ -3,6 +3,7 @@ import { API_BASE } from "../apiBase";
 import { authHeaders } from "../auth";
 import Chart from "../Chart";
 import IndiaFunding, { type IndiaDesk } from "./IndiaFunding";
+import CountryFunding, { type CountryFundingCollection } from "./CountryFunding";
 import { P } from "../palette";
 import { moneyMarketSharePath } from "../shareRoutes";
 import { MAX_WATCHED_MARKETS, filterWatchedMarkets, missingWatchedMarkets } from "../moneyMarketWatchlist";
@@ -11,7 +12,7 @@ import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
 type FetchMode = "live" | "usd-fallback" | "unavailable";
-type DeskView = "briefing" | "world" | "lab" | "china" | "india" | "notes";
+type DeskView = "briefing" | "world" | "lab" | "china" | "india" | "countries" | "notes";
 
 interface MoneyMarketMetric {
   id: string;
@@ -132,6 +133,7 @@ interface ExpansionRow {
 }
 
 interface MoneyMarketAtlas {
+  country_funding?: CountryFundingCollection;
   ok?: boolean;
   schema?: string;
   generated_at?: string;
@@ -1574,6 +1576,7 @@ export default function MoneyMarkets({ snap }: Props) {
     { id: "briefing", label: "Briefing", note: "what matters now" },
     { id: "world", label: "World map", note: "compare clearing systems" },
     { id: "india", label: "India funding", note: "RBI liquidity · sovereign curve" },
+    { id: "countries", label: "Country funding", note: "policy · funding · sovereign references" },
     { id: "lab", label: "Market lab", note: selected?.currency || "one market at a time" },
     ...(hasChinaDesk ? [{ id: "china" as DeskView, label: "China desk", note: "SHIBOR · FDR007 · CNY" }] : []),
     { id: "notes", label: "Data notes", note: "methods and coverage" },
@@ -1863,6 +1866,7 @@ export default function MoneyMarkets({ snap }: Props) {
 
           {view === "china" && hasChinaDesk && <ChinaDesk engine={harborsEngine} market={chinaMarket} onOpenLab={() => openMarket("CN-CNY")} />}
 
+          {view === "countries" && <CountryFunding data={atlas.country_funding} />}
           {view === "india" && <IndiaFunding data={atlas.markets.find(market => market.market_id === "IN-INR")?.funding_curve} />}
 
           {view === "notes" && <>

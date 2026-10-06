@@ -110,7 +110,8 @@ def test_all_declared_and_planned_markets_remain_visible_without_data():
     assert out["schema"] == ATLAS_SCHEMA
     assert out["legal_notices"]
     assert out["status"] == "PARTIAL"
-    assert len(out["markets"]) == 11
+    assert len(out["markets"]) == 19
+    assert out["coverage"]["national_sovereign_references"] == 21
     assert all(market["status"] == "DECLARED_UNAVAILABLE" for market in out["markets"])
     assert {market["market_id"] for market in out["markets"]} >= {
         "US-USD",
@@ -156,10 +157,10 @@ def test_expansion_ledger_is_broad_source_audited_and_not_live_coverage():
         "verified_on",
     }
 
-    assert len(EXPANSION_LEDGER) >= 50
+    assert len(EXPANSION_LEDGER) == 44
     assert len(expansion_ids) == len(EXPANSION_LEDGER)
     assert registered_ids.isdisjoint(expansion_ids)
-    assert {"CA-CAD", "CZ-CZK", "ID-IDR", "AE-AED", "ZA-ZAR"} <= expansion_ids
+    assert {"CA-CAD", "ID-IDR", "AE-AED", "ZA-ZAR"} <= expansion_ids
     assert all(required_fields <= item.keys() for item in EXPANSION_LEDGER)
     assert all(item["source_url"].startswith("https://") for item in EXPANSION_LEDGER)
     assert all(
@@ -167,7 +168,7 @@ def test_expansion_ledger_is_broad_source_audited_and_not_live_coverage():
     )
     assert all(item["verified_on"] == "2026-08-21" for item in EXPANSION_LEDGER)
     assert out["coverage"]["global_discovery_universe"] == (
-        len(registered_ids) + len(EXPANSION_LEDGER)
+        len(out["markets"]) + len(EXPANSION_LEDGER)
     )
     assert out["coverage"]["discovery_candidates"] == len(EXPANSION_LEDGER)
     assert "deprecated alias" in out["coverage"]["legacy_aliases"]["planned_markets"]

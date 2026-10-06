@@ -11,6 +11,19 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.0 release candidate
+
+- Add 34 country funding profiles using official public MOF, BoE, ECB, BIS,
+  OECD/FRED and CBC observations; preserve daily, monthly and policy-decision dates.
+- Expose dated policy, funding, liquidity and sovereign references through Money
+  Markets, `/api/v2/country-funding/{country}` and the existing money-market MCP tool.
+- Keep euro-area funding shared and national sovereign yields separate; missing
+  maturities, restricted benchmarks and unreviewed calendars remain explicit.
+- Seal reference-only market snapshots without inventing a calibrated gauge.
+  Apply matching date windows and revision/rights selection across public views.
+- Prepare corpus receipt `r30` without moving `r29` or changing corpus data/version.
+  Deployment, recovery and publication require their original acceptance gates.
+
 ### 0.15.0 release candidate
 
 - Add eight RBI collectors for policy rates, liquidity operations, daily money

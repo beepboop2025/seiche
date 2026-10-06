@@ -23,6 +23,7 @@ from seiche.markets.base import (
 )
 from seiche.markets.calendars import uk_england_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
+from seiche.markets.funding_reference import extend_reference_pack
 
 
 CALENDAR = BusinessCalendar(
@@ -43,7 +44,7 @@ _POLICY_CLOCK = PublicationClock(
 )
 
 
-PACK = MarketPack(
+PACK = extend_reference_pack(MarketPack(
     market_id="UK-GBP",
     monetary_area_id="UK",
     display_name="United Kingdom sterling",
@@ -96,4 +97,4 @@ PACK = MarketPack(
     calibration_id="uk-gbp-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
-)
+))

@@ -22,6 +22,7 @@ from seiche.markets.base import (
 )
 from seiche.markets.calendars import country_holiday_provider
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
+from seiche.markets.funding_reference import extend_reference_pack
 
 _korean_public_holidays = country_holiday_provider("KR")
 
@@ -79,7 +80,7 @@ _KOFR_CLOCK = PublicationClock(
 _BOK_REVIEW_PENDING = RedistributionStatus.METADATA_ONLY
 
 
-PACK = MarketPack(
+PACK = extend_reference_pack(MarketPack(
     market_id="KR-KRW",
     monetary_area_id="KR",
     display_name="South Korean won",
@@ -252,4 +253,4 @@ PACK = MarketPack(
     calibration_id="kr-krw-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
-)
+))

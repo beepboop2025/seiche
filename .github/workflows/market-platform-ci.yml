@@ -79,6 +79,8 @@ jobs:
           backend/tests/test_usd_funding_publication.py
           backend/tests/test_trade_safety.py
           backend/tests/test_market_packs.py
+          backend/tests/test_country_funding.py
+          backend/tests/test_country_funding_sources.py
           backend/tests/test_global_money_market_atlas.py
           backend/tests/test_money_market.py
           backend/tests/test_money_market_diagnostics.py

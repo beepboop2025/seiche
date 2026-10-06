@@ -52,6 +52,7 @@ def default_registry() -> MarketRegistry:
     from seiche.markets.singapore_sgd import PACK as singapore_sgd
     from seiche.markets.uk_gbp import PACK as uk_gbp
     from seiche.markets.us_usd import PACK as us_usd
+    from seiche.markets.funding_reference import additional_reference_packs
 
     return MarketRegistry(
         (
@@ -66,5 +67,6 @@ def default_registry() -> MarketRegistry:
             australia_aud,
             new_zealand_nzd,
             singapore_sgd,
+            *additional_reference_packs(),
         )
     )
