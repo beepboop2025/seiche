@@ -2,6 +2,7 @@ import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method, ordinal } from "../lib";
 import UndertowCard from "../UndertowCard";
+import RiptidePaperNote from "../RiptidePaperNote";
 
 function TellCard({ t }: { t: Any }) {
   if (!t?.ok) return <Fault name="The Tell" reason={t?.reason} span={12} />;
@@ -156,6 +157,7 @@ export default function Market({ snap }: { snap: Any }) {
       <ScuttlebuttCard s={snap.engines?.scuttlebutt} />
       <PlaybookCard p={deep.playbook} />
       <UndertowCard />
+      <RiptidePaperNote />
     </div>
   );
 }
