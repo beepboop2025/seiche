@@ -11,7 +11,7 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
-### 0.16.1 release candidate
+### 0.16.2 release candidate
 
 - Limit Google-Extended grounding/training permission to the three reviewed original
   product explanations while keeping source data and archives excluded.
@@ -19,6 +19,13 @@ they change a public contract, methodology, or release artifact.
   allocation alongside Seiche's own funding evidence.
 - Retain the accepted country desks, DONIA collection and recovery identity fixes
   from 0.16.1. Deployment and publication require new signed acceptance receipts.
+
+### 0.16.1
+
+- Connect official CBUAE DONIA observations to the AED card and preserve source clocks.
+- Repair bounded country-atlas loading and separate recovery runtime/controller identities.
+- Retain signed package/publication and ordinary recovery receipts; schedule restoration
+  and genuine native recurrence require their separate acceptance evidence.
 
 ### 0.16.0 release candidate
 
