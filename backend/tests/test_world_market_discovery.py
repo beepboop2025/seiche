@@ -396,7 +396,33 @@ def test_ai_retrieval_permission_and_training_boundary_are_consistent():
     robots = (PUBLIC / "robots.txt").read_text()
     assert "Content-Signal: search=yes, ai-input=yes, ai-train=no" in robots
     assert "used as AI input for retrieval" in dispatch_pages._LLMS_PREAMBLE
-    assert "does not grant model training" in dispatch_pages._LLMS_PREAMBLE
+    assert "terms#google-original-text" in dispatch_pages._LLMS_PREAMBLE
+    assert "do not carry a model-training grant" in dispatch_pages._LLMS_PREAMBLE
+
+    # Google supports end-of-path anchors: a nested data export or a future
+    # guide must not inherit this original-text permission.
+    group = robots.split("User-agent: Google-Extended\n", 1)[1].split("User-agent:", 1)[0]
+    assert "Content-Signal: search=yes, ai-input=yes, ai-train=yes" in group
+    assert "Disallow: /" in group
+    permitted = {
+        "/use-cases/money-market-research/",
+        "/use-cases/capital-market-transmission/",
+        "/use-cases/china-economy-evidence/",
+    }
+    allows = [line.removeprefix("Allow: ") for line in group.splitlines() if line.startswith("Allow: ")]
+    assert set(allows) == {path + "$" for path in permitted}
+    terms = (PUBLIC / "terms.html").read_text()
+    for path in permitted:
+        assert f'href="{path}"' in terms
+        assert (PUBLIC / path.strip("/") / "index.html").is_file()
+    for excluded in (
+        "/", "/datasets/direct-ofr/", "/api/v2/gift-city", "/articles/feed.json",
+        "/dispatches/", "/llms.txt", "/llms-full.txt", "/guides/future-guide/",
+        "/gift-city/data.json", "/guides/currency-conversion-reference-rates/observations.csv",
+    ):
+        assert not any(excluded == rule.removesuffix("$") for rule in allows)
+    assert "It excludes third-party material" in terms
+    assert "datasets, API responses, feeds, dispatches and all other pages" in terms
 
     feed = json.loads(dispatch_pages.render_article_json_feed(
         [{

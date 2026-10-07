@@ -1,5 +1,9 @@
 # SEICHE
 
+Public US dollar funding research from source-dated Fed and Treasury observations. Live board: [seiche.info](https://seiche.info/).
+
+[Dated answers to common research questions](https://seiche.info/questions/) explain the numbers, source dates and limits.
+
 LiquiLens, Seiche and Undertow are connected research products from **LIQUILENS PRIVATE LIMITED**, a registered company in India. Built for international review workflows: institution evidence → funding conditions → market liquidity. Market coverage, source clocks and authority remain specific to each product. [Company and investors](https://liquilens.in/investors/) · [Company profile](https://liquilens.in/company-profile.json) · [Try the connected workflow](https://liquilens.in/start/).
 
 [![sealed record](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.seiche.info%2Fapi%2Fbadge%2Frecord)](https://api.seiche.info/api/notary)
@@ -77,7 +81,7 @@ ledger status. The auditable source of truth is
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
 | **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.16.1; immutable availability is authoritative only on the linked PyPI project |
 
-Version **0.16.1 estuary** connects the [UAE DONIA reference](docs/UAE_DONIA.md) to the GIFT City AED card and repairs country-atlas loading. It retains [country funding and sovereign references](docs/COUNTRY_FUNDING.md) for China, Japan, South Korea, Taiwan, Australia, the United Kingdom, all 21 euro-area countries and seven other European countries. Official public observations retain their source dates, native frequency and gaps. The existing sixteen public MCP tools expose the country catalog through `money_market_context(section="countries")`; add `country="JP"` for a country desk. The India desk remains available through `section="india"`. Deployment and publication remain pending until their signed receipts pass.
+Version **0.16.2 estuary** prepares the [reviewed Google-Extended policy](docs/GOOGLE-EXTENDED-POLICY.md), three dated dollar-funding answers and Riptide's public paper allocation beside the Market desk. The policy permits grounding/training only on three reviewed original explanations; source data, archives and other pages remain excluded. New signed application and publication receipts are required before these changes are live. The inherited **0.16.1** release connects the [UAE DONIA reference](docs/UAE_DONIA.md) to GIFT City's AED card and retains [country funding and sovereign references](docs/COUNTRY_FUNDING.md) for China, Japan, South Korea, Taiwan, Australia, the United Kingdom, all 21 euro-area countries and seven other European countries. Official observations retain their source dates, native frequency and gaps. The sixteen public MCP tools expose the country catalog through `money_market_context(section="countries")`; add `country="JP"` for a country desk or use `section="india"` for the India desk.
 New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding
 observations can reach the daily review without waiting through the previous
 four-to-twelve-hour cache windows. Failed refreshes retain the original source

@@ -44,3 +44,101 @@
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Cross-Origin-Opener-Policy: same-origin
+
+# Alias HTML stays crawlable for its canonical, but leaves the search index.
+# Do not match /robots.txt, /sitemap.xml, /llms.txt or /.well-known/ai-catalog.json.
+https://seiche.pages.dev/
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/index.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/developers
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/developers.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/guide
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/guide.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/methodology
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/methodology.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/skeptic
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/skeptic.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/ampleness
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/ampleness.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/referee
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/referee.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/support
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/support.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/privacy
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/privacy.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/terms
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/terms.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/use-cases
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/use-cases.html
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/use-cases/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/questions/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/articles/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/dispatches/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/markets/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/money-markets/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/datasets/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/gift-city/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/agents/*
+  X-Robots-Tag: noindex
+
+https://seiche.pages.dev/investigations/*
+  X-Robots-Tag: noindex

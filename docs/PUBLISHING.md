@@ -1,10 +1,11 @@
 # Publishing Seiche release surfaces
 
-This runbook covers **0.16.1 estuary**, the official-public-source country funding
-release. It adds country desks, bounded canonical REST/MCP projections, source
-adapters and sovereign references, with daily and monthly evidence kept separate.
-The [country source review](COUNTRY_FUNDING.md) records coverage and rights.
-These changes require a full application release with existing data preserved.
+This runbook covers **0.16.2 estuary**, the reviewed search-policy, dated-answer
+and paper-allocation successor. Google grounding/training remains restricted to
+three reviewed original explanations; source data and archives stay excluded.
+The [policy review](GOOGLE-EXTENDED-POLICY.md) records that scope, and the inherited
+[country source review](COUNTRY_FUNDING.md) records country coverage and rights.
+This successor requires a full application release with existing data preserved.
 Scientific metadata uses the candidate preparation date, 2026-10-06; it does not
 establish publication. Signed tags, package bytes, deployment identity and recovery
 acceptance remain unbound until their original release gates pass.

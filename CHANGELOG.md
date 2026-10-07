@@ -13,14 +13,12 @@ they change a public contract, methodology, or release artifact.
 
 ### 0.16.1 release candidate
 
-- Connect the GIFT City AED card to official CBUAE DONIA observations, with raw
-  evidence, dated history, revisions, attribution and explicit stale/unavailable states.
-- Keep country funding loading independent of overview refreshes and give the
-  bounded atlas request time to complete.
-- Separate backend and workflow identities in recovery monitoring; permit a
-  signed next-day export start with explicit readiness-only evidence.
-- Prepare corpus receipt `r31` while retaining `r30`; corpus data is unchanged.
-  Deployment and publication remain subject to their original acceptance gates.
+- Limit Google-Extended grounding/training permission to the three reviewed original
+  product explanations while keeping source data and archives excluded.
+- Publish three dated dollar-funding answers and show the verified Riptide paper
+  allocation alongside Seiche's own funding evidence.
+- Retain the accepted country desks, DONIA collection and recovery identity fixes
+  from 0.16.1. Deployment and publication require new signed acceptance receipts.
 
 ### 0.16.0 release candidate
 

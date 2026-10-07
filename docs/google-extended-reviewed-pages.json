@@ -1,0 +1,26 @@
+{
+  "reviewed_on": "2026-10-06",
+  "reviewed_source": "e71545371ddc6b92e50acccc49c88d64737dda45",
+  "scope": "Seiche-owned explanatory text only; no source data, API responses, feeds, archives or linked material",
+  "pages": [
+    {
+      "path": "/use-cases/money-market-research/",
+      "source_file": "frontend/public/use-cases/money-market-research/index.html",
+      "sha256": "0edf029119dfe8aaf201a6fa21b9999fabd62d2663a357d6c7d1ba10f7d7e1dd"
+    },
+    {
+      "path": "/use-cases/capital-market-transmission/",
+      "source_file": "frontend/public/use-cases/capital-market-transmission/index.html",
+      "sha256": "d45c1e83c328543171de40e1696809b6b354556cef0288327e304d69ea89e1b5"
+    },
+    {
+      "path": "/use-cases/china-economy-evidence/",
+      "source_file": "frontend/public/use-cases/china-economy-evidence/index.html",
+      "sha256": "504e948049d4e058648e5fa1abb21c0446a38e7233dbb9a99e411224286a0b15"
+    }
+  ],
+  "shared_script": {
+    "source_file": "frontend/public/authority-actions.js",
+    "sha256": "8886bc0519333567e85b94308ade9cf65f7839d5655e5be55b790e4261398983"
+  }
+}

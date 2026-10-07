@@ -19,6 +19,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import urllib.robotparser
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -150,6 +151,23 @@ class UndertowRoutingTest(unittest.TestCase):
                 status, _, body = self.request(path, 'POST' if path.endswith('/mcp') else 'GET')
                 self.assertEqual(status, 200)
                 self.assertEqual(body, f'proxy:127.0.0.1:{port} {path}')
+
+    def test_seiche_data_robots_is_read_only_and_does_not_change_sibling_policy(self):
+        status, headers, body = self.request('/robots.txt')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get_content_type(), 'text/plain')
+        policy = urllib.robotparser.RobotFileParser()
+        policy.parse(body.splitlines())
+        for path in ('/api', '/api/v2/corpus/catalog', '/api/series/data.csv',
+                     '/api/dispatch/example', '/mcp', '/mcp/usage',
+                     '/.well-known/mcp.json', '/.well-known/api-catalog'):
+            self.assertFalse(policy.can_fetch('Google-Extended', path), path)
+            self.assertTrue(policy.can_fetch('Googlebot', path), path)
+        for path in ('/undertow/articles-feed.json', '/palimpsest/mcp', '/riptide/'):
+            self.assertTrue(policy.can_fetch('Google-Extended', path), path)
+        self.assertEqual(self.request('/robots.txt', 'HEAD')[::2], (200, ''))
+        self.assertEqual(self.request('/robots.txt', 'POST', b'{}')[0], 404)
+        self.assertEqual(self.request('/robots.txt/private')[0], 404)
 
     def test_live_and_static_files_keep_distinct_cache_policies(self):
         for path, fixture, cache in [('/undertow/live/quotes.json', 'live-quotes', 'no-store'),

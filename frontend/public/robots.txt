@@ -1,5 +1,6 @@
 # seiche.info: free public research, source links and published methods.
-# Search and user-directed retrieval are welcome. Model training is not granted.
+# Search and user-directed retrieval are welcome. Training is excluded except
+# for the original explanatory pages listed in the Google-Extended group below.
 # Cloudflare may prepend a managed robots policy or enforce crawler rules at the
 # edge; this repository file cannot override Cloudflare AI Crawl Control or WAF.
 
@@ -41,7 +42,17 @@ Allow: /
 User-agent: MistralAI-User
 Allow: /
 
-# Training and model-development crawlers are separate from search retrieval.
+# Google couples Gemini/Vertex grounding and model training in this token.
+# The operator permits both only for Seiche's original text at these exact URLs.
+# Third-party material, datasets, API responses and feeds remain excluded; see /terms.
+User-agent: Google-Extended
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Disallow: /
+Allow: /use-cases/money-market-research/$
+Allow: /use-cases/capital-market-transmission/$
+Allow: /use-cases/china-economy-evidence/$
+
+# Other training and model-development crawlers remain excluded.
 User-agent: GPTBot
 Disallow: /
 
@@ -49,9 +60,6 @@ User-agent: ClaudeBot
 Disallow: /
 
 User-agent: anthropic-ai
-Disallow: /
-
-User-agent: Google-Extended
 Disallow: /
 
 User-agent: CCBot
