@@ -1,0 +1,43 @@
+/* Shared IDFC payment instructions; colors and type follow each product. */
+.payment-panel { color: inherit; scroll-margin-top: 6rem; }
+.payment-panel .payment-intro { max-width: 72ch; }
+.payment-panel .payment-layout {
+  display: grid; grid-template-columns: minmax(230px, .9fr) minmax(0, 1.1fr);
+  gap: clamp(1.25rem, 3vw, 2.5rem); align-items: start; margin: 1.5rem 0;
+}
+.payment-panel .payment-figure { margin: 0; max-width: 340px; }
+.payment-panel .payment-qr {
+  display: block; width: 100%; height: auto; background: #fff; border-radius: 8px;
+}
+.payment-panel figcaption { margin-top: .7rem; font-size: .9rem; line-height: 1.6; }
+.payment-panel h3 { margin: 0 0 .8rem; font-family: inherit; font-size: 1.1rem; font-weight: 600; line-height: 1.4; }
+.payment-panel .payment-details { margin: 0; }
+.payment-panel .payment-details > div {
+  padding: .7rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+.payment-panel dt { font-size: .85rem; }
+.payment-panel dd { margin: .2rem 0 0; line-height: 1.6; overflow-wrap: anywhere; }
+.payment-panel code { font: 600 .95rem/1.6 ui-monospace, monospace; user-select: all; }
+.payment-panel .payment-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0; }
+.payment-panel .payment-action, .payment-panel .payment-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: .55rem .85rem; border: 1px solid currentColor;
+  border-radius: 6px; background: transparent; color: inherit; font: inherit;
+  text-decoration: none; cursor: pointer;
+}
+.payment-panel .payment-copy { margin-left: .5rem; font-size: .8rem; }
+.payment-panel .payment-action:hover, .payment-panel .payment-copy:hover {
+  background: color-mix(in srgb, currentColor 9%, transparent); text-decoration: none;
+}
+.payment-panel [hidden] { display: none; }
+.payment-panel :focus-visible { outline: 3px solid currentColor; outline-offset: 4px; }
+.payment-panel .payment-status { min-height: 1.6em; margin: .7rem 0; font-size: .9rem; }
+.payment-panel .payment-next {
+  border-left: 3px solid currentColor; padding-left: 1rem; margin-top: 1.5rem;
+}
+.payment-panel .payment-next p { max-width: 72ch; }
+.payment-panel .payment-fine { font-size: .85rem; }
+@media (max-width: 680px) {
+  .payment-panel .payment-layout { grid-template-columns: 1fr; }
+  .payment-panel .payment-figure { width: 100%; margin-inline: auto; }
+}
