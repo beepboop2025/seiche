@@ -1,0 +1,23 @@
+{
+  "schema": "liquilens.payment-instructions.v1",
+  "updated_at": "2026-10-07",
+  "beneficiary": "LIQUILENS PRIVATE LIMITED",
+  "bank": {
+    "name": "IDFC FIRST Bank",
+    "account_number": "81788951831",
+    "account_type": "Current account",
+    "ifsc": "IDFB0043424",
+    "branch": "Jaipur - Calgiri Road"
+  },
+  "upi": {
+    "id": "liquilens@idfcbank",
+    "uri": "upi://pay?pa=liquilens%40idfcbank&pn=LIQUILENS%20PRIVATE%20LIMITED&cu=INR",
+    "qr_image": "/payments/idfc-upi.png"
+  },
+  "currency": "INR",
+  "verification": "manual_bank_receipt",
+  "automatic_entitlement": false,
+  "product": "Seiche",
+  "support_email": "desk@seiche.info",
+  "purpose": "voluntary_support"
+}

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Support Seiche</title>
-<meta name="description" content="Seiche is free and runs on support. Contribute through GitHub Sponsors or with Bitcoin, Ethereum, Solana, Tron or TON.">
+<meta name="description" content="Seiche is free and runs on support. Support LIQUILENS PRIVATE LIMITED by UPI or IDFC FIRST Bank transfer, with payment-reference tracking. GitHub Sponsors is also available.">
 <link rel="canonical" href="https://seiche.info/support">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
@@ -12,12 +12,18 @@
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   :root { color-scheme:dark; }
   body { background:#000000; color:#edeef4; font-family:"Inter",system-ui,-apple-system,sans-serif;
-         font-size:13.5px; line-height:1.7; max-width:760px; margin:0 auto; padding:48px 24px 80px;
+         font-size:16px; line-height:1.7; max-width:960px; margin:0 auto; padding:48px 24px 80px;
          -webkit-font-smoothing:antialiased; }
   ::selection { background:rgba(156,143,232,.30); }
-  h1 { font-size:22px; font-weight:500; letter-spacing:-.01em; color:#edeef4; }
+  h1 { font-size:36px; font-weight:600; letter-spacing:-.01em; color:#edeef4; }
   a { color:#bbaffe; text-decoration:none; } a:hover { color:#d9d4ff; text-decoration:underline; }
-  .dim { color:#787f95; font-size:12px; }
+  .dim { color:#a5adbf; font-size:14px; }
+  .support-header { display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; padding-bottom:24px; border-bottom:1px solid #333748; }
+  .support-payment { margin:36px 0; padding:28px 0; border-block:1px solid #333748; }
+  h2 { font-size:26px; line-height:1.3; }
+  details { margin:20px 0; }
+  summary { cursor:pointer; }
+  .row { flex-wrap:wrap; }
   .coin { border:1px solid #1c1f2b; border-radius:12px; padding:14px 16px; margin-top:14px; background:#0b0d15; }
   .coin .name { color:#bbaffe; font-size:11px; font-weight:500; letter-spacing:.1em; }
   .coin .net { color:#787f95; font-size:11px; margin-left:8px; }
@@ -35,68 +41,64 @@
              color:#edeef4; background:rgba(156,143,232,.14); font-size:11px; font-weight:600;
              letter-spacing:.04em; }
   .sponsor:hover { background:rgba(156,143,232,.24); text-decoration:none; }
-  .coin { position:relative; }
-  @media(min-width:560px){ .coin { padding-right:128px; } .coin .qr { position:absolute; right:16px; top:50%; transform:translateY(-50%); } }
-  @media(min-width:560px){ .coin.card { padding-right:16px; } }
-  .coin .qr { width:96px; height:96px; border-radius:8px; display:block; margin-top:10px; }
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "534f08f7270a4f4f9a9a10f90d723ca7"}'></script><!-- End Cloudflare Web Analytics -->
+<link rel="stylesheet" href="/payments/payment.css">
 </head>
 <body>
+<header class="support-header"><a href="/">Seiche</a><span>Operated by LIQUILENS PRIVATE LIMITED</span><a href="https://liquilens.in/about/">Company information</a></header>
 <h1>Support Seiche</h1>
 <p class="dim">seiche.info · the funding-stress terminal</p>
 
-<p>The Seiche website is free and open: every tab, the Time Machine and the dispatch archive are available without an account, and the code is open source. Voluntary support below keeps that public infrastructure running and does not itself unlock an entitlement. Separately, five analysis MCP tools have bearer-token and dormant x402 access paths. Five private Agent Room preview tools also require a bearer identity but never accept x402 and grant no execution authority. Optional accounts can also hold email alerts; ask <a href="mailto:desk@seiche.info?subject=Seiche%20alerts%20account">desk@seiche.info</a> for help.</p>
+<p>The Seiche website is free and open: every tab, the Time Machine and the dispatch archive are available without an account, and the code is open source. Voluntary support below keeps that public infrastructure running and does not itself unlock an entitlement. </p>
+<details><summary>Accounts and developer access</summary><p>Separately, five analysis MCP tools have bearer-token and dormant x402 access paths. Five private Agent Room preview tools also require a bearer identity but never accept x402 and grant no execution authority. Optional accounts can also hold email alerts; ask <a href="mailto:desk@seiche.info?subject=Seiche%20alerts%20account">desk@seiche.info</a> for help.</p></details>
+
+<section class="support-payment payment-panel" id="payment" data-payment-panel aria-labelledby="payment-title">
+  <h2 id="payment-title">Support Seiche with UPI or bank transfer</h2>
+  <p class="payment-intro">Choose your contribution amount in INR. Your support helps maintain Seiche's public research and does not purchase a subscription or unlock paid access.</p>
+  <p class="payment-intro">Payments are received by <strong>LIQUILENS PRIVATE LIMITED</strong>, the company behind LiquiLens, Seiche and Undertow.</p>
+  <div class="payment-layout">
+    <figure class="payment-figure">
+      <img class="payment-qr" src="/payments/idfc-upi.png" width="1016" height="1406" alt="IDFC FIRST Bank UPI QR for LIQUILENS PRIVATE LIMITED, liquilens@idfcbank">
+      <figcaption>Scan with your UPI app. Check the payee name and INR amount in the app before authorising payment.</figcaption>
+      <div class="payment-actions">
+        <a class="payment-action" href="upi://pay?pa=liquilens%40idfcbank&amp;pn=LIQUILENS%20PRIVATE%20LIMITED&amp;cu=INR">Open UPI app</a>
+        <a class="payment-action" href="/payments/idfc-upi.png" download="LiquiLens-IDFC-UPI.png">Download QR</a>
+      </div>
+    </figure>
+    <div>
+      <h3>Company payment details</h3>
+      <dl class="payment-details">
+        <div><dt>Account holder</dt><dd>LIQUILENS PRIVATE LIMITED</dd></div>
+        <div><dt>UPI ID</dt><dd><code id="payment-upi">liquilens@idfcbank</code><button class="payment-copy" type="button" data-payment-copy="payment-upi" data-copy-label="UPI ID" hidden>Copy UPI ID</button></dd></div>
+        <div><dt>Bank</dt><dd>IDFC FIRST Bank</dd></div>
+        <div><dt>Current account number</dt><dd><code id="payment-account">81788951831</code><button class="payment-copy" type="button" data-payment-copy="payment-account" data-copy-label="Account number" hidden>Copy account number</button></dd></div>
+        <div><dt>IFSC</dt><dd><code id="payment-ifsc">IDFB0043424</code><button class="payment-copy" type="button" data-payment-copy="payment-ifsc" data-copy-label="IFSC" hidden>Copy IFSC</button></dd></div>
+        <div><dt>Branch</dt><dd>Jaipur - Calgiri Road</dd></div>
+        <div><dt>Currency</dt><dd>Indian rupees (INR)</dd></div>
+      </dl>
+      <p class="payment-status" data-payment-status role="status" aria-live="polite"></p>
+    </div>
+  </div>
+  <div class="payment-next">
+    <h3>Already paid?</h3>
+    <p>Submit your UPI transaction ID or bank UTR to receive an acknowledgement number and a private status link. Your payment is marked verified after we match the credit in our bank account. Voluntary support does not activate paid access.</p>
+    <div class="payment-actions"><a class="payment-action" href="https://payments.liquilens.in/?product=seiche#confirmation">Submit payment details</a></div>
+    <p class="payment-fine">An acknowledgement confirms that we received your details; it is not a bank receipt or tax invoice. For payment, invoice or refund help, email <a href="mailto:mrinal@liquilens.in">mrinal@liquilens.in</a> with your reference. Never share an OTP, UPI PIN or banking password.</p>
+  </div>
+  <p class="payment-fine">LIQUILENS PRIVATE LIMITED · CIN U62011RJ2026PTC116792 · Jaipur, India · <a href="https://liquilens.in/about/">Company information</a> · <a href="https://payments.liquilens.in/#terms">Payment terms and privacy</a></p>
+</section>
 
 <div class="coin card">
-  <span class="name">GITHUB SPONSORS · ONE-TIME / MONTHLY</span><span class="net">GitHub checkout · Stripe Connect payout</span>
+  <span class="name">GitHub Sponsors · One-time or monthly</span><span class="net">GitHub checkout · Stripe Connect payout</span>
   <p>Use the existing GitHub Sponsors page for a one-time contribution or recurring support. It funds the open public infrastructure; it is not an Undertow subscription and does not unlock a paid product tier.</p>
-  <div class="row"><a class="sponsor" href="https://github.com/sponsors/beepboop2025" rel="me">support through GitHub</a><span class="warn">GitHub account and payment method required</span></div>
-</div>
-
-<div class="coin">
-  <span class="name">BITCOIN · BTC</span><span class="net">Bitcoin network only</span>
-  <code class="addr" id="btc">bc1qjg836tkh4f60twad5l4fhh4tek2wje5x3avc3r</code>
-  <div class="row"><button class="copy" data-for="btc">copy</button><span class="warn">send BTC on the Bitcoin network, nothing else</span></div>
-  <img class="qr" src="/qr/pay-btc.svg" alt="QR code — Bitcoin address" width="96" height="96">
-</div>
-
-<div class="coin">
-  <span class="name">ETHEREUM · ETH / USDC / USDT</span><span class="net">Ethereum and EVM chains, ERC-20</span>
-  <code class="addr" id="eth">0x5B4A78b7EFe482d1579E287dA6F0043f89cf0EA1</code>
-  <div class="row"><button class="copy" data-for="eth">copy</button><span class="warn">ETH or ERC-20 stablecoins on Ethereum mainnet</span></div>
-  <img class="qr" src="/qr/pay-evm.svg" alt="QR code — Ethereum / EVM address" width="96" height="96">
-</div>
-
-<div class="coin">
-  <span class="name">SOLANA · SOL / USDC</span><span class="net">Solana network</span>
-  <code class="addr" id="sol">GSESNjnptegNExWRERN6w6niWcPH7WPh6aqdo9kje4UJ</code>
-  <div class="row"><button class="copy" data-for="sol">copy</button><span class="warn">SOL or SPL tokens on Solana</span></div>
-  <img class="qr" src="/qr/pay-sol.svg" alt="QR code — Solana address" width="96" height="96">
-</div>
-
-<div class="coin">
-  <span class="name">TRON · USDT / USDC</span><span class="net">Tron network, TRC-20</span>
-  <code class="addr" id="trx">TAAUBJ4qcQtBEp7atEiCcyiEY4qYF56Eaa</code>
-  <div class="row"><button class="copy" data-for="trx">copy</button><span class="warn">TRC-20 tokens on Tron only</span></div>
-  <img class="qr" src="/qr/pay-trx.svg" alt="QR code — Tron address" width="96" height="96">
-</div>
-
-<div class="coin">
-  <span class="name">TON · TON / USDT</span><span class="net">The Open Network</span>
-  <code class="addr" id="ton">UQCDAd8-Kt_wdVlvwDUG6eD78bdHVq7TO8D8jce37-XYsY7J</code>
-  <div class="row"><button class="copy" data-for="ton">copy</button><span class="warn">TON network only, jettons included</span></div>
-  <img class="qr" src="/qr/pay-ton.svg" alt="QR code — TON address" width="96" height="96">
-</div>
-
-<div class="note">
-  Double check the first and last characters after pasting. Crypto transfers are final, and tokens sent on the wrong network cannot be recovered. If you would rather pay another way, write to <a href="mailto:desk@seiche.info">desk@seiche.info</a> and we will sort something out.
+  <div class="row"><a class="sponsor" href="https://github.com/sponsors/beepboop2025" rel="me">Support through GitHub</a><span class="warn">GitHub account and payment method required</span></div>
 </div>
 
 <p class="dim" style="margin-top:24px">Every contribution goes straight to keeping Seiche free and running. Thank you.</p>
 
 <p class="dim" style="margin-top:32px"><a href="/">← back to the terminal</a> · <a href="/terms">terms</a> · <a href="/privacy">privacy</a></p>
 
-<script src="/support.js" defer></script>
+<script src="/payments/payment.js" defer></script>
 </body>
 </html>
