@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Decision-grade 24-hour usage digest for the Seiche product fleet.
 
-Edge requests describe reachability and scanner pressure. Product activation is
-counted separately from privacy-safe post-dispatch journal events. No request
+Edge requests describe reachability and scanner pressure. Recognized tool events
+are counted separately from privacy-safe server request-handling journals. No request
 arguments, caller identifiers, tokens, or User-Agent strings enter those events.
 """
 from __future__ import annotations
