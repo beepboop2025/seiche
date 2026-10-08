@@ -10,13 +10,131 @@ import time
 import tempfile
 import tarfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 spec = importlib.util.spec_from_file_location(
     "publisher", Path(__file__).with_name("publish.py")
 )
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
+
+
+class FrontendSettlementTests(unittest.TestCase):
+    def setUp(self):
+        self.bodies = {"/": b"new homepage", "/data/overview.json": b"new overview"}
+        self.manifest = {"publicFiles": {
+            "index.html": hashlib.sha256(self.bodies["/"]).hexdigest(),
+            "data/overview.json": hashlib.sha256(self.bodies["/data/overview.json"]).hexdigest(),
+        }}
+
+    def response(self, request, timeout):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.url = request.full_url
+        response.read.return_value = self.bodies[publisher.urllib.parse.urlsplit(request.full_url).path]
+        return response
+
+    def wait(self):
+        publisher.wait_for_frontend_settlement(
+            self.manifest, "a" * 40, Path("/mirror"), "b" * 40, {}, "exact-generation")
+
+    def test_stale_route_must_be_followed_by_two_complete_matching_observations(self):
+        for target in self.bodies:
+            with self.subTest(route=target):
+                stale = [True]
+                def fetch(request, timeout):
+                    response = self.response(request, timeout)
+                    if publisher.urllib.parse.urlsplit(request.full_url).path == target and stale[0]:
+                        response.read.return_value = b"prior generation"
+                        stale[0] = False
+                    return response
+                with (patch.object(publisher, "require_current_publication") as ownership,
+                      patch.object(publisher.urllib.request.OpenerDirector, "open", side_effect=fetch) as probe,
+                      patch.object(publisher.time, "sleep") as pause):
+                    self.wait()
+                    self.assertEqual(probe.call_count, 5 if target == "/" else 6)
+                    self.assertEqual(ownership.call_count, 4)
+                    self.assertEqual(pause.call_count, 2)
+
+    def test_permanent_mismatch_never_becomes_acceptance(self):
+        self.bodies["/"] = b"wrong site"
+        with (patch.object(publisher, "require_current_publication"),
+              patch.object(publisher.urllib.request.OpenerDirector, "open", side_effect=self.response) as probe,
+              patch.object(publisher.time, "sleep")):
+            with self.assertRaisesRegex(RuntimeError, "after 10 observations"):
+                self.wait()
+            self.assertEqual(probe.call_count, 10)
+
+    def test_source_or_mirror_advance_stops_before_another_probe(self):
+        with (patch.object(publisher, "require_current_publication",
+                           side_effect=[None, RuntimeError("mirror advanced")]),
+              patch.object(publisher.urllib.request.OpenerDirector, "open", side_effect=self.response) as probe,
+              patch.object(publisher.time, "sleep")):
+            with self.assertRaisesRegex(RuntimeError, "mirror advanced"):
+                self.wait()
+            self.assertEqual(probe.call_count, 2)
+
+    def test_deadline_stops_before_a_network_request(self):
+        with (patch.object(publisher, "require_current_publication"),
+              patch.object(publisher.time, "monotonic", side_effect=[0, 61]),
+              patch.object(publisher.urllib.request.OpenerDirector, "open") as probe):
+            with self.assertRaisesRegex(RuntimeError, "within 60 seconds"):
+                self.wait()
+            probe.assert_not_called()
+
+    def test_redirect_or_oversized_response_is_not_retried(self):
+        for failure in ("redirect", "oversized"):
+            with self.subTest(failure=failure):
+                def fetch(request, timeout):
+                    response = self.response(request, timeout)
+                    if failure == "redirect":
+                        response.url = "https://other.example/"
+                    else:
+                        response.read.return_value = b"x" * (16 * 1024 * 1024 + 1)
+                    return response
+                with (patch.object(publisher, "require_current_publication"),
+                      patch.object(publisher.urllib.request.OpenerDirector, "open", side_effect=fetch) as probe,
+                      patch.object(publisher.time, "sleep") as pause):
+                    with self.assertRaises(RuntimeError):
+                        self.wait()
+                    self.assertEqual(probe.call_count, 1)
+                    pause.assert_not_called()
+
+    def test_authentication_failure_is_not_retried(self):
+        error = publisher.urllib.error.HTTPError("https://seiche.info/", 403, "Forbidden", {}, None)
+        with (patch.object(publisher, "require_current_publication"),
+              patch.object(publisher.urllib.request.OpenerDirector, "open", side_effect=error) as probe,
+              patch.object(publisher.time, "sleep") as pause):
+            with self.assertRaises(publisher.urllib.error.HTTPError):
+                self.wait()
+            self.assertEqual(probe.call_count, 1)
+            pause.assert_not_called()
+
+    def test_same_path_redirect_is_rejected_before_following_it(self):
+        request = publisher.urllib.request.Request("https://seiche.info/?deployment=exact")
+        handler = publisher.NoFrontendRedirect()
+        with self.assertRaisesRegex(RuntimeError, "cannot follow a redirect"):
+            handler.http_error_302(request, io.BytesIO(), 302, "Found",
+                                   {"location": "https://seiche.info/"})
+
+    def test_absolute_deadline_interrupts_blocking_work_and_restores_signal_handler(self):
+        previous = publisher.signal.getsignal(publisher.signal.SIGALRM)
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "within 60 seconds"):
+            with publisher.frontend_settlement_timeout(0.02):
+                time.sleep(0.5)
+        self.assertLess(time.monotonic() - started, 0.4)
+        self.assertEqual(publisher.signal.getsignal(publisher.signal.SIGALRM), previous)
+        self.assertEqual(publisher.signal.getitimer(publisher.signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_missing_sealed_hash_stops_without_remote_access(self):
+        del self.manifest["publicFiles"]["data/overview.json"]
+        with (patch.object(publisher, "require_current_publication") as ownership,
+              patch.object(publisher.urllib.request.OpenerDirector, "open") as probe):
+            with self.assertRaisesRegex(RuntimeError, "sealed root and overview hashes"):
+                self.wait()
+            ownership.assert_not_called()
+            probe.assert_not_called()
 
 
 class PublisherBoundaryTests(unittest.TestCase):
