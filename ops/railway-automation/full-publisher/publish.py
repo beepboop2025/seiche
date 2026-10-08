@@ -14,6 +14,9 @@ import time
 import subprocess
 import tarfile
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import contextmanager
 
 import yaml
@@ -27,6 +30,89 @@ GATES = (
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
 )
+
+
+class NoFrontendRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("Frontend settlement cannot follow a redirect")
+
+
+@contextmanager
+def frontend_settlement_timeout(seconds=60):
+    """Bound blocking reads and ownership checks in this single-threaded controller."""
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise RuntimeError("Frontend settlement cannot replace an active deadline")
+    previous = signal.getsignal(signal.SIGALRM)
+    def expired(signum, frame):
+        raise RuntimeError("Frontend propagation did not settle within 60 seconds")
+    signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def wait_for_frontend_settlement(manifest, source_sha, mirror, site_sha, env, cache_key):
+    """Wait for the deployed generation before invoking the unchanged strict proof."""
+    with frontend_settlement_timeout():
+        _wait_for_frontend_settlement(manifest, source_sha, mirror, site_sha, env, cache_key)
+
+
+def _wait_for_frontend_settlement(manifest, source_sha, mirror, site_sha, env, cache_key):
+    expected = {name: manifest.get("publicFiles", {}).get(name)
+                for name in ("index.html", "data/overview.json")}
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+               for value in expected.values()):
+        raise RuntimeError("Frontend settlement requires sealed root and overview hashes")
+    deadline = time.monotonic() + 60
+    opener = urllib.request.build_opener(NoFrontendRedirect())
+    consecutive = 0
+    for attempt in range(10):
+        require_current_publication(source_sha, mirror, site_sha, env)
+        matched = True
+        for relative, digest in expected.items():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("Frontend propagation did not settle within 60 seconds")
+            suffix = "" if relative == "index.html" else relative
+            url = "https://seiche.info/" + suffix + "?" + urllib.parse.urlencode(
+                {"deployment": cache_key, "settlement": str(attempt)})
+            request = urllib.request.Request(url, headers={
+                "Accept-Encoding": "identity", "Cache-Control": "no-cache",
+                "User-Agent": "seiche-frontend-settlement/1"})
+            try:
+                with opener.open(request, timeout=min(10, remaining)) as response:
+                    final = urllib.parse.urlsplit(response.url)
+                    if (final.scheme, final.netloc, final.path) != ("https", "seiche.info", "/" + suffix):
+                        raise RuntimeError("Frontend settlement left its exact canonical route")
+                    body = response.read(16 * 1024 * 1024 + 1)
+                if len(body) > 16 * 1024 * 1024:
+                    raise RuntimeError("Frontend settlement response exceeded its bound")
+                matched = hashlib.sha256(body).hexdigest() == digest
+            except urllib.error.HTTPError as error:
+                if error.code not in {404, 429, 502, 503, 504}:
+                    raise
+                error.close()
+                matched = False
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if isinstance(error, urllib.error.URLError) and not isinstance(
+                        error.reason, (TimeoutError, ConnectionError)):
+                    raise
+                matched = False
+            if not matched:
+                break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Frontend propagation did not settle within 60 seconds")
+        consecutive = consecutive + 1 if matched else 0
+        if consecutive == 2:
+            require_current_publication(source_sha, mirror, site_sha, env)
+            print("RAILWAY_FULL_FRONTEND_SETTLED observations=2 files=2", flush=True)
+            return
+        if attempt < 9:
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
+    raise RuntimeError("Frontend propagation did not settle after 10 observations")
 
 
 def clean_env(extra=None):
@@ -842,6 +928,9 @@ def main():
             receipt,
         )
         if frontend_manifest is not None:
+            wait_for_frontend_settlement(
+                frontend_manifest, source_sha, mirror, site_sha, publish_env,
+                source_sha + "-" + env["GITHUB_RUN_ATTEMPT"])
             with original_frontend_proof(trusted) as proof:
                 proof.verify_public(candidate, frontend_manifest,
                                     cache_key=source_sha + "-" + env["GITHUB_RUN_ATTEMPT"])

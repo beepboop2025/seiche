@@ -75,6 +75,14 @@ checks the shell, referenced assets, sealed overview, catalog, declared absence
 and exact CSP in addition to the ordinary dataset proof. Thus a recurring data
 refresh retains the separately released frontend instead of restoring R's UI.
 
+Before that strict frontend proof, a bounded propagation check requires two
+consecutive observations of the sealed root and overview bytes on the canonical
+domain. It checks current source and mirror ownership each round, stops after
+60 seconds or ten observations, and never repeats a public write. Redirects,
+oversized responses and non-temporary HTTP failures stop immediately. The
+original signed verifier remains unchanged and still checks the full manifest;
+propagation readiness alone does not establish publication acceptance.
+
 Retained identity separates `publicationSourceSha` H, `controllerSourceSha` C,
 `engineSourceSha`/`rendererSourceSha` R, source-equivalence D, the input-manifest
 and desk-overlay digests, projection counts and live runtime identity. Main
