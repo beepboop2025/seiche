@@ -1,3 +1,4 @@
+import "./family-upgrades.css";
 import { useEffect, useState } from "react";
 import FundingPreview from "./FundingPreview";
 import EditorialPreview from "./EditorialPreview";
@@ -71,6 +72,9 @@ export default function ProductHome() {
         <FundingFlow />
       </section>
       <FundingPreview />
+      {/* CONNECTED-UPGRADES:START */}
+<section className="family-upgrades" aria-labelledby="connected-upgrades-heading" data-upgrade-revision="9d5d4c9cd904dd25aa21ee59370ccbd8310ff6d2ecc7b98faeb2ed1cad3e290f"><div className="family-upgrades-intro"><h2 id="connected-upgrades-heading">A connected review, from evidence to follow-up</h2><p>Review the institution, check funding conditions, inspect market liquidity, then retain the evidence for the next review.</p><a href="https://liquilens.in/updates/">What changed and what each tool can do</a></div><div className="family-upgrades-grid"><article><h3>Keep missing evidence in the review</h3><p>Inspect source-dated changes, overdue fields and visibility gaps across tracked banks and lenders. Open the live review queue and its original disclosures.</p><small>Available for research</small><a href="https://liquilens.in/banking/monitoring/">Open institution monitoring</a></article><article><h3>Make the review repeatable</h3><p>Connect the Research Desk, schedule bounded research and retain source records with operating diagnostics and recovery guidance.</p><small>Available for research</small><a href="https://liquilens.in/agents/infrastructure/">Set up recurring research</a></article><article><h3>Inspect changes before interpreting them</h3><p>Use NoiseFloor 0.3.1 to examine caller-supplied market series and headlines. Preserve measure identity, source restrictions and gaps.</p><small>Available for caller-supplied evidence</small><a href="https://liquilens.in/agents/infrastructure/#noisefloor">Connect NoiseFloor</a></article><article><h3>Rehearse the controls around an action</h3><p>Explore the paper workbench: inspect refusals, duplicate protection, STOP and reconciliation before considering an execution workflow.</p><small>Paper rehearsal; execution disabled</small><a href="https://beepboop2025.github.io/financial-evidence-skills/agents/execution.html">Explore the paper workbench</a></article></div><p className="family-upgrades-boundary">Each source keeps its dates, coverage and permissions. These tools support human review; they do not produce a combined risk score or authorize credit or trading.</p></section>
+{/* CONNECTED-UPGRADES:END */}
       <EditorialPreview />
       <section className="product-section product-capabilities" aria-labelledby="capabilities-heading">
         <div className="product-section__intro"><h2 id="capabilities-heading">See where<br/>pressure begins.</h2><p>Start with a question. Move from the funding picture to the observations that explain it.</p></div>
