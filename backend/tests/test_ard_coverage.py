@@ -1,9 +1,13 @@
 """Unit coverage for the dependency-free ARD coverage monitor."""
 
 import importlib.util
+from io import BytesIO
 import json
 from pathlib import Path
 import sys
+from urllib.error import HTTPError
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,8 +62,8 @@ def test_sibling_catalog_accepts_a_new_release_but_requires_internal_agreement()
         {"type": "streamable-http", "url": sibling.mcp_endpoint}
     ]
     mcp["capabilities"] = [
-        f"tool_{index}" for index in range(sibling.public_tool_count)
-    ]
+        f"tool_{index}" for index in range(30)
+    ] + [sibling.first_tool]
     openapi = next(entry for entry in catalog["entries"]
                    if entry["type"] == "application/vnd.oai.openapi+json")
     openapi["identifier"] = sibling.openapi_identifier
@@ -70,6 +74,77 @@ def test_sibling_catalog_accepts_a_new_release_but_requires_internal_agreement()
     assert "embedded MCP version does not match the catalog version" in (
         ard.validate_catalog(catalog, sibling)
     )
+
+
+def test_sibling_inventory_must_match_names_even_when_counts_match(monkeypatch):
+    product = next(product for product in ard.PRODUCTS if product.slug == "liquilens")
+    names = [product.first_tool, "new_release_tool"]
+    monkeypatch.setattr(ard, "_request_json", lambda *args, **kwargs: (
+        {"result": {"tools": [{"name": name} for name in names]}}, {}))
+    assert ard.probe_mcp(product, 1, names)["ok"]
+    result = ard.probe_mcp(product, 1, [product.first_tool, "missing_tool"])
+    assert not result["ok"]
+    assert "live tool names do not match catalog capabilities" in result["errors"]
+
+
+@pytest.mark.parametrize("names", [[], ["latest_article", None],
+                                    ["latest_article", "latest_article"]])
+def test_malformed_live_inventory_fails(monkeypatch, names):
+    product = ard.PRODUCTS[0]
+    monkeypatch.setattr(ard, "_request_json", lambda *args, **kwargs: (
+        {"result": {"tools": [{"name": name} for name in names]}}, {}))
+    assert not ard.probe_mcp(product, 1)["ok"]
+
+
+def test_registry_checks_exact_active_latest_record(monkeypatch):
+    product = ard.PRODUCTS[0]
+    payload = {
+        "server": {"name": product.mcp_name, "version": "9.9.9"},
+        "_meta": {"io.modelcontextprotocol.registry/official": {
+            "status": "active", "isLatest": True}},
+    }
+    calls = []
+
+    def request(url, **kwargs):
+        calls.append((url, kwargs))
+        return payload, {}
+
+    monkeypatch.setattr(ard, "_request_json", request)
+    assert ard.probe_registry(product, 1, "9.9.9")["ok"]
+    assert calls[0][0].endswith("io.github.beepboop2025%2Fliquilens/versions/latest")
+    assert calls[0][1]["attempts"] == 3
+    payload["server"]["name"] = "unrelated/server"
+    assert not ard.probe_registry(product, 1, "9.9.9")["ok"]
+    payload["server"]["name"] = product.mcp_name
+    payload["_meta"]["io.modelcontextprotocol.registry/official"]["status"] = "deleted"
+    assert not ard.probe_registry(product, 1, "9.9.9")["ok"]
+
+
+def test_registry_transport_retries_timeout_without_masking_failure(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ard.time, "sleep", lambda seconds: None)
+
+    def timeout(*args, **kwargs):
+        calls.append(1)
+        raise TimeoutError("registry unavailable")
+
+    monkeypatch.setattr(ard, "urlopen", timeout)
+    with pytest.raises(ard.ProbeError, match="registry unavailable"):
+        ard._request_json("https://example.com", timeout=1, attempts=3)
+    assert len(calls) == 3
+
+
+def test_registry_transport_does_not_retry_not_found(monkeypatch):
+    calls = []
+
+    def missing(*args, **kwargs):
+        calls.append(1)
+        raise HTTPError("https://example.com", 404, "missing", {}, BytesIO(b"missing"))
+
+    monkeypatch.setattr(ard, "urlopen", missing)
+    with pytest.raises(ard.ProbeError, match="HTTP 404"):
+        ard._request_json("https://example.com", timeout=1, attempts=3)
+    assert len(calls) == 1
 
 
 def test_value_or_reference_and_query_bounds_are_enforced():
