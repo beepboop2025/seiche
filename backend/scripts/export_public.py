@@ -67,6 +67,15 @@ def main(argv: list[str] | None = None) -> int:
         overview_out.write_text(
             json.dumps(_json_safe(snap), separators=(",", ":"), allow_nan=False))
         print(f"wrote full-board fallback -> {overview_out}")
+        # Only the fresh engine-export path may read the matching source store.
+        # Reusing a supplied snapshot must not mix in another machine's history.
+        if not args.snapshot:
+            from seiche.funding_history import public_histories
+            history_out = overview_out.with_name("funding-series.json")
+            history_out.write_text(json.dumps(
+                _json_safe(public_histories(snap["generated_at"])),
+                separators=(",", ":"), allow_nan=False))
+            print(f"wrote public chart histories -> {history_out}")
     return 0
 
 
