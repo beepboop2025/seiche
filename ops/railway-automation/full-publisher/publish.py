@@ -30,6 +30,7 @@ GATES = (
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
 )
+PAGES_PROPAGATION_SETTLE_SECONDS = 30
 
 
 class NoFrontendRedirect(urllib.request.HTTPRedirectHandler):
@@ -128,6 +129,25 @@ def clean_env(extra=None):
     }
     env.update(extra or {})
     return env
+
+
+def deploy_pages(candidate, source_sha):
+    """Allow routing to settle before the unchanged strict public verifiers."""
+    run(
+        [
+            "/opt/node22/bin/node",
+            "/opt/publisher/node_modules/wrangler/bin/wrangler.js",
+            "pages", "deploy", str(candidate),
+            "--project-name=seiche", "--branch=main", "--commit-hash", source_sha,
+        ],
+        CONTROLLER,
+        clean_env({
+            "CLOUDFLARE_API_TOKEN": os.environ["CLOUDFLARE_API_TOKEN"],
+            "CLOUDFLARE_ACCOUNT_ID": os.environ["CLOUDFLARE_ACCOUNT_ID"],
+        }),
+    )
+    print(f"RAILWAY_FULL_STEP Allow Pages propagation ({PAGES_PROPAGATION_SETTLE_SECONDS}s)", flush=True)
+    time.sleep(PAGES_PROPAGATION_SETTLE_SECONDS)
 
 
 def builder_home(path=Path("/home/builder")):
@@ -900,26 +920,7 @@ def main():
         if current_main() != source_sha:
             raise RuntimeError("Source main advanced before canonical publication")
         require_current_publication(source_sha, mirror, site_sha, publish_env)
-        run(
-            [
-                "/opt/node22/bin/node",
-                "/opt/publisher/node_modules/wrangler/bin/wrangler.js",
-                "pages",
-                "deploy",
-                str(candidate),
-                "--project-name=seiche",
-                "--branch=main",
-                "--commit-hash",
-                source_sha,
-            ],
-            CONTROLLER,
-            clean_env(
-                {
-                    "CLOUDFLARE_API_TOKEN": os.environ["CLOUDFLARE_API_TOKEN"],
-                    "CLOUDFLARE_ACCOUNT_ID": os.environ["CLOUDFLARE_ACCOUNT_ID"],
-                }
-            ),
-        )
+        deploy_pages(candidate, source_sha)
         verify_publication(
             steps,
             trusted,
