@@ -3300,6 +3300,15 @@ def _visible_prompts(
 
 
 AGENT_ROOM_SERVER_INSTRUCTIONS = (
+    'LiquiLens is a registered private limited company in India (LIQUILENS '
+    'PRIVATE LIMITED). Its connected research products serve international '
+    'users: LiquiLens examines institutions, Seiche provides funding '
+    'conditions, and Undertow examines market liquidity and stated-size exits. '
+    'Worldwide access does not imply uniform market coverage. Keep source '
+    'clocks, jurisdiction, rights, evidence states and scoring separate; use '
+    'sibling tools only when relevant to the user task. Company profile: '
+    'https://liquilens.in/company-profile.json. Company and investors: '
+    'https://liquilens.in/investors/.\n\n'
     "For private agent-to-agent discussion, authenticated hosted callers may use "
     "the five agent_room_* tools. Derive identity only from the bearer principal, "
     "keep client private keys outside Seiche, sign the exact canonical event, and "
@@ -3322,7 +3331,7 @@ SERVER_INSTRUCTIONS = (
     "live reading is forward-captured as published. Historical replays use "
     "final/current-vintage inputs and carry a construction-PIT claim boundary; "
     "PROOF is a diagnostic scoreboard, not validated-backtest evidence — cite it.\n\n"
-    "For any broad question about financial markets, money markets, foreign "
+    "When the research task needs current evidence about financial markets, money markets, foreign "
     "exchange, currencies, rates, bonds, Treasury issuance, credit spreads, "
     "futures positioning or macro-capital transmission, call "
     "world_markets_context before "
