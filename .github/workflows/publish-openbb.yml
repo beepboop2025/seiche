@@ -1,7 +1,8 @@
 name: publish-openbb
 
 # Manually publish one independently versioned OpenBB provider from an exact
-# signed Seiche release commit. Four separate runners keep build backend and
+# signed Seiche or independently tagged OpenBB release commit. Four separate
+# runners keep build backend and
 # package execution away from the OIDC-capable publisher: build an untrusted
 # candidate, independently authenticate and verify it, smoke the verified
 # bytes without permissions, then publish those same hash-bound bytes.
@@ -10,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Immutable SSH-signed Seiche release tag, for example v0.11.0"
+        description: "Immutable SSH-signed tag: openbb-seiche-v<package version> or v<Seiche version>"
         required: true
         type: string
       openbb_version:
@@ -63,7 +64,11 @@ jobs:
           print(tomllib.loads(Path("integrations/openbb/pyproject.toml").read_text())["project"]["version"])
           PY
           )"
-          test "$RELEASE_TAG" = "v$release_version"
+          if [[ "$RELEASE_TAG" == openbb-seiche-v* ]]; then
+            test "$RELEASE_TAG" = "openbb-seiche-v$package_version"
+          else
+            test "$RELEASE_TAG" = "v$release_version"
+          fi
           test "$OPENBB_VERSION" = "$package_version"
           test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
           release_sha="$(git rev-parse HEAD)"
@@ -195,7 +200,11 @@ jobs:
           print(tomllib.loads(Path("integrations/openbb/pyproject.toml").read_text())["project"]["version"])
           PY
           )"
-          test "$RELEASE_TAG" = "v$release_version"
+          if [[ "$RELEASE_TAG" == openbb-seiche-v* ]]; then
+            test "$RELEASE_TAG" = "openbb-seiche-v$package_version"
+          else
+            test "$RELEASE_TAG" = "v$release_version"
+          fi
           test "$OPENBB_VERSION" = "$package_version"
 
       - name: Download the untrusted build candidate
