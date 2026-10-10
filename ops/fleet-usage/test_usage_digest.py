@@ -145,7 +145,7 @@ def test_digest_never_labels_transport_posts_as_activations():
         activations=activations, armed=armed, funnel=None)
 
     assert "MCP transport POSTs: 949 (not activations)" in digest
-    assert "breach: 0 known calls (0 ok, 0 error); invalid probes 1" in digest
+    assert "breach: 0 raw known-tool events (0 ok, 0 error); invalid probes 1" in digest
     assert "known-auto 940 req/940 POST" in digest
     assert "unclassified 9" in digest
 
@@ -153,4 +153,70 @@ def test_digest_never_labels_transport_posts_as_activations():
 def test_unarmed_product_reports_na_instead_of_false_zero():
     line = usage._activation_summary(
         "seiche", {}, {}, 100.0, 200.0, usage.WINDOW_S)
-    assert line == "seiche: n/a — telemetry not armed"
+    assert line == "seiche (retired host): n/a — telemetry not armed"
+
+
+def test_registered_operator_events_are_separate_from_unclassified_and_raw_totals():
+    prefix = "mcp_activation product=undertow surface=public "
+    stats = usage.parse_activation_lines([
+        prefix + "tool=trade_safety_exit_context outcome=success origin=edge traffic_class=operator_verification",
+        prefix + "tool=trade_safety_exit_context outcome=error origin=direct traffic_class=operator_verification",
+        prefix + "tool=unknown outcome=error origin=edge traffic_class=operator_verification",
+        prefix + "tool=exit_cost outcome=success origin=edge traffic_class=unclassified",
+        prefix + "tool=exit_cost outcome=error origin=edge",
+        prefix + "tool=unknown outcome=error origin=direct",
+        "undertow mcp: activation surface=subscriber tool=board_full outcome=success",
+    ])["undertow"]
+    owned = stats["traffic_classes"]["operator_verification"]
+    unknown = stats["traffic_classes"]["unclassified"]
+    assert (stats["known"], stats["success"], stats["error"], stats["invalid"]) == (5, 3, 2, 2)
+    assert (owned["known"], owned["success"], owned["error"], owned["invalid"]) == (2, 1, 1, 1)
+    assert (unknown["known"], unknown["success"], unknown["error"], unknown["invalid"]) == (3, 2, 1, 1)
+    assert owned["tools"] == {"trade_safety_exit_context": 2}
+    assert "trade_safety_exit_context" not in unknown["tools"]
+    for key in ("known", "success", "error", "invalid", "tools", "surfaces", "origins"):
+        assert stats[key] == owned[key] + unknown[key]
+
+
+def test_classification_requires_exact_single_suffix_without_guessing_customer_identity():
+    prefix = "mcp_activation product=undertow surface=public tool=exit_cost outcome=success origin=edge"
+    suffixes = ["", " traffic_class=unclassified", " traffic_class=external_customer",
+                " traffic_class=operator_verification_extra", " traffic_class=OPERATOR_VERIFICATION",
+                " traffic_class=operator_verification traffic_class=unclassified",
+                " arbitrary_note=traffic_class=operator_verification"]
+    for suffix in suffixes:
+        stat = usage.parse_activation_lines([prefix + suffix])["undertow"]
+        assert stat["known"] == 1
+        assert stat["traffic_classes"]["operator_verification"]["known"] == 0
+        assert stat["traffic_classes"]["unclassified"]["known"] == 1
+    legacy = usage.parse_activation_lines([
+        "undertow mcp: activation surface=public tool=exit_cost outcome=success traffic_class=operator_verification"
+    ])["undertow"]
+    assert legacy["traffic_classes"]["unclassified"]["known"] == 1
+
+
+def test_owned_only_digest_exposes_zero_unclassified_without_customer_claim():
+    now = 1_800_000_000.0
+    activations = usage.parse_activation_lines([
+        "mcp_activation product=undertow surface=public tool=trade_safety_exit_context "
+        "outcome=success origin=edge traffic_class=operator_verification"
+    ])
+    digest = usage.render_digest(
+        now=now, window_s=usage.WINDOW_S, edge={}, activations=activations,
+        armed={"undertow": now - usage.WINDOW_S}, funnel=None)
+    assert "undertow: 1 raw known-tool events (1 ok, 0 error)" in digest
+    assert "operator verification 1 (1 ok, 0 error, 0 invalid)" in digest
+    assert "unclassified 0 (0 ok, 0 error, 0 invalid)" in digest
+    assert "Customer identity, retention and payment attribution: unknown." in digest
+    assert "not verified external use" in digest
+    assert "Seiche Railway completion coverage: unavailable" in digest
+    assert "no edge traffic recorded" in digest
+
+
+def test_failed_journal_and_partial_window_remain_explicit_with_classification():
+    assert "journal query failed" in usage._activation_summary(
+        "undertow", None, {"undertow": 100.0}, 100.0, 200.0, usage.WINDOW_S)
+    text = usage._activation_summary(
+        "undertow", {}, {"undertow": 100.0}, 100.0, 200.0, usage.WINDOW_S)
+    assert "coverage 0.0h" in text
+    assert "unclassified 0" in text and "operator verification 0" in text
