@@ -137,6 +137,82 @@ class FrontendSettlementTests(unittest.TestCase):
             probe.assert_not_called()
 
 
+class PublicationSourceSelectionTests(unittest.TestCase):
+    def test_default_still_follows_exact_main(self):
+        with (patch.dict(os.environ, {}, clear=True),
+              patch.object(publisher, "git", return_value="a" * 40 + "\trefs/heads/main") as lookup):
+            self.assertEqual(publisher.current_source(), "a" * 40)
+            self.assertEqual(lookup.call_args.args[0][-1], "refs/heads/main")
+
+    def test_receipt_selects_its_exact_annotated_subject(self):
+        tag = "publication-source-equivalence-" + "a" * 40
+        ref = "refs/tags/" + tag
+        reply = "b" * 40 + "\t" + ref + "\n" + "a" * 40 + "\t" + ref + "^{}"
+        with (patch.dict(os.environ, {"PUBLICATION_SOURCE_MODE": "receipt",
+                                     "PUBLICATION_EQUIVALENCE_TAG": tag}, clear=True),
+              patch.object(publisher, "git", return_value=reply) as lookup):
+            self.assertEqual(publisher.current_source(), "a" * 40)
+            self.assertEqual(lookup.call_args.args[0][-2:], [ref, ref + "^{}"])
+
+    def test_invalid_mode_or_receipt_never_accesses_remote(self):
+        for environment in ({"PUBLICATION_SOURCE_MODE": "latest"},
+                            {"PUBLICATION_SOURCE_MODE": "receipt"},
+                            {"PUBLICATION_SOURCE_MODE": "receipt", "PUBLICATION_EQUIVALENCE_TAG": "main"},
+                            {"PUBLICATION_SOURCE_MODE": "receipt", "PUBLICATION_EQUIVALENCE_TAG": "--upload-pack=bad"}):
+            with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True), patch.object(publisher, "git") as lookup:
+                with self.assertRaises(RuntimeError):
+                    publisher.current_source()
+                lookup.assert_not_called()
+
+    def test_lightweight_moved_missing_duplicate_or_foreign_receipt_fails_closed(self):
+        tag = "publication-source-equivalence-" + "a" * 40
+        ref = "refs/tags/" + tag
+        base = "b" * 40 + "\t" + ref
+        peeled = "a" * 40 + "\t" + ref + "^{}"
+        for reply in ("", base, base + "\n" + "c" * 40 + "\t" + ref + "^{}",
+                      base + "\n" + peeled + "\n" + peeled,
+                      base + "\n" + peeled + "\n" + "d" * 40 + "\trefs/heads/main",
+                      base + "\nnot-a-sha\t" + ref + "^{}"):
+            with self.subTest(reply=reply), patch.dict(os.environ, {
+                    "PUBLICATION_SOURCE_MODE": "receipt", "PUBLICATION_EQUIVALENCE_TAG": tag}, clear=True), patch.object(publisher, "git", return_value=reply):
+                with self.assertRaises(RuntimeError):
+                    publisher.current_source()
+
+    def test_real_git_main_advance_does_not_change_approved_selection(self):
+        # This exercises ref selection only. The original signed-source verifier
+        # must still authenticate the receipt before any build or public write.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.check_output(["git", "-C", str(root), *args], text=True,
+                                               stderr=subprocess.PIPE).strip()
+            git("init", "--initial-branch=main")
+            git("config", "user.name", "Source selection test")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "commit.gpgsign", "false")
+            git("config", "tag.gpgsign", "false")
+            (root / "input").write_text("approved")
+            git("add", "input")
+            git("commit", "-m", "approved selection fixture")
+            approved = git("rev-parse", "HEAD")
+            tag = "publication-source-equivalence-" + approved
+            git("tag", "-a", tag, "-m", "selector fixture; not publication authority")
+            (root / "input").write_text("unreleased")
+            git("commit", "-am", "unreleased main fixture")
+            newer = git("rev-parse", "HEAD")
+            with (patch.object(publisher, "SOURCE", str(root)),
+                  patch.dict(os.environ, {"PATH": os.environ["PATH"], "PUBLICATION_SOURCE_MODE": "receipt",
+                                         "PUBLICATION_EQUIVALENCE_TAG": tag}, clear=True)):
+                self.assertNotEqual(approved, newer)
+                self.assertEqual(publisher.current_source(), approved)
+                publisher.require_current_publication(approved)
+                git("tag", "-d", tag)
+                with self.assertRaises(RuntimeError):
+                    publisher.require_current_publication(approved)
+            with patch.object(publisher, "SOURCE", str(root)), patch.dict(os.environ, {"PATH": os.environ["PATH"]}, clear=True):
+                self.assertEqual(publisher.current_source(), newer)
+
+
 class PublisherBoundaryTests(unittest.TestCase):
     def test_apply_requires_each_credential_before_source_or_build_work(self):
         credentials = {name: "test-only" for name in (
@@ -149,14 +225,14 @@ class PublisherBoundaryTests(unittest.TestCase):
                         del environment[name]
                     else:
                         environment[name] = missing
-                    with patch.dict(os.environ, environment, clear=True), patch.object(publisher, "current_main") as lookup:
+                    with patch.dict(os.environ, environment, clear=True), patch.object(publisher, "current_source") as lookup:
                         with self.assertRaisesRegex(RuntimeError, "Publication credentials missing: " + name):
                             publisher.main()
                         lookup.assert_not_called()
 
     def test_preparation_can_run_without_publication_credentials(self):
         with patch.dict(os.environ, {"PUBLISH_APPLY": "0"}, clear=True), patch.object(
-            publisher, "current_main", side_effect=RuntimeError("source lookup marker")
+            publisher, "current_source", side_effect=RuntimeError("source lookup marker")
         ) as lookup:
             with self.assertRaisesRegex(RuntimeError, "source lookup marker"):
                 publisher.main()
@@ -166,7 +242,7 @@ class PublisherBoundaryTests(unittest.TestCase):
         environment = {"PUBLISH_APPLY": "1", **{name: "test-only" for name in (
             "SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}}
         with patch.dict(os.environ, environment, clear=True), patch.object(
-            publisher, "current_main", side_effect=RuntimeError("source lookup marker")
+            publisher, "current_source", side_effect=RuntimeError("source lookup marker")
         ) as lookup:
             with self.assertRaisesRegex(RuntimeError, "source lookup marker"):
                 publisher.main()
@@ -610,7 +686,7 @@ class SourceEquivalenceBoundaryTests(unittest.TestCase):
                                           "SITE_DEPLOY_KEY": "never-pass", "CLOUDFLARE_API_TOKEN": "never-pass"}),
                   patch.object(publisher, "git"),
                   patch.object(publisher, "verify_gate_files") as pinned,
-                  patch.object(publisher, "current_main", return_value="d" * 40),
+                  patch.object(publisher, "current_source", return_value="d" * 40),
                   patch.object(publisher, "run", side_effect=checked_import) as execute):
                 controller, backend, result = publisher.equivalent_sources(root, root / "current", "d" * 40, "public-fingerprint")
             self.assertEqual(result, self.admission())
@@ -649,7 +725,7 @@ class SourceEquivalenceBoundaryTests(unittest.TestCase):
                       patch.dict(os.environ, {"PUBLICATION_EQUIVALENCE_TAG": "publication-source-equivalence-" + "c" * 40}),
                       patch.object(publisher, "git"),
                       patch.object(publisher, "verify_gate_files"),
-                      patch.object(publisher, "current_main", return_value=("0" if change == "advanced" else "d") * 40),
+                      patch.object(publisher, "current_source", return_value=("0" if change == "advanced" else "d") * 40),
                       patch.object(publisher, "run", return_value=json.dumps(value),
                                    side_effect=RuntimeError("bad signature") if change == "signature" else None)):
                     with self.assertRaises(RuntimeError):
@@ -688,11 +764,11 @@ class SourceEquivalenceBoundaryTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 publisher.verify_gate_files(root, manifest)
 
-    def test_current_main_and_mirror_checks_use_publication_head(self):
-        with (patch.object(publisher, "current_main", return_value="d" * 40),
+    def test_current_source_and_mirror_checks_use_publication_head(self):
+        with (patch.object(publisher, "current_source", return_value="d" * 40),
               patch.object(publisher, "git", return_value="e" * 40 + "\trefs/heads/main")):
             publisher.require_current_publication("d" * 40, Path("/mirror"), "e" * 40)
-            with self.assertRaisesRegex(RuntimeError, "Source main advanced"):
+            with self.assertRaisesRegex(RuntimeError, "Publication source changed"):
                 publisher.require_current_publication("b" * 40, Path("/mirror"), "e" * 40)
             with self.assertRaisesRegex(RuntimeError, "compare-and-swap"):
                 publisher.require_current_publication("d" * 40, Path("/mirror"), "f" * 40)
