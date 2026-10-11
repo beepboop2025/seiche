@@ -23,7 +23,7 @@ def main():
     if not destination.resolve().is_relative_to(workspace):raise SystemExit('Destination must be on the verified workspace')
     destination.mkdir(mode=0o700,parents=True,exist_ok=True)
     if destination.stat().st_mode&0o077:raise SystemExit('Destination must be private')
-    subprocess.run(['rsync','-az','--chmod=F600,D700','--include=backup-*.json','--include=backup-*.sanbackup','--exclude=*','-e','ssh -o BatchMode=yes -o ConnectTimeout=15',a.ssh_host+':/var/lib/seiche-agent-network/backups/',str(destination)+'/'],check=True,timeout=300)
+    subprocess.run(['rsync','-az','--chmod=go-rwx','--include=backup-*.json','--include=backup-*.sanbackup','--exclude=*','-e','ssh -o BatchMode=yes -o ConnectTimeout=15',a.ssh_host+':/var/lib/seiche-agent-network/backups/',str(destination)+'/'],check=True,timeout=300)
     verified=removed=0;cutoff=datetime.now(timezone.utc)-timedelta(days=7)
     for receipt in destination.glob('backup-*.json'):
         if not re.fullmatch(r'backup-\d{8}T\d{6}Z-[a-f0-9]{12}\.json',receipt.name) or receipt.is_symlink():continue
