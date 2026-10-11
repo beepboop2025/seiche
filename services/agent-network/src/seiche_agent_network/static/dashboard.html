@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Platform intelligence · Seiche</title>
+  <link rel="stylesheet" href="./static/dashboard.css">
+  <script src="./static/dashboard.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to dashboard</a>
+  <header class="site-header">
+    <a class="brand" href="./dashboard" aria-label="Seiche platform intelligence">SEICHE<span> / intelligence</span></a>
+    <nav aria-label="Platform navigation"><a href="./console">Agent console <span aria-hidden="true">↗</span></a><span class="operator-label">Operator view</span></nav>
+  </header>
+  <main id="main">
+    <section class="intro" aria-labelledby="title">
+      <p class="eyebrow">PLATFORM OPERATIONS / STAGE ONE</p>
+      <div class="intro-line"><h1 id="title">See where the work happens.</h1><span class="connection-tag" id="connection-tag">Disconnected</span></div>
+      <p class="intro-copy">Traffic, tool performance and source readiness across your financial products. Every number keeps its scope.</p>
+    </section>
+
+    <section class="connection-panel" aria-label="Connect to operator reports">
+      <form id="connect-form">
+        <label for="report-token">Operator report credential<span class="field-note">Separate from an organisation or agent credential.</span></label>
+        <div class="credential-entry"><input id="report-token" type="password" minlength="32" maxlength="512" autocomplete="off" spellcheck="false" required placeholder="Paste your report credential" aria-describedby="credential-note"><button type="submit" id="connect-button">Connect reports <span aria-hidden="true">→</span></button></div>
+      </form>
+      <div class="connection-actions" id="connection-actions" hidden><div><strong>Private operator session</strong><p id="updated-label">Loading reports…</p></div><div class="button-row"><label class="auto-refresh"><input type="checkbox" id="auto-refresh">Refresh every 60s</label><button type="button" id="refresh-button">Refresh</button><button type="button" id="disconnect-button" class="subtle">Disconnect</button></div></div>
+      <p class="small-note" id="credential-note">The credential stays in this page’s memory and is cleared on disconnect or reload. No cookies, browser storage or third-party trackers.</p>
+      <p id="connection-status" class="status-message" role="status" aria-live="polite">Connect to load the platform’s private reports.</p>
+    </section>
+
+    <section id="disconnected-view" class="empty-state" aria-label="Disconnected dashboard">
+      <div class="empty-mark" aria-hidden="true">↗</div><h2>Your platform, in one view.</h2><p>Connect your operator credential to inspect real exchanges, source clocks and network geography.</p><div class="empty-categories"><span>Product performance</span><span>Request geography</span><span>Source readiness</span></div>
+    </section>
+
+    <div id="report-view" hidden>
+      <div class="report-toolbar"><p id="report-window">Global platform report</p><p id="report-scope">Central ingress only</p></div>
+      <div id="coverage-notice" class="notice" role="note"></div>
+      <section class="metric-grid" aria-label="Platform overview" id="metrics"></section>
+
+      <section class="panel activity-panel" aria-labelledby="activity-title"><div class="panel-heading"><div><p class="eyebrow">OBSERVED ACTIVITY</p><h2 id="activity-title">Exchanges over time</h2></div><span class="muted-label">UTC days · all products</span></div><div id="daily-activity" class="daily-activity"></div><p class="small-note">Counts include protocol exchanges and classified automation. They do not establish people, completed work, trades or downloads.</p></section>
+
+      <div class="filter-toolbar"><div><h2>Explore the platform</h2><p>Filter product, country, tool and source views. Overview metrics and traffic classification remain global.</p></div><label for="product-filter">Product<select id="product-filter"><option value="all">All products</option></select></label></div>
+
+      <div class="two-columns">
+        <section class="panel" aria-labelledby="countries-title"><div class="panel-heading"><div><p class="eyebrow">REQUEST GEOGRAPHY</p><h2 id="countries-title">Where requests enter</h2></div><span id="country-count" class="muted-label"></span></div><div id="countries" class="ranked-list"></div><p class="small-note">Countries describe trusted edge network origins. VPNs and cloud gateways may differ from the institution’s location. Unknown remains visible.</p></section>
+        <section class="panel" aria-labelledby="traffic-title"><div class="panel-heading"><div><p class="eyebrow">CLASSIFICATION</p><h2 id="traffic-title">What traffic represents</h2></div><span class="muted-label">All products</span></div><div id="traffic" class="ranked-list"></div><div id="returning-activity" class="context-box"></div><p class="small-note">Production classifications are operator-reported. Synthetic and internal traffic are excluded from the weekly returning organisation calculation; unknown traffic is not verified adoption.</p></section>
+      </div>
+
+      <section class="panel" aria-labelledby="products-title"><div class="panel-heading"><div><p class="eyebrow">RELIABILITY &amp; VOLUME</p><h2 id="products-title">Product performance</h2></div><span class="muted-label">p95 is a histogram interval</span></div><div class="table-wrap" tabindex="0" role="region" aria-label="Product performance table, scroll horizontally if needed"><table><caption class="sr-only">Product exchanges, HTTP errors, tool errors and approximate p95 latency interval</caption><thead><tr><th scope="col">Product</th><th scope="col">Exchanges</th><th scope="col">HTTP errors</th><th scope="col">Tool errors</th><th scope="col">p95 interval</th></tr></thead><tbody id="product-rows"></tbody></table></div><p class="small-note">HTTP errors and tool errors are separate measures and may overlap. Response latency is not the age of the underlying source.</p></section>
+
+      <section class="panel" aria-labelledby="tools-title"><div class="panel-heading"><div><p class="eyebrow">TOOL PERFORMANCE</p><h2 id="tools-title">Which tools are being called</h2></div><label class="search-label" for="tool-search"><span class="sr-only">Filter tools by name</span><input type="search" id="tool-search" placeholder="Find a tool" maxlength="120"></label></div><div class="table-wrap" tabindex="0" role="region" aria-label="Tool performance table, scroll horizontally if needed"><table><caption class="sr-only">Tool exchanges, errors and p95 latency intervals</caption><thead><tr><th scope="col">Tool / product</th><th scope="col">Exchanges</th><th scope="col">Tool errors</th><th scope="col">HTTP errors</th><th scope="col">p95 interval</th></tr></thead><tbody id="tool-rows"></tbody></table></div><p class="small-note" id="tool-count"></p><p class="small-note">“Other” groups names outside the approved tool registry. “None” denotes an exchange without a tool call. Tool arguments and results are not retained in this report.</p></section>
+
+      <section class="panel freshness-panel" aria-labelledby="freshness-title"><div class="panel-heading"><div><p class="eyebrow">SOURCE READINESS</p><h2 id="freshness-title">Transport is only the first check.</h2></div><span id="monitor-status" class="badge unknown">Not loaded</span></div><p id="freshness-summary" class="section-copy">Loading the source monitor…</p><div id="freshness-products" class="freshness-grid"></div><div class="legend" aria-label="Freshness states"><span class="badge fresh">Fresh</span><span class="badge stale">Stale</span><span class="badge unknown">Unknown</span><span class="badge restricted">Restricted</span></div><p class="small-note">Freshness applies to the inspected source scope. Unknown means evidence or a qualified cadence policy is missing. Restricted preserves source rights and context-only limits. Neither transport success nor a recent report timestamp establishes trading readiness.</p></section>
+    </div>
+  </main>
+  <footer><span>SEICHE / PLATFORM INTELLIGENCE</span><p>Private operational measurement · Existing core products remain free.<br>Website visits and package downloads are outside this dashboard.</p></footer>
+</body>
+</html>

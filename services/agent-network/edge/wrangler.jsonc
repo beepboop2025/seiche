@@ -1,0 +1,11 @@
+{
+  "name": "seiche-agent-platform",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-11",
+  "account_id": "6b33e9ac81f0df1e9b52650676ddb0f1",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{"pattern": "agents.seiche.info", "custom_domain": true}],
+  "vars": {"PLATFORM_ORIGIN": "https://api.seiche.info", "ORIGIN_PATH_PREFIX": "/agents"},
+  "observability": {"enabled": false}
+}

@@ -1,0 +1,19 @@
+[Unit]
+Description=Seiche platform source freshness checks
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m seiche_agent_network.freshness --output /var/lib/seiche-agent-network/freshness.json --timeout 25
+SuccessExitStatus=1 2
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network
+MemoryMax=256M
