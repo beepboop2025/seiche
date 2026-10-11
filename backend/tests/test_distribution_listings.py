@@ -41,11 +41,13 @@ EXPECTED_SURFACES = {
     "OpenAI",
     "Docker / GHCR",
     "OpenBB",
+    "OpenBB provider on PyPI",
     "Hugging Face",
     "Kaggle",
     "Zenodo",
 }
 LISTED_SURFACES = {
+    "OpenBB provider on PyPI",
     "Official MCP Registry",
     "Glama remote connector",
     "Smithery",
@@ -227,12 +229,12 @@ class SubmissionLedgerContracts(unittest.TestCase):
 
         self.assertEqual(official["target"], "io.github.beepboop2025/seiche")
         self.assertIn("/versions/latest", official["public_evidence_url"])
-        self.assertIn("version 0.10.1", official["notes"])
+        self.assertIn("version 0.16.2", official["notes"])
         self.assertEqual(glama["ownership"], "owner_verified")
-        self.assertIn("eleven live tool links", glama["notes"])
+        self.assertIn("sixteen live tool links", glama["notes"])
         self.assertEqual(smithery["ownership"], "owner_published")
-        self.assertEqual(smithery["freshness"], "stale")
-        self.assertIn("only ten tools", smithery["notes"])
+        self.assertEqual(smithery["freshness"], "current")
+        self.assertIn("16 tools", smithery["notes"])
         self.assertEqual(lulu["public_evidence_url"], "https://getlulu.dev/mcps/seiche")
         self.assertIn("does not mean owner-claimed", lulu["notes"])
 
