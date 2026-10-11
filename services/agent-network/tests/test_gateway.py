@@ -66,6 +66,61 @@ def test_missing_auth_and_operator_token_never_downgrade(platform,monkeypatch):
     assert client.post('/products/not-a-product/mcp',json={}).status_code==404
 
 
+def test_undertow_service_identity_only_reaches_public_calls(platform, upstream_credential):
+    client, store, owners, requests, gateway = platform
+    token, _ = upstream_credential()
+    visitor = owners[0]['owner_token']
+    def call(name, **kwargs):
+        return client.post('/products/undertow/mcp', json={'jsonrpc':'2.0','id':2,'method':'tools/call',
+            'params':{'name':name,'arguments':{}}}, **kwargs)
+    assert call('liquidity_tiers', headers={'Authorization':'Bearer '+visitor}).status_code == 200
+    assert requests[-1].headers['authorization'] == 'Bearer '+token
+    assert visitor not in str(requests[-1].headers)
+    assert call('agent_access_status').status_code == 200
+    assert 'authorization' not in requests[-1].headers
+    gateway.client.cookies.set('owner', 'privileged', domain='api.seiche.info', path='/')
+    response = client.post('/products/undertow/mcp', json={'jsonrpc':'2.0','id':3,'method':'tools/list'})
+    assert response.status_code == 200
+    assert 'authorization' not in requests[-1].headers and 'cookie' not in requests[-1].headers
+    response = client.post('/products/seiche/mcp', json={'jsonrpc':'2.0','id':3,'method':'tools/list'})
+    assert response.status_code == 200 and 'cookie' not in requests[-1].headers
+    assert 'authorization' not in requests[-1].headers
+    count = len(requests)
+    for tool in ['board_full', 'exit_desk_full', 'unknown_tool']:
+        assert call(tool).status_code == 403
+    assert len(requests) == count
+    assert token not in json.dumps(gateway.report(None))
+
+
+def test_undertow_credentials_rotate_and_expiry_does_not_downgrade(platform, upstream_credential):
+    client, _, _, requests, gateway = platform
+    now = int(gateway.clock())
+    first, _ = upstream_credential(now=now)
+    payload = {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'exit_cost'}}
+    assert client.post('/products/undertow/mcp', json=payload).status_code == 200
+    assert requests[-1].headers['authorization'] == 'Bearer '+first
+    second, _ = upstream_credential(now=now, name='rotated')
+    assert client.post('/products/undertow/mcp', json=payload).status_code == 200
+    assert requests[-1].headers['authorization'] == 'Bearer '+second
+    upstream_credential(now=now-3600)
+    count = len(requests)
+    failure = client.post('/products/undertow/mcp', json=payload)
+    assert failure.status_code == 503 and len(requests) == count
+    assert 'token' not in failure.text and second not in failure.text
+
+
+def test_undertow_changed_session_contract_is_never_exposed(platform, upstream_credential):
+    client, _, _, requests, gateway = platform
+    upstream_credential()
+    response = client.post('/products/undertow/mcp', json={'jsonrpc':'2.0','id':1,'method':'initialize'})
+    assert response.status_code == 502 and 'mcp-session-id' not in response.headers
+    assert not gateway.sessions and gateway.active == 0
+    count = len(requests)
+    response = client.post('/products/undertow/mcp', headers={'Mcp-Session-Id':'private-upstream-session'},
+        json={'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'agent_access_status'}})
+    assert response.status_code == 404 and len(requests) == count
+
+
 def test_failed_measurement_does_not_fail_data_response(platform,monkeypatch):
     client,_,_,_,gateway=platform
     def fail(*args,**kwargs):raise OSError('database offline')

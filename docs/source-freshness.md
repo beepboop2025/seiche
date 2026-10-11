@@ -126,3 +126,58 @@ These are dated scoped findings. Current evidence is the scheduled report's
 `evaluated_at` and rows, not these historical counts. One earlier Seiche MCP
 probe returned HTTP 502; the later successful probes do not erase that transient
 failure.
+
+## Undertow central access and the admission-check budget
+
+Central public calls may use an operator-owned native MCP identity so all
+visitors do not compete for the server IP's 200-call anonymous daily allowance.
+This changes identity attribution at the native ingress, not source rights,
+subscriber access, billing, or the native per-minute and proof limits.
+`upstream_auth.py` has an explicit reviewed public-tool allowlist independent
+of discovery. Discovery and `agent_access_status` remain anonymous; unknown
+and subscriber tools are rejected. Visitor bearer credentials are never sent
+upstream. Cookies are removed for every product. Native Undertow is stateless
+and rebuilds identity per request; an unexpected MCP session response fails
+closed rather than allowing an elevated session to be reused.
+
+Provision the derived credential using `services/agent-network/ops/renew_undertow_token.py`
+and its root-only oneshot/daily timer. Configure both the central service and
+the freshness service with:
+
+```text
+SEICHE_UNDERTOW_MCP_TOKEN_FILE=/var/lib/seiche-agent-network/undertow-mcp-token.json
+```
+
+The credential file must be a regular, single-link, non-symlink file with mode
+0600, owned by the service account, no larger than 16 KiB. Its exact JSON
+fields are `token`, `expires_at` (aware ISO8601 matching the native token's
+signed expiry), `product: "undertow"`, and `purpose: "public_mcp_gateway"`.
+The native signing secret stays in the native environment; only the derived
+token enters this file. Atomic replacement is read on the next request without
+a restart. The renewal job checks the existing signature and owner identity,
+then renews a 30-day token when seven days or less remain. The central reader
+checks local format and expiry; the native service remains the authority for
+signature and current entitlement. Configured invalid, unreadable, or expired
+credentials fail closed instead of silently reverting to anonymous quota.
+The monitor exposes only credential status and expiry, never the token, owner,
+file path, or signing material. `ready` describes local credential readiness,
+not independently verified native entitlement.
+
+The ten-minute monitor still refreshes Undertow's ordinary observation clocks
+each run. Native `trade_safety_exit_context` has a separate 60-call daily limit,
+including the owner. Its monitor attempt is therefore reserved durably at most
+once per hour in private `undertow-admission-cache.json` beside the report,
+with a private advisory lock to exclude overlapping monitor processes. Failed
+or cancelled requests consume the reservation. An ordinary day has at most
+24 monitor proof attempts; other clients share the native identity's remaining
+proof and per-minute capacity. Credential rotation starts a new cache identity.
+This integration does not raise those limits or guarantee unlimited throughput.
+
+Only an explicit native `pending_owner_review`, `denied`, or `restricted`
+rights result can be reused, for less than one hour. A cached check preserves
+its original `checked_at`, exposes `age_seconds`, `cached`,
+`cache_ttl_seconds`, and `next_attempt_at`, and contains no cached quote clocks.
+A positive admission is never replayed as fresh. Expired evidence, an invalid
+cache, a failed refresh, or a pending hourly retry produces unknown admission;
+it cannot turn a fresh observation clock into trading permission. A restriction
+continues to win the top-level status while its bounded cached evidence is valid.

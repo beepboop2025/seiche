@@ -10,10 +10,12 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, time as day_time, timedelta, timezone
 from functools import lru_cache
+import fcntl
 import hashlib
 import json
 import math
 import os
+import stat
 from pathlib import Path
 import time
 import uuid
@@ -24,6 +26,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from .gateway import PRODUCTS
+from .upstream_auth import ProbeAuth, load_undertow_credential, read_private_json
 
 # These match Seiche's explicit generic publication contracts. Series with a
 # calendar-based override are deliberately NOT evaluated using a generic age.
@@ -45,6 +48,7 @@ RETIRED_IDENTITIES = {
 }
 UNDERTOW_VENUES = frozenset({"binance", "bitfinex", "coinbase", "gemini", "kraken", "okx"})
 UNDERTOW_MAX_AGE = 7200
+ADMISSION_CACHE_SECONDS = 3600
 _NY = ZoneInfo("America/New_York")
 
 
@@ -438,15 +442,100 @@ class _ProbeTransport(httpx.AsyncHTTPTransport):
         return response
 
 
-async def probe_product(product, *, timeout=30):
+def _iso_epoch(value):
+    return datetime.fromtimestamp(value, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+async def _undertow_admission(session, *, cache_path, timeout, clock=time.time):
+    """At most one attempted native proof per hour for this monitor/cache.
+
+    Persist the attempt before making a request, including failed/cancelled
+    requests. Only an explicit restriction is reusable; current quote clocks
+    and positive admission are never cached as fresh. The native 60/day limit
+    remains authoritative and is shared with other calls using that identity.
+    """
+    unknown = {"freshness": "unknown", "clocks": [], "source_age_seconds": None,
+               "cached": False, "cache_ttl_seconds": ADMISSION_CACHE_SECONDS}
+    if cache_path is None:
+        return {**unknown, "reasons": ["admission_cache_not_configured"]}
+    credential = load_undertow_credential(now=clock())
+    if credential.status not in {"ready", "not_configured"}:
+        return {**unknown, "reasons": ["upstream_credential_unavailable"]}
+    path = Path(cache_path)
+    lock_fd = None
+    try:
+        lock_fd = os.open(str(path) + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        info = os.fstat(lock_fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_nlink != 1:
+            raise ValueError("Invalid admission cache lock")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            stored = read_private_json(path)
+        except FileNotFoundError:
+            stored = None
+        now = clock()
+        if stored is not None:
+            if (not isinstance(stored, dict) or stored.get("schema") != "undertow.admission-cache.v1"
+                    or type(stored.get("attempted_at")) not in {int, float}
+                    or not math.isfinite(stored["attempted_at"])):
+                raise ValueError("Invalid admission cache")
+            age = now - stored["attempted_at"]
+            if age < 0:
+                return {**unknown, "reasons": ["admission_cache_clock_in_future"]}
+            if age < ADMISSION_CACHE_SECONDS and stored.get("identity") == credential.cache_identity:
+                metadata = {"next_attempt_at": _iso_epoch(stored["attempted_at"] + ADMISSION_CACHE_SECONDS)}
+                checked_at, restriction = stored.get("checked_at"), stored.get("restriction")
+                if (type(checked_at) in {int, float} and math.isfinite(checked_at)
+                        and 0 <= now - checked_at < ADMISSION_CACHE_SECONDS
+                        and isinstance(restriction, dict)
+                        and restriction.get("status") in {"pending_owner_review", "denied", "restricted"}
+                        and restriction.get("scope") == "derived_metadata_only"):
+                    return {**unknown, **metadata, "freshness": "restricted", "cached": True,
+                            "checked_at": _iso_epoch(checked_at), "age_seconds": round(now - checked_at, 3),
+                            "rights": {"status": restriction["status"], "scope": "derived_metadata_only"},
+                            "reasons": ["cached_native_restriction_within_one_hour_ttl"]}
+                return {**unknown, **metadata, "reasons": ["admission_refresh_waiting_for_hourly_budget"]}
+        attempt = {"schema": "undertow.admission-cache.v1", "identity": credential.cache_identity,
+                   "attempted_at": now, "checked_at": None, "restriction": None}
+        save_report(path, attempt)  # Durable reservation survives cancellation/restart.
+        metadata = {"next_attempt_at": _iso_epoch(now + ADMISSION_CACHE_SECONDS)}
+        request = {"request_hash": hashlib.sha256(b"seiche-freshness-metadata-probe-v1").hexdigest(),
+                   "mode": "observe", "instrument": "BTC/USD", "side": "sell", "venue": None,
+                   "requested_size_usd": 1000}
+        try:
+            async with asyncio.timeout(min(10, timeout)):
+                admission = await session.call_tool("trade_safety_exit_context", request)
+            checked_at = clock()
+            checked = inspect_result("undertow", "trade_safety_exit_context", admission, now=checked_at)
+            if admission.isError:
+                return {**unknown, **metadata, "transport": "tool_error", "reasons": ["native_admission_tool_error"]}
+            rights = checked.get("rights", {})
+            if (checked["freshness"] == "restricted" and rights.get("status") in {"pending_owner_review", "denied", "restricted"}
+                    and rights.get("scope") == "derived_metadata_only"):
+                attempt.update(checked_at=checked_at, restriction={"status": rights["status"], "scope": rights["scope"]})
+                save_report(path, attempt)
+            return {**checked, **metadata, "checked_at": _iso_epoch(checked_at), "age_seconds": 0,
+                    "cached": False, "cache_ttl_seconds": ADMISSION_CACHE_SECONDS}
+        except Exception:
+            return {**unknown, **metadata, "transport": "unavailable", "reasons": ["native_admission_check_unavailable"]}
+    except (OSError, ValueError, TypeError, OverflowError, RecursionError):
+        return {**unknown, "reasons": ["admission_cache_unavailable_or_busy"]}
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+
+
+async def probe_product(product, *, timeout=30, admission_cache_path=None, clock=time.time, transport=None):
     if product not in PRODUCTS:
         raise ValueError("Only fixed public product endpoints may be probed")
     started = time.monotonic()
     summary = {"product": product, "transport": "unavailable", "tool": None,
                "freshness": "unknown", "source_age_seconds": None, "clocks": [], "reasons": []}
+    auth = ProbeAuth(clock=clock)
     try:
         async with asyncio.timeout(timeout):
-            async with httpx.AsyncClient(transport=_ProbeTransport(), follow_redirects=False, timeout=timeout,
+            async with httpx.AsyncClient(transport=transport or _ProbeTransport(), follow_redirects=False, timeout=timeout,
+                                         event_hooks={"request": [auth.request], "response": [auth.response]},
                                          headers={"X-Financial-Evidence-Traffic-Class": "synthetic"}) as client:
                 async with streamable_http_client(PRODUCTS[product][1], http_client=client) as (read, write, _):
                     async with ClientSession(read, write) as session:
@@ -459,28 +548,23 @@ async def probe_product(product, *, timeout=30):
                             summary["tool"] = name
                             args = {"offset": 0, "limit": 12} if name == "research_catalog" else {}
                             value = await session.call_tool(name, args)
-                            summary.update(inspect_result(product, name, value))
+                            summary.update(inspect_result(product, name, value, now=clock()))
                             if value.isError:
                                 summary["transport"] = "tool_error"
                             if product == "undertow" and "trade_safety_exit_context" in available:
-                                # Fixed observe-only sample; it cannot place, clear or
-                                # route an order. Never send a real portfolio or intent.
-                                request = {"request_hash": hashlib.sha256(b"seiche-freshness-metadata-probe-v1").hexdigest(),
-                                    "mode": "observe", "instrument": "BTC/USD", "side": "sell", "venue": None,
-                                    "requested_size_usd": 1000}
                                 summary["clock_freshness"] = summary["freshness"]
-                                try:
-                                    async with asyncio.timeout(min(10, timeout)):
-                                        admission = await session.call_tool("trade_safety_exit_context", request)
-                                    checked = inspect_result(product, "trade_safety_exit_context", admission)
-                                    summary["admission_check"] = checked
-                                    if checked["freshness"] == "restricted":
-                                        summary["freshness"] = "restricted"
-                                        summary["reasons"].append("observation_clocks_do_not_override_native_rights_restriction")
-                                except Exception:
-                                    summary["admission_check"] = {"freshness": "unknown", "transport": "unavailable"}
+                                checked = await _undertow_admission(session, cache_path=admission_cache_path, timeout=timeout, clock=clock)
+                                summary["admission_check"] = checked
+                                if checked["freshness"] == "restricted":
+                                    summary["freshness"] = "restricted"
+                                    summary["reasons"].append("observation_clocks_do_not_override_native_rights_restriction")
+                                elif checked["freshness"] != "fresh":
                                     summary["freshness"] = "unknown"
-                                    summary["reasons"].append("native_admission_check_unavailable")
+                                    summary["reasons"].append("native_admission_check_not_current")
+                            elif product == "undertow":
+                                summary["clock_freshness"] = summary["freshness"]
+                                summary["freshness"] = "unknown"
+                                summary["reasons"].append("native_admission_tool_not_advertised")
                         else:
                             summary["reasons"] = ["no_qualified_health_tool_advertised"]
                             if product == "noisefloor":
@@ -491,6 +575,8 @@ async def probe_product(product, *, timeout=30):
         summary = {"product": product, "tool": summary.get("tool"), "transport": "unavailable",
                    "reasons": ["probe_failed_or_timed_out"], "freshness": "unknown",
                    "clocks": [], "source_age_seconds": None}
+    if product == "undertow":
+        summary["upstream_auth"] = load_undertow_credential(now=clock()).metadata()
     summary["transport_duration_ms"] = round((time.monotonic() - started) * 1000)
     return summary
 
@@ -515,7 +601,8 @@ def save_report(path, report):
 async def probe_products(output_path, *, timeout=30):
     if not 1 <= timeout <= 60:
         raise ValueError("Probe timeout must be between 1 and 60 seconds")
-    rows = await asyncio.gather(*(probe_product(product, timeout=timeout) for product in PRODUCTS))
+    cache = Path(output_path).with_name("undertow-admission-cache.json")
+    rows = await asyncio.gather(*(probe_product(product, timeout=timeout, admission_cache_path=cache) for product in PRODUCTS))
     report = {"schema": "seiche-agent-network.freshness.v1", "evaluated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
               "products": rows, "traffic_class": "synthetic", "raw_payloads_retained": False,
               "interpretation": "Transport availability and scoped source-clock checks; not trade execution approval or complete product coverage"}

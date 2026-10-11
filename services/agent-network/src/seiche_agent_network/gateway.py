@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .models import NetworkError
 from .analytics import Analytics
 from .geography import verified_country
+from .upstream_auth import public_call_credential, UpstreamAuthUnavailable
 
 PRODUCTS = {
     "seiche": ("Seiche", "https://api.seiche.info/mcp"),
@@ -50,7 +51,8 @@ missed_release_weeks latest_expected_release_at expected_observation_period_star
 effective_at available_at availability_clock_kind availability_age_seconds current_observation_available
 clock_role forward_effective_days reference_period_age_seconds expected_observation_date publication_timezone
 unverified_public_holidays_not_excused
-publication_cutoff_local grace_days""".split())
+publication_cutoff_local grace_days upstream_auth expires_at checked_at age_seconds cached cache_ttl_seconds
+next_attempt_at""".split())
 
 
 def _public_metadata(value, *, depth=0):
@@ -248,6 +250,8 @@ class Gateway:
         self.buckets[identity] += 1
         self.sessions = {k:v for k,v in self.sessions.items() if v[3] > now}
         supplied_session = request.headers.get("mcp-session-id")
+        if product == "undertow" and supplied_session:
+            raise NetworkError("session_unsupported", "Undertow uses stateless public requests", 404)
         upstream_session = None
         if supplied_session:
             session = self.sessions.get(supplied_session)
@@ -276,6 +280,12 @@ class Gateway:
                         tool = requested_tool
             except (ValueError, AttributeError, TypeError, RecursionError):
                 raise NetworkError("invalid_request", "A supported MCP JSON-RPC object is required")
+        try:
+            upstream_token = public_call_credential(product, method, tool, now=now)
+        except UpstreamAuthUnavailable:
+            if product == "undertow" and method == "tools/call" and tool == "other":
+                raise NetworkError("tool_unavailable", "Only the public Undertow tool surface is available", 403) from None
+            raise NetworkError("upstream_auth_unavailable", "Product upstream credential requires operator renewal", 503) from None
         traffic = request.headers.get("x-financial-evidence-traffic-class", "unknown")
         if traffic not in {"synthetic", "internal", "backtest", "shadow", "paper", "operator_reported_production"}:
             traffic = "unknown"
@@ -286,6 +296,8 @@ class Gateway:
         country = verified_country(request.headers,request.method,public_path,self.geo_secret,now=now)
         headers = {"Content-Type":"application/json", "Accept":"application/json, text/event-stream",
                    "Accept-Encoding":"identity", "X-Financial-Evidence-Traffic-Class":traffic}
+        if upstream_token:
+            headers["Authorization"] = "Bearer " + upstream_token
         if upstream_session:
             headers["Mcp-Session-Id"] = upstream_session
         version = request.headers.get("mcp-protocol-version")
@@ -296,8 +308,13 @@ class Gateway:
             raise NetworkError("rate_limited", "Ingress operating limit reached; retry later", 429)
         self.active += 1
         try:
-            upstream = await self.client.send(self.client.build_request(request.method,
-                PRODUCTS[product][1], headers=headers, content=body), stream=True)
+            upstream_request = self.client.build_request(request.method,
+                PRODUCTS[product][1], headers=headers, content=body)
+            # Products share hosts and this HTTP client. An HTTP cookie jar
+            # must never carry the service identity into another product or
+            # an intentionally anonymous discovery/status request.
+            upstream_request.headers.pop("cookie", None)
+            upstream = await self.client.send(upstream_request, stream=True)
         except asyncio.CancelledError:
             self.active -= 1
             await self._record(principal,product,method,traffic,499,round((self.clock()-now)*1000),tool=tool,country=country)
@@ -319,6 +336,10 @@ class Gateway:
         if media not in {"application/json", "text/event-stream"}:
             media = "application/octet-stream"
         new_session = upstream.headers.get("mcp-session-id")
+        if new_session and product == "undertow":
+            self.active -= 1
+            await self._cleanup(upstream,(principal,product,method,traffic,502,round((self.clock()-now)*1000)),{"tool":tool,"country":country})
+            raise NetworkError("upstream_session_contract", "Product session contract requires operator review", 502)
         if new_session:
             if len(new_session) > 512 or len(self.sessions) >= 4096:
                 self.active -= 1

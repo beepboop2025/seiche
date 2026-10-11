@@ -5,7 +5,7 @@ import stat
 import httpx
 import pytest
 
-from seiche_agent_network.freshness import SourcePolicy, _LimitedStream, inspect_result, probe_product, probe_products
+from seiche_agent_network.freshness import SourcePolicy, _LimitedStream, _undertow_admission, inspect_result, probe_product, probe_products
 
 NOW = datetime(2026, 10, 11, 12, tzinfo=timezone.utc)
 
@@ -243,3 +243,129 @@ def test_undertow_stronger_context_expires_at_exact_native_boundary():
     result = inspect_result("undertow", "trade_safety_exit_context", context, now=NOW)
     assert result["freshness"] == "stale"
     assert result["source_reason_counts"]["native_observation_expiry_reached"] == 6
+
+
+def native_admission(status="pending_owner_review"):
+    from mcp.types import CallToolResult, TextContent
+    venue = venue_result()
+    data = {"schema": "undertow.trade-safety-exit-context.v1", "status": "available",
+            "rights": {"status": status, "scope": "derived_metadata_only", "valid_until": stamp(-1)},
+            "clocks": {"venue_observation_at_by_venue": {v: row["observed_at"] for v, row in venue["venue_freshness"].items()}}}
+    return CallToolResult(content=[TextContent(type="text", text=json.dumps(data))])
+
+
+class AdmissionSession:
+    def __init__(self, value=None):
+        self.value = value or native_admission()
+        self.calls = 0
+
+    async def call_tool(self, name, arguments):
+        self.calls += 1
+        assert name == "trade_safety_exit_context" and arguments["mode"] == "observe"
+        assert arguments["instrument"] == "BTC/USD" and arguments["requested_size_usd"] == 1000
+        if isinstance(self.value, Exception): raise self.value
+        return self.value
+
+
+async def test_admission_cache_preserves_original_clock_and_bounds_failed_refresh(tmp_path, upstream_credential):
+    now = NOW.timestamp()
+    token, _ = upstream_credential(now=now, ttl=86400)
+    cache = tmp_path / "admission.json"
+    session = AdmissionSession()
+    first = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now)
+    assert first["freshness"] == "restricted" and first["cached"] is False
+    for minutes in [10, 20, 30, 40, 50]:
+        check = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now+minutes*60)
+        assert check["freshness"] == "restricted" and check["cached"] is True
+        assert check["checked_at"] == first["checked_at"] and check["age_seconds"] == minutes*60
+        assert check["clocks"] == [] and check["source_age_seconds"] is None
+    assert session.calls == 1
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    assert token not in cache.read_text() and "venue_observation" not in cache.read_text()
+    session.value = RuntimeError("private native response with secret")
+    expired = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now+3600)
+    assert expired["freshness"] == "unknown" and expired["cached"] is False
+    assert "private native" not in json.dumps(expired)
+    for minutes in [70, 80, 90, 100, 110]:
+        check = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now+minutes*60)
+        assert check["freshness"] == "unknown" and "checked_at" not in check
+    assert session.calls == 2  # Failure cannot turn ten-minute polling into 144 proofs/day.
+
+
+async def test_admission_daily_monitor_budget_and_no_cached_positive_admission(tmp_path, upstream_credential):
+    now = NOW.timestamp()
+    upstream_credential(now=now, ttl=172800)
+    session, cache = AdmissionSession(), tmp_path / "daily.json"
+    for index in range(144):
+        check = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now+index*600)
+        assert check["freshness"] == "restricted"
+    assert session.calls == 24  # 24 attempted proofs, below native 60/day; no quota change.
+    approved = AdmissionSession(native_admission("approved"))
+    positive = await _undertow_admission(approved, cache_path=tmp_path/"positive.json", timeout=10, clock=lambda: now)
+    assert positive["freshness"] == "fresh"
+    reused = await _undertow_admission(approved, cache_path=tmp_path/"positive.json", timeout=10, clock=lambda: now+600)
+    assert reused["freshness"] == "unknown" and approved.calls == 1
+
+
+async def test_admission_cache_refuses_bad_clock_permissions_and_concurrent_probe(tmp_path, upstream_credential):
+    import fcntl
+    import os
+    now = NOW.timestamp()
+    upstream_credential(now=now)
+    cache, session = tmp_path/"admission.json", AdmissionSession()
+    await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now)
+    future = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now-1)
+    assert future["freshness"] == "unknown" and session.calls == 1
+    cache.chmod(0o644)
+    unsafe = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now+600)
+    assert unsafe["freshness"] == "unknown" and session.calls == 1
+    cache.chmod(0o600)
+    fd = os.open(str(cache)+".lock", os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        busy = await _undertow_admission(session, cache_path=cache, timeout=10, clock=lambda: now+600)
+        assert busy["freshness"] == "unknown" and session.calls == 1
+    finally:
+        os.close(fd)
+
+
+async def test_official_sdk_probe_authenticates_only_public_calls_and_reuses_restriction(tmp_path, upstream_credential):
+    token, _ = upstream_credential(now=NOW.timestamp())
+    seen = []
+    async def upstream(request):
+        payload = json.loads(request.content) if request.content else {}
+        seen.append((request, payload))
+        method = payload.get("method")
+        if request.method == "GET": return httpx.Response(405)
+        if method == "notifications/initialized": return httpx.Response(202)
+        if method == "initialize":
+            value = {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "test", "version": "1"}}
+        elif method == "tools/list":
+            value = {"tools": [{"name": name, "inputSchema": {"type": "object"}} for name in ["exit_cost", "trade_safety_exit_context"]]}
+        elif method == "tools/call":
+            name = payload["params"]["name"]
+            value = native_admission().model_dump() if name == "trade_safety_exit_context" else {"content": [{"type": "text", "text": json.dumps(venue_result())}]}
+        else:
+            raise AssertionError("Unexpected native method")
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": value},
+                              headers={"Set-Cookie": "owner=private; Path=/"})
+    for offset in [0, 600]:
+        report = await probe_product("undertow", admission_cache_path=tmp_path/"cache.json", clock=lambda: NOW.timestamp()+offset,
+                                     transport=httpx.MockTransport(upstream))
+        assert report["transport"] == "available" and report["clock_freshness"] == "fresh"
+        assert report["freshness"] == "restricted" and report["admission_check"]["cached"] is (offset > 0)
+        assert report["upstream_auth"]["status"] == "ready" and token not in json.dumps(report)
+    calls = [(request, payload) for request, payload in seen if payload.get("method") == "tools/call"]
+    assert [payload["params"]["name"] for _, payload in calls] == ["exit_cost", "trade_safety_exit_context", "exit_cost"]
+    for request, payload in seen:
+        assert "cookie" not in request.headers and "mcp-session-id" not in request.headers
+        if payload.get("method") == "tools/call": assert request.headers["authorization"] == "Bearer "+token
+        else: assert "authorization" not in request.headers
+
+
+async def test_expired_credential_is_observable_and_never_claims_fresh(tmp_path, upstream_credential):
+    upstream_credential(now=NOW.timestamp()-3600)
+    report = await probe_product("undertow", admission_cache_path=tmp_path/"cache.json", clock=lambda: NOW.timestamp(),
+                                 transport=httpx.MockTransport(lambda request: httpx.Response(503)))
+    assert report["freshness"] == "unknown" and report["upstream_auth"]["status"] == "expired"
+    assert report["upstream_auth"]["expires_at"] == NOW.isoformat().replace("+00:00", "Z")
