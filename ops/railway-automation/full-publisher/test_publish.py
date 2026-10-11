@@ -138,6 +138,52 @@ class FrontendSettlementTests(unittest.TestCase):
 
 
 class PublicationSourceSelectionTests(unittest.TestCase):
+    def test_catalog_receipt_is_bound_to_this_full_controller_and_declared_tag(self):
+        tag = "market-corpus-receipt-corpus-7cb1695c6affa707-r33"
+        ref = "refs/tags/" + tag
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "controller-source.json").write_text(json.dumps({"sha": "a" * 40}))
+            catalog = root / "frontend/public/.well-known/ai-catalog.json"
+            catalog.parent.mkdir(parents=True)
+            def declare(value):
+                catalog.write_text(json.dumps({"entries": [{
+                    "identifier": "urn:air:seiche.info:mcp:market-corpus",
+                    "metadata": {"publicationReceipt": json.dumps({"tag": value})},
+                }]}))
+            declare(tag)
+            reply = "b" * 40 + "\t" + ref + "\n" + "a" * 40 + "\t" + ref + "^{}"
+            with (patch.object(publisher, "CONTROLLER", root),
+                  patch.dict(os.environ, {"PUBLICATION_SOURCE_MODE": "catalog",
+                                         "PUBLICATION_CATALOG_RECEIPT_TAG": tag}, clear=True),
+                  patch.object(publisher, "git", return_value=reply)):
+                self.assertEqual(publisher.current_source(), "a" * 40)
+                publisher.verify_catalog_selection(root)
+                declare(tag.replace("r33", "r32"))
+                with self.assertRaisesRegex(RuntimeError, "source declaration"):
+                    publisher.verify_catalog_selection(root)
+                for invalid in ("", "b" * 40 + "\t" + ref,
+                                reply.replace("a" * 40, "c" * 40), reply + "\n" + reply):
+                    with patch.object(publisher, "git", return_value=invalid):
+                        with self.assertRaises(RuntimeError):
+                            publisher.current_source()
+                os.environ["PUBLICATION_EQUIVALENCE_TAG"] = "publication-source-equivalence-" + "a" * 40
+                with self.assertRaisesRegex(RuntimeError, "one exact catalog receipt"):
+                    publisher.current_source()
+
+    def test_catalog_source_cannot_select_a_separate_engine_or_unpinned_controller(self):
+        for identity in ({}, {"sha": "main"}, {"sha": "a" * 40, "engineSourceSha": "b" * 40}):
+            with self.subTest(identity=identity), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                (root / "controller-source.json").write_text(json.dumps(identity))
+                with (patch.object(publisher, "CONTROLLER", root),
+                      patch.dict(os.environ, {"PUBLICATION_SOURCE_MODE": "catalog",
+                        "PUBLICATION_CATALOG_RECEIPT_TAG": "market-corpus-receipt-corpus-7cb1695c6affa707-r33"}, clear=True),
+                      patch.object(publisher, "git") as lookup):
+                    with self.assertRaisesRegex(RuntimeError, "full controller source"):
+                        publisher.current_source()
+                    lookup.assert_not_called()
+
     def test_default_still_follows_exact_main(self):
         with (patch.dict(os.environ, {}, clear=True),
               patch.object(publisher, "git", return_value="a" * 40 + "\trefs/heads/main") as lookup):

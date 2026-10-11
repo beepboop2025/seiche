@@ -54,6 +54,28 @@ Build bundle includes the exact reviewed publish.yml, verifier hash manifest,
 controller source receipt, known hosts and hash-locked social-card requirements.
 The original GitHub workflow remains active until an actual passing replacement.
 
+## Exact catalog-receipt publication
+
+`PUBLICATION_SOURCE_MODE=catalog` selects the annotated tag named by
+`PUBLICATION_CATALOG_RECEIPT_TAG`. Its peeled commit must equal the immutable
+controller bundle's source SHA, already merged into main. The source catalog
+must declare that same receipt. Missing, lightweight, moved or conflicting refs
+stop selection; this mode refuses a separate engine pin or equivalence tag.
+
+This is the ordinary full publication path with a pinned source, including
+static documentation from `frontend/public`. It does not use or enlarge the
+frontend-only overlay contract. The catalog gate still authenticates the pinned
+owner signature, exact receipt subject, signed Seiche and corpus versions, PyPI
+artifacts, hosted runtime and deep corpus evidence before building. All four
+verifier hashes remain bound to the reviewed controller. Full tests, sealed
+outputs, recovery and public-byte proof remain required. Source selection alone
+does not authorize publication.
+
+A newly approved publication requires a new receipt generation and controller
+bundle. Old tags remain immutable. Later main commits cannot enter a scheduled
+refresh through this receipt. Keep only this publisher scheduled after its full
+acceptance, and retain the previous controller and variable values for recovery.
+
 ## Bounded engine projection
 
 The optional `PUBLICATION_EQUIVALENCE_TAG=publication-source-equivalence-D`
