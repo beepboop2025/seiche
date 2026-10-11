@@ -215,9 +215,33 @@ def git(args, cwd, env=None):
 
 def source_mode():
     mode = os.environ.get("PUBLICATION_SOURCE_MODE", "main")
-    if mode not in {"main", "receipt"}:
+    if mode not in {"main", "receipt", "catalog"}:
         raise RuntimeError("Invalid publication source mode")
     return mode
+
+
+def catalog_selection():
+    """Select only this controller's exact, independently receipted source."""
+    tag = os.environ.get("PUBLICATION_CATALOG_RECEIPT_TAG", "")
+    if (not re.fullmatch(r"market-corpus-receipt-corpus-[0-9a-f]{16}-r[1-9][0-9]*", tag)
+            or os.environ.get("PUBLICATION_EQUIVALENCE_TAG")):
+        raise RuntimeError("Catalog source mode requires one exact catalog receipt")
+    identity = json.loads((CONTROLLER / "controller-source.json").read_text())
+    expected = identity.get("sha")
+    if (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected)
+            or identity.get("engineSourceSha")):
+        raise RuntimeError("Catalog source must equal the full controller source")
+    return tag, expected
+
+
+def verify_catalog_selection(checkout):
+    tag, _ = catalog_selection()
+    catalog = json.loads((checkout / "frontend/public/.well-known/ai-catalog.json").read_text())
+    entries = [row for row in catalog["entries"]
+               if row.get("identifier") == "urn:air:seiche.info:mcp:market-corpus"]
+    if (len(entries) != 1
+            or json.loads(entries[0]["metadata"]["publicationReceipt"]).get("tag") != tag):
+        raise RuntimeError("Selected catalog receipt differs from the source declaration")
 
 
 def current_source():
@@ -231,9 +255,13 @@ def current_source():
                 or not re.fullmatch(r"[0-9a-f]{40}", fields[0])):
             raise RuntimeError("Invalid source identity")
         return fields[0]
-    tag = os.environ.get("PUBLICATION_EQUIVALENCE_TAG", "")
-    if not re.fullmatch(r"publication-source-equivalence-[0-9a-f]{40}", tag):
-        raise RuntimeError("Receipt source mode requires an exact equivalence tag")
+    if source_mode() == "catalog":
+        tag, expected = catalog_selection()
+    else:
+        tag = os.environ.get("PUBLICATION_EQUIVALENCE_TAG", "")
+        if not re.fullmatch(r"publication-source-equivalence-[0-9a-f]{40}", tag):
+            raise RuntimeError("Receipt source mode requires an exact equivalence tag")
+        expected = tag.removeprefix("publication-source-equivalence-")
     ref = "refs/tags/" + tag
     value = git(["ls-remote", "--exit-code", SOURCE, ref, ref + "^{}"], CONTROLLER)
     observed = {}
@@ -243,7 +271,6 @@ def current_source():
                 or fields[1] in observed or not re.fullmatch(r"[0-9a-f]{40}", fields[0])):
             raise RuntimeError("Invalid publication receipt identity")
         observed[fields[1]] = fields[0]
-    expected = tag.removeprefix("publication-source-equivalence-")
     if set(observed) != {ref, ref + "^{}"} or observed[ref + "^{}"] != expected:
         raise RuntimeError("Publication receipt is not an annotated tag for its exact source")
     return expected
@@ -713,7 +740,7 @@ def main():
         git(["clone", "--quiet", SOURCE, str(trusted)], root)
         git(["checkout", "--quiet", "--detach", source_sha], trusted)
         observed_main = git(["rev-parse", "refs/remotes/origin/main"], trusted)
-        if source_mode() == "receipt":
+        if source_mode() in {"receipt", "catalog"}:
             # A signed proposal that has not landed in the source repository is
             # not eligible for this production refresh mode.
             git(["merge-base", "--is-ancestor", source_sha, observed_main], trusted)
@@ -741,6 +768,8 @@ def main():
             verify_gate_files(trusted, json.loads((CONTROLLER / "gate-sha256.json").read_text()))
         elif (controller_checkout / ".github/workflows/publish.yml").read_bytes() != workflow_path.read_bytes():
             raise RuntimeError("Controller and signed engine workflows differ")
+        if source_mode() == "catalog":
+            verify_catalog_selection(trusted)
         identity = publication_identity(source_admission, source_sha, engine_sha)
         if identity:
             identity["buildTreeKind"] = "signed_engine_with_validated_desk_overlay"
