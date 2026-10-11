@@ -7,6 +7,7 @@ Type=oneshot
 User=seiche-network
 Group=seiche-network
 WorkingDirectory=/opt/seiche-agent-network/current
+EnvironmentFile=/etc/seiche-agent-network.env
 Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
 ExecStart=/opt/seiche-agent-network/venv/bin/python -m seiche_agent_network.freshness --output /var/lib/seiche-agent-network/freshness.json --timeout 25
 SuccessExitStatus=1 2
