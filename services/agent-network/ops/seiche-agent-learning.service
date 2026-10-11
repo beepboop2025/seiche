@@ -9,7 +9,7 @@ Group=seiche-network
 WorkingDirectory=/opt/seiche-agent-network/current-hub
 Environment=PYTHONPATH=/opt/seiche-agent-network/current-hub/src
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/seiche-agent-network/venv/bin/python -m financial_evidence.learning.cli --store /var/lib/seiche-agent-network/learning serve --host 127.0.0.1 --port 18797
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m financial_evidence.learning --store /var/lib/seiche-agent-network/learning serve --host 127.0.0.1 --port 18797
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

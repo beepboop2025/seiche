@@ -11,7 +11,7 @@ WorkingDirectory=/opt/seiche-agent-network/current
 EnvironmentFile=/etc/seiche-agent-network.env
 Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/seiche-agent-network/venv/bin/python -m seiche_agent_network.cli serve --host 127.0.0.1 --port 18796 --public-url https://agents.seiche.info --allow-host api.seiche.info --gateway
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m seiche_agent_network.cli serve --host 127.0.0.1 --port 18796 --public-url https://agents.seiche.info --allow-host api.seiche.info --allow-host agents.seiche.info --allow-host 127.0.0.1 --gateway
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
