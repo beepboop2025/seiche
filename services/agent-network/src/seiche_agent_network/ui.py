@@ -20,5 +20,9 @@ def mount_console(app):
     def privacy():
         return FileResponse(assets / "privacy.html", headers={"Cache-Control": "no-store"})
 
+    @app.get("/connect", include_in_schema=False)
+    def connect():
+        return FileResponse(assets / "connect.html", headers={"Cache-Control": "no-store"})
+
     from .dashboard import mount_dashboard
     mount_dashboard(app)

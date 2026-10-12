@@ -120,3 +120,35 @@ def test_postgres_analytics_constraints_and_tenant_delete(postgres):
     assert analytics.report(postgres["owners"][1])["totals"]["requests"] == 0
     store.delete_org(postgres["owners"][0])
     assert analytics.report()["totals"]["requests"] == 0
+
+
+def test_postgres_independent_data_progress_and_policy_revocation_barrier(postgres):
+    from threading import Event
+    store, other = postgres["stores"][:2]
+    entered, release, read_done = Event(), Event(), Event()
+
+    def hold_shared():
+        with store._transaction(shared=True, keys=["synthetic:held"]):
+            entered.set()
+            assert release.wait(10)
+
+    def independent():
+        other.authenticate(postgres["tokens"][0])
+        with other._transaction(shared=True, keys=["synthetic:other"]):
+            read_done.set()
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        held = pool.submit(hold_shared)
+        assert entered.wait(3)
+        reading = pool.submit(independent)
+        try:
+            assert read_done.wait(3), "independent reads/data writes should not queue behind shared lock"
+            revoke = pool.submit(postgres["stores"][2].set_agent_status, postgres["owners"][0], postgres["principals"][0].agent_id, "paused")
+            assert not revoke.done()
+        finally:
+            release.set()
+        held.result()
+        reading.result()
+        revoke.result()
+    with pytest.raises(NetworkError):
+        other.authenticate(postgres["tokens"][0])

@@ -29,6 +29,16 @@ def test_generated_fetched_and_catalog_clocks_never_prove_observation_freshness(
     assert result["freshness"] == "unknown" and result["source_age_seconds"] is None
 
 
+def test_wake_collection_clock_cannot_promote_an_old_reference_period():
+    result = inspect_result("wake", "wake_economy_now", {
+        "schema": "wake.public-economy.v1", "as_of": stamp(),
+        "observations": [{"source": "census_ecommerce", "period_end": stamp(100),
+                          "knowledge_time": stamp(), "collection_fresh": True}]}, now=NOW)
+    assert result["freshness"] == "unknown"
+    assert result["source_age_seconds"] == 100 * 86400
+    assert result["clocks"][0]["clock_role"] == "reference_period_end"
+
+
 def test_seiche_qualified_native_cadences_and_conservative_calendar_limits():
     assert inspect_result("seiche", "data_health", {"provenance": [row(3)]}, now=NOW)["freshness"] == "fresh"
     assert inspect_result("seiche", "data_health", {"provenance": [row(9, "W")]}, now=NOW)["freshness"] == "fresh"
@@ -90,7 +100,8 @@ async def test_probe_report_is_status_only_atomic_and_private(tmp_path, monkeypa
     monkeypatch.setattr("seiche_agent_network.freshness.probe_product", fake)
     path = tmp_path / "status.json"
     report = await probe_products(path)
-    assert len(report["products"]) == 6 and report["raw_payloads_retained"] is False
+    assert {row["product"] for row in report["products"]} == {"seiche", "liquilens", "undertow", "palimpsest", "noisefloor", "narcoscope", "wake"}
+    assert report["raw_payloads_retained"] is False
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert json.loads(path.read_text()) == report
     assert all(row["freshness"] == "unknown" for row in report["products"])

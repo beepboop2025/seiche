@@ -1,5 +1,16 @@
 # Insert within the existing api.seiche.info site only after canary qualification.
 # This is an additive route; preserve every existing route and native publisher.
+handle_path /agents/commerce/* {
+    request_body {
+        max_size 64KiB
+    }
+    header {
+        Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        defer
+    }
+    header Cache-Control "no-store, no-transform"
+    reverse_proxy 127.0.0.1:18798
+}
 handle_path /agents/learning/* {
     request_body {
         max_size 64KiB

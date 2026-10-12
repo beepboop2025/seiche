@@ -29,6 +29,7 @@ PRODUCTS = {
     "palimpsest": ("Palimpsest", "https://api.seiche.info/palimpsest/mcp"),
     "noisefloor": ("NoiseFloor", "https://api.seiche.info/noisefloor/mcp"),
     "narcoscope": ("NarcoScope", "https://www.narcoscope.com/mcp"),
+    "wake": ("Wake", "http://127.0.0.1:18798/mcp/"),
 }
 METHODS = {"initialize", "notifications/initialized", "notifications/cancelled", "ping",
            "tools/list", "tools/call", "resources/list", "resources/read", "resources/templates/list",
@@ -435,7 +436,7 @@ def mount_gateway(app, store, *, transport=None):
     @app.get("/v1/products")
     def products():
         return {"products":[{"id":key,"name":value[0],"mcp_path":f"/products/{key}/mcp",
-                              "direct_origin":value[1],"free_core":True} for key,value in PRODUCTS.items()],
+                              "direct_origin":("https://agents.seiche.info/commerce/mcp/" if key == "wake" else value[1]),"free_core":True} for key,value in PRODUCTS.items()],
                 "measurement":"30-day operational metadata; no arguments, results, IPs or prompts retained",
                 "training":"Separate explicit contribution enrollment required"}
 

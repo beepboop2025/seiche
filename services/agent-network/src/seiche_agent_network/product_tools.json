@@ -25,6 +25,43 @@
     "universe_search",
     "verify_published_record"
   ],
+  "narcoscope": [
+    "research_network",
+    "list_capabilities",
+    "get_overview",
+    "get_atlas",
+    "get_entities",
+    "get_federation",
+    "get_newsroom",
+    "get_story",
+    "get_palimpsest_bridge",
+    "get_palimpsest_corridors",
+    "get_palimpsest_bri_context",
+    "get_connected_research",
+    "get_market_catalog",
+    "query_market_observations"
+  ],
+  "noisefloor": [
+    "ab_test",
+    "did_it_change",
+    "dyson_reference",
+    "forecast_next",
+    "market_assessment",
+    "narrative_triage",
+    "real_or_sampling",
+    "score_forecasts",
+    "spectral_assessment",
+    "which_metrics_matter"
+  ],
+  "palimpsest": [
+    "research_catalog",
+    "list_signals",
+    "get_signal",
+    "get_newsroom",
+    "query_economic_observations",
+    "whats_happening",
+    "gfw_reading"
+  ],
   "seiche": [
     "gift_city_context",
     "gold_inventory_carry",
@@ -61,41 +98,9 @@
     "venue_concentration",
     "venue_price_reconciliation"
   ],
-  "palimpsest": [
-    "research_catalog",
-    "list_signals",
-    "get_signal",
-    "get_newsroom",
-    "query_economic_observations",
-    "whats_happening",
-    "gfw_reading"
-  ],
-  "narcoscope": [
-    "research_network",
-    "list_capabilities",
-    "get_overview",
-    "get_atlas",
-    "get_entities",
-    "get_federation",
-    "get_newsroom",
-    "get_story",
-    "get_palimpsest_bridge",
-    "get_palimpsest_corridors",
-    "get_palimpsest_bri_context",
-    "get_connected_research",
-    "get_market_catalog",
-    "query_market_observations"
-  ],
-  "noisefloor": [
-    "ab_test",
-    "did_it_change",
-    "dyson_reference",
-    "forecast_next",
-    "market_assessment",
-    "narrative_triage",
-    "real_or_sampling",
-    "score_forecasts",
-    "spectral_assessment",
-    "which_metrics_matter"
+  "wake": [
+    "wake_economy_now",
+    "wake_dataset_policy",
+    "wake_collection_contract"
   ]
 }

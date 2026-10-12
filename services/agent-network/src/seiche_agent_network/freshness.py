@@ -37,6 +37,7 @@ PREFERRED_TOOLS["undertow"] = ("exit_cost",)
 PREFERRED_TOOLS["liquilens"] = ("crypto_regime_board",)
 PREFERRED_TOOLS["narcoscope"] = ("get_market_catalog",)
 PREFERRED_TOOLS["noisefloor"] = ()  # Caller-owned calculations, not a hosted market feed.
+PREFERRED_TOOLS["wake"] = ("wake_economy_now",)
 FUNDING_CORE_SOURCES = ("fred:SOFR", "fred:EFFR", "fred:IORB")
 # Exact native identities in backend/seiche/sources/publication.py and
 # backend/seiche/trade_safety.py. Caller-provided labels cannot admit a policy.
@@ -376,6 +377,23 @@ with observations [{source_id, cadence, <qualified clock field>}].
             if native_status == "unavailable":
                 states.append("unknown")
                 reasons.append("native_result_unavailable_clock_freshness_is_insufficient")
+    elif product == "wake" and tool == "wake_economy_now":
+        result["scope"] = "published_usage_and_retail_reference_periods_not_individual_purchases"
+        result["use_boundary"] = "collection_recency_does_not_establish_source_publication_freshness"
+        rows = payload.get("observations")
+        if payload.get("schema") != "wake.public-economy.v1" or not isinstance(rows, list) or len(rows) > 200:
+            reasons.append("wake_public_schema_missing_or_out_of_bounds")
+        else:
+            for row in rows:
+                if not isinstance(row, dict) or row.get("source") not in {"openrouter_rankings", "census_ecommerce"}:
+                    states.append("unknown")
+                    continue
+                # A reference period has no publication calendar admission here.
+                # Preserve its clock without promoting a recent fetch to fresh.
+                add(row["source"], row.get("period_end") or row.get("event_time"),
+                    "period_end", "reference_period")
+                clocks[-1]["clock_role"] = "reference_period_end"
+            reasons.append("source_publication_calendar_not_yet_qualified")
     elif payload.get("schema") == "financial-evidence.source-freshness.v1":
         rows = payload.get("observations")
         if isinstance(rows, list) and len(rows) <= 2000:

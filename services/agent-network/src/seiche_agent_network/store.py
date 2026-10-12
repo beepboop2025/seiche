@@ -1,8 +1,8 @@
 """Transactional relay store; SQLite for local use, PostgreSQL for hosted use.
 
-All mutations and authorization checks share one database transaction. A small
-global writer lock deliberately serializes the initial release: correctness is
-established before increasing concurrency. This is not a throughput claim.
+Authorization changes take an exclusive policy lock. PostgreSQL readers and
+independent data writes share that lock, with ordered transaction-scoped locks
+for conflicting data. A revocation therefore cannot race an accepted write.
 """
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ import threading
 import stat
 import time
 import uuid
-from contextlib import contextmanager
+import hashlib
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (Boolean, Column, Float, Integer, MetaData,
                         String, Table, Text, UniqueConstraint, and_, create_engine,
-                        delete, event, func, insert, inspect, or_, select, update)
+                        delete, event, func, insert, inspect, or_, select, text, update)
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.engine import make_url
 
@@ -136,20 +137,32 @@ class Store:
                 raise ValueError("Keys do not match this network database; restore the original service keys")
 
     @contextmanager
-    def _transaction(self, initializing=False):
-        with self._mutex, self.engine.connect() as db:
+    def _transaction(self, initializing=False, *, shared=False, keys=()):
+        # SQLite retains its single-writer contract. PostgreSQL uses database
+        # locks across workers; a Python mutex would defeat independent writes.
+        guard = self._mutex if self.sqlite else nullcontext()
+        with guard, self.engine.connect() as db:
             try:
                 if self.sqlite:
                     db.exec_driver_sql("BEGIN IMMEDIATE")
                 else:
                     db.begin()
                     if not initializing:
-                        db.execute(select(locks).where(locks.c.id == 1).with_for_update())
+                        db.execute(select(locks).where(locks.c.id == 1).with_for_update(read=shared))
+                        self._data_locks(db, keys)
                 yield db
                 db.commit()
             except BaseException:
                 db.rollback()
                 raise
+
+    def _data_locks(self, db, keys):
+        if not self.sqlite:
+            # Sorting numeric lock IDs gives every process the same order.
+            ids = sorted({int.from_bytes(hashlib.sha256(key.encode()).digest()[:8],
+                                         "big", signed=True) for key in keys})
+            for key in ids:
+                db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
 
     def close(self):
         self.engine.dispose()
@@ -190,7 +203,7 @@ class Store:
     def authenticate(self, token):
         if not isinstance(token, str) or len(token) > 512:
             raise NetworkError("unauthorized", "Invalid credential", 401)
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             c = _one(db, credentials, credentials.c.token_hash == digest(token.encode()), credentials.c.active.is_(True))
             if c is None:
                 raise NetworkError("unauthorized", "Invalid credential", 401)
@@ -199,7 +212,7 @@ class Store:
             return p
 
     def me(self, p):
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             org = self._principal(db, p)
             return {"org_id": p.org_id, "agent_id": p.agent_id, "role": "agent" if p.agent_id else "owner",
                     "organization": dict(org), "shared_training": False}
@@ -233,7 +246,7 @@ class Store:
             return {"agent": self._agent_view(db, row), "token": self._credential(db, p.org_id, row["id"])}
 
     def list_owned_agents(self, p):
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._principal(db, p, owner=True)
             return [self._agent_view(db, a) for a in db.execute(select(agents).where(agents.c.org_id == p.org_id)).mappings()]
 
@@ -313,7 +326,7 @@ class Store:
     def directory(self, p, query=None):
         if query is not None and (not isinstance(query, str) or len(query) > 200):
             raise NetworkError("invalid_input", "Directory query must be at most 200 characters")
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._principal(db, p)
             rows = db.execute(select(agents).where(agents.c.public.is_(True), agents.c.status == "active").order_by(agents.c.id)).mappings()
             result = []
@@ -329,7 +342,7 @@ class Store:
 
     def get_agent(self, p, agent_id):
         _identifier(agent_id)
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._principal(db, p)
             a = _one(db, agents, agents.c.id == agent_id)
             if a is None or (a["org_id"] != p.org_id and (a["status"] != "active" or
@@ -372,7 +385,7 @@ class Store:
             return data
 
     def list_contacts(self, p):
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._principal(db, p)
             ids = [p.agent_id] if p.agent_id else list(db.scalars(select(agents.c.id).where(agents.c.org_id == p.org_id)))
             return [dict(r) for r in db.execute(select(contacts).where(or_(contacts.c.sender.in_(ids), contacts.c.recipient.in_(ids)))).mappings()]
@@ -461,7 +474,7 @@ class Store:
             return {"room_id": room_id, "agent_id": p.agent_id, "status": "active"}
 
     def list_rooms(self, p):
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._principal(db, p)
             ids = [p.agent_id] if p.agent_id else list(db.scalars(select(agents.c.id).where(agents.c.org_id == p.org_id)))
             result, seen = [], set()
@@ -517,7 +530,14 @@ class Store:
         if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)) or not math.isfinite(expires_in) or not 1 <= expires_in <= self.retention_days * 86400:
             raise NetworkError("invalid_input", "Expiry must be within the configured retention period")
         request_hash = digest(canonical({"room_id": room_id, "kind": kind, "payload": payload, "expires_in": expires_in, "parent_id": parent_id}))
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
+            # Membership cannot change while the shared policy lock is held.
+            # Lock every mutable quota and sequence before reading their values.
+            self._principal(db, p, agent=True)
+            participants = db.execute(select(members.c.agent_id).where(
+                members.c.room_id == room_id, members.c.status == "active")).scalars().all()
+            self._data_locks(db, ["room:" + room_id, "send:" + p.agent_id, "org:" + p.org_id,
+                                 *("receive:" + a for a in participants)])
             room, _ = self._member(db, p, room_id)
             existing = _one(db, messages, messages.c.sender == p.agent_id, messages.c.idempotency_key == idempotency_key)
             if existing:
@@ -578,7 +598,7 @@ class Store:
 
     def list_messages(self, p, room_id, after=0, limit=100):
         self._paging(after, limit)
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._member(db, p, room_id)
             result = []
             for row in db.execute(select(messages).where(messages.c.room_id == room_id, messages.c.sequence > after).order_by(messages.c.sequence)).mappings():
@@ -590,7 +610,7 @@ class Store:
 
     def poll_deliveries(self, p, after=0, limit=100):
         self._paging(after, limit)
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._principal(db, p, agent=True)
             items, cursor = [], after
             for delivery in db.execute(select(deliveries).where(deliveries.c.recipient == p.agent_id, deliveries.c.id > after).order_by(deliveries.c.id)).mappings():
@@ -623,7 +643,7 @@ class Store:
         return row
 
     def get_task(self, p, message_id):
-        with self._transaction() as db:
+        with self._transaction(shared=True) as db:
             self._principal(db, p, agent=True)
             row = self._accessible_message(db, p, message_id)
             task = _one(db, tasks, tasks.c.id == message_id)
@@ -738,6 +758,9 @@ class Store:
             for room_id in expired_rooms:
                 self._delete_room(db, room_id)
             db.execute(delete(quotas).where(quotas.c.window < int(now // 60) - 1))
+            if inspect(db).has_table("network_enrollment_claims"):
+                claim_table = Table("network_enrollment_claims", MetaData(), autoload_with=db)
+                db.execute(delete(claim_table).where(claim_table.c.created < now - 86400))
             # Extension aggregates also expire during idle periods/CLI maintenance.
             analytics_count = 0
             aggregate_cutoff = (datetime.fromtimestamp(now, timezone.utc).date() - timedelta(days=29)).isoformat()
@@ -781,6 +804,10 @@ class Store:
             db.execute(delete(contacts).where(or_(contacts.c.sender.in_(ids), contacts.c.recipient.in_(ids))))
             db.execute(delete(blocks).where(or_(blocks.c.sender.in_(ids), blocks.c.recipient.in_(ids))))
             db.execute(delete(reports).where(reports.c.org_id == p.org_id))
+            if inspect(db).has_table("network_enrollment_claims"):
+                claims_table = Table("network_enrollment_claims", MetaData(), autoload_with=db)
+                # Keep only the spent nonce for its bounded anti-replay period.
+                db.execute(update(claims_table).where(claims_table.c.org_id == p.org_id).values(org_id=""))
             if inspect(db).has_table("network_analytics_daily"):
                 aggregate_table = Table("network_analytics_daily", MetaData(), autoload_with=db)
                 db.execute(delete(aggregate_table).where(aggregate_table.c.org_id == p.org_id))

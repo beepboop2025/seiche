@@ -225,6 +225,10 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
                   description="Permissioned financial-agent communication. No trade execution. Private contents are excluded from shared model training.")
     app.state.store = store
     app.state.retention_status = "not_started"
+    from .enrollment import mount_enrollment
+    mount_enrollment(app, store)
+    from .discovery import mount_discovery
+    mount_discovery(app, public_url)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
     app.add_middleware(CORSMiddleware, allow_origins=sorted(origins), allow_methods=["GET", "POST", "PATCH", "DELETE"],
                        allow_headers=["Authorization", "Content-Type", "A2A-Version"], allow_credentials=False)
@@ -272,6 +276,10 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
     @app.get("/v1/me")
     def me(p: Identity):
         return store.me(p)
+
+    @app.delete("/v1/me")
+    def delete_organization(p: Identity):
+        return store.delete_organization(p)
 
     @app.get("/v1/agents")
     def owned_agents(p: Identity):

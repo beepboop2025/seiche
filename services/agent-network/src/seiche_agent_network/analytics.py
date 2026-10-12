@@ -18,7 +18,7 @@ from .models import NetworkError
 from .store import orgs
 
 PRODUCTS = frozenset({"seiche", "liquilens", "undertow", "palimpsest", "noisefloor", "narcoscope",
-                      "financial-evidence", "seiche-agent-network", "other"})
+                      "wake", "financial-evidence", "seiche-agent-network", "other"})
 METHODS = frozenset({"GET", "POST", "DELETE", "PATCH", "PUT", "HEAD", "OPTIONS", "MCP", "other",
     "initialize", "notifications/initialized", "notifications/cancelled", "ping", "tools/list", "tools/call",
     "resources/list", "resources/read", "resources/templates/list", "prompts/list", "prompts/get", "logging/setLevel", "completion/complete"})
@@ -109,7 +109,7 @@ class Analytics:
                       freshness=freshness, tool_outcome=tool_outcome)
         key = digest(canonical(labels))
         histogram_index = next((i for i, upper in enumerate(LATENCY_BOUNDS) if duration_ms <= upper), len(LATENCY_BOUNDS))
-        with self.store._transaction() as db:
+        with self.store._transaction(shared=True, keys=["analytics:" + key]) as db:
             if principal is not None:
                 self.store._principal(db, principal)
             prior = db.execute(select(daily).where(daily.c.key == key)).mappings().first()
@@ -135,7 +135,7 @@ class Analytics:
         age = None if source_age_seconds is None else _nonnegative(source_age_seconds, "source_age_seconds", 100 * 366 * 86400)
         labels = dict(day=_day(self.store.clock()).isoformat(), product=product, source=source, freshness=freshness)
         key = digest(canonical(labels))
-        with self.store._transaction() as db:
+        with self.store._transaction(shared=True, keys=["freshness:" + key]) as db:
             prior = db.execute(select(freshness_checks).where(freshness_checks.c.key == key)).mappings().first()
             values = dict(checks=(prior["checks"] if prior else 0) + 1,
                           source_age_count=(prior["source_age_count"] if prior else 0) + (age is not None),
