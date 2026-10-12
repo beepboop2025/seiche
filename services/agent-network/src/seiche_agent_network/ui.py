@@ -24,5 +24,9 @@ def mount_console(app):
     def connect():
         return FileResponse(assets / "connect.html", headers={"Cache-Control": "no-store"})
 
+    @app.get("/community", include_in_schema=False)
+    def community():
+        return FileResponse(assets / "community.html", headers={"Cache-Control": "no-store"})
+
     from .dashboard import mount_dashboard
     mount_dashboard(app)

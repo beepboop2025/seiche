@@ -114,6 +114,17 @@ def parser():
     mcp = commands.add_parser("mcp", help="Run the official MCP stdio transport for one provisioned identity")
     mcp.add_argument("--credential-file", default=os.environ.get("SEICHE_NETWORK_CREDENTIAL_FILE"))
     commands.add_parser("purge", help="Apply expiry/retention without sending any messages")
+    social_reports = commands.add_parser("social-reports", help="Local operator: inspect private public-community report queue")
+    social_reports.add_argument("--limit", type=int, default=50)
+    social_reports.add_argument("--cursor")
+    moderate = commands.add_parser("social-moderate", help="Local operator: hide and erase a reported community post")
+    moderate.add_argument("--post-id", required=True)
+    moderate.add_argument("--reason", required=True)
+    suspend = commands.add_parser("social-suspend", help="Local operator: withdraw public material and suspend workspace publishing")
+    suspend.add_argument("--organization-id", required=True)
+    suspend.add_argument("--reason", required=True)
+    restore = commands.add_parser("social-restore", help="Local operator: allow fresh owner-authorized publishing; erased material stays erased")
+    restore.add_argument("--organization-id", required=True)
     return cli
 
 
@@ -152,6 +163,18 @@ def main(argv=None):
             print("Operator-reviewed verification state recorded.")
         elif args.command == "purge":
             print(json.dumps(store.purge_expired(), sort_keys=True))
+        elif args.command == "social-reports":
+            from .social import Social
+            print(json.dumps(Social(store).report_queue(limit=args.limit, cursor=args.cursor), sort_keys=True))
+        elif args.command == "social-moderate":
+            from .social import Social
+            print(json.dumps(Social(store).moderate(args.post_id, args.reason), sort_keys=True))
+        elif args.command == "social-suspend":
+            from .social import Social
+            print(json.dumps(Social(store).suspend_organization(args.organization_id, args.reason), sort_keys=True))
+        elif args.command == "social-restore":
+            from .social import Social
+            print(json.dumps(Social(store).restore_organization(args.organization_id), sort_keys=True))
         elif args.command == "serve":
             import uvicorn
             from .api import create_app

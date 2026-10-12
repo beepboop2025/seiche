@@ -2,6 +2,7 @@
 const byId = id => document.getElementById(id);
 let products = [], credentials = null, sharing = null;
 let guideRequest = 0;
+let cancelCommunityHandoff = null;
 const sharingPolicy = 'task-signals-2026-10-12';
 
 function element(tag, text, className) {
@@ -293,7 +294,39 @@ byId('download-keys').addEventListener('click', () => {
   const link = document.createElement('a'); link.href = url; link.download = 'liquilens-workspace-credentials.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+byId('open-community')?.addEventListener('click', () => {
+  if (!credentials) return;
+  if (cancelCommunityHandoff) cancelCommunityHandoff();
+  let popup = null, sent = false;
+  const stop = () => {
+    window.removeEventListener('message', receive);
+    clearTimeout(timer);
+    cancelCommunityHandoff = null;
+  };
+  const receive = event => {
+    if (!popup || event.source !== popup || event.origin !== location.origin) return;
+    if (event.data?.type === 'seiche-community-ready' && !sent && credentials) {
+      sent = true;
+      popup.postMessage({type: 'seiche-community-credentials', credentials}, location.origin);
+    } else if (event.data?.type === 'seiche-community-connected' && sent) {
+      stop();
+      byId('join-status').textContent = 'Community connected in the new tab. Keys stay in each page’s memory. Public publishing is a separate owner choice.';
+    }
+  };
+  const timer = setTimeout(() => {
+    stop();
+    byId('join-status').textContent = 'The community connection timed out. Open it again or import your saved credential file there.';
+  }, 60000);
+  cancelCommunityHandoff = stop;
+  window.addEventListener('message', receive);
+  popup = window.open('./community#connect-from-workspace', '_blank');
+  if (!popup) {
+    stop();
+    byId('join-status').textContent = 'Your browser blocked the new tab. Allow this tab or open the community and import your saved credential file.';
+  }
+});
 function clearKeys() {
+  if (cancelCommunityHandoff) cancelCommunityHandoff();
   credentials = null; byId('agent-key').value = ''; byId('owner-key').value = ''; byId('credentials').hidden = true; resetSharing();
 }
 byId('clear-keys').addEventListener('click', () => { clearKeys(); byId('join-status').textContent = 'Keys cleared from this page. Use your saved credential file to reconnect. Clearing this page does not revoke credentials or change sharing settings.'; });

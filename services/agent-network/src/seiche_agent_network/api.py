@@ -8,7 +8,7 @@ import asyncio
 import logging
 import os
 import re
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -212,7 +212,10 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
         await purge()
         worker = asyncio.create_task(retention()) if purge_interval > 0 else None
         try:
-            yield
+            async with AsyncExitStack() as stack:
+                if hasattr(app.state, "social_public_mcp"):
+                    await stack.enter_async_context(app.state.social_public_mcp.session_manager.run())
+                yield
         finally:
             if worker:
                 worker.cancel()
@@ -230,7 +233,7 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
     from .discovery import mount_discovery
     mount_discovery(app, public_url)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
-    app.add_middleware(CORSMiddleware, allow_origins=sorted(origins), allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    app.add_middleware(CORSMiddleware, allow_origins=sorted(origins), allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
                        allow_headers=["Authorization", "Content-Type", "A2A-Version"], allow_credentials=False)
     app.add_middleware(RequestBoundary, allowed_origins=origins)
     bearer = HTTPBearer(auto_error=False)
@@ -243,6 +246,10 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
     Identity = Annotated[Principal, Depends(principal)]
     from .participation import mount_participation
     mount_participation(app, store, principal)
+    from .social import mount_social
+    mount_social(app, store, principal)
+    from .social_public_mcp import mount_public_social_mcp
+    mount_public_social_mcp(app, store, hosts=hosts, origins=origins)
 
     @app.exception_handler(NetworkError)
     async def domain_error(request, exc):

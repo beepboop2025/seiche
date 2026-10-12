@@ -1,5 +1,6 @@
 'use strict';
 let credential = '', activeRoom = null, identity = null;
+let connectionEpoch = 0, cancelHandoff = null;
 const apiRoot = location.pathname.replace(/\/console\/?$/, '');
 const $ = id => document.getElementById(id);
 const json = value => JSON.stringify(value, null, 2);
@@ -7,8 +8,14 @@ const rows = value => Array.isArray(value) ? value : value.items || value.agents
 function status(text) { $('status').textContent = text; }
 async function api(path, method = 'GET', body) {
   if (!credential) throw new Error('Connect first.');
-  const response = await fetch(apiRoot + path, {method, credentials:'omit', cache:'no-store', headers:{Authorization:`Bearer ${credential}`, ...(body === undefined ? {} : {'Content-Type':'application/json'})}, body:body === undefined ? undefined : JSON.stringify(body)});
-  let data; try { data = await response.json(); } catch { data = {}; }
+  const epoch = connectionEpoch, token = credential;
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
+  let response, data;
+  try {
+    response = await fetch(apiRoot + path, {method, credentials:'omit', cache:'no-store', redirect:'error', signal:controller.signal, headers:{Authorization:`Bearer ${token}`, ...(body === undefined ? {} : {'Content-Type':'application/json'})}, body:body === undefined ? undefined : JSON.stringify(body)});
+    try { data = await response.json(); } catch { data = {}; }
+  } finally { clearTimeout(timer); }
+  if (epoch !== connectionEpoch || token !== credential) throw new Error('The workspace connection changed. Reconnect to continue.');
   if (!response.ok) throw new Error(`Request failed (${response.status}): ${typeof data.detail === 'string' ? data.detail : data.error?.message || 'Check the request and your permissions.'}`);
   return data;
 }
@@ -51,8 +58,20 @@ async function openRoom(id) {
     return controls;
   });
 }
-bind('connect-form',async()=>{credential=$('token').value;$('token').value='';identity=await api('/v1/me');$('identity').textContent=json(identity);$('workspace').hidden=false;$('owner').hidden=!!identity.agent_id;$('agent').hidden=!identity.agent_id;await refresh();});
-$('disconnect').addEventListener('click',()=>{credential='';identity=null;activeRoom=null;$('workspace').hidden=true;for(const id of ['identity','issued-secret','metrics','messages','inbox','rooms','contacts','directory','owned-agents'])$(id).replaceChildren();status('Disconnected.');});
+function clearConnection() {
+  connectionEpoch++;credential='';identity=null;activeRoom=null;
+  if(cancelHandoff)cancelHandoff();
+  $('workspace').hidden=true;
+  for(const id of ['identity','issued-secret','metrics','messages','inbox','rooms','contacts','directory','owned-agents'])$(id).replaceChildren();
+  for(const field of document.querySelectorAll('input,textarea')) { if(field.type==='checkbox')field.checked=false;else field.value=''; }
+  status('Disconnected.');
+}
+async function connectCredential(token) {
+  clearConnection();credential=token;
+  identity=await api('/v1/me');$('identity').textContent=json(identity);$('workspace').hidden=false;$('owner').hidden=!!identity.agent_id;$('agent').hidden=!identity.agent_id;await refresh();
+}
+bind('connect-form',async()=>{const token=$('token').value.trim();await connectCredential(token);});
+$('disconnect').addEventListener('click',clearConnection);
 $('refresh').addEventListener('click',()=>run(refresh));
 bind('agent-form',async d=>{$('issued-secret').textContent=json(await api('/v1/agents','POST',{label:d.label,capabilities:d.capabilities.split(',').map(x=>x.trim()).filter(Boolean),public:d.public==='on'}));await refresh();});
 bind('directory-form',async d=>render('directory',await api(`/v1/directory?q=${encodeURIComponent(d.query)}`),a=>[action('Request contact',async()=>{await api('/v1/contacts/invite','POST',{target_agent_id:a.id || a.agent_id});await refresh();})]));
@@ -62,3 +81,22 @@ bind('message-form',async(d,form)=>{if(!activeRoom)throw new Error('Select a con
 bind('remove-form',async d=>{if(!activeRoom)throw new Error('Select a conversation first.');await api(`/v1/rooms/${activeRoom}/members/${encodeURIComponent(d.agent_id)}`,'DELETE');await openRoom(activeRoom);});
 $('verify-room').addEventListener('click',()=>run(async()=>{if(!activeRoom)throw new Error('Select a conversation first.');$('metrics').textContent=json(await api(`/v1/rooms/${activeRoom}/verify`));}));
 window.addEventListener('pagehide',()=>{$('disconnect').click();$('token').value='';});
+window.addEventListener('pageshow',event=>{if(event.persisted)clearConnection();});
+if(location.hash==='#connect-from-community'&&window.opener) {
+  const opener=window.opener;let received=false;
+  const stop=()=>{window.removeEventListener('message',receive);clearTimeout(timer);cancelHandoff=null;};
+  const receive=async event=>{
+    if(received||event.origin!==location.origin||event.source!==opener||event.data?.type!=='seiche-workspace-credentials')return;
+    received=true;stop();history.replaceState({},'',location.pathname+location.search);
+    try {
+      const token=event.data.credential;
+      if(typeof token!=='string'||!/^san_[A-Za-z0-9_-]{16,256}$/.test(token))throw new Error('The workspace credential could not be read.');
+      await connectCredential(token);status('Connected from your community workspace.');
+      opener.postMessage({type:'seiche-workspace-connected'},location.origin);
+    } catch(error) { status(error.message); }
+    finally { window.opener=null; }
+  };
+  const timer=setTimeout(()=>{stop();history.replaceState({},'',location.pathname+location.search);window.opener=null;},60000);
+  cancelHandoff=stop;window.addEventListener('message',receive);
+  opener.postMessage({type:'seiche-workspace-ready'},location.origin);
+}

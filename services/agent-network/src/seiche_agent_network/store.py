@@ -138,8 +138,10 @@ class Store:
         # Upgrade tables share the existing policy lock, so several new-version
         # workers cannot race the check/create sequence during a rolling start.
         from .participation import meta as participation_meta
+        from .social import meta as social_meta
         with self._transaction() as db:
             participation_meta.create_all(db)
+            social_meta.create_all(db)
 
     @contextmanager
     def _transaction(self, initializing=False, *, shared=False, keys=()):
@@ -785,8 +787,10 @@ class Store:
             if inspect(db).has_table("network_participation_limits"):
                 limit_table = Table("network_participation_limits", MetaData(), autoload_with=db)
                 db.execute(delete(limit_table).where(limit_table.c.day < datetime.fromtimestamp(now, timezone.utc).date().isoformat()))
+            from .social import purge as purge_social
+            social_counts = purge_social(db, now)
             return {"purged_payloads": count, "purged_reports": report_count, "purged_rooms": len(expired_rooms), "purged_aggregate_buckets": analytics_count,
-                    "purged_participation_signals": participation_count}
+                    "purged_participation_signals": participation_count, **social_counts}
 
     def _delete_room(self, db, room_id):
         ids = select(messages.c.id).where(messages.c.room_id == room_id)
@@ -833,6 +837,8 @@ class Store:
                 if inspect(db).has_table(table_name):
                     participation_table = Table(table_name, MetaData(), autoload_with=db)
                     db.execute(delete(participation_table).where(participation_table.c.org_id == p.org_id))
+            from .social import delete_organization as delete_social
+            delete_social(db, p.org_id)
             db.execute(delete(credentials).where(credentials.c.org_id == p.org_id))
             db.execute(delete(agents).where(agents.c.org_id == p.org_id))
             db.execute(delete(orgs).where(orgs.c.id == p.org_id))

@@ -40,7 +40,7 @@ async def test_sdk_tool_inventory_and_http_identity_parity(state):
     server = create_mcp(store, owner["owner_token"])
     inventory = await server.list_tools()
     names = {tool.name for tool in inventory}
-    assert len(names) == 32
+    assert len(names) == 41
     assert {"network_send", "network_inbox", "network_cancel_task", "network_verify_room", "network_rotate_agent", "network_metrics"} <= names
     with TestClient(create_app(store)) as client:
         expected = client.get("/v1/me", headers={"Authorization": "Bearer " + owner["owner_token"]}).json()
@@ -93,7 +93,7 @@ async def test_real_sdk_stdio_initialize_list_and_call(state, tmp_path):
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "Seiche Agent Network"
             inventory = await session.list_tools()
-            assert len(inventory.tools) == 32
+            assert len(inventory.tools) == 41
             result = await session.call_tool("network_identity", {})
             assert result.isError is False
             assert json.loads(result.content[0].text)["org_id"] == store.authenticate(owner["owner_token"]).org_id
@@ -135,3 +135,68 @@ async def test_task_report_tools_cannot_expand_permissions_or_echo_private_field
     store.rotate_agent_token(p, agent["agent"]["id"])
     with pytest.raises(ToolError, match="unauthorized"):
         await server.call_tool("network_participation_status", {})
+
+
+async def test_social_mcp_publication_grant_retries_threads_and_withdrawal(state):
+    from uuid import uuid4
+    from seiche_agent_network.social import Social, ProfilePublish
+    store, owner, p, agent, _, _ = state
+    social = Social(store)
+    server = create_mcp(store, agent["token"])
+    terms = unpack(await server.call_tool("network_social_contract", {}))
+    publication = ProfilePublish(display_name="Synthetic community agent", bio="Test public research",
+        role="finance_research", topics=["funding"], website_url=None, traffic_class="synthetic",
+        policy_version=terms["policy_version"], acknowledged=True)
+    profile = social.publish(p, agent["agent"]["id"], publication)
+    post = {"event_id": str(uuid4()), "grant_id": profile["grant_id"], "topic": "funding",
+            "kind": "research_note", "text": "Synthetic public research", "source_urls": ["https://example.org/evidence"]}
+    first = unpack(await server.call_tool("network_social_create_post", {"post": post}))
+    assert first["status"] == "accepted"
+    assert first["post"]["evidence_kind"] == "agent_authored"
+    assert unpack(await server.call_tool("network_social_create_post", {"post": post}))["status"] == "duplicate"
+    public_profile = unpack(await server.call_tool("network_social_profile", {"agent_id": agent["agent"]["id"]}))
+    assert "grant_id" not in public_profile
+    assert "grant_id" not in first["post"]["author"]
+    feed = unpack(await server.call_tool("network_social_feed", {"include_synthetic": True}))
+    assert [item["id"] for item in feed["posts"]] == [first["post"]["id"]]
+    reply = {"event_id": str(uuid4()), "grant_id": profile["grant_id"], "topic": "funding",
+             "kind": "reply", "text": "Synthetic question", "parent_id": first["post"]["id"], "source_urls": []}
+    answered = unpack(await server.call_tool("network_social_create_post", {"post": reply}))
+    thread = unpack(await server.call_tool("network_social_feed", {
+        "parent_id": first["post"]["id"], "include_synthetic": True}))
+    assert [item["id"] for item in thread["posts"]] == [answered["post"]["id"]]
+    with pytest.raises(ToolError):
+        await server.call_tool("network_social_create_post", {"post": reply | {
+            "event_id": str(uuid4()), "parent_id": answered["post"]["id"]}})
+    await server.call_tool("network_social_delete_post", {"post_id": first["post"]["id"]})
+    with pytest.raises(ToolError):
+        await server.call_tool("network_social_post", {"post_id": answered["post"]["id"]})
+    with pytest.raises(ToolError):
+        await server.call_tool("network_social_create_post", {"post": post})
+    social.withdraw(p, agent["agent"]["id"])
+    fresh = social.publish(p, agent["agent"]["id"], publication)
+    assert fresh["grant_id"] != profile["grant_id"]
+    with pytest.raises(ToolError):
+        await server.call_tool("network_social_create_post", {"post": post | {"event_id": str(uuid4())}})
+
+
+async def test_social_mcp_reauthenticates_and_cannot_expand_owner_publication(state):
+    store, owner, p, agent, _, _ = state
+    server = create_mcp(store, agent["token"])
+    names = {tool.name for tool in await server.list_tools() if tool.name.startswith("network_social_")}
+    assert names == {"network_social_" + name for name in (
+        "contract", "profiles", "profile", "me", "feed", "post", "create_post", "delete_post", "report_post")}
+    private = "private-community-canary"
+    for name, args in (
+        ("network_social_create_post", {"post": {"prompt": private}}),
+        ("network_social_profiles", {"limit": True}),
+        ("network_social_feed", {"include_synthetic": "true"}),
+        ("network_social_profile", {"agent_id": private}),
+    ):
+        with pytest.raises(ToolError) as error:
+            await server.call_tool(name, args)
+        assert private not in str(error.value)
+    store.rotate_agent_token(p, agent["agent"]["id"])
+    for name in ("network_social_contract", "network_social_profiles", "network_social_me", "network_social_feed"):
+        with pytest.raises(ToolError, match="unauthorized"):
+            await server.call_tool(name, {})
