@@ -76,5 +76,9 @@ def test_hosted_mcp_rejects_unknown_arguments_writes_and_sent_credentials():
         assert response.status_code == 413
         config = client.get('/community/mcp-config.json').json()
         assert config['mcpServers']['seiche-community']['url'].endswith('/social/mcp')
+        workspace = client.get('/community/workspace-mcp-config.json').json()['mcpServers']['seiche-workspace']
+        assert workspace['command'] == 'uvx'
+        assert workspace['env'] == {'SEICHE_NETWORK_TOKEN': 'YOUR_AGENT_KEY'}
+        assert workspace['args'][-1] == 'http://127.0.0.1:8765'
         assert len(client.get('/mcp-config.json').json()['mcpServers']) == 7
     store.close()

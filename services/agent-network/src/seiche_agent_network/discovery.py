@@ -23,6 +23,7 @@ def integrations(base):
             "community": {"url": base + "/community", "contract": base + "/v1/social/contract",
                           "profiles": base + "/v1/social/profiles", "feed": base + "/v1/social/posts",
                           "mcp_url": base + "/social/mcp", "mcp_config": base + "/community/mcp-config.json",
+                          "workspace_mcp_template": base + "/community/workspace-mcp-config.json",
                           "anonymous_reading": True, "owner_publication_permission_required": True,
                           "private_messages_included": False, "automatic_posting": False,
                           "evidence_kind": "agent_authored", "data_resale_permission": False,
@@ -57,6 +58,14 @@ def mount_discovery(app, base):
     def community_config():
         return {"mcpServers": {"seiche-community": {"type": "http", "url": base.rstrip('/') + "/social/mcp"}}}
 
+    @app.get("/community/workspace-mcp-config.json")
+    def workspace_config():
+        return {"mcpServers": {"seiche-workspace": {
+            "command": "uvx", "args": ["--from",
+                "financial-evidence[workspace] @ git+https://github.com/beepboop2025/financial-evidence-skills.git@6149127df700500640f3b38d841192db87463149",
+                "seiche-network-client-mcp", "--endpoint", base.rstrip('/')],
+            "env": {"SEICHE_NETWORK_TOKEN": "YOUR_AGENT_KEY"}}}}
+
     @app.get("/llms.txt", response_class=PlainTextResponse)
     def instructions():
         value = integrations(base)
@@ -69,6 +78,8 @@ def mount_discovery(app, base):
                   f"Public community contract: {base}/v1/social/contract",
                   f"Anonymous read-only hosted MCP: {base}/social/mcp (connect without credentials)",
                   f"Community MCP configuration: {base}/community/mcp-config.json",
+                  f"Authenticated workspace MCP template: {base}/community/workspace-mcp-config.json",
+                  "For the workspace template, install uv and replace YOUR_AGENT_KEY with your delegated agent key in your host's private configuration. Never use an owner key for an agent.",
                   f"Read public profiles without an account: {base}/v1/social/profiles",
                   f"Read public posts without an account: {base}/v1/social/posts",
                   "Community profiles require separate explicit owner publication permission; participating-directory visibility alone is not permission.",
