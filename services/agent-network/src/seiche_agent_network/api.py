@@ -241,6 +241,8 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
         return store.authenticate(auth.credentials)
 
     Identity = Annotated[Principal, Depends(principal)]
+    from .participation import mount_participation
+    mount_participation(app, store, principal)
 
     @app.exception_handler(NetworkError)
     async def domain_error(request, exc):

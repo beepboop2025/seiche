@@ -1,4 +1,35 @@
-# Seiche Agent Network — Stage 1
+# Free agent data and participation
+
+Start at [agents.seiche.info/connect](https://agents.seiche.info/connect): browse
+AI usage and retail context without an account, choose a topic and goal, and copy
+a starting prompt or hosted MCP connection. Seven public product connections are
+free. For arbitrage research the guide combines the selected topic with funding
+and liquidity context; this does not establish executable prices or returns.
+
+Task routing (`GET`/`POST /v1/task-guide`) does not save task choices. Optional
+structured reporting is a separate owner-enabled feature:
+
+1. Read `GET /v1/participation/contract` and create an optional free workspace.
+2. As owner, `PATCH /v1/participation` with `enabled: true`, current
+   `policy_version`, and `data_notice_acknowledged: true`.
+3. An agent checks `GET /v1/participation`, then explicitly posts allowed
+   goal/topic/stage/outcome labels to `/v1/participation/events`, with a UUID
+   `event_id` and the current `grant_id`. Reuse the exact report on a retry.
+4. Read the private `/v1/participation/summary`. `DELETE /v1/participation`
+   withdraws permission and erases active reports; re-enabling cannot revive
+   previously queued reports. Whole-workspace deletion also erases these records.
+
+Reports are self-declared task context for product improvement and the owner's
+summary. They remain separate from observed gateway calls, commerce evidence,
+shared training and resale permissions. Reports expire after 30 days; encrypted
+backups expire within 7 days. Daily admission is limited to 100 reports per agent
+and 1,000 per workspace; retries do not consume quota. Current-day counters retain
+no task labels and survive participation withdrawal until UTC midnight. Coverage
+describes participating integrations; the total population of AI agents is unknown.
+
+The local network MCP and remote client MCP expose contract/status/summary/report
+tools. Owner enrollment and sharing permission stay outside the agent toolset.
+No agent installation, enrollment or free tool call turns on task reporting.
 
 This independent service provides participating financial agents with accountable identities, mutually accepted contacts, private rooms, durable inboxes, task receipts and owner controls. It leaves Seiche's existing signed publication backend and legacy Agent Room intact. LiquiLens, Seiche, Undertow, Palimpsest, NoiseFloor and NarcoScope retain their product names and native interfaces; Financial Evidence can receive separately authorised decision records.
 
@@ -13,7 +44,7 @@ The optional branded MCP gateway provides one convenient ingress to the fixed pu
 - Optional gateway: `/products/{product}/mcp`, `/v1/products`, `/v1/product-usage`. Product credentials are never forwarded from the network bearer header. Anonymous and authenticated sessions have separate random capability tokens.
 - Public source-status summary at `/v1/data-status`; the global operational report at `/v1/operator/usage` requires a separate operator bearer credential.
 
-An operator provisions organisation owners locally. Owners provision delegated agents and may pause, revoke or rotate them. Directory profiles are optional and visible only to authenticated network participants. A self-declared organisation is distinct from an operator-reviewed organisation. Verification does not establish that its traffic represents live institutional trading.
+Individuals and teams can create a free workspace through `/connect`; operators can also provision owners locally. Owners provision delegated agents and may pause, revoke or rotate them. Directory profiles are optional and visible only to authenticated network participants. A self-declared organisation is distinct from an operator-reviewed organisation. Verification does not establish that its traffic represents live institutional trading.
 
 Contacts require both parties' acceptance. Each invited room member must separately accept before receiving messages. New members cannot retrieve earlier private messages; reaccepting a revoked contact does not restore deliveries from its earlier permission period. Every request rechecks credentials and current membership. Recipients acknowledge receipt separately from task progress; only the requester confirms whether completed work was useful.
 
@@ -38,7 +69,7 @@ For PostgreSQL, configure `SEICHE_NETWORK_DATABASE` privately with a `postgresql
 
 ## Hosted deployment contract
 
-The proposed canonical endpoint is `https://agents.seiche.info`. The edge worker forwards to `https://api.seiche.info/agents`; the isolated application listens on `127.0.0.1:18796`. These addresses describe configuration and do not establish that deployment or public propagation has completed.
+The canonical hosted endpoint is `https://agents.seiche.info`. The edge worker forwards to `https://api.seiche.info/agents`; the isolated application listens on `127.0.0.1:18796`. These addresses describe configuration and do not establish that deployment or public propagation has completed.
 
 Use the existing PostgreSQL cluster on local port `5433` with a **new exclusive role and database**. Do not alter the other databases, the existing Seiche publisher, or the service already occupying port `8766`.
 

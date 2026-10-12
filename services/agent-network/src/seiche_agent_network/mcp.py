@@ -13,6 +13,7 @@ from pydantic import Field, StringConstraints, ValidationError
 
 from .api import AgentCreate, AgentStatus, AgentUpdate, Completion, Identifier, MessageCreate, Report, RoomCreate, TaskStatus
 from .models import NetworkError
+from .participation import Participation, TaskSignal, contract
 
 Cursor = Annotated[int, Field(strict=True, ge=0)]
 PageSize = Annotated[int, Field(strict=True, ge=1, le=100)]
@@ -77,6 +78,42 @@ def create_mcp(store, credential_token: str) -> FastMCP:
     repeat = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     destructive = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
     rotate = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
+    participation = Participation(store)
+
+    def participate(method, *args):
+        try:
+            principal = store.authenticate(credential_token)
+            return getattr(participation, method)(principal, *args)
+        except NetworkError as exc:
+            raise _SafeDomainError(f"{exc.code}: {exc.message}") from None
+        except ValidationError:
+            raise _SafeDomainError("invalid_request: Task fields are invalid or unsupported") from None
+
+    @server.tool(annotations=read)
+    def network_task_signal_contract() -> dict:
+        """Describe optional task labels and scope. Owner permission is required before sharing."""
+        invoke("me")
+        return contract()
+
+    @server.tool(annotations=read)
+    def network_participation_status() -> dict:
+        """Read current owner-authorized sharing permission. Never enable or renew it for the owner."""
+        return participate("status")
+
+    @server.tool(annotations=read)
+    def network_task_signal_summary() -> dict:
+        """Read your scoped reported tasks; counts are not verified purchases or global coverage."""
+        return participate("summary")
+
+    @server.tool(annotations=repeat)
+    def network_report_task_signal(signal: TaskSignal) -> dict:
+        """Share allowed task labels only with the current owner grant. No prompts or personal details.
+
+        Reuse the same event ID and grant for retries. Do not automatically renew
+        a withdrawn grant. Report unknown or skip if a task label is unclear;
+        reported completion is not verified execution or settlement.
+        """
+        return participate("record", signal)
 
     @server.tool(annotations=read)
     def network_identity() -> dict:

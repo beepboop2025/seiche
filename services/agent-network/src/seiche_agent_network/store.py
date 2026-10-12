@@ -135,6 +135,11 @@ class Store:
                 db.execute(insert(locks).values(id=1, key_fingerprint=self.crypto.fingerprint))
             elif row["key_fingerprint"] != self.crypto.fingerprint:
                 raise ValueError("Keys do not match this network database; restore the original service keys")
+        # Upgrade tables share the existing policy lock, so several new-version
+        # workers cannot race the check/create sequence during a rolling start.
+        from .participation import meta as participation_meta
+        with self._transaction() as db:
+            participation_meta.create_all(db)
 
     @contextmanager
     def _transaction(self, initializing=False, *, shared=False, keys=()):
@@ -773,7 +778,15 @@ class Store:
                 if inspect(db).has_table(table_name):
                     aggregate_table = Table(table_name, MetaData(), autoload_with=db)
                     analytics_count += db.execute(delete(aggregate_table).where(aggregate_table.c.day < aggregate_cutoff)).rowcount
-            return {"purged_payloads": count, "purged_reports": report_count, "purged_rooms": len(expired_rooms), "purged_aggregate_buckets": analytics_count}
+            participation_count = 0
+            if inspect(db).has_table("network_participation_signals"):
+                signal_table = Table("network_participation_signals", MetaData(), autoload_with=db)
+                participation_count = db.execute(delete(signal_table).where(signal_table.c.received_at <= now - 30 * 86400)).rowcount
+            if inspect(db).has_table("network_participation_limits"):
+                limit_table = Table("network_participation_limits", MetaData(), autoload_with=db)
+                db.execute(delete(limit_table).where(limit_table.c.day < datetime.fromtimestamp(now, timezone.utc).date().isoformat()))
+            return {"purged_payloads": count, "purged_reports": report_count, "purged_rooms": len(expired_rooms), "purged_aggregate_buckets": analytics_count,
+                    "purged_participation_signals": participation_count}
 
     def _delete_room(self, db, room_id):
         ids = select(messages.c.id).where(messages.c.room_id == room_id)
@@ -816,6 +829,10 @@ class Store:
             if inspect(db).has_table("network_analytics_daily"):
                 aggregate_table = Table("network_analytics_daily", MetaData(), autoload_with=db)
                 db.execute(delete(aggregate_table).where(aggregate_table.c.org_id == p.org_id))
+            for table_name in ("network_participation_signals", "network_participation_grants", "network_participation_limits"):
+                if inspect(db).has_table(table_name):
+                    participation_table = Table(table_name, MetaData(), autoload_with=db)
+                    db.execute(delete(participation_table).where(participation_table.c.org_id == p.org_id))
             db.execute(delete(credentials).where(credentials.c.org_id == p.org_id))
             db.execute(delete(agents).where(agents.c.org_id == p.org_id))
             db.execute(delete(orgs).where(orgs.c.id == p.org_id))

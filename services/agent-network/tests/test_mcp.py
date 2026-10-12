@@ -40,7 +40,7 @@ async def test_sdk_tool_inventory_and_http_identity_parity(state):
     server = create_mcp(store, owner["owner_token"])
     inventory = await server.list_tools()
     names = {tool.name for tool in inventory}
-    assert len(names) == 28
+    assert len(names) == 32
     assert {"network_send", "network_inbox", "network_cancel_task", "network_verify_room", "network_rotate_agent", "network_metrics"} <= names
     with TestClient(create_app(store)) as client:
         expected = client.get("/v1/me", headers={"Authorization": "Bearer " + owner["owner_token"]}).json()
@@ -93,9 +93,45 @@ async def test_real_sdk_stdio_initialize_list_and_call(state, tmp_path):
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "Seiche Agent Network"
             inventory = await session.list_tools()
-            assert len(inventory.tools) == 28
+            assert len(inventory.tools) == 32
             result = await session.call_tool("network_identity", {})
             assert result.isError is False
             assert json.loads(result.content[0].text)["org_id"] == store.authenticate(owner["owner_token"]).org_id
             failure = await session.call_tool("network_inbox", {"after": -1})
             assert failure.isError is True
+
+
+async def test_task_reports_require_live_owner_grant_and_retries_count_once(state):
+    from uuid import uuid4
+    from seiche_agent_network.participation import POLICY, Participation, ParticipationRequest
+    store, owner, p, agent, _, _ = state
+    sharing = Participation(store)
+    server = create_mcp(store, agent["token"])
+    assert unpack(await server.call_tool("network_participation_status", {}))["enabled"] is False
+    contract = unpack(await server.call_tool("network_task_signal_contract", {}))
+    assert contract["policy_version"] == POLICY
+    grant = sharing.configure(p, ParticipationRequest(enabled=True, policy_version=POLICY, data_notice_acknowledged=True))
+    signal = {"event_id": str(uuid4()), "grant_id": grant["grant_id"], "goal": "compare",
+              "topic": "ai_economy", "stage": "comparing", "traffic_class": "synthetic"}
+    first = unpack(await server.call_tool("network_report_task_signal", {"signal": signal}))
+    assert first["status"] == "accepted" and first["evidence_kind"] == "self_reported"
+    assert unpack(await server.call_tool("network_report_task_signal", {"signal": signal}))["status"] == "duplicate"
+    assert unpack(await server.call_tool("network_task_signal_summary", {}))["total_events"] == 1
+    sharing.withdraw(p)
+    with pytest.raises(ToolError, match="participation_disabled"):
+        await server.call_tool("network_report_task_signal", {"signal": signal})
+    assert unpack(await server.call_tool("network_task_signal_summary", {}))["total_events"] == 0
+
+
+async def test_task_report_tools_cannot_expand_permissions_or_echo_private_fields(state):
+    store, owner, p, agent, _, _ = state
+    server = create_mcp(store, agent["token"])
+    names = {tool.name for tool in await server.list_tools()}
+    assert not any("enable" in name or "configure_participation" in name for name in names)
+    private = "private-agent-prompt"
+    with pytest.raises(ToolError) as err:
+        await server.call_tool("network_report_task_signal", {"signal": {"prompt": private}})
+    assert private not in str(err.value)
+    store.rotate_agent_token(p, agent["agent"]["id"])
+    with pytest.raises(ToolError, match="unauthorized"):
+        await server.call_tool("network_participation_status", {})
