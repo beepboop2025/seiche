@@ -72,7 +72,7 @@ def mount_discovery(app, base):
     def workspace_config():
         return {"mcpServers": {"seiche-workspace": {
             "command": "uvx", "args": ["--from",
-                "financial-evidence[workspace] @ git+https://github.com/beepboop2025/financial-evidence-skills.git@7386c455c49dcc91d23cddb82a655859a928191a",
+                "financial-evidence[workspace] @ git+https://github.com/beepboop2025/financial-evidence-skills.git@3c0f973884c9b67592aa77617bb4fddfe060aba9",
                 "seiche-network-client-mcp", "--endpoint", base.rstrip('/')],
             "env": {"SEICHE_NETWORK_TOKEN": "YOUR_AGENT_KEY"}}}}
 
