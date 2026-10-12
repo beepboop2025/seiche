@@ -111,6 +111,36 @@ class A2ASend(StrictModel):
     configuration: A2AConfiguration = Field(default_factory=A2AConfiguration)
 
 
+# The published Financial Evidence desk and downloadable browser tools live on
+# this reviewed origin. It receives public data access only, never workspace CORS.
+DATA_BROWSER_ORIGINS = frozenset({"https://beepboop2025.github.io"})
+
+
+def _public_data_request(scope):
+    if scope.get("type") != "http" or scope.get("method") not in {"GET", "OPTIONS"}:
+        return False
+    path = scope.get("path", "")
+    root = scope.get("root_path", "")
+    if root and path.startswith(root + "/"):
+        path = path[len(root):]
+    return path == "/v1/data-catalog" or path.startswith(("/v1/data/", "/v1/research/api/v1/"))
+
+
+class ScopedCORS:
+    def __init__(self, app, *, allowed_origins):
+        self.workspace = CORSMiddleware(app, allow_origins=sorted(allowed_origins),
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            allow_headers=["Authorization", "Content-Type", "A2A-Version"], allow_credentials=False)
+        self.data = CORSMiddleware(app, allow_origins=sorted(set(allowed_origins) | DATA_BROWSER_ORIGINS),
+            allow_methods=["GET"], allow_credentials=False,
+            allow_headers=["Authorization", "Content-Type", "X-Financial-Evidence-Traffic-Class", "X-Liquilens-Traffic-Class"],
+            expose_headers=["X-Dataset-ID", "X-Dataset-Catalog-Version", "X-Source-URL", "X-Product"])
+
+    async def __call__(self, scope, receive, send):
+        middleware = self.data if _public_data_request(scope) else self.workspace
+        await middleware(scope, receive, send)
+
+
 class RequestBoundary:
     """Cap streamed request bytes before JSON parsing; reject cross-origin access."""
 
@@ -124,7 +154,8 @@ class RequestBoundary:
         headers = dict(scope["headers"])
         origin = headers.get(b"origin", b"").decode("latin1")
         response = None
-        if origin and origin not in self.allowed_origins:
+        public_origin = _public_data_request(scope) and origin in DATA_BROWSER_ORIGINS
+        if origin and origin not in self.allowed_origins and not public_origin:
             response = JSONResponse({"error": {"code": "origin_denied", "message": "Origin is not permitted"}}, status_code=403)
         elif headers.get(b"content-encoding", b"identity").lower() != b"identity":
             response = JSONResponse({"error": {"code": "encoding_unsupported", "message": "Compressed request bodies are not supported"}}, status_code=415)
@@ -233,8 +264,7 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
     from .discovery import mount_discovery
     mount_discovery(app, public_url)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
-    app.add_middleware(CORSMiddleware, allow_origins=sorted(origins), allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-                       allow_headers=["Authorization", "Content-Type", "A2A-Version"], allow_credentials=False)
+    app.add_middleware(ScopedCORS, allowed_origins=origins)
     app.add_middleware(RequestBoundary, allowed_origins=origins)
     bearer = HTTPBearer(auto_error=False)
 

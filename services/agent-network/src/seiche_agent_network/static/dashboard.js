@@ -3,13 +3,13 @@
 (() => {
   const byId = (id) => document.getElementById(id);
   const base = location.pathname.replace(/\/dashboard\/?$/, "");
-  const names = {seiche: "Seiche", liquilens: "LiquiLens", undertow: "Undertow", palimpsest: "Palimpsest", noisefloor: "NoiseFloor", narcoscope: "NarcoScope", "financial-evidence": "Financial Evidence", "seiche-agent-network": "Agent Network", other: "Other"};
+  const names = {seiche: "Seiche", liquilens: "LiquiLens", undertow: "Undertow", palimpsest: "Palimpsest", noisefloor: "NoiseFloor", narcoscope: "NarcoScope", wake: "Wake", riptide: "Riptide", "myquant-editorial": "MyQuant editorial", "myquant-app": "MyQuant app", "trade-safety": "Trade Safety", "financial-evidence": "Financial Evidence", "seiche-agent-network": "Agent Network", other: "Other"};
   const trafficNames = {operator_reported_production: "Reported production", paper: "Paper workflows", shadow: "Shadow workflows", backtest: "Backtests", synthetic: "Synthetic checks", internal: "Internal traffic", unknown: "Unknown classification"};
   const states = new Set(["fresh", "stale", "unknown", "restricted"]);
   const fmt = new Intl.NumberFormat("en", {maximumFractionDigits: 1});
   let regions;
   try { regions = new Intl.DisplayNames(["en"], {type: "region"}); } catch (_) { regions = null; }
-  const session = {token: "", usage: null, freshness: null, generation: 0, controller: null, loading: false, timer: null};
+  const session = {token: "", usage: null, freshness: null, demand: null, generation: 0, controller: null, loading: false, timer: null};
   const safe = (value, fallback = "Unavailable") => typeof value === "string" && value.length ? value.slice(0, 300) : fallback;
   const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
   const count = (value) => number(value) === null ? "—" : fmt.format(value);
@@ -79,8 +79,10 @@
     byId("report-window").textContent = "Global report · " + count(report.retention_days) + " UTC days · from " + safe(report.cutoff_day);
     byId("report-scope").textContent = "Central ingress exchanges only";
     const complete = report.collection_complete === true ? "Collection is marked complete for its stated scope. " : "Collection completeness is unverified. ";
-    const failures = number(report.process_measurement_failures);
-    byId("coverage-notice").textContent = complete + safe(report.coverage, "Direct product endpoints, requests rejected before forwarding and downtime are outside these counts.") + (failures ? " Measurement failures in this process: " + count(failures) + "." : "");
+    const diagnostics = report.measurement_diagnostics;
+    const dropped = number(diagnostics?.dropped_capacity) !== null && number(diagnostics?.dropped_closing) !== null ? diagnostics.dropped_capacity + diagnostics.dropped_closing : null;
+    const collection = diagnostics?.scope === "current_process_only" ? " Collection in this process: " + count(diagnostics.committed) + " committed, " + count(diagnostics.pending) + " pending, " + count(diagnostics.late_committed) + " committed after the response deadline, " + count(dropped) + " dropped, " + count(diagnostics.permanent_errors) + " write errors. These diagnostics reset on restart; late writes are not necessarily lost." : "";
+    byId("coverage-notice").textContent = complete + safe(report.coverage, "Direct product endpoints, requests rejected before forwarding and downtime are outside these counts.") + collection;
 
     const days = array(report.days).filter((row) => typeof row?.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.day)).sort((a, b) => a.day.localeCompare(b.day)).slice(-30);
     const maximum = Math.max(1, ...days.map((row) => number(row.requests) || 0));
@@ -127,7 +129,7 @@
 
   function renderFilters() {
     const select = byId("product-filter"), selected = select.value;
-    const available = new Set([...array(session.usage?.products), ...array(session.freshness?.products)].map((row) => row?.product).filter((value) => typeof value === "string" && value.length < 80));
+    const available = new Set([...array(session.usage?.products), ...array(session.freshness?.products), ...array(session.demand?.rows)].map((row) => row?.product).filter((value) => typeof value === "string" && value.length < 80));
     select.replaceChildren(node("option", "All products")); select.firstChild.value = "all";
     [...available].sort().forEach((value) => { const option = node("option", productName(value)); option.value = value; select.append(option); });
     select.value = available.has(selected) ? selected : "all";
@@ -185,6 +187,28 @@
     byId("tool-count").textContent = "Showing " + count(Math.min(rows.length, 500)) + " of " + count(rows.length) + " matching tool / product groups.";
   }
 
+  function renderDemand() {
+    const report = session.demand;
+    if (!report || report._unavailable) {
+      emptyTable(byId("demand-rows"), "Data demand could not be loaded. Refresh to retry.");
+      byId("demand-summary").textContent = "No demand total is available for this snapshot.";
+      byId("demand-count").textContent = "Unavailable does not mean zero requests.";
+      return;
+    }
+    const totals = report.totals || {}, selected = byId("product-filter").value;
+    const rows = array(report.rows).filter((row) => selected === "all" || row.product === selected);
+    byId("demand-summary").textContent = count(totals.data_requests) + " data requests · " + count(totals.discovery_requests) + " discovery requests · " + count(totals.unknown_requests) + " unclassified requests. Across all products in the selected traffic view. " + count(totals.authenticated_agent_requests) + " requests carry an agent credential; " + count(totals.owner_requests) + " carry a workspace-owner credential.";
+    if (!rows.length) emptyTable(byId("demand-rows"), "No data-demand observations match this view.");
+    else byId("demand-rows").replaceChildren(...rows.map((value) => {
+      const row = node("tr"), label = tableCell(safe(value.label, safe(value.dataset_id)));
+      label.append(node("span", productName(value.product) + " · " + safe(value.basis) + " · " + safe(value.operation).replaceAll("_", " "), "tool-product"));
+      const errors = tableCell(count(value.http_errors) + " HTTP / " + count(value.tool_errors) + " tool", "table-number");
+      row.append(label, tableCell(count(value.requests), "table-number"), tableCell(count(value.authenticated_agent_requests), "table-number"), tableCell(count(value.anonymous_requests), "table-number"), errors);
+      return row;
+    }));
+    byId("demand-count").textContent = "Showing " + count(rows.length) + " groups from the server's top " + count(report.limit) + ". " + (report.truncated ? "More groups exist; the totals include them. " : "") + "Observed since " + safe(report.cutoff_day) + " UTC. Family classification does not establish which individual records were used.";
+  }
+
   function sourceCard(value) {
     const card = node("article", null, "source-card"), top = node("div", null, "source-top");
     top.append(node("h3", productName(value.product)), badge(value.freshness));
@@ -240,21 +264,21 @@
     else empty(cards, "No source monitor assessment exists for this product.");
   }
 
-  function renderSelected() { renderCountries(); renderProducts(); renderTools(); renderFreshness(); }
+  function renderSelected() { renderCountries(); renderProducts(); renderTools(); renderDemand(); renderFreshness(); }
 
   function clearSession(message = "Disconnected. The credential and loaded reports have been cleared.", error = false) {
     session.generation += 1; session.controller?.abort(); session.controller = null;
-    session.token = ""; session.usage = null; session.freshness = null; session.loading = false;
+    session.token = ""; session.usage = null; session.freshness = null; session.demand = null; session.loading = false;
     clearInterval(session.timer); session.timer = null;
     byId("auto-refresh").checked = false; byId("report-token").value = "";
     byId("connect-form").hidden = false; byId("connection-actions").hidden = true;
     byId("report-view").hidden = true; byId("disconnected-view").hidden = false;
     byId("connection-tag").textContent = "Disconnected"; byId("connection-tag").className = "connection-tag";
-    byId("connect-button").disabled = false; byId("refresh-button").disabled = false;
-    for (const id of ["metrics", "daily-activity", "countries", "traffic", "returning-activity", "product-rows", "tool-rows", "freshness-products"]) byId(id).replaceChildren();
-    for (const id of ["coverage-notice", "report-window", "report-scope", "freshness-summary", "updated-label", "tool-count", "country-count"]) byId(id).textContent = "";
+    byId("connect-button").disabled = false; byId("refresh-button").disabled = false; byId("demand-traffic").disabled = false;
+    for (const id of ["metrics", "daily-activity", "countries", "traffic", "returning-activity", "product-rows", "tool-rows", "demand-rows", "freshness-products"]) byId(id).replaceChildren();
+    for (const id of ["coverage-notice", "report-window", "report-scope", "freshness-summary", "updated-label", "tool-count", "demand-summary", "demand-count", "country-count"]) byId(id).textContent = "";
     byId("product-filter").replaceChildren(node("option", "All products")); byId("product-filter").firstChild.value = "all";
-    byId("tool-search").value = "";
+    byId("tool-search").value = ""; byId("demand-traffic").value = "non_test";
     status(message, error);
   }
 
@@ -272,10 +296,10 @@
     session.loading = true; const controller = new AbortController(); session.controller = controller;
     const signal = controller.signal;
     const deadline = setTimeout(() => controller.abort(), 20000);
-    byId("connect-button").disabled = true; byId("refresh-button").disabled = true;
+    byId("connect-button").disabled = true; byId("refresh-button").disabled = true; byId("demand-traffic").disabled = true;
     status("Loading private operational reports…");
     try {
-      const [usage, freshness] = await Promise.allSettled([getReport("/v1/operator/usage", signal), getReport("/v1/operator/freshness", signal)]);
+      const [usage, freshness, demand] = await Promise.allSettled([getReport("/v1/operator/usage", signal), getReport("/v1/operator/freshness", signal), getReport("/v1/operator/dataset-usage?traffic=" + encodeURIComponent(byId("demand-traffic").value) + "&limit=200", signal)]);
       if (generation !== session.generation) return;
       if (usage.status !== "fulfilled") {
         const code = usage.reason?.status;
@@ -288,18 +312,20 @@
       if (!usage.value || usage.value.scope !== "operator_global") { clearSession("The response was not a global operator report. No dashboard data was displayed.", true); return; }
       session.usage = usage.value;
       session.freshness = freshness.status === "fulfilled" ? freshness.value : {_unavailable: true};
+      session.demand = demand.status === "fulfilled" && demand.value?.scope === "operator_global" ? demand.value : {_unavailable: true};
       byId("connect-form").hidden = true; byId("connection-actions").hidden = false;
       byId("report-token").value = "";
       byId("report-view").hidden = false; byId("disconnected-view").hidden = true;
       byId("connection-tag").textContent = "Connected"; byId("connection-tag").className = "connection-tag connected";
       byId("updated-label").textContent = "Fetched " + timestamp(new Date().toISOString());
       renderOverview(session.usage); renderFilters(); renderSelected();
-      status(freshness.status === "fulfilled" ? "Reports loaded. Coverage and source limitations are shown below." : "Usage loaded. The source monitor report is unavailable.", freshness.status !== "fulfilled");
+      const incomplete = freshness.status !== "fulfilled" || session.demand._unavailable;
+      status(incomplete ? "Usage loaded. One or more additional reports are unavailable; see their sections below." : "Reports loaded. Coverage and source limitations are shown below.", incomplete);
     } catch (_) {
       if (generation === session.generation) status("The report could not be displayed. Refresh to retry; no readiness conclusion was made.", true);
     } finally {
       clearTimeout(deadline);
-      if (generation === session.generation) { session.loading = false; byId("connect-button").disabled = false; byId("refresh-button").disabled = false; }
+      if (generation === session.generation) { session.loading = false; byId("connect-button").disabled = false; byId("refresh-button").disabled = false; byId("demand-traffic").disabled = false; }
     }
   }
 
@@ -317,6 +343,7 @@
   byId("disconnect-button").addEventListener("click", () => { clearSession(); byId("report-token").focus(); });
   byId("product-filter").addEventListener("change", renderSelected);
   byId("tool-search").addEventListener("input", renderTools);
+  byId("demand-traffic").addEventListener("change", refresh);
   byId("auto-refresh").addEventListener("change", () => {
     clearInterval(session.timer); session.timer = null;
     if (byId("auto-refresh").checked && session.token) session.timer = setInterval(refresh, 60000);

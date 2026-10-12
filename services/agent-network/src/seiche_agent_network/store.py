@@ -139,9 +139,11 @@ class Store:
         # workers cannot race the check/create sequence during a rolling start.
         from .participation import meta as participation_meta
         from .social import meta as social_meta
+        from .demand import meta as demand_meta
         with self._transaction() as db:
             participation_meta.create_all(db)
             social_meta.create_all(db)
+            demand_meta.create_all(db)
 
     @contextmanager
     def _transaction(self, initializing=False, *, shared=False, keys=()):
@@ -789,8 +791,10 @@ class Store:
                 db.execute(delete(limit_table).where(limit_table.c.day < datetime.fromtimestamp(now, timezone.utc).date().isoformat()))
             from .social import purge as purge_social
             social_counts = purge_social(db, now)
+            from .demand import purge as purge_demand
+            demand_count = purge_demand(db, aggregate_cutoff)
             return {"purged_payloads": count, "purged_reports": report_count, "purged_rooms": len(expired_rooms), "purged_aggregate_buckets": analytics_count,
-                    "purged_participation_signals": participation_count, **social_counts}
+                    "purged_participation_signals": participation_count, "purged_dataset_buckets": demand_count, **social_counts}
 
     def _delete_room(self, db, room_id):
         ids = select(messages.c.id).where(messages.c.room_id == room_id)
@@ -839,6 +843,8 @@ class Store:
                     db.execute(delete(participation_table).where(participation_table.c.org_id == p.org_id))
             from .social import delete_organization as delete_social
             delete_social(db, p.org_id)
+            from .demand import daily as dataset_daily
+            db.execute(delete(dataset_daily).where(dataset_daily.c.org_id == p.org_id))
             db.execute(delete(credentials).where(credentials.c.org_id == p.org_id))
             db.execute(delete(agents).where(agents.c.org_id == p.org_id))
             db.execute(delete(orgs).where(orgs.c.id == p.org_id))

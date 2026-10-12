@@ -100,7 +100,9 @@ async def test_probe_report_is_status_only_atomic_and_private(tmp_path, monkeypa
     monkeypatch.setattr("seiche_agent_network.freshness.probe_product", fake)
     path = tmp_path / "status.json"
     report = await probe_products(path)
-    assert {row["product"] for row in report["products"]} == {"seiche", "liquilens", "undertow", "palimpsest", "noisefloor", "narcoscope", "wake"}
+    assert {row["product"] for row in report["products"]} == {
+        "seiche", "liquilens", "undertow", "palimpsest", "noisefloor", "narcoscope", "wake",
+        "riptide", "myquant-editorial", "myquant-app", "trade-safety", "financial-evidence"}
     assert report["raw_payloads_retained"] is False
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert json.loads(path.read_text()) == report

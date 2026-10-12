@@ -16,12 +16,15 @@ from sqlalchemy import Column, Float, Integer, MetaData, String, Table, Text, de
 from .crypto import canonical, digest
 from .models import NetworkError
 from .store import orgs
+from .extra_products import EXTRA_PRODUCTS
+from . import demand
+from .data_catalog import classify
 
 PRODUCTS = frozenset({"seiche", "liquilens", "undertow", "palimpsest", "noisefloor", "narcoscope",
-                      "wake", "financial-evidence", "seiche-agent-network", "other"})
+                      "wake", "financial-evidence", "seiche-agent-network", "other", *EXTRA_PRODUCTS})
 METHODS = frozenset({"GET", "POST", "DELETE", "PATCH", "PUT", "HEAD", "OPTIONS", "MCP", "other",
     "initialize", "notifications/initialized", "notifications/cancelled", "ping", "tools/list", "tools/call",
-    "resources/list", "resources/read", "resources/templates/list", "prompts/list", "prompts/get", "logging/setLevel", "completion/complete"})
+    "resources/list", "resources/read", "resources/templates/list", "prompts/list", "prompts/get", "logging/setLevel", "completion/complete", "server/discover"})
 TRAFFIC_CLASSES = frozenset({"synthetic", "internal", "backtest", "shadow", "paper", "operator_reported_production", "unknown"})
 FRESHNESS = frozenset({"fresh", "stale", "restricted", "unknown"})
 OUTCOMES = frozenset({"success", "error", "unknown"})
@@ -60,7 +63,8 @@ class Analytics:
         self.store, self.retention_days = store, retention_days
         self.tool_registry = self._registry(tool_registry)
         self.source_registry = self._registry(source_registry)
-        meta.create_all(store.engine)
+        with store._transaction() as db:
+            meta.create_all(db)
 
     @staticmethod
     def _registry(value):
@@ -84,7 +88,8 @@ class Analytics:
         return product if product in PRODUCTS else "other"
 
     def record(self, principal, *, product, tool, method, http_status, duration_ms, country="unknown",
-               traffic_class="unknown", freshness="unknown", source_age_seconds=None, tool_outcome="unknown"):
+               traffic_class="unknown", freshness="unknown", source_age_seconds=None, tool_outcome="unknown",
+               classification=None, response_state="unknown"):
         """Record one HTTP/MCP exchange; identity None is anonymous service traffic.
 
         This local method is not an unauthenticated analytics-ingestion API.
@@ -108,8 +113,13 @@ class Analytics:
                       method=method, http_status=http_status, country=country, traffic_class=traffic_class,
                       freshness=freshness, tool_outcome=tool_outcome)
         key = digest(canonical(labels))
+        classification = classification or classify(product, method, tool)
+        # Other operational-only products intentionally collapse to the one
+        # admitted unknown bucket; arbitrary names never become dataset labels.
+        demand_labels = labels if classification.product == product else labels | {"product": "other"}
+        demand_key, demand_values = demand.prepare(demand_labels, classification, response_state)
         histogram_index = next((i for i, upper in enumerate(LATENCY_BOUNDS) if duration_ms <= upper), len(LATENCY_BOUNDS))
-        with self.store._transaction(shared=True, keys=["analytics:" + key]) as db:
+        with self.store._transaction(shared=True, keys=["analytics:" + key, "dataset:" + demand_key]) as db:
             if principal is not None:
                 self.store._principal(db, principal)
             prior = db.execute(select(daily).where(daily.c.key == key)).mappings().first()
@@ -124,6 +134,7 @@ class Analytics:
                 db.execute(update(daily).where(daily.c.key == key).values(**values))
             else:
                 db.execute(insert(daily).values(key=key, **labels, **values))
+            demand.record(db, demand_key, demand_values, duration_ms)
             self._purge(db)
 
     def record_source_freshness(self, *, product, source, freshness, source_age_seconds=None):
@@ -151,6 +162,7 @@ class Analytics:
         cutoff = self._cutoff()
         count = db.execute(delete(daily).where(daily.c.day < cutoff)).rowcount
         count += db.execute(delete(freshness_checks).where(freshness_checks.c.day < cutoff)).rowcount
+        demand.purge(db, cutoff)
         return count
 
     def purge(self):

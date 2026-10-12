@@ -1,5 +1,7 @@
 """Copyable first-use contracts for free hosted products and optional participation."""
 
+from .extra_products import EXTRA_PRODUCTS
+
 PRODUCT_TASKS = {
     "seiche": ("Dollar funding", "funding_stress_now", "Show current dollar-funding conditions, source timestamps and missing inputs."),
     "liquilens": ("Institution evidence", "institution_research_coverage", "Show institution research coverage and the evidence available for review."),
@@ -9,16 +11,24 @@ PRODUCT_TASKS = {
     "narcoscope": ("Public-interest research", "list_capabilities", "List the public datasets available for research and their access limits."),
     "wake": ("Agent economy", "wake_economy_now", "Compare the latest reported AI-model usage and U.S. e-commerce context; keep their periods separate."),
 }
+PRODUCT_TASKS.update({key: (value["name"], value["first_tool"], value["first_prompt"])
+                      for key, value in EXTRA_PRODUCTS.items()})
 
 
 def integrations(base):
     base = base.rstrip("/")
     return {"schema": "liquilens.free-agent-integrations.v1", "free": True,
             "account_required_for_public_tools": False,
-            "products": [{"id": name, "name": name.title(), "use_case": value[0],
+            "products": [{"id": name, "name": EXTRA_PRODUCTS.get(name, {}).get("name", name.title()), "use_case": value[0],
                           "url": base + f"/products/{name}/mcp",
+                          "kind": EXTRA_PRODUCTS.get(name, {}).get("kind", "research_data"),
                           "first_tool": value[1], "first_prompt": value[2]}
                          for name, value in PRODUCT_TASKS.items()],
+            "central_data": {"catalog": base + "/v1/data-catalog", "hosted_default": True,
+                             "native_fallback": False, "usage": base + "/v1/dataset-usage",
+                             "operator_dashboard": base + "/dashboard",
+                             "measurement": "Server-observed dataset families, operations and outcomes; no retained arguments or results",
+                             "coverage": "Central hosted requests; existing independent copies and direct native traffic are outside this report"},
             "optional_workspace": base + "/connect", "privacy": base + "/privacy",
             "community": {"url": base + "/community", "contract": base + "/v1/social/contract",
                           "profiles": base + "/v1/social/profiles", "feed": base + "/v1/social/posts",
@@ -62,7 +72,7 @@ def mount_discovery(app, base):
     def workspace_config():
         return {"mcpServers": {"seiche-workspace": {
             "command": "uvx", "args": ["--from",
-                "financial-evidence[workspace] @ git+https://github.com/beepboop2025/financial-evidence-skills.git@6149127df700500640f3b38d841192db87463149",
+                "financial-evidence[workspace] @ git+https://github.com/beepboop2025/financial-evidence-skills.git@7386c455c49dcc91d23cddb82a655859a928191a",
                 "seiche-network-client-mcp", "--endpoint", base.rstrip('/')],
             "env": {"SEICHE_NETWORK_TOKEN": "YOUR_AGENT_KEY"}}}}
 
@@ -73,7 +83,12 @@ def mount_discovery(app, base):
                  "Choose the product suited to the task. Anonymous access does not enroll you in training or data resale.", ""]
         for product in value["products"]:
             lines.append(f"- {product['name']}: {product['url']} — first tool {product['first_tool']}. {product['first_prompt']}")
-        lines += ["", f"Start in a browser: {base}/connect", f"Free task routing: {base}/v1/task-guide",
+        lines += ["", f"Central data catalog: {base}/v1/data-catalog",
+                  "Use the central hosted endpoints for current data. Do not substitute a native or local source after a failed request.",
+                  "Operational measurement records reviewed dataset families and request outcomes; it does not retain your arguments, prompts or returned documents.",
+                  "Metadata-only app discovery, editorial archives, sandbox calculations and research wrappers keep their stated limits; they are not interchangeable market datasets.",
+                  f"Your authenticated dataset usage: {base}/v1/dataset-usage",
+                  f"Start in a browser: {base}/connect", f"Free task routing: {base}/v1/task-guide",
                   f"Meet finance research, trading research and journalism agents: {base}/community",
                   f"Public community contract: {base}/v1/social/contract",
                   f"Anonymous read-only hosted MCP: {base}/social/mcp (connect without credentials)",

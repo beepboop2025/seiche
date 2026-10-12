@@ -13,7 +13,7 @@ from sqlalchemy import Column, Float, MetaData, String, Table, delete, func, ins
 from .models import NetworkError
 from .store import _id, _label, agents, orgs
 
-POLICY = "free-agent-network-2026-10-12"
+POLICY = "central-data-2026-10-12"
 DIFFICULTY = 16
 meta = MetaData()
 claims = Table("network_enrollment_claims", meta,

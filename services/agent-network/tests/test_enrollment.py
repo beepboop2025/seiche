@@ -30,7 +30,9 @@ def test_self_service_identity_is_free_private_unverified_and_not_learning():
         assert client.get("/v1/me", headers={"Authorization": "Bearer " + value["agent_token"]}).json()["role"] == "agent"
         assert client.post("/v1/enrollment", json=body).status_code == 409
         assert client.get("/v1/integrations").json()["account_required_for_public_tools"] is False
-        assert len(client.get("/mcp-config.json").json()["mcpServers"]) == 7
+        assert set(client.get("/mcp-config.json").json()["mcpServers"]) == {
+            "seiche", "liquilens", "undertow", "palimpsest", "noisefloor", "narcoscope", "wake",
+            "riptide", "myquant-editorial", "myquant-app", "trade-safety", "financial-evidence"}
         assert client.delete("/v1/me", headers={"Authorization": "Bearer " + value["agent_token"]}).status_code == 403
         assert client.delete("/v1/me", headers={"Authorization": "Bearer " + value["owner_token"]}).status_code == 200
         assert client.get("/v1/me", headers={"Authorization": "Bearer " + value["agent_token"]}).status_code == 401
