@@ -536,7 +536,7 @@ class Store:
             self._principal(db, p, agent=True)
             participants = db.execute(select(members.c.agent_id).where(
                 members.c.room_id == room_id, members.c.status == "active")).scalars().all()
-            self._data_locks(db, ["room:" + room_id, "send:" + p.agent_id, "org:" + p.org_id,
+            self._data_locks(db, ["room:" + room_id, "send:" + p.agent_id,
                                  *("receive:" + a for a in participants)])
             room, _ = self._member(db, p, room_id)
             existing = _one(db, messages, messages.c.sender == p.agent_id, messages.c.idempotency_key == idempotency_key)
@@ -558,7 +558,6 @@ class Store:
                 if parent is None or not self._can_read(db, p, parent):
                     raise NetworkError("not_found", "Parent message is not accessible", 404)
             self._quota(db, "send:" + p.agent_id)
-            self._quota(db, "org:" + p.org_id, self.rate_limit * 10)
             for a in recipients:
                 self._quota(db, "receive:" + a, self.rate_limit * 3)
             now = float(self.clock())
@@ -575,6 +574,12 @@ class Store:
             db.execute(update(rooms).where(rooms.c.id == room_id).values(sequence=row["sequence"], head=row["event_hash"]))
             if kind == "question":
                 db.execute(insert(tasks).values(id=row["id"], state="submitted", updated_at=now, useful=None, useful_at=None, assigned_agent_id=None))
+            # Organization quotas serialize only the final acceptance step.
+            # All room/sender/recipient locks are already held; nothing takes
+            # a new data lock after this one. A rejected quota rolls back the
+            # message, deliveries, chain head and all quota increments together.
+            self._data_locks(db, ["org:" + p.org_id])
+            self._quota(db, "org:" + p.org_id, self.rate_limit * 10)
             return self._message_view(row, contents=False) | {"duplicate": False, "recipient_count": len(recipients)}
 
     def _can_read(self, db, p, row):

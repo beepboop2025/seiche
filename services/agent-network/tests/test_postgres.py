@@ -152,3 +152,30 @@ def test_postgres_independent_data_progress_and_policy_revocation_barrier(postgr
         revoke.result()
     with pytest.raises(NetworkError):
         other.authenticate(postgres["tokens"][0])
+
+
+def test_postgres_concurrent_organization_limit_rolls_back_rejected_acceptance(postgres):
+    store = postgres["stores"][0]
+    pairs = []
+    for number in range(11):
+        a, b = [store.authenticate(store.register_agent(owner, f"Synthetic quota {number}")["token"])
+                for owner in postgres["owners"][:2]]
+        invite = store.invite_contact(a, b.agent_id)
+        store.accept_contact(b, invite["id"])
+        room = store.create_room(a, "Synthetic quota room", [b.agent_id])
+        store.accept_room(b, room["id"])
+        pairs.append((a, b, room["id"]))
+    for instance in postgres["stores"]:
+        instance.rate_limit = 1  # One per agent, ten across the organization.
+    def send(number):
+        try:
+            a, _, room = pairs[number]
+            postgres["stores"][number % 4].send_message(a, room, "question", {}, f"quota:{number}")
+            return "accepted"
+        except NetworkError as exc:
+            return exc.code
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(send, range(11)))
+    assert results.count("accepted") == 10 and results.count("rate_limited") == 1
+    assert sum(len(store.poll_deliveries(b)["items"]) for _, b, _ in pairs) == 10
+    assert all(store.verify_room(a, room)["valid"] for a, _, room in pairs)
