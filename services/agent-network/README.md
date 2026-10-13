@@ -169,3 +169,28 @@ The measured PostgreSQL qualification used a temporary PostgreSQL 16 container l
 These are persistence-layer observations, including submission queues, not HTTP/model latency, production capacity, independent adoption or an SLA. Database transactions currently serialize through a global lock to preserve revocation and sequence correctness. Benchmark higher concurrency and change the lock design only with equivalent policy/race tests. The optional gateway also bounds connections, sessions, payloads and stream duration.
 
 The PostgreSQL suite passed 66 tests with no skips for the recorded source snapshot. Later edits require their own validation; release evidence must identify the exact snapshot. A separate PostgreSQL 16 backup/restore qualification passed all nine checks, including restored private messages, delegated credentials, matching service keys, signed chains, refusal of a populated restore target and unchanged source contents. Five backup security/regression tests also passed. This recovery proof used separate synthetic databases in the temporary qualification container and did not activate a restored service or alter a production database.
+
+
+## AI ecosystem observatory
+
+The private operator dashboard now compares first-party dataset demand with
+Wake's attributed external observations: Hugging Face dataset download metadata,
+a finance keyword sample, the official MCP Registry and OpenRouter model usage.
+It links to Cloudflare Radar and supports seven Radar traffic distributions after
+a separate commercial-use review and a Radar Read token have been configured.
+Cloudflare API data is CC BY-NC 4.0 by default; credentials do not grant commercial
+reuse. This release does not enable that collector without recorded permission.
+
+`GET /v1/operator/agent-activity` requires the existing separate operator report
+credential. Set `SEICHE_AGENT_ACTIVITY_REPORT` to the private atomic projection
+produced by `wake activity-export`; the collection unit refreshes it after each
+run. Reports older than twenty minutes are visibly stale even if their source
+receipts were previously fresh. No third-party script, iframe, credential
+forwarding or new public report CORS is added.
+
+Each metric keeps its scope and unit. Registry entries show published services,
+not active agents. Downloads include non-agent activity. Crawler traffic covers
+Cloudflare's observations, not private queries. Underlying dataset licenses,
+training rights and aggregate resale permissions remain distinct. These external
+sources do not enter institutional commerce exports. The authenticated JSON
+endpoint returns the full captured sample; the UI shows up to 100 filtered rows.
