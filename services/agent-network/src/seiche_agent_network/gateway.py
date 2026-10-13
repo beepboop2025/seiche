@@ -690,6 +690,14 @@ def mount_gateway(app, store, *, transport=None):
         from .agent_activity import read_report
         return await asyncio.to_thread(read_report)
 
+    @app.get("/v1/operator/demand-history")
+    async def operator_demand_history(request: Request):
+        configured = os.environ.get("SEICHE_OPERATOR_REPORT_TOKEN", "")
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer ") or len(configured) < 32 or not secrets.compare_digest(configured, auth[7:]):
+            raise NetworkError("unauthorized", "Operator reporting credential required", 401)
+        return await asyncio.to_thread(demand.history, store)
+
     def source_status():
         location=os.environ.get("SEICHE_FRESHNESS_REPORT")
         if not location:
@@ -711,6 +719,11 @@ def mount_gateway(app, store, *, transport=None):
         # This file contains source clocks and availability only, never usage,
         # identities, credentials, message bodies or raw product payloads.
         return await asyncio.to_thread(source_status)
+
+    @app.get("/v1/data-status/core")
+    async def core_data_status():
+        from .core_freshness import read_report
+        return await asyncio.to_thread(read_report)
 
     @app.get("/v1/products")
     def products():

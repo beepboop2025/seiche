@@ -34,6 +34,19 @@ def test_dataset_cross_instance_increment_for_shared_and_distinct_operational_bu
         assert db.scalar(select(func.count()).select_from(operational)) == 2
 
 
+def test_closed_day_history_aggregates_on_postgres(postgres, monkeypatch):
+    store = postgres['stores'][0]
+    at = store.clock()
+    monkeypatch.setattr(store, 'clock', lambda: at)
+    analytics = Analytics(store, tool_registry=tool_registry())
+    analytics.record(postgres['principals'][0], product='seiche', tool='funding_stress_now',
+                     method='tools/call', http_status=200, duration_ms=1)
+    monkeypatch.setattr(store, 'clock', lambda: at + 86400)
+    result = demand.history(store)
+    assert len(result['rows']) == 1 and result['rows'][0]['registered_agents'] == 1
+    assert result['rows'][0]['returning_registered_agents'] == 0
+
+
 def test_dataset_extension_bootstrap_is_serialized_across_instances(postgres):
     with postgres['stores'][0]._transaction() as db:
         demand.meta.drop_all(db)

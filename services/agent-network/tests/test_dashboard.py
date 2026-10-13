@@ -44,9 +44,12 @@ def test_operator_report_token_never_accepts_tenant_or_anonymous(dashboard):
     principal = store.authenticate(owner["owner_token"])
     app.state.gateway.analytics.record(principal, product="seiche", tool="none", method="initialize", http_status=200, duration_ms=15, country="IN", traffic_class="synthetic")
     app.state.gateway.analytics.record(None, product="liquilens", tool="none", method="initialize", http_status=200, duration_ms=900, country="unknown")
-    for path in ("/v1/operator/usage", "/v1/operator/freshness"):
+    for path in ("/v1/operator/usage", "/v1/operator/freshness", "/v1/operator/demand-history"):
         assert client.get(path).status_code == 401
         assert client.get(path, headers={"Authorization": "Bearer " + owner["owner_token"]}).status_code == 401
+    history = client.get("/v1/operator/demand-history", headers={"Authorization": "Bearer " + token})
+    assert history.status_code == 200 and history.json()["scope"] == "operator_global"
+    assert "no-store" in history.headers["cache-control"]
     report = client.get("/v1/operator/usage", headers={"Authorization": "Bearer " + token}).json()
     assert report["scope"] == "operator_global"
     assert report["totals"]["requests"] == 2
