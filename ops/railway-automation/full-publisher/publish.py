@@ -14,6 +14,9 @@ import time
 import subprocess
 import tarfile
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import contextmanager
 
 import yaml
@@ -27,6 +30,89 @@ GATES = (
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
 )
+
+
+class NoFrontendRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("Frontend settlement cannot follow a redirect")
+
+
+@contextmanager
+def frontend_settlement_timeout(seconds=60):
+    """Bound blocking reads and ownership checks in this single-threaded controller."""
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise RuntimeError("Frontend settlement cannot replace an active deadline")
+    previous = signal.getsignal(signal.SIGALRM)
+    def expired(signum, frame):
+        raise RuntimeError("Frontend propagation did not settle within 60 seconds")
+    signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def wait_for_frontend_settlement(manifest, source_sha, mirror, site_sha, env, cache_key):
+    """Wait for the deployed generation before invoking the unchanged strict proof."""
+    with frontend_settlement_timeout():
+        _wait_for_frontend_settlement(manifest, source_sha, mirror, site_sha, env, cache_key)
+
+
+def _wait_for_frontend_settlement(manifest, source_sha, mirror, site_sha, env, cache_key):
+    expected = {name: manifest.get("publicFiles", {}).get(name)
+                for name in ("index.html", "data/overview.json")}
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+               for value in expected.values()):
+        raise RuntimeError("Frontend settlement requires sealed root and overview hashes")
+    deadline = time.monotonic() + 60
+    opener = urllib.request.build_opener(NoFrontendRedirect())
+    consecutive = 0
+    for attempt in range(10):
+        require_current_publication(source_sha, mirror, site_sha, env)
+        matched = True
+        for relative, digest in expected.items():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("Frontend propagation did not settle within 60 seconds")
+            suffix = "" if relative == "index.html" else relative
+            url = "https://seiche.info/" + suffix + "?" + urllib.parse.urlencode(
+                {"deployment": cache_key, "settlement": str(attempt)})
+            request = urllib.request.Request(url, headers={
+                "Accept-Encoding": "identity", "Cache-Control": "no-cache",
+                "User-Agent": "seiche-frontend-settlement/1"})
+            try:
+                with opener.open(request, timeout=min(10, remaining)) as response:
+                    final = urllib.parse.urlsplit(response.url)
+                    if (final.scheme, final.netloc, final.path) != ("https", "seiche.info", "/" + suffix):
+                        raise RuntimeError("Frontend settlement left its exact canonical route")
+                    body = response.read(16 * 1024 * 1024 + 1)
+                if len(body) > 16 * 1024 * 1024:
+                    raise RuntimeError("Frontend settlement response exceeded its bound")
+                matched = hashlib.sha256(body).hexdigest() == digest
+            except urllib.error.HTTPError as error:
+                if error.code not in {404, 429, 502, 503, 504}:
+                    raise
+                error.close()
+                matched = False
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if isinstance(error, urllib.error.URLError) and not isinstance(
+                        error.reason, (TimeoutError, ConnectionError)):
+                    raise
+                matched = False
+            if not matched:
+                break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Frontend propagation did not settle within 60 seconds")
+        consecutive = consecutive + 1 if matched else 0
+        if consecutive == 2:
+            require_current_publication(source_sha, mirror, site_sha, env)
+            print("RAILWAY_FULL_FRONTEND_SETTLED observations=2 files=2", flush=True)
+            return
+        if attempt < 9:
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
+    raise RuntimeError("Frontend propagation did not settle after 10 observations")
 
 
 def clean_env(extra=None):
@@ -127,14 +213,67 @@ def git(args, cwd, env=None):
     return run(["git", *args], cwd, env or clean_env(), capture=True)
 
 
-def current_main():
-    # Preserve the workflow's exact-head Git transport check; shared anonymous
-    # GitHub REST limits must not prevent an otherwise valid publication.
-    value = git(["ls-remote", "--exit-code", SOURCE, "refs/heads/main"], CONTROLLER)
-    sha, ref = value.split()
-    if ref != "refs/heads/main" or not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise RuntimeError("Invalid source identity")
-    return sha
+def source_mode():
+    mode = os.environ.get("PUBLICATION_SOURCE_MODE", "main")
+    if mode not in {"main", "receipt", "catalog"}:
+        raise RuntimeError("Invalid publication source mode")
+    return mode
+
+
+def catalog_selection():
+    """Select only this controller's exact, independently receipted source."""
+    tag = os.environ.get("PUBLICATION_CATALOG_RECEIPT_TAG", "")
+    if (not re.fullmatch(r"market-corpus-receipt-corpus-[0-9a-f]{16}-r[1-9][0-9]*", tag)
+            or os.environ.get("PUBLICATION_EQUIVALENCE_TAG")):
+        raise RuntimeError("Catalog source mode requires one exact catalog receipt")
+    identity = json.loads((CONTROLLER / "controller-source.json").read_text())
+    expected = identity.get("sha")
+    if (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{40}", expected)
+            or identity.get("engineSourceSha")):
+        raise RuntimeError("Catalog source must equal the full controller source")
+    return tag, expected
+
+
+def verify_catalog_selection(checkout):
+    tag, _ = catalog_selection()
+    catalog = json.loads((checkout / "frontend/public/.well-known/ai-catalog.json").read_text())
+    entries = [row for row in catalog["entries"]
+               if row.get("identifier") == "urn:air:seiche.info:mcp:market-corpus"]
+    if (len(entries) != 1
+            or json.loads(entries[0]["metadata"]["publicationReceipt"]).get("tag") != tag):
+        raise RuntimeError("Selected catalog receipt differs from the source declaration")
+
+
+def current_source():
+    # Receipt mode selects an approved immutable source; it does not admit main
+    # through that receipt. equivalent_sources still verifies the original signed
+    # contract before any source execution or publication.
+    if source_mode() == "main":
+        value = git(["ls-remote", "--exit-code", SOURCE, "refs/heads/main"], CONTROLLER)
+        fields = value.split()
+        if (len(fields) != 2 or fields[1] != "refs/heads/main"
+                or not re.fullmatch(r"[0-9a-f]{40}", fields[0])):
+            raise RuntimeError("Invalid source identity")
+        return fields[0]
+    if source_mode() == "catalog":
+        tag, expected = catalog_selection()
+    else:
+        tag = os.environ.get("PUBLICATION_EQUIVALENCE_TAG", "")
+        if not re.fullmatch(r"publication-source-equivalence-[0-9a-f]{40}", tag):
+            raise RuntimeError("Receipt source mode requires an exact equivalence tag")
+        expected = tag.removeprefix("publication-source-equivalence-")
+    ref = "refs/tags/" + tag
+    value = git(["ls-remote", "--exit-code", SOURCE, ref, ref + "^{}"], CONTROLLER)
+    observed = {}
+    for line in value.splitlines():
+        fields = line.split()
+        if (len(fields) != 2 or fields[1] not in {ref, ref + "^{}"}
+                or fields[1] in observed or not re.fullmatch(r"[0-9a-f]{40}", fields[0])):
+            raise RuntimeError("Invalid publication receipt identity")
+        observed[fields[1]] = fields[0]
+    if set(observed) != {ref, ref + "^{}"} or observed[ref + "^{}"] != expected:
+        raise RuntimeError("Publication receipt is not an annotated tag for its exact source")
+    return expected
 
 
 
@@ -190,8 +329,8 @@ def equivalent_sources(root, current, current_sha, signer):
             or subject.get("controllerSourceSha") != controller_sha
             or subject.get("backendReleaseSha") != engine_sha):
         raise RuntimeError("Source-equivalence admission differs from the pinned source identities")
-    if current_main() != current_sha:
-        raise RuntimeError("Current main advanced during source-equivalence admission")
+    if current_source() != current_sha:
+        raise RuntimeError("Publication source changed during source-equivalence admission")
     return controller, backend, admission
 
 
@@ -213,8 +352,8 @@ def publication_identity(admission, current_sha, source_sha):
 
 
 def require_current_publication(current_sha, mirror=None, mirror_sha=None, env=None):
-    if current_main() != current_sha:
-        raise RuntimeError("Source main advanced during publication")
+    if current_source() != current_sha:
+        raise RuntimeError("Publication source changed during publication")
     if mirror is not None:
         observed = git(["ls-remote", "origin", "refs/heads/main"], mirror, env).split()
         if len(observed) != 2 or observed != [mirror_sha, "refs/heads/main"]:
@@ -576,10 +715,10 @@ def main():
                    if not os.environ.get(name, "").strip()]
         if missing:
             raise RuntimeError("Publication credentials missing: " + ", ".join(missing))
-    source_sha = current_main()
+    source_sha = current_source()
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", source_sha)
     if expected != source_sha:
-        raise RuntimeError("Requested source is no longer current main")
+        raise RuntimeError("Requested source is no longer selected for publication")
     print(f"RAILWAY_FULL_START source={source_sha} deployment={os.environ.get('RAILWAY_DEPLOYMENT_ID', 'local')}", flush=True)
     evidence = Path("/evidence")
     prior_state = None
@@ -600,6 +739,15 @@ def main():
         trusted = root / "trusted"
         git(["clone", "--quiet", SOURCE, str(trusted)], root)
         git(["checkout", "--quiet", "--detach", source_sha], trusted)
+        observed_main = git(["rev-parse", "refs/remotes/origin/main"], trusted)
+        if source_mode() in {"receipt", "catalog"}:
+            # A signed proposal that has not landed in the source repository is
+            # not eligible for this production refresh mode.
+            git(["merge-base", "--is-ancestor", source_sha, observed_main], trusted)
+        print("RAILWAY_FULL_SOURCE_SELECTION " + json.dumps({
+            "mode": source_mode(), "publicationSourceSha": source_sha,
+            "observedMainSha": observed_main,
+        }, sort_keys=True), flush=True)
         current = trusted
         source_admission = None
         engine_sha = source_sha
@@ -620,10 +768,14 @@ def main():
             verify_gate_files(trusted, json.loads((CONTROLLER / "gate-sha256.json").read_text()))
         elif (controller_checkout / ".github/workflows/publish.yml").read_bytes() != workflow_path.read_bytes():
             raise RuntimeError("Controller and signed engine workflows differ")
+        if source_mode() == "catalog":
+            verify_catalog_selection(trusted)
         identity = publication_identity(source_admission, source_sha, engine_sha)
         if identity:
             identity["buildTreeKind"] = "signed_engine_with_validated_desk_overlay"
             identity["deskOverlayApplied"] = True
+            identity["publicationSourceMode"] = source_mode()
+            identity["observedMainSha"] = observed_main
         receipt = ""  # Full engine output requires the original backend release gate.
         temp = root / "temp"
         temp.mkdir()
@@ -731,8 +883,8 @@ def main():
             trusted, clean_env())
         if identity:
             identity["runtimeIdentity"] = verify_runtime_identity(trusted, engine_sha)
-        if current_main() != source_sha:
-            raise RuntimeError("Source main advanced during preparation")
+        if current_source() != source_sha:
+            raise RuntimeError("Publication source changed during preparation")
         require_current_publication(source_sha, mirror, previous_sha)
         print(
             f"RAILWAY_FULL_PREPARE_PASS source={source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
@@ -799,8 +951,8 @@ def main():
                 ["commit", "-m", "Verified Railway full publication " + source_sha],
                 mirror,
             )
-            if current_main() != source_sha:
-                raise RuntimeError("Source main advanced before mirror publication")
+            if current_source() != source_sha:
+                raise RuntimeError("Publication source changed before mirror publication")
             require_current_publication(source_sha, mirror, previous_sha, publish_env)
             git(["push", "origin", "HEAD:main"], mirror, publish_env)
         site_sha = git(["rev-parse", "HEAD"], mirror)
@@ -811,8 +963,8 @@ def main():
             != site_sha
         ):
             raise RuntimeError("Site mirror compare-and-swap lost")
-        if current_main() != source_sha:
-            raise RuntimeError("Source main advanced before canonical publication")
+        if current_source() != source_sha:
+            raise RuntimeError("Publication source changed before canonical publication")
         require_current_publication(source_sha, mirror, site_sha, publish_env)
         run(
             [
@@ -842,6 +994,9 @@ def main():
             receipt,
         )
         if frontend_manifest is not None:
+            wait_for_frontend_settlement(
+                frontend_manifest, source_sha, mirror, site_sha, publish_env,
+                source_sha + "-" + env["GITHUB_RUN_ATTEMPT"])
             with original_frontend_proof(trusted) as proof:
                 proof.verify_public(candidate, frontend_manifest,
                                     cache_key=source_sha + "-" + env["GITHUB_RUN_ATTEMPT"])

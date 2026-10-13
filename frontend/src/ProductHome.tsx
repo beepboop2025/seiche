@@ -1,3 +1,4 @@
+import "./family-upgrades.css";
 import { useEffect, useState } from "react";
 import FundingPreview from "./FundingPreview";
 import EditorialPreview from "./EditorialPreview";
@@ -59,6 +60,14 @@ function FundingFlow() {
   </figure>;
 }
 
+export function ConnectedUpgrades() {
+  return <>
+{/* CONNECTED-UPGRADES:START */}
+<section className="family-upgrades" aria-labelledby="connected-upgrades-heading" data-upgrade-revision="284995ab93f25855b353efd063706debecd7c5a00a9f347097ca065cda6fe9bf"><div className="family-upgrades-intro"><h2 id="connected-upgrades-heading">A connected review, from evidence to follow-up</h2><p>Review the institution, check funding conditions, inspect market liquidity, then retain the evidence for the next review.</p><a href="https://liquilens.in/updates/">What changed and what each tool can do</a></div><div className="family-upgrades-grid"><article><h3>Keep missing evidence in the review</h3><p>Inspect source-dated changes, overdue fields and visibility gaps across tracked banks and lenders. Open the live review queue and its original disclosures.</p><small>Available for research</small><a href="https://liquilens.in/banking/monitoring/">Open institution monitoring</a></article><article><h3>Make the review repeatable</h3><p>Connect the Research Desk, schedule bounded research and retain source records with operating diagnostics and recovery guidance.</p><small>Available for research</small><a href="https://liquilens.in/agents/infrastructure/">Set up recurring research</a></article><article><h3>Inspect what moves together</h3><p>Use NoiseFloor 0.4.0 to inspect shared-factor concentration and rolling correlations. Explore a separate synthetic Dyson reference and retain source restrictions and gaps.</p><small>Available for caller-supplied evidence</small><a href="https://liquilens.in/agents/correlation/">Open correlation workbench</a></article><article><h3>Rehearse the controls around an action</h3><p>Explore the paper workbench: inspect refusals, duplicate protection, STOP and reconciliation before considering an execution workflow.</p><small>Paper rehearsal; execution disabled</small><a href="https://beepboop2025.github.io/financial-evidence-skills/agents/execution.html">Explore the paper workbench</a></article></div><p className="family-upgrades-boundary">Each source keeps its dates, coverage and permissions. These tools support human review; they do not produce a combined risk score or authorize credit or trading.</p></section>
+{/* CONNECTED-UPGRADES:END */}
+  </>;
+}
+
 export default function ProductHome() {
   return <div className="product-home">
     <a className="product-skip" href="#product-content">Skip to content</a>
@@ -71,6 +80,7 @@ export default function ProductHome() {
         <FundingFlow />
       </section>
       <FundingPreview />
+      <ConnectedUpgrades />
       <EditorialPreview />
       <section className="product-section product-capabilities" aria-labelledby="capabilities-heading">
         <div className="product-section__intro"><h2 id="capabilities-heading">See where<br/>pressure begins.</h2><p>Start with a question. Move from the funding picture to the observations that explain it.</p></div>

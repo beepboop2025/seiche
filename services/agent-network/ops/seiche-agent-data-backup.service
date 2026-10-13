@@ -1,0 +1,19 @@
+[Unit]
+Description=Encrypted learning and commerce database backup
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/seiche-agent-network/venv/bin/python ops/data_backup.py backup --config /var/lib/seiche-agent-network/data-backup-config.json --key-file /var/lib/seiche-agent-network/data-backup-key.json --destination /var/lib/seiche-agent-network/data-backups
+TimeoutStartSec=300
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network/data-backups
+ReadOnlyPaths=/var/lib/seiche-agent-network/wake /var/lib/seiche-agent-network/learning
+MemoryMax=256M

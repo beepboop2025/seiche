@@ -255,10 +255,13 @@ class PublicCatalogContracts(unittest.TestCase):
         self.assertIn("Content-Type: application/ld+json; charset=utf-8", dcat_headers)
         self.assertIn("Access-Control-Allow-Origin: *", dcat_headers)
 
-    def test_directory_inventory_count_and_release_order_are_explicit(self) -> None:
+    def test_directory_evidence_and_release_order_are_explicit(self) -> None:
         clients = _read("integrations/mcp-clients/README.md")
-        self.assertIn("seven additional live indexes", clients)
-        self.assertNotIn("eight additional live indexes", clients)
+        self.assertIn("Rechecked on 11 October 2026", clients)
+        self.assertIn("sixteen tools matching the hosted server", clients)
+        self.assertIn("nine-tool cache still needs directory refresh", clients)
+        self.assertIn("with review and fee waiver pending", clients)
+        self.assertIn("has not been rechecked by this update", clients)
 
         publishing = _read("docs/PUBLISHING.md")
         ordered_markers = (
@@ -291,7 +294,8 @@ class PublicCatalogContracts(unittest.TestCase):
         distribution = _read("docs/DISTRIBUTION.md")
         self.assertIn("OpenBB-finance/awesome-openbb", publishing)
         self.assertNotIn("OpenBB's docs", publishing)
-        self.assertIn("`awesome-openbb` ecosystem-list", distribution)
+        self.assertIn("awesome-openbb", distribution)
+        self.assertIn("archived", distribution)
         self.assertNotIn("documentation pull request", distribution)
         self.assertIn("OpenBB-finance/openbb-docs", openbb_submission)
         self.assertIn("not the documentation repository", openbb_submission)

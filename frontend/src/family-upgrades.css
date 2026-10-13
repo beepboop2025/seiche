@@ -1,0 +1,20 @@
+/* Generated homepage content uses the reviewed manifest at liquilens.in/updates/capabilities.json. */
+.family-upgrades { margin:28px auto 40px; padding:24px 0; max-width:1336px; border-block:1px solid var(--research-line,#30343b); color:var(--research-text,#f1f2f4); }
+.family-upgrades-intro { display:grid; grid-template-columns:1fr 1fr; gap:8px 32px; align-items:start; }
+.family-upgrades h2 { margin:0; font-size:clamp(23px,2.3vw,30px); font-weight:550; line-height:1.2; letter-spacing:-.6px; }
+.family-upgrades-intro p { margin:0; max-width:65ch; font-size:14px; line-height:1.6; color:var(--research-muted,#a6abb3); }
+.family-upgrades a { color:var(--research-accent,#abc7ff); text-underline-offset:3px; font-size:13px; }
+.family-upgrades-intro>a { grid-column:2; }
+.family-upgrades-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:24px; margin:26px 0 18px; }
+.family-upgrades-grid article { display:flex; flex-direction:column; align-items:start; }
+.family-upgrades h3 { margin:0 0 10px; font-size:17px; line-height:1.35; font-weight:550; }
+.family-upgrades-grid p { margin:0 0 12px; font-size:13px; line-height:1.65; color:var(--research-muted,#a6abb3); }
+.family-upgrades-grid small { display:block; margin-top:auto; margin-bottom:9px; color:var(--research-muted,#a6abb3); font-size:11px; }
+.family-upgrades-boundary { max-width:110ch; font-size:12px; line-height:1.6; color:var(--research-muted,#a6abb3); margin:18px 0 0; }
+.family-upgrades a:focus-visible { outline:2px solid currentColor; outline-offset:4px; }
+.product-home .family-upgrades { margin-inline:clamp(20px,4vw,64px); }
+.upgrade-evidence { max-width:85ch; font-size:14px; line-height:1.7; }
+.upgrade-evidence dt { font-weight:550; margin-top:22px; }
+.upgrade-evidence dd { color:var(--research-muted); margin:6px 0 20px; }
+@media(max-width:960px) { .family-upgrades-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:600px) { .family-upgrades-intro,.family-upgrades-grid { grid-template-columns:1fr; } .family-upgrades-intro>a { grid-column:auto; } .family-upgrades-grid { gap:24px; } .family-upgrades-grid article+article { border-top:1px solid var(--research-line,#30343b); padding-top:20px; } }

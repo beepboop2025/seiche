@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly commerce data and backup retention
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+RandomizedDelaySec=60
+Persistent=true
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=Encrypted Seiche network database and key backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+EnvironmentFile=/etc/seiche-agent-network.env
+Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
+ExecStartPre=/opt/seiche-agent-network/venv/bin/python ops/backup.py prune --destination /var/lib/seiche-agent-network/backups --retention-days 7
+ExecStart=/opt/seiche-agent-network/venv/bin/python ops/backup.py backup --keys-file /var/lib/seiche-agent-network/keys.json --backup-key-file /var/lib/seiche-agent-network/backup-key.json --destination /var/lib/seiche-agent-network/backups --retention-days 7
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network/backups
+MemoryMax=384M
+TimeoutStartSec=15min

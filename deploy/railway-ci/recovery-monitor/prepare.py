@@ -54,7 +54,21 @@ def health_wait_proof(body):
     return body[:start] + replacement + body[finish:]
 
 
-def prepare(repository, revision, output, target, signer_public_key):
+def runtime_revision(repository, revision, requested, allowed_signers):
+    """An explicit older runtime must be a signed ancestor of the verifier."""
+    if requested is None:
+        return revision
+    if not isinstance(requested, str) or re.fullmatch(r"[0-9a-f]{40}", requested) is None:
+        raise ValueError("Application source must be one full immutable commit SHA")
+    subprocess.run(["git", "-C", str(repository), "merge-base", "--is-ancestor",
+                    requested, revision], check=True, capture_output=True, timeout=30)
+    subprocess.run(["git", "-C", str(repository), "-c",
+                    "gpg.ssh.allowedSignersFile=" + str(allowed_signers),
+                    "verify-commit", requested], check=True, capture_output=True, timeout=30)
+    return requested
+
+
+def prepare(repository, revision, output, target, signer_public_key, *, application_source=None):
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("Selected source must be one full immutable commit SHA")
     if set(target) != TARGET_NAMES:
@@ -81,9 +95,12 @@ def prepare(repository, revision, output, target, signer_public_key):
         subprocess.run(["git", "-C", str(here), "-c", "gpg.format=ssh", "-c",
                         "gpg.ssh.allowedSignersFile=" + str(allowed),
                         "verify-commit", controller_source], check=True)
+        runtime = runtime_revision(repository, revision, application_source, allowed)
     output.mkdir(parents=True, exist_ok=False)
-    policy = {"source": revision, "controller_source": controller_source,
+    policy = {"source": runtime, "controller_source": controller_source,
               "controller_signer": fingerprint, "inputs": {}, "target": target}
+    if application_source is not None:
+        policy["verifier_source"] = revision
     for path in INPUTS:
         body = show(path)
         destination = output / "trusted" / path
@@ -116,7 +133,7 @@ def prepare(repository, revision, output, target, signer_public_key):
     manifest = {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in sorted(output.rglob("*")) if path.is_file()}
     (output / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
-    print(json.dumps({"prepared": str(output), "source": revision,
+    print(json.dumps({"prepared": str(output), "source": runtime,
                       "workflow_steps_sha256": policy["workflow_steps_sha256"]}))
 
 
@@ -127,6 +144,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--signer-public-key", type=Path, required=True)
+    parser.add_argument("--application-source", help="Exact signed live runtime ancestor; defaults to revision")
     args = parser.parse_args()
     prepare(args.repository, args.revision, args.output,
-            json.loads(args.target.read_text()), args.signer_public_key)
+            json.loads(args.target.read_text()), args.signer_public_key,
+            application_source=args.application_source)

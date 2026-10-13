@@ -1,0 +1,44 @@
+# Insert within the existing api.seiche.info site only after canary qualification.
+# This is an additive route; preserve every existing route and native publisher.
+handle_path /agents/commerce/* {
+    request_body {
+        max_size 64KiB
+    }
+    header {
+        Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        defer
+    }
+    header Cache-Control "no-store, no-transform"
+    reverse_proxy 127.0.0.1:18798
+}
+handle_path /agents/learning/* {
+    request_body {
+        max_size 64KiB
+    }
+    header Cache-Control "no-store, no-transform"
+    reverse_proxy 127.0.0.1:18797
+}
+handle_path /agents/* {
+    # Only these reviewed POSTs use the application's streamed 2 MiB boundary.
+    # Caddy 2.6 reports request_body read failures as reverse-proxy 502 errors.
+    @agent_small_body {
+        not {
+            method POST
+            path /v1/noisefloor/v1/market/assess /v1/noisefloor/v1/narrative/triage /v1/noisefloor/v1/spectral/assess /v1/noisefloor/v1/research/dyson
+        }
+    }
+    request_body @agent_small_body {
+        max_size 64KiB
+    }
+    header {
+        Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        defer
+    }
+    header Cache-Control "no-store, no-transform"
+    reverse_proxy 127.0.0.1:18796 {
+        flush_interval -1
+    }
+}
+# For learning ingestion, an independently enrolled credential is mandatory.
+# Route /agents/learning/* to its isolated loopback listener before /agents/*.
+# Do not enable global access logging with raw query strings or Authorization.

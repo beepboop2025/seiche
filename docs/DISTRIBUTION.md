@@ -154,16 +154,19 @@ PyPI is immutable. Creating a GitHub Release therefore verifies the existing
 PyPI artifacts and then publishes the MCP Registry record. It never attempts to
 upload the same package version a second time.
 
-The independently versioned `openbb-seiche` package has a separate, manually
-invoked `publish-openbb.yml` trusted-publishing path. Its explicit OpenBB-version
-input binds 0.1.0 artifacts to the selected signed Seiche commit without
-pretending the two packages share a version number. A per-version concurrency
-lock and exact PyPI existence preflight reject attempts to retry 0.1.0 on future
-Seiche releases. Its build, independent exact verifier, permissionless smoke,
-and OIDC-only publisher are separate runners. The OpenBB listing remains
-receipt-gated until the PyPI version is public and OpenBB accepts the prepared
-`awesome-openbb` ecosystem-list pull request. A merge is a community-listing
-receipt, not an OpenBB endorsement of Seiche or its financial claims.
+The independently versioned `openbb-seiche` package has its own
+`publish-openbb.yml` trusted-publishing path and exact-version preflight.
+[Version 0.1.1 is public on PyPI](https://pypi.org/project/openbb-seiche/0.1.1/),
+verified on 11 October 2026; do not attempt to republish that immutable version.
+
+The [Seiche ecosystem PR #13](https://github.com/OpenBB-finance/awesome-openbb/pull/13)
+is open and unmerged in an archived, read-only repository. The official family
+Marketplace application was submitted on 11 October with participation
+conditional on a requested first-year fee waiver. Review, waiver approval and a
+public Marketplace listing remain pending. See the [dated application receipt](https://beepboop2025.github.io/financial-evidence-skills/distribution/openbb-marketplace-20261011.md)
+([source record](https://github.com/beepboop2025/financial-evidence-skills/blob/main/docs/distribution/openbb-marketplace-20261011.md)).
+A published Python package, submitted application and accepted ecosystem listing
+are separate outcomes; none is an endorsement of financial claims.
 
 Seiche is research software and not investment advice. Publications should cite
 the primary data providers for any underlying observations as well as the

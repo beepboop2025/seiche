@@ -1,0 +1,20 @@
+[Unit]
+Description=Independent commerce expiry and encrypted backup retention
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+Environment=PYTHONPATH=/opt/seiche-agent-network/current/src:/opt/seiche-agent-network/current-wake/src:/opt/seiche-agent-network/current-hub/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m wake.cli purge --config /var/lib/seiche-agent-network/wake/config.json
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m financial_evidence.learning --store /var/lib/seiche-agent-network/learning expire
+ExecStart=/opt/seiche-agent-network/venv/bin/python ops/data_backup.py prune --destination /var/lib/seiche-agent-network/data-backups
+TimeoutStartSec=300
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network/data-backups /var/lib/seiche-agent-network/wake /var/lib/seiche-agent-network/learning
+MemoryMax=256M

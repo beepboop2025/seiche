@@ -109,6 +109,17 @@ command validator's default path. Backend tests and the existing dispatch conten
 are excluded from runtime admission. The original strict 26-hour monitor still
 runs first with its three existing isolated inputs.
 
+When rebuilding the controller while the accepted application remains on an
+older release, pass `--application-source <full SHA>` alongside
+`--recurring-source`. The monitor verifies that this runtime commit is signed by
+the established owner and is an ancestor of the selected verifier revision.
+Its health checks remain pinned to that runtime; helper bytes and workflow
+semantics remain pinned to the separately selected verifier. The assembled
+policy records `runtime_source` without changing the historical qualification
+case's `application_source`. Reproduction must supply the same option. Omitting
+it preserves the existing single-revision behavior. The signed installation,
+strict freshness checks and original export/restore gates remain required.
+
 A replacement can be assembled with `--export-not-before YYYY-MM-DD`. This UTC
 date is part of the image manifest and therefore bound by the signed installation.
 It may defer the first export by at most one day. Before that date, installation,

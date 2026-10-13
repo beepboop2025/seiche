@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
@@ -75,7 +76,7 @@ class Product:
     openapi_identifier: str
     openapi_url: str
     first_tool: str
-    public_tool_count: int
+    public_tool_count: int | None
     intent_query: str
 
 
@@ -91,7 +92,7 @@ PRODUCTS = (
         openapi_identifier="urn:air:liquilens.in:openapi:failure-radar",
         openapi_url="https://api.liquilens.in/api/openapi.json",
         first_tool="latest_article",
-        public_tool_count=22,
+        public_tool_count=None,
         intent_query="Which Indian banks or NBFCs are showing failure risk?",
     ),
     Product(
@@ -122,7 +123,7 @@ PRODUCTS = (
             "urn:air:liquilens-undertow.com:openapi:x402-market-liquidity"),
         openapi_url="https://api.seiche.info/undertow/x402/openapi.json",
         first_tool="latest_article",
-        public_tool_count=11,
+        public_tool_count=None,
         intent_query="What would it cost to sell $100,000 of BTC across venues?",
     ),
 )
@@ -156,7 +157,8 @@ def _decode_json_or_sse(raw: bytes) -> dict[str, Any]:
     raise ProbeError("response was neither a JSON object nor JSON SSE data")
 
 
-def _request_json(url: str, *, timeout: float, payload: Any = None
+def _request_json(url: str, *, timeout: float, payload: Any = None,
+                  attempts: int = 1
                   ) -> tuple[dict[str, Any], dict[str, str]]:
     headers = {
         "Accept": "application/json, text/event-stream",
@@ -169,18 +171,24 @@ def _request_json(url: str, *, timeout: float, payload: Any = None
         body = _json_bytes(payload)
         headers["Content-Type"] = "application/json"
     request = Request(url, data=body, headers=headers, method=method)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-            response_headers = {
-                key.lower(): value for key, value in response.headers.items()
-            }
-    except HTTPError as exc:
-        detail = exc.read(500).decode("utf-8", errors="replace")
-        raise ProbeError(f"HTTP {exc.code} from {url}: {detail}") from exc
-    except (URLError, TimeoutError, OSError) as exc:
-        raise ProbeError(f"could not read {url}: {exc}") from exc
-    return _decode_json_or_sse(raw), response_headers
+    for attempt in range(attempts):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                raw = response.read()
+                response_headers = {
+                    key.lower(): value for key, value in response.headers.items()
+                }
+            return _decode_json_or_sse(raw), response_headers
+        except HTTPError as exc:
+            if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == attempts - 1:
+                detail = exc.read(500).decode("utf-8", errors="replace")
+                raise ProbeError(f"HTTP {exc.code} from {url}: {detail}") from exc
+            exc.close()
+        except (URLError, TimeoutError, OSError) as exc:
+            if attempt == attempts - 1:
+                raise ProbeError(f"could not read {url}: {exc}") from exc
+        time.sleep(0.5 * 2 ** attempt)
+    raise ValueError("attempts must be positive")
 
 
 def _catalog_payload(source: str, timeout: float
@@ -277,8 +285,18 @@ def validate_catalog(catalog: dict[str, Any], product: Product) -> list[str]:
             remote.get("url") for remote in remotes if isinstance(remote, dict)]:
         errors.append("embedded MCP card does not advertise the live endpoint")
     capabilities = mcp.get("capabilities")
-    if not isinstance(capabilities, list) or len(capabilities) != (
-            product.public_tool_count):
+    valid_tools = (isinstance(capabilities, list) and bool(capabilities)
+                   and all(isinstance(name, str) and name.strip()
+                           for name in capabilities))
+    if not valid_tools:
+        errors.append("catalog capabilities must be non-empty tool names")
+    elif len(set(capabilities)) != len(capabilities):
+        errors.append("catalog capabilities contain duplicate tool names")
+    elif product.first_tool not in capabilities:
+        errors.append(f"catalog omits first activation tool {product.first_tool}")
+    if product.public_tool_count is not None and (
+            not isinstance(capabilities, list)
+            or len(capabilities) != product.public_tool_count):
         errors.append(
             f"catalog exposes {len(capabilities) if isinstance(capabilities, list) else 0} "
             f"capabilities, expected {product.public_tool_count}")
@@ -311,11 +329,17 @@ def probe_catalog(product: Product, source: str, timeout: float) -> dict[str, An
             if isinstance(entry, dict)
             and entry.get("identifier") == product.mcp_identifier
         ), None)
+        advertised_tools = next((
+            entry.get("capabilities") for entry in payload.get("entries", [])
+            if isinstance(entry, dict)
+            and entry.get("identifier") == product.mcp_identifier
+        ), None)
         return {
             "ok": not errors,
             "source": source,
             "entryCount": len(payload.get("entries", [])),
             "mcpVersion": mcp_version,
+            "advertisedTools": advertised_tools,
             "cors": cors,
             "errors": errors,
         }
@@ -326,35 +350,34 @@ def probe_catalog(product: Product, source: str, timeout: float) -> dict[str, An
 def probe_registry(
         product: Product, timeout: float,
         expected_version: str | None = None) -> dict[str, Any]:
-    url = f"{MCP_REGISTRY}?search={quote(product.mcp_name, safe='')}"
+    url = f"{MCP_REGISTRY}/{quote(product.mcp_name, safe='')}/versions/latest"
     try:
-        payload, _ = _request_json(url, timeout=timeout)
-        rows = payload.get("servers", [])
-        exact = [row for row in rows if isinstance(row, dict)
-                 and row.get("server", {}).get("name") == product.mcp_name]
-        latest = [row for row in exact if row.get("_meta", {}).get(
-            "io.modelcontextprotocol.registry/official", {}).get("isLatest")]
-        row = latest[0] if latest else (exact[-1] if exact else None)
-        version = row.get("server", {}).get("version") if row else None
+        payload, _ = _request_json(url, timeout=timeout, attempts=3)
+        server = payload.get("server", {})
+        official = payload.get("_meta", {}).get(
+            "io.modelcontextprotocol.registry/official", {})
+        version = server.get("version")
         errors = []
-        if row is None:
+        if server.get("name") != product.mcp_name:
             errors.append("no exact official MCP Registry record")
-        elif expected_version is not None and version != expected_version:
+        if official.get("status") != "active" or not official.get("isLatest"):
+            errors.append("official MCP Registry record is not active and latest")
+        if expected_version is not None and version != expected_version:
             errors.append(
                 f"official MCP Registry version is {version}, "
                 f"expected catalog version {expected_version}")
         return {
             "ok": not errors,
             "version": version,
-            "versionsFound": [row.get("server", {}).get("version")
-                              for row in exact],
+            "versionsFound": [version] if version else [],
             "errors": errors,
         }
     except ProbeError as exc:
         return {"ok": False, "errors": [str(exc)]}
 
 
-def probe_mcp(product: Product, timeout: float) -> dict[str, Any]:
+def probe_mcp(product: Product, timeout: float,
+              advertised_tools: list[str] | None = None) -> dict[str, Any]:
     request = {
         "jsonrpc": "2.0",
         "id": "ard-coverage",
@@ -369,12 +392,20 @@ def probe_mcp(product: Product, timeout: float) -> dict[str, Any]:
         tools = payload.get("result", {}).get("tools", [])
         names = [tool.get("name") for tool in tools if isinstance(tool, dict)]
         errors = []
-        if len(names) != product.public_tool_count:
+        valid_names = all(isinstance(name, str) and name.strip() for name in names)
+        if not names or not valid_names or (valid_names and len(set(names)) != len(names)):
+            errors.append("live tools/list must contain unique non-empty tool names")
+        if product.public_tool_count is not None and len(names) != product.public_tool_count:
             errors.append(
                 f"live tools/list returned {len(names)} tools, "
                 f"expected {product.public_tool_count}")
         if product.first_tool not in names:
             errors.append(f"first activation tool {product.first_tool} is missing")
+        if advertised_tools is not None and valid_names:
+            advertised_valid = (isinstance(advertised_tools, list)
+                                and all(isinstance(name, str) for name in advertised_tools))
+            if not advertised_valid or set(names) != set(advertised_tools):
+                errors.append("live tool names do not match catalog capabilities")
         return {
             "ok": not errors,
             "toolCount": len(names),
@@ -475,7 +506,8 @@ def _run_product(product: Product, source: str, timeout: float,
         expected_version = product.mcp_version or catalog.get("mcpVersion")
         report["mcpRegistry"] = probe_registry(
             product, timeout, expected_version=expected_version)
-        report["mcpInventory"] = probe_mcp(product, timeout)
+        report["mcpInventory"] = probe_mcp(
+            product, timeout, advertised_tools=catalog.get("advertisedTools"))
         report["openapi"] = probe_openapi(product, timeout)
         with ThreadPoolExecutor(max_workers=len(ARD_REGISTRIES)) as pool:
             searches = {
