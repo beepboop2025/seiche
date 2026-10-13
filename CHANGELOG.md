@@ -11,6 +11,14 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.3 daily source checks
+
+- Check the six BIS quarterly series and four OFR monthly money-market-fund
+  series every day. Their actual observation dates, publication frequency and
+  freshness limits remain unchanged.
+- Source-fetch cadence changes require the ordinary signed application and
+  recovery acceptance before production activation.
+
 ### 0.16.2 release candidate
 
 - Limit Google-Extended grounding/training permission to the three reviewed original
