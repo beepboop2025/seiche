@@ -681,6 +681,15 @@ def mount_gateway(app, store, *, transport=None):
         result["measurement_diagnostics"] = gateway.diagnostics()
         return result
 
+    @app.get("/v1/operator/agent-activity")
+    async def operator_agent_activity(request: Request):
+        configured = os.environ.get("SEICHE_OPERATOR_REPORT_TOKEN", "")
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer ") or len(configured) < 32 or not secrets.compare_digest(configured, auth[7:]):
+            raise NetworkError("unauthorized", "Operator reporting credential required", 401)
+        from .agent_activity import read_report
+        return await asyncio.to_thread(read_report)
+
     def source_status():
         location=os.environ.get("SEICHE_FRESHNESS_REPORT")
         if not location:
