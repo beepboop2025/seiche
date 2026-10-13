@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import uuid
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -37,7 +38,11 @@ def inspect(product, payload, now):
     result = {"product": product, "status": "partial", "current_view_violation_count": 0,
               "all_sources_fresh": False, "training_eligible": False,
               "production_model_eligible": False, "coverage_complete": False}
-    today = now.date()
+    # The institution board uses ml.merton_dd.authority_today(), an India
+    # calendar date. Its date-only clock can be tomorrow relative to UTC.
+    calendar_zone = "Asia/Kolkata" if product == "liquilens" else "UTC"
+    today = now.astimezone(ZoneInfo(calendar_zone)).date()
+    result["evaluation_calendar_timezone"] = calendar_zone
     if product == "seiche":
         native = inspect_result("seiche", "data_health", payload, now=now)
         rows = native["clocks"]

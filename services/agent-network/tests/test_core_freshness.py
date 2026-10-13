@@ -43,6 +43,31 @@ def test_restricted_undertow_values_cannot_supply_a_current_score():
     assert inspect("undertow", payload, NOW)["status"] == "failed"
 
 
+@pytest.mark.parametrize(("instant", "board_day", "expected"), [
+    ("2026-10-13T18:29:59+00:00", "2026-10-14", "failed"),
+    ("2026-10-13T18:30:00+00:00", "2026-10-14", "partial"),
+    ("2026-10-14T00:00:00+05:30", "2026-10-14", "partial"),
+    ("2026-10-13T19:00:00+00:00", "2026-10-15", "failed"),
+    ("2026-10-13T19:00:00+00:00", "2026-10-12", "failed"),
+])
+def test_institution_board_follows_its_india_authority_day(instant, board_day, expected):
+    payload = bank_board() | {"as_of": board_day}
+    result = inspect("liquilens", payload, datetime.fromisoformat(instant))
+    assert result["status"] == expected
+    assert result["evaluation_calendar_timezone"] == "Asia/Kolkata"
+    assert result["all_inspected_current_rows_fresh"]
+    assert not result["all_sources_fresh"]
+
+
+def test_india_calendar_does_not_relax_utc_market_clocks():
+    payload = {"available": True, "stale": False, "as_of": "2026-10-14", "keys": {
+        "BTC-USD": {"series": {"dates": ["2026-10-13"]}}}}
+    result = inspect("liquilens_crypto", payload,
+                     datetime(2026, 10, 13, 19, tzinfo=timezone.utc))
+    assert result["status"] == "failed"
+    assert result["evaluation_calendar_timezone"] == "UTC"
+
+
 def test_refetch_does_not_promote_stale_seiche_observations():
     payload = {"generated_at": NOW.isoformat(), "provenance": [{
         "source": "fred", "mnemonic": "DGS10", "freq": "D", "asof": "2026-10-08",
