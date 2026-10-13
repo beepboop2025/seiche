@@ -1,0 +1,19 @@
+[Unit]
+Description=Renew native Undertow credential for Seiche public MCP gateway
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/seiche-agent-network/current
+ExecStart=/opt/seiche-agent-network/venv/bin/python ops/renew_undertow_token.py --native-env /etc/undertow-mcp.env --native-repo /opt/liquilens-undertow --output /var/lib/seiche-agent-network/undertow-mcp-token.json --runtime-user seiche-network
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=192M
+TimeoutStartSec=60s
+

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily check for the Seiche Undertow gateway credential
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+Unit=seiche-agent-upstream-token.service
+
+[Install]
+WantedBy=timers.target

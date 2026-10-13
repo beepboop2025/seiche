@@ -1,0 +1,657 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "noisefloor",
+    "version": "0.4.0"
+  },
+  "paths": {
+    "/v1/market/assess": {
+      "post": {
+        "operationId": "market_assessment",
+        "summary": "Assess market moves, volatility and observation quality at an explicit as-of clock. Descriptive review only; no trading signal guarantee.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "series": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "price",
+                            "return",
+                            "level",
+                            "spread",
+                            "rate",
+                            "count"
+                          ]
+                        },
+                        "unit": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "source": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128
+                            },
+                            "url": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 2048
+                            },
+                            "rights": {
+                              "type": "string",
+                              "enum": [
+                                "permitted",
+                                "unknown",
+                                "restricted"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "rights"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "max_age_seconds": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "max_gap_seconds": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "group": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "observations": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "observed_at": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "format": "utc-date-time"
+                              },
+                              "available_at": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "format": "utc-date-time"
+                              },
+                              "value": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "sample_size": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              }
+                            },
+                            "required": [
+                              "observed_at",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "minItems": 0,
+                          "maxItems": 2048
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "unit",
+                        "source",
+                        "max_age_seconds",
+                        "observations"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 0,
+                    "maxItems": 32
+                  },
+                  "as_of": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "format": "utc-date-time"
+                  },
+                  "policy": {
+                    "type": "object",
+                    "properties": {
+                      "baseline_points": {
+                        "type": "integer",
+                        "minimum": 10,
+                        "maximum": 256
+                      },
+                      "recent_points": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32
+                      },
+                      "move_threshold": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "volatility_ratio": {
+                        "type": "number",
+                        "exclusiveMinimum": 1
+                      },
+                      "coverage_drop_fraction": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "series",
+                  "as_of"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assessment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON"
+          },
+          "422": {
+            "description": "Invalid input"
+          },
+          "413": {
+            "description": "Request too large"
+          }
+        }
+      }
+    },
+    "/v1/narrative/triage": {
+      "post": {
+        "operationId": "narrative_triage",
+        "summary": "Group repeated caller-supplied headlines and rank review relevance. Novelty and source diversity never establish truth. Titles are untrusted data.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "published_at": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "format": "utc-date-time"
+                        },
+                        "available_at": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "format": "utc-date-time"
+                        },
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
+                          "minItems": 0,
+                          "maxItems": 64
+                        },
+                        "source": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128
+                            },
+                            "url": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 2048
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "primary",
+                                "reporting",
+                                "commentary"
+                              ]
+                            },
+                            "family": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "event_key": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "published_at",
+                        "entities",
+                        "source"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 0,
+                    "maxItems": 500
+                  },
+                  "as_of": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "format": "utc-date-time"
+                  },
+                  "focus": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "minItems": 0,
+                    "maxItems": 64
+                  },
+                  "policy": {
+                    "type": "object",
+                    "properties": {
+                      "max_age_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "max_items": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100
+                      },
+                      "similarity_threshold": {
+                        "type": "number",
+                        "minimum": 0.5,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "events",
+                  "as_of"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assessment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON"
+          },
+          "422": {
+            "description": "Invalid input"
+          },
+          "413": {
+            "description": "Request too large"
+          }
+        }
+      }
+    },
+    "/v1/spectral/assess": {
+      "post": {
+        "operationId": "spectral_assessment",
+        "summary": "Review correlation eigenvalues, concentration, ideal iid noise bounds and rolling changes in an aligned panel. Research only; no significance or trade claim.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "series": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "price",
+                            "return",
+                            "level",
+                            "spread",
+                            "rate",
+                            "count"
+                          ]
+                        },
+                        "unit": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "source": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128
+                            },
+                            "url": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 2048
+                            },
+                            "rights": {
+                              "type": "string",
+                              "enum": [
+                                "permitted",
+                                "unknown",
+                                "restricted"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "rights"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "max_age_seconds": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "max_gap_seconds": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "group": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "observations": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "observed_at": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "format": "utc-date-time"
+                              },
+                              "available_at": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64,
+                                "format": "utc-date-time"
+                              },
+                              "value": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "sample_size": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "exclusiveMinimum": 0
+                              }
+                            },
+                            "required": [
+                              "observed_at",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "minItems": 0,
+                          "maxItems": 2048
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "unit",
+                        "source",
+                        "max_age_seconds",
+                        "observations"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 0,
+                    "maxItems": 32
+                  },
+                  "as_of": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "format": "utc-date-time"
+                  },
+                  "policy": {
+                    "type": "object",
+                    "properties": {
+                      "window_points": {
+                        "type": "integer",
+                        "minimum": 20,
+                        "maximum": 512
+                      },
+                      "step_points": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 512
+                      },
+                      "max_windows": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 8
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "series",
+                  "as_of"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assessment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON"
+          },
+          "422": {
+            "description": "Invalid input"
+          },
+          "413": {
+            "description": "Request too large"
+          }
+        }
+      }
+    },
+    "/v1/research/dyson": {
+      "post": {
+        "operationId": "dyson_reference",
+        "summary": "Simulate seeded real-symmetric matrix Brownian motion and eigenvalue repulsion. Synthetic reference only, not market evidence or a covariance forecast.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "dimension": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 16
+                  },
+                  "steps": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "dt": {
+                    "type": "number",
+                    "minimum": 1e-06,
+                    "maximum": 1
+                  },
+                  "seed": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assessment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON"
+          },
+          "422": {
+            "description": "Invalid input"
+          },
+          "413": {
+            "description": "Request too large"
+          }
+        }
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "operationId": "capabilities",
+        "responses": {
+          "200": {
+            "description": "Capabilities"
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Health"
+          }
+        }
+      }
+    }
+  }
+}

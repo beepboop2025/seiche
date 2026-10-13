@@ -1,0 +1,11 @@
+[Unit]
+Description=Check product source clocks every ten minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

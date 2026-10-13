@@ -1,0 +1,17 @@
+[Unit]
+Description=Expire retained Seiche network backups independently of backup success
+
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
+ExecStart=/opt/seiche-agent-network/venv/bin/python ops/backup.py prune --destination /var/lib/seiche-agent-network/backups --retention-days 7
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network/backups
+MemoryMax=128M
