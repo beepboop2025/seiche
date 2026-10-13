@@ -19,7 +19,15 @@ handle_path /agents/learning/* {
     reverse_proxy 127.0.0.1:18797
 }
 handle_path /agents/* {
-    request_body {
+    # Only these reviewed POSTs use the application's streamed 2 MiB boundary.
+    # Caddy 2.6 reports request_body read failures as reverse-proxy 502 errors.
+    @agent_small_body {
+        not {
+            method POST
+            path /v1/noisefloor/v1/market/assess /v1/noisefloor/v1/narrative/triage /v1/noisefloor/v1/spectral/assess /v1/noisefloor/v1/research/dyson
+        }
+    }
+    request_body @agent_small_body {
         max_size 64KiB
     }
     header {
