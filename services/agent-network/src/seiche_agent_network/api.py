@@ -22,6 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .models import NetworkError, Principal
+from . import hosted_surfaces
 
 Identifier = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
@@ -111,19 +112,21 @@ class A2ASend(StrictModel):
     configuration: A2AConfiguration = Field(default_factory=A2AConfiguration)
 
 
-# The published Financial Evidence desk and downloadable browser tools live on
-# this reviewed origin. It receives public data access only, never workspace CORS.
-DATA_BROWSER_ORIGINS = frozenset({"https://beepboop2025.github.io"})
+# Reviewed research frontends receive public data access only, never workspace
+# or operator-report CORS.
+DATA_BROWSER_ORIGINS = hosted_surfaces.PUBLIC_ORIGINS
 
 
 def _public_data_request(scope):
+    if hosted_surfaces.public_surface(scope):
+        return True
     if scope.get("type") != "http" or scope.get("method") not in {"GET", "OPTIONS"}:
         return False
     path = scope.get("path", "")
     root = scope.get("root_path", "")
     if root and path.startswith(root + "/"):
         path = path[len(root):]
-    return path == "/v1/data-catalog" or path.startswith(("/v1/data/", "/v1/research/api/v1/"))
+    return path == "/v1/data-catalog" or path.startswith("/v1/data/")
 
 
 class ScopedCORS:
@@ -131,13 +134,23 @@ class ScopedCORS:
         self.workspace = CORSMiddleware(app, allow_origins=sorted(allowed_origins),
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
             allow_headers=["Authorization", "Content-Type", "A2A-Version"], allow_credentials=False)
-        self.data = CORSMiddleware(app, allow_origins=sorted(set(allowed_origins) | DATA_BROWSER_ORIGINS),
-            allow_methods=["GET"], allow_credentials=False,
-            allow_headers=["Authorization", "Content-Type", "X-Financial-Evidence-Traffic-Class", "X-Liquilens-Traffic-Class"],
-            expose_headers=["X-Dataset-ID", "X-Dataset-Catalog-Version", "X-Source-URL", "X-Product"])
+        data_options = dict(allow_origins=sorted(set(allowed_origins) | DATA_BROWSER_ORIGINS), allow_credentials=False,
+            allow_headers=["Authorization", "Content-Type", "X-Financial-Evidence-Traffic-Class", "X-Liquilens-Traffic-Class",
+                           "MCP-Protocol-Version", "Mcp-Session-Id", "Mcp-Method", "Mcp-Name", "Last-Event-ID"],
+            expose_headers=["X-Dataset-ID", "X-Dataset-Catalog-Version", "X-Source-URL", "X-Product", "Mcp-Session-Id",
+                            *sorted(hosted_surfaces.CSV_HEADERS)])
+        self.data = CORSMiddleware(app, allow_methods=["GET"], **data_options)
+        self.noise = CORSMiddleware(app, allow_methods=["POST"], **data_options)
+        self.product_mcp = CORSMiddleware(app, allow_methods=["GET", "POST", "DELETE"], **data_options)
 
     async def __call__(self, scope, receive, send):
         middleware = self.data if _public_data_request(scope) else self.workspace
+        if _public_data_request(scope):
+            path = hosted_surfaces.relative_path(scope)
+            if path in {"/v1/noisefloor/" + item for item in hosted_surfaces.NOISEFLOOR_POST}:
+                middleware = self.noise
+            elif path in hosted_surfaces.PUBLIC_MCP_PATHS:
+                middleware = self.product_mcp
         await middleware(scope, receive, send)
 
 
@@ -152,6 +165,7 @@ class RequestBoundary:
             await self.app(scope, receive, send)
             return
         headers = dict(scope["headers"])
+        max_bytes = hosted_surfaces.body_limit(scope, self.max_bytes)
         origin = headers.get(b"origin", b"").decode("latin1")
         response = None
         public_origin = _public_data_request(scope) and origin in DATA_BROWSER_ORIGINS
@@ -166,8 +180,8 @@ class RequestBoundary:
                 if event["type"] == "http.disconnect":
                     return
                 body.extend(event.get("body", b""))
-                if len(body) > self.max_bytes:
-                    response = JSONResponse({"error": {"code": "body_too_large", "message": "Request body exceeds 65536 bytes"}}, status_code=413)
+                if len(body) > max_bytes:
+                    response = JSONResponse({"error": {"code": "body_too_large", "message": f"Request body exceeds {max_bytes} bytes"}}, status_code=413)
                     break
                 if not event.get("more_body", False):
                     break
@@ -258,6 +272,7 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
     app = FastAPI(title="Seiche Agent Network", version="0.1.0", lifespan=lifespan, root_path=base.path.rstrip("/"), docs_url=None, redoc_url=None,
                   description="Permissioned financial-agent communication. No trade execution. Private contents are excluded from shared model training.")
     app.state.store = store
+    app.state.public_url = public_url.rstrip("/")
     app.state.retention_status = "not_started"
     from .enrollment import mount_enrollment
     mount_enrollment(app, store)

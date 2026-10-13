@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="250" height="200" viewBox="0 0 250 200">
+<rect width="250" height="200" rx="12" fill="#0e1728"/>
+<text x="20" y="39" fill="#5eead4" font-size="12" font-family="sans-serif">LIQUIDITY LAB / OPENBB</text>
+<text x="20" y="74" fill="#fff" font-size="22" font-family="sans-serif">Financial Evidence</text>
+<text x="20" y="98" fill="#94a3b8" font-size="13" font-family="sans-serif">Four sources. Explicit boundaries.</text>
+<path d="M20 148h210M20 174h210" stroke="#334155"/>
+<text x="20" y="138" fill="#e2e8f0" font-size="12" font-family="sans-serif">Funding · Banks · Liquidity</text>
+<text x="20" y="166" fill="#e2e8f0" font-size="12" font-family="sans-serif">China coverage · Source audit</text></svg>

@@ -23,7 +23,7 @@ from .analytics import Analytics
 from .geography import verified_country
 from .upstream_auth import public_call_credential, UpstreamAuthUnavailable
 from .extra_products import EXTRA_PRODUCTS, EXTRA_PRODUCT_TARGETS
-from . import data_catalog, demand
+from . import data_catalog, demand, hosted_surfaces
 
 PRODUCTS = {
     "seiche": ("Seiche", "https://api.seiche.info/mcp"),
@@ -160,6 +160,7 @@ class Gateway:
             timeout=httpx.Timeout(30.0, read=90.0), limits=httpx.Limits(max_connections=64))
         self.sessions = {}
         self.active = 0
+        self.noise_active = 0
         self.buckets = Counter()
         self.window = 0
         self.measurement_failures = 0
@@ -337,7 +338,7 @@ class Gateway:
             if product == "undertow" and method == "tools/call" and tool == "other":
                 raise NetworkError("tool_unavailable", "Only the public Undertow tool surface is available", 403) from None
             raise NetworkError("upstream_auth_unavailable", "Product upstream credential requires operator renewal", 503) from None
-        traffic = request.headers.get("x-financial-evidence-traffic-class", "unknown")
+        traffic = request.headers.get("x-financial-evidence-traffic-class", request.headers.get("x-liquilens-traffic-class", "unknown"))
         if traffic not in {"synthetic", "internal", "backtest", "shadow", "paper", "operator_reported_production"}:
             traffic = "unknown"
         public_path = request.url.path
@@ -346,7 +347,8 @@ class Gateway:
             public_path = prefix + public_path
         country = verified_country(request.headers,request.method,public_path,self.geo_secret,now=now)
         headers = {"Content-Type":"application/json", "Accept":"application/json, text/event-stream",
-                   "Accept-Encoding":"identity", "X-Financial-Evidence-Traffic-Class":traffic}
+                   "Accept-Encoding":"identity", "X-Financial-Evidence-Traffic-Class":traffic,
+                   "X-Liquilens-Traffic-Class":traffic}
         if upstream_token:
             headers["Authorization"] = "Bearer " + upstream_token
         if upstream_session:
@@ -465,6 +467,12 @@ class Gateway:
 
     async def fixed_json(self, request, url, params, classification):
         """Bounded fixed-origin GET. Never forward caller credentials or URLs."""
+        return await self.fixed_response(request, url, params, classification)
+
+    async def fixed_response(self, request, url, params, classification, *, method="GET", body=None,
+                             media_types=frozenset({"application/json"}), transform=None,
+                             response_headers=frozenset(), tool="none", noise=False):
+        """Only reviewed callers choose the fixed target, media and transformation."""
         principal = None
         auth = request.headers.get("authorization")
         if auth is not None:
@@ -481,8 +489,10 @@ class Gateway:
             raise NetworkError("capacity", "Ingress capacity reached", 429)
         if self._closing or self.active + len(self._cleanup_tasks) >= 64 or self.buckets[identity] >= (600 if principal else 1200):
             raise NetworkError("rate_limited", "Ingress operating limit reached; retry later", 429)
+        if noise and self.noise_active >= 4:
+            raise NetworkError("rate_limited", "NoiseFloor computation capacity reached; retry later", 429)
         self.buckets[identity] += 1
-        traffic = request.headers.get("x-financial-evidence-traffic-class", "unknown")
+        traffic = request.headers.get("x-financial-evidence-traffic-class", request.headers.get("x-liquilens-traffic-class", "unknown"))
         from .analytics import TRAFFIC_CLASSES
         if traffic not in TRAFFIC_CLASSES:
             traffic = "unknown"
@@ -490,16 +500,20 @@ class Gateway:
         prefix = request.scope.get("root_path", "")
         if prefix and not path.startswith(prefix + "/"):
             path = prefix + path
-        country = verified_country(request.headers, "GET", path, self.geo_secret, now=now)
-        headers = {"Accept": "application/json", "Accept-Encoding": "identity",
-                   "X-Financial-Evidence-Traffic-Class": traffic}
+        country = verified_country(request.headers, method, path, self.geo_secret, now=now)
+        headers = {"Accept": ", ".join(sorted(media_types)), "Accept-Encoding": "identity",
+                   "X-Financial-Evidence-Traffic-Class": traffic, "X-Liquilens-Traffic-Class": traffic}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         output = {"Cache-Control": "no-store", "X-Dataset-ID": classification.dataset_id,
                   "X-Dataset-Catalog-Version": data_catalog.VERSION, "X-Source-URL": url,
                   "X-Product": classification.product}
         self.active += 1
+        if noise:
+            self.noise_active += 1
         upstream, status, response_state = None, 502, "unknown"
         try:
-            outbound = self.client.build_request("GET", url, headers=headers, params=params or None)
+            outbound = self.client.build_request(method, url, headers=headers, params=params or None, content=body)
             outbound.headers.pop("cookie", None)
             async with asyncio.timeout(120):
                 upstream = await self.client.send(outbound, stream=True)
@@ -508,8 +522,9 @@ class Gateway:
                 if upstream.headers.get("content-encoding", "identity").strip().lower() != "identity":
                     raise NetworkError("upstream_encoding", "Compressed dataset responses are unsupported", 502)
                 media = upstream.headers.get("content-type", "application/json").split(";", 1)[0].strip().lower()
-                if media != "application/json" and not media.endswith("+json"):
-                    raise NetworkError("upstream_media", "Dataset response must be JSON", 502)
+                is_json = media == "application/json" or media.endswith("+json")
+                if media not in media_types and not (is_json and "application/json" in media_types):
+                    raise NetworkError("upstream_media", "Response does not match the reviewed media contract", 502)
                 captured = bytearray()
                 async def chunks():
                     if upstream.is_stream_consumed:
@@ -523,14 +538,27 @@ class Gateway:
                     captured.extend(chunk)
                 raw = bytes(captured)
                 response_state = "empty" if not raw else "unknown"
-                if raw:
+                if raw and is_json:
                     try:
-                        parsed = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
-                    except (ValueError, UnicodeError, RecursionError):
+                        parsed = hosted_surfaces.strict_json(raw)
+                    except (ValueError, UnicodeError, RecursionError, OverflowError):
                         raise NetworkError("upstream_json", "Dataset response is not valid JSON", 502) from None
                     response_state = "empty" if parsed is None or parsed == [] or parsed == {} or parsed == "" else "nonempty"
+                elif raw:
+                    response_state = "nonempty"
                 elif upstream.status_code not in {204, 205, 304}:
                     raise NetworkError("upstream_json", "Dataset response is not valid JSON", 502)
+                if transform is not None and raw:
+                    try:
+                        raw, media = transform(raw, media, upstream.status_code)
+                        if len(raw) > 4194304:
+                            raise ValueError()
+                    except (ValueError, KeyError, TypeError, AttributeError, UnicodeError, RecursionError, OverflowError):
+                        raise NetworkError("upstream_contract", "Hosted surface requires operator contract review", 502) from None
+                for name in response_headers:
+                    value = upstream.headers.get(name)
+                    if value is not None and len(value) <= 1024 and all(32 <= ord(c) <= 126 for c in value):
+                        output[name] = value
                 status = upstream.status_code
                 return Response(raw, status_code=status, media_type=media, headers=output)
         except asyncio.CancelledError:
@@ -540,8 +568,10 @@ class Gateway:
             raise NetworkError("upstream_unavailable", "Dataset temporarily unavailable", 502) from None
         finally:
             self.active -= 1
-            args = (principal, classification.product, "GET", traffic, status, round((self.clock() - now) * 1000))
-            metadata = {"tool": "none", "country": country, "classification": classification, "response_state": response_state}
+            if noise:
+                self.noise_active -= 1
+            args = (principal, classification.product, method, traffic, status, round((self.clock() - now) * 1000))
+            metadata = {"tool": tool, "country": country, "classification": classification, "response_state": response_state}
             if upstream is not None:
                 await self._cleanup(upstream, args, metadata)
             else:
@@ -554,7 +584,7 @@ def mount_gateway(app, store, *, transport=None):
 
     @app.get("/v1/data-catalog")
     def data_catalog_route():
-        return data_catalog.catalog()
+        return {**data_catalog.catalog(), "hosted_surfaces": hosted_surfaces.catalog()}
 
     @app.get("/v1/data/{dataset_id}")
     async def fixed_data(dataset_id: str, request: Request):
@@ -563,8 +593,41 @@ def mount_gateway(app, store, *, transport=None):
 
     @app.get("/v1/research/api/v1/{operation}")
     async def fixed_research(operation: str, request: Request):
+        if operation == "funding-review.csv":
+            hosted_surfaces.no_query(request.query_params)
+            classification = data_catalog.Classification("seiche", "research.money_markets", "family", "research_wrapper")
+            return await gateway.fixed_response(request, hosted_surfaces.RESEARCH_ORIGIN + "/api/v1/funding-review.csv", {}, classification,
+                media_types=frozenset({"text/csv", "application/json"}), response_headers=hosted_surfaces.CSV_HEADERS,
+                transform=lambda raw, media, status: hosted_surfaces.transform_csv(raw, media, status, app.state.public_url))
         url, params, classification = data_catalog.research_request(operation, request.query_params)
+        if operation == "start":
+            return await gateway.fixed_response(request, url, params, classification,
+                transform=lambda raw, media, status: hosted_surfaces.transform_start(raw, media, status, app.state.public_url))
         return await gateway.fixed_json(request, url, params, classification)
+
+    @app.get("/v1/research")
+    @app.get("/v1/research/")
+    @app.get("/v1/research/{operation}")
+    async def research_surface(request: Request, operation: str = ""):
+        if operation not in hosted_surfaces.RESEARCH_UI:
+            raise NetworkError("not_found", "Unknown reviewed research surface", 404)
+        hosted_surfaces.no_query(request.query_params)
+        classification = data_catalog.Classification("financial-evidence", "financial-evidence.discovery", "discovery", "research_wrapper")
+        media = {"guide": "text/plain", "thumbnail.svg": "image/svg+xml"}.get(operation, "application/json")
+        target = "openapi.json" if operation == "docs" else operation
+        base = app.state.public_url
+        return await gateway.fixed_response(request, hosted_surfaces.RESEARCH_ORIGIN + "/" + target, {}, classification,
+            media_types=frozenset({media, "application/json"}),
+            transform=lambda raw, media, status: hosted_surfaces.transform_research(operation, raw, media, status, base))
+
+    @app.api_route("/v1/noisefloor/{operation:path}", methods=["GET", "POST"])
+    async def noise_surface(operation: str, request: Request):
+        body = await request.body()
+        url, classification, tool = hosted_surfaces.noise_request(operation, request.query_params, request.method,
+                                                                 request.headers.get("content-type", ""), body)
+        return await gateway.fixed_response(request, url, {}, classification, method=request.method,
+            body=body if request.method == "POST" else None, tool=tool, noise=True,
+            transform=lambda raw, media, status: hosted_surfaces.transform_noise(operation, raw, media, status, app.state.public_url))
 
     @app.get("/v1/dataset-usage")
     async def dataset_usage(request: Request, traffic: str = "all", limit: int = Query(default=100, ge=1, le=200)):

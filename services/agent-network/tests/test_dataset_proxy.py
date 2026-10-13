@@ -221,7 +221,7 @@ def test_reviewed_hub_cors_is_scoped_to_public_data_routes(platform):
         assert 'X-Source-URL' in response.headers['access-control-expose-headers']
         assert 'access-control-allow-credentials' not in response.headers
     count = len(requests)
-    for path in ('/v1/me', '/v1/dataset-usage', '/v1/operator/dataset-usage', '/v1/social/me', '/products/seiche/mcp'):
+    for path in ('/v1/me', '/v1/dataset-usage', '/v1/operator/dataset-usage', '/v1/social/me', '/products/unreviewed/mcp'):
         response = client.get(path, headers={'Origin':origin,'Authorization':'Bearer '+owner['owner_token']})
         assert response.status_code == 403 and 'access-control-allow-origin' not in response.headers
         assert client.options(path, headers=preflight).status_code == 403
