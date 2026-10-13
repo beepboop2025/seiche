@@ -18,7 +18,7 @@ from .freshness import inspect_result, save_report
 
 URLS = {
     "liquilens": "https://api.liquilens.in/api/failure-radar/board",
-    "liquilens_crypto": "https://api.liquilens.in/api/public-signals/crypto",
+    "liquilens_crypto": "https://api.liquilens.in/api/public-signals/crypto-regime",
     "liquilens_rails": "https://api.liquilens.in/api/public-signals/rails",
     "seiche": "https://api.seiche.info/api/health",
     "undertow": "https://api.seiche.info/undertow/board.json",
