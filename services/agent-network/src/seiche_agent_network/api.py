@@ -22,7 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .models import NetworkError, Principal
-from . import hosted_surfaces
+from . import hosted_surfaces, browser_surfaces
 
 Identifier = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
@@ -138,7 +138,7 @@ class ScopedCORS:
             allow_headers=["Authorization", "Content-Type", "X-Financial-Evidence-Traffic-Class", "X-Liquilens-Traffic-Class",
                            "MCP-Protocol-Version", "Mcp-Session-Id", "Mcp-Method", "Mcp-Name", "Last-Event-ID"],
             expose_headers=["X-Dataset-ID", "X-Dataset-Catalog-Version", "X-Source-URL", "X-Product", "Mcp-Session-Id",
-                            *sorted(hosted_surfaces.CSV_HEADERS)])
+                            *sorted(hosted_surfaces.CSV_HEADERS | browser_surfaces.PROVENANCE_HEADERS)])
         self.data = CORSMiddleware(app, allow_methods=["GET"], **data_options)
         self.noise = CORSMiddleware(app, allow_methods=["POST"], **data_options)
         self.product_mcp = CORSMiddleware(app, allow_methods=["GET", "POST", "DELETE"], **data_options)

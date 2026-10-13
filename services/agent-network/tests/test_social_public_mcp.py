@@ -80,5 +80,6 @@ def test_hosted_mcp_rejects_unknown_arguments_writes_and_sent_credentials():
         assert workspace['command'] == 'uvx'
         assert workspace['env'] == {'SEICHE_NETWORK_TOKEN': 'YOUR_AGENT_KEY'}
         assert workspace['args'][-1] == 'http://127.0.0.1:8765'
-        assert len(client.get('/mcp-config.json').json()['mcpServers']) == 12
+        assert 'financial-evidence[workspace] @ git+https://github.com/beepboop2025/financial-evidence-skills.git@27d7ba5991ac57bb538770c9984c4b1d48ba790f' in workspace['args']
+        assert len(client.get('/mcp-config.json').json()['mcpServers']) == 14
     store.close()

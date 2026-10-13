@@ -33,7 +33,7 @@ def record(analytics, principal=None, **kwargs):
 
 def test_every_registered_tool_has_reviewed_family_or_discovery():
     document = catalog()
-    assert len(tool_registry()) == 12
+    assert len(tool_registry()) == 14
     assert all(item['basis'] in {'family', 'discovery'} for item in document['mcp_classification'])
     assert {item['id'] for item in document['datasets']} >= set(FIXED_DATA)
     assert document['raw_arguments_retained'] is False and document['data_resale_permission'] is False
@@ -42,6 +42,22 @@ def test_every_registered_tool_has_reviewed_family_or_discovery():
     for name in ('financial_evidence_datasets', 'financial_evidence_route'):
         assert classify('financial-evidence', 'tools/call', name).basis == 'discovery'
     assert classify('financial-evidence', 'tools/call', 'financial_evidence_sources').basis == 'family'
+
+
+def test_historical_catalog_buckets_remain_in_reports_after_extension(network):
+    store, analytics, owners, _, _ = network
+    record(analytics, owners[0], tool='funding_stress_now')
+    with store._transaction() as db:
+        row = db.execute(select(demand.daily)).mappings().one()
+        values = dict(row)
+        values.update(key='historic-catalog-bucket', catalog_version='central-data-2026-10-12', requests=3)
+        db.execute(demand.daily.insert().values(**values))
+    report = demand.report(store, owners[0])
+    assert report['totals']['requests'] == 4 and report['totals']['family_requests'] == 4
+    assert len(report['rows']) == 1
+    assert report['rows'][0]['dataset_id'] == 'seiche.money_markets' and report['rows'][0]['requests'] == 4
+    with store.engine.connect() as db:
+        assert set(db.scalars(select(demand.daily.c.catalog_version))) == {'central-data-2026-10-12', 'central-data-2026-10-13'}
 
 
 def test_two_tables_commit_or_rollback_together(network, monkeypatch):

@@ -53,6 +53,9 @@ def public_surface(scope):
     headers = dict(scope.get("headers", []))
     if method == "OPTIONS":
         method = headers.get(b"access-control-request-method", b"").decode("latin1").upper()
+    from .browser_surfaces import public_surface as browser_surface
+    if browser_surface(path, method):
+        return True
     if path in {"/v1/research", "/v1/research/"} or path.removeprefix("/v1/research/") in RESEARCH_UI and path.startswith("/v1/research/"):
         return method == "GET"
     if path.startswith("/v1/research/api/v1/"):

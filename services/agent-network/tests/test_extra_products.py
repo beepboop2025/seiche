@@ -14,6 +14,8 @@ def test_extra_products_have_only_reviewed_fixed_https_origins():
         "myquant-app": "https://myquant-app.vercel.app/mcp",
         "trade-safety": "https://trade-safety.liquilens.in/mcp",
         "financial-evidence": "https://api.seiche.info/openbb/mcp",
+        "research-data": "https://api.seiche.info/api/v2/research-data/mcp",
+        "seiche-market-corpus": "https://api.seiche.info/api/v2/corpus/mcp",
     }
     assert {key: value["url"] for key, value in EXTRA_PRODUCTS.items()} == expected
     for key, product in EXTRA_PRODUCTS.items():

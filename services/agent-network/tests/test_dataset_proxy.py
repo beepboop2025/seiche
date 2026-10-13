@@ -109,7 +109,7 @@ def test_auth_report_boundaries_and_invalid_requests_never_forward(platform, mon
     assert client.get('/v1/dataset-usage?limit=201', headers=headers).status_code == 422
     assert client.get('/v1/dataset-usage?traffic=private', headers=headers).status_code == 400
     assert 'measurement_diagnostics' not in client.get('/v1/dataset-usage', headers=headers).json()
-    assert client.get('/v1/data-catalog').json()['version'] == 'central-data-2026-10-12'
+    assert client.get('/v1/data-catalog').json()['version'] == 'central-data-2026-10-13'
 
 
 def test_extra_products_reject_unreviewed_tools_and_modern_protocol_headers(platform):

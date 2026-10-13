@@ -1,7 +1,7 @@
 """Reviewed additional public MCP surfaces, pinned to fixed HTTPS origins.
 
-Admission was checked against native source and live initialize/tools/list on
-2026-10-12. Each first tool also returned a successful read-only response. These
+Admission was checked against native source and live discovery on 2026-10-12;
+the separate Source Data and Corpus services were reviewed on 2026-10-13. These
 are explicit tool allowlists, never permissions inferred from future discovery.
 Research wrappers may read other products: count their requests separately from
 nested source requests, not as additional people, agents, or completed tasks.
@@ -10,6 +10,29 @@ from __future__ import annotations
 
 
 EXTRA_PRODUCTS = {
+    "research-data": {
+        "name": "Source Data Research Workspace",
+        "url": "https://api.seiche.info/api/v2/research-data/mcp",
+        "first_tool": "research_catalog",
+        "first_prompt": "Discover source datasets, then resolve exact series and entity identifiers before reading a bounded page with its capture receipts.",
+        "kind": "research_wrapper",
+        "read_tools": (
+            "research_workspace", "research_series_summary", "research_tracked_institutions",
+            "research_catalog", "research_series", "research_entities",
+            "research_observations", "research_analysis",
+        ),
+    },
+    "seiche-market-corpus": {
+        "name": "Seiche Market Atlas Corpus",
+        "url": "https://api.seiche.info/api/v2/corpus/mcp",
+        "first_tool": "corpus_catalog",
+        "first_prompt": "Inspect the corpus catalog, source clocks, publication rights and bounded records. Restricted collections remain metadata only.",
+        "kind": "research_wrapper",
+        "read_tools": (
+            "corpus_catalog", "list_datasets", "inspect_dataset", "bis_observations",
+            "bis_records", "bis_flow_manifest", "seiche_markets", "seiche_observations", "corpus_health",
+        ),
+    },
     "riptide": {
         "name": "Riptide",
         "url": "https://api.seiche.info/riptide/mcp",
@@ -77,6 +100,8 @@ EXTRA_TOOL_REGISTRY = {
 # Whole-product labels only. Exact dataset selectors require separate validation;
 # MyQuant app discovery is not evidence of access to a reader's on-device state.
 EXTRA_FAMILIES = {
+    "research-data": "research-data.research_wrapper",
+    "seiche-market-corpus": "seiche-market-corpus.research_wrapper",
     "riptide": "riptide.public_research",
     "myquant-editorial": "myquant-editorial.public_archive",
     "myquant-app": "myquant-app.discovery",

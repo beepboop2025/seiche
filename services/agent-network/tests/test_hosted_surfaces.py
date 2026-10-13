@@ -311,7 +311,7 @@ def test_hosted_surface_contract_is_discoverable_without_payload_permissions(pla
 
 def test_every_registered_public_product_mcp_has_scoped_browser_cors(platform):
     client, _, owner, _, _, _ = platform
-    assert len(surfaces.PUBLIC_MCP_PATHS) == 12
+    assert len(surfaces.PUBLIC_MCP_PATHS) == 14
     for path in surfaces.PUBLIC_MCP_PATHS:
         response = client.options(path, headers={'Origin': 'https://liquilens.in', 'Access-Control-Request-Method': 'POST',
                                                 'Access-Control-Request-Headers': 'content-type,authorization,mcp-protocol-version'})

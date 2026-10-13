@@ -102,7 +102,7 @@ async def test_probe_report_is_status_only_atomic_and_private(tmp_path, monkeypa
     report = await probe_products(path)
     assert {row["product"] for row in report["products"]} == {
         "seiche", "liquilens", "undertow", "palimpsest", "noisefloor", "narcoscope", "wake",
-        "riptide", "myquant-editorial", "myquant-app", "trade-safety", "financial-evidence"}
+        "riptide", "myquant-editorial", "myquant-app", "trade-safety", "financial-evidence", "research-data", "seiche-market-corpus"}
     assert report["raw_payloads_retained"] is False
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert json.loads(path.read_text()) == report

@@ -9,7 +9,7 @@ import re
 
 from .models import NetworkError
 
-VERSION = "central-data-2026-10-12"
+VERSION = "central-data-2026-10-13"
 FIXED_DATA = {
     "seiche.money_markets": ("seiche", "Money markets", "https://api.seiche.info/api/v2/money-markets"),
     "seiche.capital_markets": ("seiche", "Capital markets", "https://api.seiche.info/api/v2/world-markets?section=capital_markets"),
@@ -21,6 +21,10 @@ FIXED_DATA = {
     "seiche.forex": ("seiche", "Foreign exchange", "https://api.seiche.info/api/v2/world-markets?section=forex"),
     "liquilens.institution_watchlist": ("liquilens", "Institution monitoring watchlist", "https://api.liquilens.in/api/experimental/v1/banking/monitoring/watchlist"),
     "undertow.exit_check": ("undertow", "Exit size scenarios", "https://api.seiche.info/undertow/mcp/exit-check"),
+    "riptide.allocation": ("riptide", "Published paper allocation", "https://api.seiche.info/riptide/api/v1/allocation"),
+    "seiche.gauge": ("seiche", "Published funding gauge", "https://api.seiche.info/api/gauge"),
+    "seiche.public": ("seiche", "Public funding research", "https://api.seiche.info/api/public"),
+    "undertow.board": ("undertow", "Public market liquidity board", "https://api.seiche.info/undertow/board.json"),
 }
 
 # Each list was reviewed as a family, not an exact underlying source/record.
@@ -57,6 +61,8 @@ DISCOVERY_TOOLS = {
     "undertow": "research_network agent_access_status", "palimpsest": "research_catalog list_signals",
     "noisefloor": "", "narcoscope": "research_network list_capabilities get_market_catalog",
     "wake": "wake_dataset_policy wake_collection_contract",
+    "research-data": "research_catalog",
+    "seiche-market-corpus": "corpus_catalog corpus_health list_datasets seiche_markets",
 }
 RESEARCH_DATASETS = {
     "money_markets": ("seiche", "Money market research"), "money_market_history": ("seiche", "Money market history"),
@@ -87,6 +93,7 @@ def tool_registry():
 
 @lru_cache(maxsize=1)
 def entries():
+    from .browser_surfaces import demand_entries
     result = {key: {"id": key, "product": value[0], "label": value[1], "route": "/v1/data/" + key,
                     "native_url": value[2], "tier": "primary"} for key, value in FIXED_DATA.items()}
     for key, (label, _) in GROUPS.items():
@@ -112,6 +119,7 @@ def entries():
                        "tier": "research_wrapper"}
     result["research.agent_review"] = {"id": "research.agent_review", "product": "liquilens", "label": "Institution research review",
                                          "route": "/v1/research/api/v1/agent-review", "tier": "research_wrapper"}
+    result.update(demand_entries())
     return result
 
 

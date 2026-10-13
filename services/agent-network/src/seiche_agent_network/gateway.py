@@ -548,6 +548,7 @@ class Gateway:
                     response_state = "nonempty"
                 elif upstream.status_code not in {204, 205, 304}:
                     raise NetworkError("upstream_json", "Dataset response is not valid JSON", 502)
+                original_raw, original_media = raw, media
                 if transform is not None and raw:
                     try:
                         raw, media = transform(raw, media, upstream.status_code)
@@ -556,6 +557,8 @@ class Gateway:
                     except (ValueError, KeyError, TypeError, AttributeError, UnicodeError, RecursionError, OverflowError):
                         raise NetworkError("upstream_contract", "Hosted surface requires operator contract review", 502) from None
                 for name in response_headers:
+                    if name.lower() == "etag" and (raw != original_raw or media != original_media):
+                        continue  # Native validators only describe unchanged representations.
                     value = upstream.headers.get(name)
                     if value is not None and len(value) <= 1024 and all(32 <= ord(c) <= 126 for c in value):
                         output[name] = value
@@ -579,17 +582,48 @@ class Gateway:
 
 
 def mount_gateway(app, store, *, transport=None):
+    from . import browser_surfaces
     gateway = Gateway(store, transport=transport)
     app.state.gateway = gateway
 
     @app.get("/v1/data-catalog")
     def data_catalog_route():
-        return {**data_catalog.catalog(), "hosted_surfaces": hosted_surfaces.catalog()}
+        return {**data_catalog.catalog(), "hosted_surfaces": hosted_surfaces.catalog(), "browser_surfaces": browser_surfaces.catalog()}
 
     @app.get("/v1/data/{dataset_id}")
     async def fixed_data(dataset_id: str, request: Request):
         url, params, classification = data_catalog.fixed_request(dataset_id, request.query_params)
-        return await gateway.fixed_json(request, url, params, classification)
+        return await gateway.fixed_response(request, url, params, classification, response_headers=browser_surfaces.PROVENANCE_HEADERS)
+
+    @app.get("/v1/source-data")
+    @app.get("/v1/source-data/")
+    @app.get("/v1/source-data/{operation}")
+    async def source_data_surface(request: Request, operation: str = ""):
+        url, params, classification = browser_surfaces.source_request(operation, request.query_params)
+        return await gateway.fixed_response(request, url, params, classification,
+            media_types=frozenset({"application/json", "text/csv"}) if operation == "export.csv" else frozenset({"application/json"}),
+            response_headers=browser_surfaces.PROVENANCE_HEADERS,
+            transform=lambda raw, media, status: browser_surfaces.transform_source(operation, raw, media, status, app.state.public_url))
+
+    @app.get("/v1/banking/{operation:path}")
+    async def banking_surface(operation: str, request: Request):
+        url, params, classification = browser_surfaces.banking_request(operation, request.query_params)
+        return await gateway.fixed_response(request, url, params, classification, response_headers=browser_surfaces.PROVENANCE_HEADERS)
+
+    @app.get("/v1/economy/series/{operation}")
+    async def economy_surface(operation: str, request: Request):
+        url, params, classification = browser_surfaces.economy_request(operation, request.query_params)
+        return await gateway.fixed_response(request, url, params, classification,
+            media_types=frozenset({"application/json", "text/csv"}) if operation.endswith(".csv") else frozenset({"application/json"}),
+            response_headers=browser_surfaces.PROVENANCE_HEADERS,
+            transform=lambda raw, media, status: browser_surfaces.transform_economy(operation, raw, media, status, app.state.public_url))
+
+    @app.get("/v1/corpus/v1/catalog")
+    async def corpus_catalog_surface(request: Request):
+        hosted_surfaces.no_query(request.query_params)
+        classification = data_catalog.Classification("seiche-market-corpus", "seiche-market-corpus.discovery", "discovery", "rest_json")
+        return await gateway.fixed_response(request, browser_surfaces.CORPUS_ORIGIN + "/v1/catalog", {}, classification,
+                                            response_headers=browser_surfaces.PROVENANCE_HEADERS)
 
     @app.get("/v1/research/api/v1/{operation}")
     async def fixed_research(operation: str, request: Request):
