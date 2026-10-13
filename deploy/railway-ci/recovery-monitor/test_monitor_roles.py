@@ -263,5 +263,71 @@ def run_role_tests():
     print(LOG_MARKER + json.dumps(record, sort_keys=True), flush=True)
 
 
+class RuntimePreparationTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.key = self.root / "owner"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True)
+        self.allowed = self.root / "allowed-signers"
+        self.allowed.write_text("owner " + self.key.with_suffix(".pub").read_text())
+        self.repo = self.root / "repo"
+        self.git("init", "-q", str(self.repo), outside=True)
+        for key, value in {"user.name": "Fixture", "user.email": "owner@example.test",
+                           "gpg.format": "ssh", "user.signingkey": str(self.key)}.items():
+            self.git("config", key, value)
+        self.runtime = self.commit("runtime", signed=True)
+        self.verifier = self.commit("verifier", signed=True)
+
+    def git(self, *args, outside=False):
+        command = ["git"] + ([] if outside else ["-C", str(self.repo)]) + list(args)
+        return subprocess.check_output(command, stderr=subprocess.PIPE, text=True).strip()
+
+    def commit(self, message, *, signed):
+        self.git("commit", "--allow-empty", "-S" if signed else "--no-gpg-sign", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def admit(self, runtime):
+        return prepare.runtime_revision(self.repo, self.verifier, runtime, self.allowed)
+
+    def test_signed_ancestor_keeps_runtime_separate_from_verifier(self):
+        self.assertEqual(self.admit(self.runtime), self.runtime)
+        self.assertNotEqual(self.runtime, self.verifier)
+
+    def test_default_preserves_existing_revision(self):
+        self.assertEqual(self.admit(None), self.verifier)
+
+    def test_unsigned_ancestor_is_rejected(self):
+        unsigned = self.commit("unsigned", signed=False)
+        self.verifier = self.commit("signed descendant", signed=True)
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.admit(unsigned)
+
+    def test_signed_successor_cannot_impersonate_the_older_runtime(self):
+        successor = self.commit("future", signed=True)
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.admit(successor)
+
+    def test_other_signer_is_rejected(self):
+        other = self.root / "other"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(other)], check=True)
+        self.allowed.write_text("owner " + other.with_suffix(".pub").read_text())
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.admit(self.runtime)
+
+    def test_moving_refs_and_malformed_sources_are_rejected(self):
+        for value in ("main", "HEAD", self.runtime + "\n", "A" * 40, "", 1):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.admit(value)
+
+
 if __name__ == "__main__":
     run_role_tests()
+    runtime_suite = unittest.defaultTestLoader.loadTestsFromTestCase(RuntimePreparationTests)
+    runtime_result = unittest.TextTestRunner(verbosity=2).run(runtime_suite)
+    if (not runtime_result.wasSuccessful() or runtime_result.testsRun != 6
+            or runtime_result.skipped or runtime_result.expectedFailures
+            or runtime_result.unexpectedSuccesses):
+        raise SystemExit("Runtime preparation signature and ancestry checks failed")
+    print("RAILWAY_RUNTIME_PREPARATION_TESTS_PASS passed=6 skipped=0", flush=True)
