@@ -1,0 +1,20 @@
+[Unit]
+Description=Audit native LiquiLens Seiche Undertow current-data gates
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m seiche_agent_network.core_freshness --output /var/lib/seiche-agent-network/core-freshness/latest.json
+TimeoutStartSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network/core-freshness
+MemoryMax=256M

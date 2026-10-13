@@ -38,7 +38,8 @@ def test_stale_future_oversized_and_malformed_projections_fail_closed(monkeypatc
     value["as_of"] = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     path.write_text(json.dumps(value))
     report = read_report()
-    assert report["status"] == "stale_report" and not report["observations"][0]["collection_fresh"]
+    assert report["status"] == "stale_report" and report["observations"] == []
+    assert report["withheld_observations"] == 1
     value["as_of"] = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
     path.write_text(json.dumps(value))
     assert read_report()["status"] == "invalid_report"
@@ -59,3 +60,46 @@ def test_expired_radar_rights_hide_retained_rows_even_in_a_current_report(monkey
     report = read_report()
     assert report["report_current"] and report["observations"] == []
     assert report["sources"][0]["status"] == "not_admitted"
+
+
+def test_report_regeneration_cannot_refresh_old_source_rows(monkeypatch, tmp_path):
+    path = tmp_path / "activity.json"
+    monkeypatch.setenv("SEICHE_AGENT_ACTIVITY_REPORT", str(path))
+    now = datetime.now(timezone.utc)
+    stamp = (now - timedelta(hours=13)).isoformat()
+    value = {"schema": "wake.agent-activity.v1", "as_of": now.isoformat(),
+             "sources": [{"source": "huggingface_datasets", "fresh": True, "status": "ok",
+                          "knowledge_time": stamp, "receipt_id": "a" * 64}],
+             "observations": [{"source": "huggingface_datasets", "collection_fresh": True,
+                               "knowledge_time": stamp, "receipt_id": "a" * 64}]}
+    path.write_text(json.dumps(value))
+    result = read_report()
+    assert result["report_current"] and result["observations"] == []
+    assert result["sources"][0]["status"] == "stale"
+    assert result["withheld_observations"] == 1
+    # A real, still-current receipt survives. Report metadata cannot substitute
+    # a different receipt or attach an older row to a fresh source.
+    stamp = (now - timedelta(minutes=10)).isoformat()
+    value["sources"][0]["knowledge_time"] = stamp
+    value["observations"][0]["knowledge_time"] = stamp
+    path.write_text(json.dumps(value))
+    assert len(read_report()["observations"]) == 1
+    value["observations"][0]["receipt_id"] = "b" * 64
+    path.write_text(json.dumps(value))
+    assert read_report()["observations"] == []
+
+
+def test_unknown_and_future_source_clocks_and_duplicate_sources_are_rejected(monkeypatch, tmp_path):
+    path = tmp_path / "activity.json"
+    monkeypatch.setenv("SEICHE_AGENT_ACTIVITY_REPORT", str(path))
+    now = datetime.now(timezone.utc)
+    source = {"source": "mcp_registry", "fresh": True, "status": "ok", "receipt_id": "a" * 64}
+    value = {"schema": "wake.agent-activity.v1", "as_of": now.isoformat(), "sources": [source],
+             "observations": [{"source": "mcp_registry", "collection_fresh": True}]}
+    for stamp in [None, now.replace(tzinfo=None).isoformat(), (now + timedelta(hours=1)).isoformat()]:
+        source["knowledge_time"] = stamp
+        path.write_text(json.dumps(value))
+        assert read_report()["observations"] == []
+    value["sources"].append(dict(source))
+    path.write_text(json.dumps(value))
+    assert read_report()["status"] == "invalid_report"

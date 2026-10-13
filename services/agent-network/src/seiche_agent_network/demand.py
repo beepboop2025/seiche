@@ -128,3 +128,46 @@ def report(store, principal=None, *, traffic="all", limit=100):
                               "non_test excludes synthetic/internal only; remaining activity is not verified adoption.",
             "raw_arguments_retained": False, "raw_responses_retained": False,
             "model_training": False, "data_resale_permission": False}
+
+
+def history(store):
+    """Operator-only closed-day feature candidates within existing retention.
+
+    No identities leave the database. Repeated anonymous activity is not an
+    identified returning agent, and a request cannot establish a transaction.
+    """
+    today = datetime.fromtimestamp(store.clock(), timezone.utc).date()
+    cutoff = (today - timedelta(days=29)).isoformat()
+    conditions = [daily.c.day >= cutoff, daily.c.day < today.isoformat(),
+                  daily.c.traffic_class.not_in(["synthetic", "internal"]),
+                  daily.c.basis.in_(["family", "exact"])]
+    first = (select(daily.c.agent_id, func.min(daily.c.day).label("first_day"))
+             .where(*conditions, daily.c.agent_id != "").group_by(daily.c.agent_id).subquery())
+    registered = func.count(func.distinct(case((daily.c.agent_id != "", daily.c.agent_id))))
+    returning = func.count(func.distinct(case((first.c.first_day < daily.c.day, daily.c.agent_id))))
+    groups = (daily.c.day, daily.c.product, daily.c.dataset_id, daily.c.basis)
+    query = (select(*groups, *_counts(), registered.label("registered_agents"),
+                    returning.label("returning_registered_agents"))
+             .select_from(daily.outerjoin(first, daily.c.agent_id == first.c.agent_id))
+             .where(*conditions).group_by(*groups).order_by(*groups).limit(2001))
+    with store._transaction(shared=True) as db:
+        rows = [dict(row) for row in db.execute(query).mappings()]
+    tracks = [
+        {"id": "market_liquidity", "target": "future spread, depth and order-flow imbalance",
+         "required_labels": "separately admitted dated market outcomes"},
+        {"id": "economic_demand", "target": "future service usage and released economic demand",
+         "required_labels": "separately admitted usage or economic release outcomes"},
+    ]
+    return {"schema": "seiche-agent-network.demand-history.v1", "scope": "operator_global",
+            "generated_at": datetime.fromtimestamp(store.clock(), timezone.utc).isoformat(),
+            "cutoff_day": cutoff, "end_day_exclusive": today.isoformat(), "closed_days_only": True,
+            "rows": rows[:2000], "truncated": len(rows) > 2000, "model_tracks": tracks,
+            "synthetic_and_internal_excluded": True, "anonymous_identity": "not_observed",
+            "returning_agent_definition": "registered credential observed on an earlier retained UTC day",
+            "coverage_complete": False, "economic_transactions_observed": False,
+            "model_training": False, "production_model_eligible": False,
+            "interpretation": "First-party information-demand candidates. Registered credentials are not "
+                              "verified autonomous traders. Anonymous and unclassified requests can include "
+                              "monitors. Dataset rows and returning-agent counts must not be summed into "
+                              "unique users. Native direct traffic is outside this gateway. Both models "
+                              "may use these common features but require separate labels and evaluations."}

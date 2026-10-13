@@ -124,6 +124,30 @@ def test_expiry_and_workspace_erasure(network):
         assert db.scalar(select(func.count()).select_from(demand.daily)) == 0
 
 
+def test_daily_history_separates_closed_days_and_anonymous_repeat_identity(network):
+    store, analytics, owners, agents, now = network
+    record(analytics, agents[0], traffic_class="synthetic")
+    record(analytics, agents[1], tool="data_health")  # discovery is not dataset demand
+    record(analytics, agents[0])
+    record(analytics)
+    assert demand.history(store)["rows"] == []
+    now[0] += 86400
+    record(analytics, agents[0])
+    record(analytics)
+    now[0] += 86400
+    result = demand.history(store)
+    assert [row["requests"] for row in result["rows"]] == [2, 2]
+    assert [row["registered_agents"] for row in result["rows"]] == [1, 1]
+    assert [row["returning_registered_agents"] for row in result["rows"]] == [0, 1]
+    assert {track["id"] for track in result["model_tracks"]} == {"market_liquidity", "economic_demand"}
+    assert not result["model_training"] and not result["production_model_eligible"]
+    assert agents[0].agent_id not in json.dumps(result)
+    store.delete_org(owners[0])
+    assert all(row["registered_agents"] == 0 for row in demand.history(store)["rows"])
+    now[0] += 30 * 86400
+    assert demand.history(store)["rows"] == []
+
+
 @pytest.mark.parametrize('dataset,query', [
     ('seiche.money_markets','url=https://private.example'),
     ('liquilens.institution_watchlist','slugs=a&slugs=b'),
