@@ -1,0 +1,10 @@
+handle /agents/activity {
+	rewrite * /
+	reverse_proxy 127.0.0.1:18804
+}
+handle_path /agents/activity/* {
+	request_body {
+		max_size 64KiB
+	}
+	reverse_proxy 127.0.0.1:18804
+}

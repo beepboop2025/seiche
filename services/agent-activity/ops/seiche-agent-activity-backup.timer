@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted backup of agent activity evidence
+
+[Timer]
+OnCalendar=*-*-* 03:25:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+Unit=seiche-agent-activity-backup.service
+
+[Install]
+WantedBy=timers.target
