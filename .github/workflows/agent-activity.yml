@@ -1,0 +1,26 @@
+name: Agent activity evidence
+on:
+  push:
+    paths: ['services/agent-activity/**', '.github/workflows/agent-activity.yml']
+  pull_request:
+    paths: ['services/agent-activity/**', '.github/workflows/agent-activity.yml']
+permissions:
+  contents: read
+jobs:
+  evidence-contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/agent-activity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.10.0'
+      - run: uv sync --frozen --extra dev
+      - run: uv run pytest -q
+      - run: node --check src/agent_activity/static/app.js && node --check clients/activity.mjs
+      - run: bash -n ops/install.sh

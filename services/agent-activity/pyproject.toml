@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seiche-agent-activity"
+version = "0.1.0"
+description = "Attributed agent economic activity with independent evidence and explicit coverage"
+requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+dependencies = ["fastapi==0.143.0", "uvicorn==0.54.0", "pydantic==2.14.0", "cryptography==49.0.0", "httpx==0.28.1", "pycryptodome==3.23.0"]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1"]
+
+[project.scripts]
+agent-activity = "agent_activity.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_activity"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
