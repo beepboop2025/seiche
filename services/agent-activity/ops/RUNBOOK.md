@@ -79,6 +79,15 @@ Run `restore --bundle PRIVATE_ENCRYPTED_FILE --key-file PRIVATE_KEY` with a new
 revokes all contributor credentials and removes private submissions, claims,
 requests and exports before returning. Re-enroll contributors from current grants;
 do not revive withdrawn data from an older backup. Never aim a drill at active state.
+The deployment also installs `com.liquilens.agent-activity-backup` on the owner's
+Mac. It runs hourly through `ssd-data run`, verifies the ProductData mount, copies
+only encrypted archives, checks SHA256 and retains seven days. Its pinned script
+is retained at `/Users/mrinal/SSDWorkspace/artifacts/agent-activity-ops-20261014/`;
+`ops/offhost-backup.py` records the deployed implementation. Check its private
+`offhost-status.json` and the LaunchAgent exit status. This runs when the Mac and
+its SSDs are available; it is not a continuously available second server. It
+reports stale remote backups and never puts the recovery key beside the archive.
+
 Public collection history can resume from its verified checkpoint. Automatic source
 recurrence and automatic backup recurrence must be observed separately from manual runs.
 

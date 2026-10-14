@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Attributed agent economic activity with independent evidence and explicit coverage"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
-dependencies = ["fastapi==0.143.0", "uvicorn==0.54.0", "pydantic==2.14.0", "cryptography==49.0.0", "httpx==0.28.1", "pycryptodome==3.23.0"]
+dependencies = ["fastapi==0.143.0", "uvicorn==0.54.0", "pydantic==2.14.0", "cryptography==50.0.0", "httpx==0.28.1", "pycryptodome==3.23.0"]
 
 [project.optional-dependencies]
 dev = ["pytest==9.1.1"]
