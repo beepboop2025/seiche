@@ -111,13 +111,13 @@ def create_app(store: Store, operator_token=None):
         return store.entities(limit, offset, kind)
 
     @app.get("/v1/protocol-events")
-    def protocol_events(limit: int = 50):
-        if not 1 <= limit <= 100:
+    def protocol_events(limit: int = 50, source: str | None = None):
+        if not 1 <= limit <= 100 or source not in {None, "virtuals_acp", "olas_marketplace"}:
             raise Rejected("invalid_page")
         # Raw exchange account records remain private to the operator unless a source-specific redistribution review exists.
-        rows = store.public_events(limit, "virtuals_acp")
-        return {"items": [{k: r[k] for k in ["id", "kind", "occurred_at", "block_number", "transaction_hash", "explorer_url", "receipt", "verification", "ai_authorship"]} for r in rows],
-                "scope": "observed finalized protocol events; not verified autonomous-agent transactions"}
+        rows = store.public_events(limit, source or ("virtuals_acp", "olas_marketplace"))
+        return {"items": [dict({k: r[k] for k in ["id", "kind", "source", "chain_id", "occurred_at", "block_number", "transaction_hash", "explorer_url", "receipt", "verification", "ai_authorship"]}, count_unit="event_log") for r in rows],
+                "scope": "observed finalized protocol event logs; not unique jobs, verified autonomous-agent transactions or independently verified service quality"}
 
     @app.get("/v1/receipts/{identifier}")
     def receipt(identifier: str):

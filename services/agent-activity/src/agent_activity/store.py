@@ -35,6 +35,7 @@ SOURCES = {
     "erc8004": ("ERC-8004 registry sample", "https://8004scan.io/developers", "Registry metadata; not verified active agents", 86400),
     "x402": ("x402 service catalog", "https://docs.cdp.coinbase.com/x402/buyer/discover-services", "Listed services and facilitator-reported activity; not unique AI buyers", 3600),
     "virtuals_acp": ("Virtuals ACP on Base", "https://os.virtuals.io/acp/overview", "Finalized contract events in the captured block range; AI authorship unknown", 1800),
+    "olas_marketplace": ("Olas marketplace on Gnosis", "https://github.com/valory-xyz/autonolas-marketplace", "Finalized marketplace event logs; not unique jobs, AI buyers or independently verified service quality", 900),
     "hyperliquid": ("Hyperliquid account activity", "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint", "Reviewed public account panel only; incomplete portfolio performance", 900),
 }
 
@@ -161,7 +162,7 @@ class Store:
                     "status": status, "captured_at": r["captured"] if r else None,
                     "receipt": r["id"] if r else None, "sha256": r["sha256"] if r else None,
                     "error": r["error"] if r else None, "retained_entities": n,
-                    "redistribution": "source_metadata_and_collection_counts_only", "bulk_resale": False,
+                    "redistribution": "native_protocol_event_metadata_only" if key in {"virtuals_acp", "olas_marketplace"} else "source_metadata_and_collection_counts_only", "bulk_resale": False,
                     "collection_window": self.checkpoint(key) if key != "hyperliquid" else {"scope": "explicitly reviewed public account panel"}})
         return result
 
@@ -171,7 +172,9 @@ class Store:
             entities = dict(db.execute("SELECT kind,count(*) FROM entities GROUP BY kind").fetchall())
             span = db.execute("SELECT min(occurred),max(occurred) FROM public_events").fetchone()
         return {"schema": "agent-activity.coverage.v1", "as_of": time.time(), "sources": self.source_status(),
-            "retained_entities": entities, "observed_events": kinds, "event_window": {"start": span[0], "end": span[1]},
+            "retained_entities": entities, "observed_events": kinds,
+            "event_count_semantics": "native source event records; not unique jobs, purchases, agents or revenue",
+            "event_window": {"start": span[0], "end": span[1]},
             "coverage": {"global_agent_population": None, "global_coverage_percent": None,
                 "economic_value_coverage_percent": None, "sampling": "bounded source samples and explicit account panel",
                 "unique_active_ai_agents": None, "performance": "not_established",
@@ -197,7 +200,10 @@ class Store:
                 "scope": "metadata discovery; not a global census or verified performance ranking"}
 
     def public_events(self, limit=50, source=None):
-        where, params = (" WHERE source=?", [source]) if source else ("", [])
+        if isinstance(source, tuple):
+            where, params = " WHERE source IN ("+",".join("?" for _ in source)+")", list(source)
+        else:
+            where, params = (" WHERE source=?", [source]) if source else ("", [])
         with self.db() as db:
             rows = db.execute("SELECT data,receipt,captured FROM public_events" + where + " ORDER BY occurred DESC,id LIMIT ?",
                               [*params, limit]).fetchall()

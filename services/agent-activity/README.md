@@ -19,6 +19,7 @@ the complete admission contract at `/v1/contract`, and read-only MCP at `/mcp`.
 | ERC-8004 discovery | Rolling 500-entry daily sample of the anonymous 8004scan list. Owner addresses are not assumed to be trading accounts. |
 | x402 discovery | Rolling 500-service hourly sample. Provider-reported calls and payers are not AI-buyer counts. |
 | Virtuals ACP | Contiguous finalized Base log windows, reviewed ABI, block-hash checks, immutable events, checkpoint advance in the same database transaction. Rate limits remain visible. |
+| Olas marketplace | Public Gnosis RPC, three pinned marketplace event topics and contiguous finalized windows. Counts represent event logs, not batch members, purchases or independent service-quality verification. No partnership or credential is needed for this source connection. |
 | Hyperliquid | Fills only for reviewed, separately publication-authorized account links. No guessed wallets or fabricated initial panel. |
 | Private ingestion | Separate contributor credentials, typed authority, immutable receipts, UTC permission window, encrypted payloads, 90-day retention and withdrawal. |
 | Python / JavaScript clients | Explicit submission only. Python adds an encrypted, destination-bound, durable outbox with retry and receipt validation. |
@@ -34,6 +35,12 @@ settlement/fulfillment windows. This service does not overwrite Wake or the exis
 learning/network databases. Full portfolio returns require complete positions,
 cash flows, costs and valuation history; the service does not publish a performance
 leaderboard from incomplete fills.
+
+The public protocol endpoint supports `source=virtuals_acp|olas_marketplace` and
+returns both sources by default. Each row identifies its chain and source.
+The broader route before platform partnerships is documented in
+[`PUBLIC_SOURCES.md`](PUBLIC_SOURCES.md), including open-source collection tools,
+direct operator contributions and the distinction between software and data rights.
 
 ## Local development
 

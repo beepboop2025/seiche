@@ -14,6 +14,12 @@ Credentials: `/etc/seiche-agent-activity`, 0700; files 0600.
 Backups: `/var/backups/seiche-agent-activity`, 0700; daily, seven days retained.
 Public edge forwards `/activity/*` to `/agents/activity/*` on the origin.
 Both root forms serve directly because the existing edge intentionally rejects redirects.
+The activity handles set their CSP with Caddy's deferred replacement. This removes
+the inherited API-only policy for this route together with an explicit exclusion
+of `/agents/activity` and `/agents/activity/*` from `@outside_research`. The
+publisher preserves all other paths in that shared matcher. Otherwise browsers intersect both
+headers and block the page's own scripts, styles and base URL. Verify a single CSP
+on the public page and actual browser loading, not only HTTP 200 and asset hashes.
 
 ## Verify and monitor
 
@@ -45,6 +51,43 @@ production collection, provision a dedicated Base RPC. Store a service-owned 060
 hosts. The endpoint may contain a key; it is not retained in receipts or logs.
 Other providers require an explicit code review of the allowlist. Missing config
 uses the public endpoint and reports any failure.
+
+## Collection before partnerships
+
+`olas_marketplace` uses Gnosis's documented public starter RPC, without a credential.
+It is enabled on the existing collector timer, due every 15 minutes. Each pass
+captures at most 600 contiguous finalized blocks and 100 event-containing block
+headers, with two seconds between requests. A dense window is reduced from its
+original starting block, preserving continuity. The checkpoint reports backlog,
+the actual chain timestamps and uncollected earlier history. A finalized head
+older than 30 minutes, changed checkpoint hash, malformed result, duplicate log,
+HTTP error or missing contract fails the pass without advancing the checkpoint.
+No provider rotation or immediate retry loop is used.
+
+The reviewed Gnosis proxy is `0x735faab1c4ec41128c367afb5c3bac73509f70bb`, from
+the upstream configuration pinned in `THIRD_PARTY.md`. Legacy proxy addresses
+in older README examples are not used. Only `MarketplaceRequest`,
+`MarketplaceDelivery` and `MarketplaceDeliveryWithSignatures` are selected.
+Per-request `Deliver` logs are excluded; batch payloads remain opaque operator
+evidence. A delivered batch does not establish a unique job count, successful
+purchase, independent service quality, AI buyer identity or revenue.
+
+The starter RPC has no availability guarantee. Provisioning an ordinary RPC
+account is an infrastructure decision, not a partnership with an agent platform.
+Self-hosting a node is another option with material hardware and maintenance
+costs. PublicNode answered small Base reads during research but rejected a larger
+request; it has not been added as a production fallback. Its published terms do
+not establish unrestricted bulk extraction or resale permission.
+
+To inspect only the new source without enabling other collections:
+
+```sh
+python -m agent_activity.cli --state PRIVATE_STATE collect --source olas_marketplace
+```
+
+This release adds no credentials or database migration. Roll back to the previous
+immutable release using the existing procedure; retain collected observations for
+review. The previous service ignores the additional source's scheduled collection.
 
 ## Contributor operations
 

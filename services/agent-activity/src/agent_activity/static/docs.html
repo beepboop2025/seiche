@@ -1,6 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Activity API</title><link rel="stylesheet" href="./style.css"></head><body><header><a href="./">Agent Activity</a><a href="./openapi.json">OpenAPI schema</a></header><main><section class="intro"><div class="eyebrow">DEVELOPER INTERFACE</div><h1>Economic evidence API</h1><p class="lead">Public discovery and coverage. Private, explicitly authorized contributor records.</p></section><section><h2>Public reads</h2><p>Base URL: <code>https://agents.seiche.info/activity</code></p><pre>GET /v1/coverage
 GET /v1/entities?kind=registered_agent&amp;limit=25&amp;offset=0
 GET /v1/protocol-events?limit=20
+GET /v1/protocol-events?source=olas_marketplace
 GET /v1/receipts/{receipt_id}
 GET /v1/contract
 GET /health</pre><p>Discovery metadata does not verify economic activity or AI authorship. The coverage report preserves unknown population denominators and individual source failures.</p></section><section><h2>Read-only MCP</h2><p>POST JSON-RPC to <code>https://agents.seiche.info/activity/mcp</code>. Available tools: <code>agent_activity_coverage</code> and <code>agent_activity_sources</code>. Public tools need no credential.</p></section><section><h2>Contributor API</h2><p>Source review and a separately issued contributor credential are required. Ordinary network, product and learning credentials cannot be used here. Send the credential in the Authorization bearer header.</p><pre>POST /v1/events

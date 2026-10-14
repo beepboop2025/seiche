@@ -18,6 +18,7 @@ REGISTRY = "https://api.8004scan.io/api/v1/agents"
 BAZAAR = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources"
 BASE = "https://mainnet.base.org"
 HYPERLIQUID = "https://api.hyperliquid.xyz/info"
+GNOSIS = "https://rpc.gnosischain.com"
 ACP = "0x238e541bfefd82238730d00a2208e5497f1832e0"
 ABI = json.loads(Path(__file__).with_name("acp-events.json").read_text())
 
@@ -31,7 +32,7 @@ EVENTS = {signature(x["name"]+"("+",".join(i["type"] for i in x["inputs"])+")"):
 
 def request(url, payload=None):
     # No source URL, redirect or arbitrary user-provided endpoint is followed.
-    if url.split("?", 1)[0] not in {REGISTRY, BAZAAR, BASE, HYPERLIQUID}:
+    if url.split("?", 1)[0] not in {REGISTRY, BAZAAR, BASE, HYPERLIQUID, GNOSIS}:
         raise Rejected("unreviewed_upstream")
     if url == BASE and os.environ.get("ACTIVITY_RPC_CONFIG"):
         config_path = Path(os.environ["ACTIVITY_RPC_CONFIG"])
@@ -309,6 +310,9 @@ def collect(store, sources=None, force=False):
                     result = collect_catalog(store, source)
                 elif source == "virtuals_acp":
                     result = collect_acp(store)
+                elif source == "olas_marketplace":
+                    from .olas import collect_olas
+                    result = collect_olas(store)
                 else:
                     result = collect_hyperliquid(store)
                 results[source] = dict(result, status="ok")
