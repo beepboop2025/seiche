@@ -2095,7 +2095,7 @@ def _provenance(src: dict) -> list[dict]:
             prov.append({
                 **series.provenance(),
                 **metadata,
-                "availability": "empty" if series.points.empty else "available",
+                "availability": "empty" if series.asof is None else "available",
             })
         else:
             reason = (
