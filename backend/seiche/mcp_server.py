@@ -1659,11 +1659,12 @@ TOOLS: dict[str, tuple] = {
     ),
     "latest_article": (
         "Latest evidence-led article",
-        "The exact full-text Seiche editorial published today: current funding "
-        "analysis when the evidence moved, or a clearly labelled historical "
-        "replay on a quiet day. Returns the canonical headline, dek, Markdown, "
-        "evidence clock, generation mode and passing publication receipt. Use "
-        "this for 'what did Seiche write today?' and quote it without regenerating facts.",
+        "The latest available full-text Seiche editorial, which may predate "
+        "today. Returns the canonical headline, dek, Markdown, publication date, "
+        "evidence clock, generation mode and passing publication receipt. "
+        "Report its publication and evidence dates; do not describe an older "
+        "edition as today's analysis. Use funding_stress_now for current funding "
+        "conditions, and quote the article without regenerating facts.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_latest_article,
         True,
