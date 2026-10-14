@@ -1,4 +1,4 @@
-"""Add/remove only this service's Caddy import under the shared edge lock."""
+"""Publish this service's import and narrow CSP exception under the edge lock."""
 import fcntl
 import hashlib
 import os
@@ -8,48 +8,72 @@ import sys
 import tempfile
 import time
 
-remove = sys.argv[1:] == ["--remove"]
-if sys.argv[1:] and not remove:
-    raise SystemExit("Only --remove is supported")
-line = "\timport /etc/caddy/agent-activity.caddy\n"
-path = Path("/etc/caddy/Caddyfile")
-with open("/run/lock/seiche-railway-edge.lock", "a") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    original = path.read_bytes()
-    text = original.decode()
+
+def updated_config(text, remove=False):
+    """Own only the activity import and its exclusion from the API-only CSP."""
+    import re
+    line = "\timport /etc/caddy/agent-activity.caddy\n"
     if remove:
         updated = text.replace(line, "")
     elif line in text:
         updated = text
     else:
         if text.count("api.seiche.info {\n") != 1:
-            raise SystemExit("Expected a single api.seiche.info site")
+            raise ValueError("Expected a single api.seiche.info site")
         updated = text.replace("api.seiche.info {\n", "api.seiche.info {\n"+line, 1)
-    fd, name = tempfile.mkstemp(prefix="activity-candidate-", dir="/etc/caddy")
-    try:
-        with os.fdopen(fd, "w") as output:
-            output.write(updated)
-        # Validation logs may contain unrelated configuration; keep them out of tool output.
-        result = subprocess.run(["caddy", "validate", "--adapter", "caddyfile", "--config", name], capture_output=True)
-        if result.returncode:
-            raise SystemExit("Candidate Caddy validation failed; active configuration was not changed")
-        if path.read_bytes() != original:
-            raise SystemExit("Concurrent Caddy change detected; retry after reviewing it")
-        if updated != text:
-            backup = Path("/etc/seiche-agent-activity") / ("caddy-before-"+str(time.time_ns()))
-            backup.write_bytes(original)
-            backup.chmod(0o600)
-            os.chmod(name, path.stat().st_mode & 0o777)
-            os.chown(name, path.stat().st_uid, path.stat().st_gid)
-            os.replace(name, path)
-        reload = subprocess.run(["systemctl", "reload", "caddy"], capture_output=True)
-        if reload.returncode:
-            # The shared lock is still held. Preserve an unrelated writer if one ignored it.
-            if path.read_text() == updated:
-                path.write_bytes(original)
-                subprocess.run(["systemctl", "reload", "caddy"], capture_output=True)
-            raise SystemExit("Caddy reload failed; own configuration change rolled back when safe")
-        print("activity_route_removed" if remove else "activity_route_published")
-        print("caddy_sha256="+hashlib.sha256(path.read_bytes()).hexdigest())
-    finally:
-        Path(name).unlink(missing_ok=True)
+    # Preserve every unrelated exclusion, including concurrent product routes.
+    pattern = re.compile(r"(?m)^([ \t]*@outside_research not path)([^\n]*)$")
+    matches = list(pattern.finditer(updated))
+    if len(matches) != 1:
+        raise ValueError("Expected a single API-only CSP matcher")
+    match = matches[0]
+    paths = match.group(2).split()
+    owned = ["/agents/activity", "/agents/activity/*"]
+    if remove:
+        paths = [path for path in paths if path not in owned]
+    else:
+        paths += [path for path in owned if path not in paths]
+    return updated[:match.start()]+match.group(1)+" "+" ".join(paths)+updated[match.end():]
+
+
+def publish(remove=False):
+    path = Path("/etc/caddy/Caddyfile")
+    with open("/run/lock/seiche-railway-edge.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        original = path.read_bytes()
+        text = original.decode()
+        updated = updated_config(text, remove)
+        fd, name = tempfile.mkstemp(prefix="activity-candidate-", dir="/etc/caddy")
+        try:
+            with os.fdopen(fd, "w") as output:
+                output.write(updated)
+            # Validation logs may contain unrelated configuration; keep them out of tool output.
+            result = subprocess.run(["caddy", "validate", "--adapter", "caddyfile", "--config", name], capture_output=True)
+            if result.returncode:
+                raise SystemExit("Candidate Caddy validation failed; active configuration was not changed")
+            if path.read_bytes() != original:
+                raise SystemExit("Concurrent Caddy change detected; retry after reviewing it")
+            if updated != text:
+                backup = Path("/etc/seiche-agent-activity") / ("caddy-before-"+str(time.time_ns()))
+                backup.write_bytes(original)
+                backup.chmod(0o600)
+                os.chmod(name, path.stat().st_mode & 0o777)
+                os.chown(name, path.stat().st_uid, path.stat().st_gid)
+                os.replace(name, path)
+            reload = subprocess.run(["systemctl", "reload", "caddy"], capture_output=True)
+            if reload.returncode:
+                # The shared lock is still held. Preserve an unrelated writer if one ignored it.
+                if path.read_text() == updated:
+                    path.write_bytes(original)
+                    subprocess.run(["systemctl", "reload", "caddy"], capture_output=True)
+                raise SystemExit("Caddy reload failed; own configuration change rolled back when safe")
+            print("activity_route_removed" if remove else "activity_route_published")
+            print("caddy_sha256="+hashlib.sha256(path.read_bytes()).hexdigest())
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] not in [[], ["--remove"]]:
+        raise SystemExit("Only --remove is supported")
+    publish(sys.argv[1:] == ["--remove"])
