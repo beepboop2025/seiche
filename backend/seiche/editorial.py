@@ -194,6 +194,7 @@ def _evidence(engines: dict, deep: dict, headline: dict, calendar: dict) -> list
             "label": "Dated forcing",
             "claim": str(first.get("reason") or "A flagged funding window is approaching.") + ".",
             "engine": "weather",
+            "evidence_type": "scheduled_event",
             "asof": first.get("date"),
             "source": "Treasury auction calendar and Seiche reserve path",
         })
