@@ -14,6 +14,10 @@ Credentials: `/etc/seiche-agent-activity`, 0700; files 0600.
 Backups: `/var/backups/seiche-agent-activity`, 0700; daily, seven days retained.
 Public edge forwards `/activity/*` to `/agents/activity/*` on the origin.
 Both root forms serve directly because the existing edge intentionally rejects redirects.
+The activity handles set their CSP with Caddy's deferred replacement. This removes
+the inherited API-only policy for this route; otherwise browsers intersect both
+headers and block the page's own scripts, styles and base URL. Verify a single CSP
+on the public page and actual browser loading, not only HTTP 200 and asset hashes.
 
 ## Verify and monitor
 
