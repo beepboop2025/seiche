@@ -46,9 +46,12 @@ Production proxies must disable buffering for `/v1/context/events` and allow
 the session duration. The response includes `X-Accel-Buffering: no`.
 
 The normal public-origin allowlist applies to these GET endpoints and their
-preflights. `GET /v1/context/metrics` reports process-local connection/frame
-counters, split into `synthetic` and `unknown`; counters reset on restart and
-do not measure independent users. Diagnostic clients should send
+preflights. `GET /v1/operator/context-metrics` reports process-local
+connection/frame counters only with the existing operator reporting bearer
+credential. Tenant owner and delegated-agent credentials cannot access global
+counters, and public research origins do not receive CORS access to this route.
+Counters split `synthetic` and `unknown` traffic, reset on restart, and do not
+measure independent users. Diagnostic clients should send
 `X-Financial-Evidence-Traffic-Class: synthetic`. No private identity, request
 arguments or response bodies are recorded by this stream.
 
@@ -142,6 +145,18 @@ The commands refuse to overwrite existing credential files. Add `--gateway` to `
 For PostgreSQL, configure `SEICHE_NETWORK_DATABASE` privately with a `postgresql+psycopg://...` URL. Keep it out of command arguments, transcripts and dashboards. The database and service keys must belong exclusively to this network service. Initial schema creation is an operator action; provision the database before starting additional workers. This initial release has no automatic schema migration framework.
 
 ## Hosted deployment contract
+
+`ops/seiche-agent-context-latency.timer` runs the bounded public-path observer
+every five minutes. It makes three anonymous, labelled synthetic snapshot reads
+and writes mode-0600 receipts to `/var/lib/seiche-agent-network/latency/latest.json`
+and a bounded history of 2,016 observations. The observer records response size,
+hash and transport time; it retains no source payload or credentials. It checks
+monitor timestamps again at receipt, rejects future/expired evidence, and
+reports transport success separately from source-monitor validity. Exit 1 means
+transport/contract failure; exit 2 means the source monitor is stale or invalid.
+Neither a successful invocation nor a short sample establishes an SLA, fresh
+market prices, source entitlements, or external adoption. Enable this timer only
+after the deployed context routes pass external readback.
 
 The canonical hosted endpoint is `https://agents.seiche.info`. The edge worker forwards to `https://api.seiche.info/agents`; the isolated application listens on `127.0.0.1:18796`. These addresses describe configuration and do not establish that deployment or public propagation has completed.
 

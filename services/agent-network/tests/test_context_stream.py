@@ -300,6 +300,8 @@ def test_public_routes_cors_no_auth_and_synthetic_counter(tmp_path, monkeypatch)
     import time
     save_report(path, report(time.time()))
     monkeypatch.setenv("SEICHE_FRESHNESS_REPORT", str(path))
+    operator = "synthetic-context-operator-credential-" * 2
+    monkeypatch.setenv("SEICHE_OPERATOR_REPORT_TOKEN", operator)
     store = Store(tmp_path / "network.db", **generate_keys())
     app = create_app(store, gateway=True)
     app.state.context_stream.session_seconds = .01
@@ -321,9 +323,42 @@ def test_public_routes_cors_no_auth_and_synthetic_counter(tmp_path, monkeypatch)
         denied = client.options("/v1/context/events", headers={"Origin": "https://liquilens.in", "Access-Control-Request-Method": "POST"})
         assert denied.status_code == 403
         assert client.post("/v1/context/events", headers=headers).status_code == 403
-        metrics = client.get("/v1/context/metrics").json()
+        metrics = client.get("/v1/operator/context-metrics", headers={"Authorization": "Bearer " + operator}).json()
         assert metrics["counters"]["synthetic"]["snapshot_requests"] == 1
         assert metrics["counters"]["synthetic"]["stream_connections"] == 1
         assert metrics["independent_users"] == "not_established"
     assert app.state.context_stream.worker.done()
+    store.close()
+
+
+def test_global_context_metrics_require_existing_operator_credential(tmp_path, monkeypatch):
+    operator = "synthetic-context-operator-credential-" * 2
+    monkeypatch.setenv("SEICHE_OPERATOR_REPORT_TOKEN", operator)
+    store = Store(tmp_path / "network.db", **generate_keys())
+    owner = store.bootstrap_org("Synthetic owner")
+    principal = store.authenticate(owner["owner_token"])
+    agent = store.register_agent(principal, "Synthetic agent")
+    with TestClient(create_app(store, gateway=True)) as client:
+        path = "/v1/operator/context-metrics"
+        for credential in (None, owner["owner_token"], agent["token"], "invalid", operator + "x"):
+            headers = {"Authorization": "Bearer " + credential} if credential else {}
+            response = client.get(path, headers=headers)
+            assert response.status_code == 401
+            assert "counters" not in response.json()
+        headers = {"Authorization": "Bearer " + operator}
+        result = client.get(path, headers=headers)
+        assert result.status_code == 200 and "counters" in result.json()
+        assert "no-store" in result.headers["cache-control"]
+        assert client.get(path, headers={**headers, "Origin": "https://liquilens.in"}).status_code == 403
+        preflight = client.options(path, headers={"Origin": "https://liquilens.in", "Access-Control-Request-Method": "GET"})
+        assert preflight.status_code == 403 and "access-control-allow-origin" not in preflight.headers
+        assert client.get("/v1/context/metrics").status_code == 404
+        contract = client.get("/v1/context/contract").json()
+        assert contract["operator_metrics"] == path and contract["operator_metrics_requires_auth"] is True
+        assert path not in PATHS
+        # Fail closed if the existing credential is removed or misconfigured.
+        monkeypatch.delenv("SEICHE_OPERATOR_REPORT_TOKEN")
+        assert client.get(path, headers=headers).status_code == 401
+        monkeypatch.setenv("SEICHE_OPERATOR_REPORT_TOKEN", "short")
+        assert client.get(path, headers={"Authorization": "Bearer short"}).status_code == 401
     store.close()

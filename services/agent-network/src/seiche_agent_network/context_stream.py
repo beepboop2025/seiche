@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import time
 import uuid
 
@@ -20,10 +21,11 @@ from fastapi import Request
 from starlette.responses import JSONResponse, Response
 
 from .gateway import PRODUCTS
+from .models import NetworkError
 from .upstream_auth import read_private_json
 
 SCHEMA = "seiche-agent-network.context.v1"
-PATHS = frozenset({"/v1/context/contract", "/v1/context/snapshot", "/v1/context/events", "/v1/context/metrics"})
+PATHS = frozenset({"/v1/context/contract", "/v1/context/snapshot", "/v1/context/events"})
 MAX_SNAPSHOT_BYTES = 16384
 MAX_FRAME_BYTES = 17408
 MAX_REPORT_BYTES = 1048576
@@ -340,7 +342,8 @@ def mount_context(app):
     @app.get("/v1/context/contract")
     async def contract():
         return {"schema": "seiche-agent-network.context-contract.v1", "snapshot_schema": SCHEMA,
-                "snapshot": "/v1/context/snapshot", "events": "/v1/context/events", "metrics": "/v1/context/metrics",
+                "snapshot": "/v1/context/snapshot", "events": "/v1/context/events",
+                "operator_metrics": "/v1/operator/context-metrics", "operator_metrics_requires_auth": True,
                 "content": "source_status_metadata_only", "market_quotes": False, "execution_authority": "none",
                 "source": "scheduled_first_party_freshness_report", "upstream_requests_per_client_request": 0,
                 "source_poll_seconds": hub.poll_seconds, "source_monitor_max_age_seconds": MONITOR_MAX_AGE_SECONDS,
@@ -368,6 +371,13 @@ def mount_context(app):
             return JSONResponse({"error": {"code": "invalid_event_id", "message": "Last-Event-ID is invalid"}}, status_code=400)
         return ContextEvents(hub, traffic=traffic_class(request), reconnect=bool(resume))
 
-    @app.get("/v1/context/metrics")
-    async def metrics():
+    @app.get("/v1/operator/context-metrics")
+    async def metrics(request: Request):
+        # Same operator credential as the existing gateway/global dashboard;
+        # a tenant owner or delegated agent is not a global reporting operator.
+        configured = os.environ.get("SEICHE_OPERATOR_REPORT_TOKEN", "")
+        auth = request.headers.get("authorization", "")
+        if (not auth.startswith("Bearer ") or len(configured) < 32
+                or not secrets.compare_digest(configured.encode(), auth[7:].encode())):
+            raise NetworkError("unauthorized", "Operator reporting credential required", 401)
         return hub.metrics()
