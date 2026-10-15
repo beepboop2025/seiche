@@ -23,7 +23,7 @@ import time
 ROOT = Path(__file__).resolve().parent
 TRUSTED = ROOT / "trusted"
 RESTORE_UID = 65532
-MAX_DOWNLOAD_BYTES = 3 * 1024**3
+MAX_DOWNLOAD_BYTES = 6 * 1024**3
 INPUT_NAMES = {
     "AWS_ACCESS_KEY_ID": "RECOVERY_S3_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY": "RECOVERY_S3_SECRET_ACCESS_KEY",
@@ -41,6 +41,12 @@ def digest(body):
 
 def event(kind, **values):
     print(json.dumps({"event": kind, **values}, sort_keys=True), flush=True)
+
+
+def require_restore_space(directory, total):
+    """Reserve the existing five-copy scratch allowance on the actual filesystem."""
+    if shutil.disk_usage(directory).free < total * 5 + 1024**3:
+        raise RuntimeError("insufficient bounded scratch space for an isolated restore")
 
 
 def environment(home):
@@ -372,8 +378,7 @@ def main():
             raise ValueError("storage destination differs from the reviewed target")
     recovery, storage = modules()
     offsite, total = validate_case(policy, credentials, recovery, storage)
-    if shutil.disk_usage("/tmp").free < total * 5 + 1024**3:
-        raise RuntimeError("insufficient bounded scratch space for an isolated restore")
+    require_restore_space(tempfile.gettempdir(), total)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     evidence = Path("/evidence") / stamp
     evidence.mkdir(mode=0o700, parents=True)

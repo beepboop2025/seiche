@@ -1,5 +1,15 @@
 # Railway recovery execution
 
+The signed controller admits at most 6 GiB of immutable recovery objects, with
+the existing additional 32 MiB allowance for recurring workspace proofs. Both
+historical verification and recurring restoration require five times the actual
+input size plus 1 GiB of free scratch space on the selected filesystem. The
+larger ceiling accommodates observed snapshot growth beyond the former 3 GiB
+limit; it does not increase provider resources or extend job deadlines. Object
+versions, content hashes, signatures, retention and isolated restore checks are
+unchanged. A replacement image must complete the full actual-image qualification
+and signed installation procedure before use.
+
 Native continuity probes retain the original 15-second total deadline per
 endpoint. Connection setup has a three-second limit and may be attempted up to
 three times. Each response can use the remaining part of the original deadline;
