@@ -58,6 +58,14 @@ supports the request matcher; the
 [2.6.2 encoder implementation](https://github.com/caddyserver/caddy/blob/v2.6.2/modules/caddyhttp/encode/encode.go)
 explains the version-specific buffering behavior.
 
+Inside the `/agents/*` handler, the example also gives the exact rewritten path
+`/v1/context/events` its own proxy without an explicit `flush_interval -1`.
+Caddy automatically flushes `text/event-stream`; omitting the negative setting
+also retains upstream cancellation when the client disconnects, releasing the
+subscriber slot. The existing general proxy retains its settings. See the
+[streaming rules](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)
+and [Caddy 2.6.2 proxy implementation](https://github.com/caddyserver/caddy/blob/v2.6.2/modules/caddyhttp/reverseproxy/reverseproxy.go).
+
 The CLI gives active requests ten seconds to drain on shutdown, then cancels
 them and runs application cleanup before the service unit's 30-second stop
 deadline. Clients reconnect and receive a new reset after a restart. This uses

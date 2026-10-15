@@ -42,6 +42,10 @@ handle_path /agents/* {
         defer
     }
     header Cache-Control "no-store, no-transform"
+    # SSE auto-flushes without -1; retain upstream cancellation on disconnect.
+    # This matcher sees the path after handle_path strips /agents.
+    @agent_context_events path /v1/context/events
+    reverse_proxy @agent_context_events 127.0.0.1:18796
     reverse_proxy 127.0.0.1:18796 {
         flush_interval -1
     }
