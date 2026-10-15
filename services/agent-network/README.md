@@ -44,6 +44,24 @@ latest reset. Each process admits at most 64 subscribers; excess requests return
 releases capacity, and the latest-only design retains no per-client event queue.
 Production proxies must disable buffering for `/v1/context/events` and allow
 the session duration. The response includes `X-Accel-Buffering: no`.
+On Caddy 2.6.2, `flush_interval -1` does not flush the compression layer.
+At the `api.seiche.info` site level, replace the existing `encode zstd gzip`
+directive with the named matcher and `encode` directive in
+[`ops/caddy-route.example`](ops/caddy-route.example). The matcher excludes only
+`/agents/v1/context/events` and runs before `/agents` is stripped. Do not add a
+second encoder or install this matcher inside `handle_path`. Other paths retain
+their existing compression. Validate the complete Caddy configuration before
+reloading, then verify the initial reset through the public edge with compression
+accepted; local streaming alone cannot verify this boundary. The
+[Caddy encode syntax](https://caddyserver.com/docs/caddyfile/directives/encode)
+supports the request matcher; the
+[2.6.2 encoder implementation](https://github.com/caddyserver/caddy/blob/v2.6.2/modules/caddyhttp/encode/encode.go)
+explains the version-specific buffering behavior.
+
+The CLI gives active requests ten seconds to drain on shutdown, then cancels
+them and runs application cleanup before the service unit's 30-second stop
+deadline. Clients reconnect and receive a new reset after a restart. This uses
+[Uvicorn's graceful-shutdown timeout](https://uvicorn.dev/settings/#timeouts).
 
 The normal public-origin allowlist applies to these GET endpoints and their
 preflights. `GET /v1/operator/context-metrics` reports process-local

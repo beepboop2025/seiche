@@ -182,7 +182,8 @@ def main(argv=None):
                 raise ValueError("A non-loopback listener requires an HTTPS public URL and TLS termination")
             app = create_app(store, public_url=args.public_url, allowed_origins=args.allow_origin, allowed_hosts=args.allow_host, gateway=args.gateway)
             uvicorn.run(app, host=args.host, port=args.port, root_path=app.root_path,
-                        access_log=False, proxy_headers=False)
+                        access_log=False, proxy_headers=False,
+                        timeout_graceful_shutdown=10)
         elif args.command == "mcp":
             from .mcp import create_mcp
             server = create_mcp(store, _token(args.credential_file))
