@@ -65,6 +65,7 @@ def seal_restore_inputs(work):
             raise ValueError("export inputs contain a link or non-regular member")
     if total > verify.MAX_DOWNLOAD_BYTES + 32 * 1024**2:
         raise ValueError("export inputs exceed the bounded restore size")
+    verify.require_restore_space(work, total)
     work.chmod(0o755)
     (work / "proof").chmod(0o1777)
 
