@@ -1,5 +1,57 @@
 # Free agent data and participation
 
+## Compact source context and change notifications
+
+With the hosted gateway enabled, `GET /v1/context/contract` describes the
+available source-status stream. `GET /v1/context/snapshot` returns a compact
+snapshot (at most 16 KiB), and `GET /v1/context/events` delivers Server-Sent
+Events. Both serve precomputed metadata from the existing
+`SEICHE_FRESHNESS_REPORT` file; client requests never trigger upstream collection.
+The background reader checks this atomic, private file every second. The source
+monitor's own schedule determines when new evidence becomes available.
+
+The stream contains product availability, coverage and rights states, the
+SOFR/EFFR/IORB source clocks, and Undertow's inspected research venue clocks.
+`omitted_clock_count` and `missing_products` make the subset explicit. Full
+source-status metadata remains at `/v1/data-status`. The stream includes no
+market prices, order book, customer strategy, execution authority, or verified
+trade outcome. `freshness_at_evaluation` preserves the monitor's assessment and
+each clock's cadence; a heartbeat is only evidence that the connection is alive.
+Freshness does not establish source entitlements or input eligibility.
+
+Snapshots use `seiche-agent-network.context.v1`, a process-specific `stream_id`,
+an increasing `sequence`, a SHA-256 content `revision`, and `published_at`.
+The publication time does not replace any observation time. Monitor reports
+older than 900 seconds, future-dated reports, missing files and invalid files
+produce `input_eligibility: blocked_monitor`. Current reports retain
+`input_eligibility: not_evaluated`; they never grant trading admission.
+Consumers must expire the report at `source_monitor.valid_until` using their
+own clock, even while disconnected. No latency SLA has been established.
+
+Every connection starts with `event: reset`, including requests with
+`Last-Event-ID`. The event ID is `stream_id:sequence`, and its JSON data is the
+complete snapshot plus `delivery: {reason, replay_complete: false}`. Apply it
+as a replacement. Later `snapshot` events also replace the complete state.
+There is no replay log: a slow subscriber may skip revisions, in which case a
+`reset` with reason `updates_coalesced` replaces its state. A new process uses a
+new stream ID. Never reconstruct a complete market event history from this
+source-status stream.
+
+Connections receive a transport-only `keepalive` every 15 seconds without a new
+event ID. Sessions end after 300 seconds; reconnect with backoff and accept the
+latest reset. Each process admits at most 64 subscribers; excess requests return
+503 with `Retry-After: 5`. Writes have a five-second deadline, cancellation
+releases capacity, and the latest-only design retains no per-client event queue.
+Production proxies must disable buffering for `/v1/context/events` and allow
+the session duration. The response includes `X-Accel-Buffering: no`.
+
+The normal public-origin allowlist applies to these GET endpoints and their
+preflights. `GET /v1/context/metrics` reports process-local connection/frame
+counters, split into `synthetic` and `unknown`; counters reset on restart and
+do not measure independent users. Diagnostic clients should send
+`X-Financial-Evidence-Traffic-Class: synthetic`. No private identity, request
+arguments or response bodies are recorded by this stream.
+
 Start at [agents.seiche.info/connect](https://agents.seiche.info/connect): browse
 AI usage and retail context without an account, choose a topic and goal, and copy
 a starting prompt or hosted MCP connection. Seven public product connections are
