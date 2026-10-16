@@ -23,6 +23,7 @@ export default function Site(){
         <article><h3><a href="/questions/are-bank-reserves-scarce/">Are bank reserves scarce?</a></h3><p>Read reserve balances alongside funding rates and facilities; one aggregate cannot establish scarcity.</p></article>
       </div>
       <p><a href="/questions/">All funding questions →</a> · <a href="/use-cases/money-market-research/">Money-market research guide</a></p>
+      <p>Bring the same evidence into your workflow: <a href="https://agents.seiche.info/v1/source-data/?product=seiche">inspect dated funding histories</a> or <a href="https://beepboop2025.github.io/financial-evidence-skills/agents/low-latency.md">receive source-status updates</a>. Status updates describe source freshness and permissions; they are not live market quotes.</p>
     </section></div>
     </>}<Suspense fallback={<main id="main" className="research-page"><p className="rw-loading">Opening the funding research workspace…</p></main>}><Terminal/></Suspense>{entry && <div className="research-page"><ConnectedUpgrades /></div>}</>;
 }
