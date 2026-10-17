@@ -440,9 +440,14 @@ jobs:
               f"{urllib.parse.quote(version, safe='')}?include_deleted=true"
           )
           record = None
+          deadline = time.monotonic() + 120
           for attempt in range(24):
+              remaining = deadline - time.monotonic()
+              if remaining <= 0:
+                  break
               request = urllib.request.Request(
                   detail_url,
+                  method="GET",
                   headers={
                       "Accept": "application/json",
                       "Cache-Control": "no-cache",
@@ -450,15 +455,19 @@ jobs:
                   },
               )
               try:
-                  response = urllib.request.urlopen(request, timeout=30)
+                  with urllib.request.urlopen(request, timeout=min(30, remaining)) as response:
+                      body = response.read(2 * 1024 * 1024 + 1)
               except urllib.error.HTTPError as exc:
                   if exc.code != 404:
                       raise
                   print(f"MCP Registry receipt attempt {attempt + 1}: not visible yet")
-                  time.sleep(5)
+                  time.sleep(min(5, max(0, deadline - time.monotonic())))
                   continue
-              with response:
-                  body = response.read(2 * 1024 * 1024 + 1)
+              except TimeoutError:
+                  # Only repeat the readback; the publish above is never retried.
+                  print(f"MCP Registry receipt attempt {attempt + 1}: GET timed out")
+                  time.sleep(min(5, max(0, deadline - time.monotonic())))
+                  continue
               if len(body) > 2 * 1024 * 1024:
                   raise SystemExit("MCP Registry response exceeds 2 MiB")
               record = json.loads(body)
