@@ -1,0 +1,21 @@
+[Unit]
+Description=Observe public agent context latency and monitor validity
+After=network-online.target seiche-agent-network.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+ExecStart=/opt/seiche-agent-network/venv/bin/python ops/context_latency_monitor.py --output /var/lib/seiche-agent-network/latency/latest.json
+TimeoutStartSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=128M
+

@@ -126,6 +126,12 @@ def _public_data_request(scope):
     root = scope.get("root_path", "")
     if root and path.startswith(root + "/"):
         path = path[len(root):]
+    from .context_stream import PATHS
+    if path in PATHS:
+        method = scope.get("method")
+        if method == "OPTIONS":
+            method = dict(scope.get("headers", [])).get(b"access-control-request-method", b"").decode("latin1").upper()
+        return method == "GET"
     return path == "/v1/data-catalog" or path.startswith("/v1/data/")
 
 
@@ -260,8 +266,12 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
             async with AsyncExitStack() as stack:
                 if hasattr(app.state, "social_public_mcp"):
                     await stack.enter_async_context(app.state.social_public_mcp.session_manager.run())
+                if hasattr(app.state, "context_stream"):
+                    await app.state.context_stream.start()
                 yield
         finally:
+            if hasattr(app.state, "context_stream"):
+                await app.state.context_stream.stop()
             if worker:
                 worker.cancel()
                 with suppress(asyncio.CancelledError):
@@ -522,4 +532,6 @@ def create_app(store, *, public_url="http://127.0.0.1:8765", allowed_origins=Non
     if gateway:
         from .gateway import mount_gateway
         mount_gateway(app, store)
+        from .context_stream import mount_context
+        mount_context(app)
     return app
