@@ -65,6 +65,42 @@ ChatGPT does not use local Codex configuration for MCP apps. See
 [`openai.md`](openai.md) for the accurate workspace-draft and public-listing
 boundaries.
 
+## Compact India evidence reads
+
+Check `tools/list` for the optional `view` and `metric_id` arguments on
+`money_market_context` before using these examples. Support depends on the
+deployed server version; source changes alone do not establish hosted support.
+If those arguments are absent, use the existing `{"section": "india"}` call.
+When supported, start with these arguments:
+
+```json
+{"section": "india", "view": "summary"}
+```
+
+The summary retains coverage, missing series, findings, sources, caveats and
+separate daily/monthly curve constraints. Its `metric_catalog` lists the exact
+IDs of exposed cards. Freshness counts cover only those cards; a recent desk
+`asof` does not mean every observation is current.
+
+Request one complete card using an ID from that catalog:
+
+```json
+{"section": "india", "view": "metric", "metric_id": "IN.RBI.POLICY_REPO_WEEKLY"}
+```
+
+The card retains rights, observation/publication/knowledge clocks, availability,
+freshness and statistical sample limits. Restricted or missing values stay
+explicit; an unknown ID returns `selection_status: "not_found"` and no card.
+Each call derives the existing desk from bounded canonical observations: compare
+its clocks before combining results. The projection adds no new financial
+calculations or collection, and does not pin a snapshot.
+Omitting `view` (or using `"full"`) preserves the existing complete India response
+and the `/api/v2/india-funding` REST contract. `view` and `metric_id` apply only
+to `section: "india"`; `metric_id` is accepted only with `view: "metric"`.
+
+For an opt-in external evaluation with explicit activity and retention measures,
+use the [agent evaluation guide](../agent-evaluation/README.md).
+
 ## Discovery and publication boundary
 
 Rechecked on 11 October 2026:

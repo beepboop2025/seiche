@@ -1217,7 +1217,7 @@ def tool_money_market(args: dict, _public: bool) -> Any:
     """Serve chartless funding desks from completed or canonical evidence."""
     if not isinstance(args, dict):
         raise ToolError("arguments must be an object")
-    unknown = sorted(str(key) for key in args if key not in {"section", "country"})
+    unknown = sorted(str(key) for key in args if key not in {"section", "country", "view", "metric_id"})
     if unknown:
         raise ToolError(f"unknown argument(s): {', '.join(unknown)}")
     selector = args.get("section", "summary")
@@ -1228,6 +1228,17 @@ def tool_money_market(args: dict, _public: bool) -> Any:
 
     if "country" in args and selector != "countries":
         raise ToolError("`country` is supported only with section='countries'")
+    if selector != "india" and any(key in args for key in ("view", "metric_id")):
+        raise ToolError("`view` and `metric_id` are supported only with section='india'")
+    view = args.get("view", "full")
+    if not isinstance(view, str) or view not in {"full", "summary", "metric"}:
+        raise ToolError("`view` must be one of: full, summary, metric")
+    if view == "metric":
+        if (not isinstance(args.get("metric_id"), str) or not args["metric_id"].strip()
+                or len(args["metric_id"]) > 128):
+            raise ToolError("`metric_id` must be a nonblank string of at most 128 characters with view='metric'")
+    elif "metric_id" in args:
+        raise ToolError("`metric_id` is supported only with view='metric'")
     if selector == "countries":
         from seiche import country_funding
         try:
@@ -1256,6 +1267,12 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         out["section_catalog"] = [{"id": section["id"], "title": section["id"].replace("_", " ")}
                                   for section in india["sections"]]
         out["snapshot_generated_at"] = india["generated_at"]
+        if view != "full":
+            from seiche import india_context
+            out["india"] = india_context.project(india, view=view, metric_id=args.get("metric_id"))
+            out["freshness"] = out["india"].get("freshness_summary")
+            if out["india"].get("selection_status") == "not_found":
+                out["ok"] = False
         return out
 
     raw_snap = _get_completed_snapshot()
@@ -1817,7 +1834,10 @@ TOOLS: dict[str, tuple] = {
         "cash curve; liquidity buffers and Fed facilities; and MMF repo plumbing. "
         "Use section='india' for the India funding, RBI liquidity, policy and sovereign-curve desk "
         "from a bounded canonical observation read. It keeps benchmark identities, date alignment, "
-        "curve movements and mechanism hypotheses separate. Otherwise use optional `section` to request a compact summary, one named USD desk section, "
+        "curve movements and mechanism hypotheses separate. India defaults to view='full' for compatibility; "
+        "prefer view='summary' for findings, constraints and an exact metric ID catalog, then "
+        "view='metric' with metric_id for one complete evidence card. These India-only views "
+        "are independent reads, not a pinned snapshot or pagination. Otherwise use optional `section` to request a compact summary, one named USD desk section, "
         "diagnostics, sources, methodology, or all context. Diagnostics count funding "
         "persistence, compare secured/unsecured benchmarks and show calendar cohorts "
         "with sample limits, without changing any score. Returns exact-date alignment, native-"
@@ -1841,6 +1861,14 @@ TOOLS: dict[str, tuple] = {
                 "country": {
                     "type": "string", "pattern": "^[A-Za-z]{2}$",
                     "description": "Country code for section=countries only. Omit to list supported countries; UK aliases GB.",
+                },
+                "view": {
+                    "type": "string", "enum": ["full", "summary", "metric"], "default": "full",
+                    "description": "India only: legacy full desk, compact findings/catalog, or one exact metric card.",
+                },
+                "metric_id": {
+                    "type": "string", "minLength": 1, "maxLength": 128,
+                    "description": "Exact ID from the India summary metric_catalog; required only for view=metric.",
                 },
             },
             "additionalProperties": False,
@@ -2512,7 +2540,22 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "methodology": {"type": "object"},
             "formulas": {"type": "array"},
             "diagnostics": {"type": "object"},
-            "india": {"type": "object"},
+            "india": {
+                "type": "object",
+                "description": (
+                    "Legacy full India desk, or opt-in summary with metric_catalog and "
+                    "freshness_summary, or exact metric with selection_status and "
+                    "selection_context. Missing/restricted cards retain their original status."
+                ),
+                "properties": {
+                    "view": {"type": "string", "enum": ["summary", "metric"]},
+                    "metric_catalog": {"type": "array"},
+                    "freshness_summary": {"type": "object"},
+                    "selection_status": {"type": "string", "enum": ["found", "not_found"]},
+                    "metric": _OBJECT_OR_NULL,
+                    "selection_context": {"type": "object"},
+                },
+            },
             "countries": {"type": "object"},
         },
         (

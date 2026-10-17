@@ -56,6 +56,29 @@ def _pro_token():
     return accounts.issue_token("desk_pro", "pro")["token"]
 
 
+def test_india_summary_and_exact_metric_over_http_preserve_rest_contract(client, monkeypatch):
+    from datetime import UTC
+    from seiche import india_funding
+    desk = india_funding.build([], now=datetime(2026, 10, 1, tzinfo=UTC), include_history=False)
+    monkeypatch.setattr(india_funding, "read", lambda **kwargs: desk)
+    def call(arguments):
+        response = client.post("/mcp", json=_rpc("tools/call", {
+            "name": "money_market_context", "arguments": arguments,
+        }))
+        assert response.status_code == 200
+        return response.json()["result"]["structuredContent"]
+    assert call({"section": "india"}) == call({"section": "india", "view": "full"})
+    assert client.get("/api/v2/india-funding").json() == desk
+    summary = call({"section": "india", "view": "summary"})["india"]
+    assert summary["status"] == "unavailable"
+    assert "sections" not in summary and "nodes" not in summary["curve"]
+    metric_id = summary["metric_catalog"][0]["metric_ids"][0]
+    metric = call({"section": "india", "view": "metric", "metric_id": metric_id})["india"]
+    assert metric["metric"] == desk["sections"][0]["metrics"][0]
+    assert metric["metric"]["availability"] == "UNAVAILABLE"
+    assert client.get("/api/v2/india-funding?view=summary").status_code == 422
+
+
 def _rpc(method, params=None, msg_id=1):
     m = {"jsonrpc": "2.0", "method": method}
     if msg_id is not None:

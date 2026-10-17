@@ -590,6 +590,10 @@ def test_money_market_tool_publishes_the_exact_bounded_selector_contract():
 
     assert selector["enum"] == list(mcp.MONEY_MARKET_SELECTORS)
     assert selector["default"] == "summary"
+    assert tool["inputSchema"]["properties"]["view"]["enum"] == ["full", "summary", "metric"]
+    assert tool["inputSchema"]["properties"]["view"]["default"] == "full"
+    assert "metric_catalog" in tool["inputSchema"]["properties"]["metric_id"]["description"]
+    assert tool["inputSchema"]["properties"]["metric_id"]["maxLength"] == 128
     assert tool["inputSchema"]["additionalProperties"] is False
     assert "Chart history is always omitted" in tool["description"]
     assert "never triggers collection or engine recomputation" in tool["description"]
