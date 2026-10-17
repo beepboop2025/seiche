@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Decision-grade 24-hour usage digest for the Seiche product fleet.
 
-Edge requests describe reachability and scanner pressure. Product activation is
-counted separately from privacy-safe post-dispatch journal events. No request
+Edge requests describe reachability and scanner pressure. Recognized tool events
+are counted separately from privacy-safe server request-handling journals. No request
 arguments, caller identifiers, tokens, or User-Agent strings enter those events.
 """
 from __future__ import annotations
@@ -66,6 +66,13 @@ LEGACY_UNDERTOW_RE = re.compile(
     r"tool=(?P<tool>[A-Za-z0-9_.:-]+) "
     r"outcome=(?P<outcome>success|error)"
 )
+# The optional log extension follows undertow.mcp-call-outcome.v1. Keep the
+# allowlist fixed so arbitrary diagnostics cannot become parsed metadata.
+ACTIVATION_REASONS = frozenset({
+    "completed", "access_required", "scope_denied", "invalid_arguments",
+    "unknown_tool", "source_unavailable", "quota_exhausted",
+    "meter_unavailable", "internal_failure",
+})
 
 # Explicit automation only. Generic runtimes (node, undici, python-httpx,
 # go-http-client, blank UAs) remain unclassified because real clients use them.
@@ -226,7 +233,7 @@ def funnel_counts(cutoff: float, path: Path = FUNNEL) -> Counter | None:
     return counts
 
 
-def _activation_stat() -> dict:
+def _dispatch_stat() -> dict:
     return {
         "known": 0,
         "success": 0,
@@ -238,6 +245,58 @@ def _activation_stat() -> dict:
     }
 
 
+def _activation_stat() -> dict:
+    # Retain the raw totals and dimensions for historical continuity. The two
+    # disjoint attribution buckets sum to those totals; neither is customers.
+    return {**_dispatch_stat(), "traffic_classes": {
+        "operator_verification": _dispatch_stat(),
+        "unclassified": _dispatch_stat(),
+    }}
+
+
+def _count_dispatch(stat: dict, event: dict) -> None:
+    if event["tool"] == "unknown":
+        stat["invalid"] += 1
+        return
+    stat["known"] += 1
+    stat[event["outcome"]] += 1
+    stat["tools"][event["tool"]] += 1
+    stat["surfaces"][event["surface"]] += 1
+    stat["origins"][event["origin"]] += 1
+
+
+def activation_metadata(suffix: str, *, outcome: str) -> dict[str, str | None]:
+    """Validate optional event fields together; ambiguous metadata fails closed.
+
+    Consumers should pass the text after ACTIVATION_RE's match rather than
+    comparing that text to an exact traffic_class suffix. Raw event counting
+    does not depend on whether these optional fields are valid.
+    """
+    unclassified = {"traffic_class": "unclassified", "reason": None}
+    if len(suffix) > 128 or outcome not in ("success", "error"):
+        return unclassified
+    fields = suffix.strip().split(" ") if suffix.strip() else []
+    if len(fields) > 2:
+        return unclassified
+    metadata = {}
+    for field in fields:
+        key, separator, value = field.partition("=")
+        if not separator or key in metadata:
+            return unclassified
+        if key == "traffic_class":
+            if value not in ("operator_verification", "unclassified"):
+                return unclassified
+        elif key == "reason":
+            if value not in ACTIVATION_REASONS:
+                return unclassified
+            if (value == "completed") != (outcome == "success"):
+                return unclassified
+        else:
+            return unclassified
+        metadata[key] = value
+    return {**unclassified, **metadata}
+
+
 def parse_activation_lines(lines: Iterable[str]) -> dict:
     """Parse only the fixed event grammar; arbitrary journal prose is ignored."""
     stats = defaultdict(_activation_stat)
@@ -246,21 +305,19 @@ def parse_activation_lines(lines: Iterable[str]) -> dict:
         if match:
             event = match.groupdict()
             event["origin"] = event.get("origin") or "unknown"
+            metadata = activation_metadata(
+                line[match.end():], outcome=event["outcome"])
+            traffic_class = metadata["traffic_class"]
         else:
             legacy = LEGACY_UNDERTOW_RE.search(line)
             if not legacy:
                 continue
             event = {"product": "undertow", "origin": "unknown",
                      **legacy.groupdict()}
+            traffic_class = "unclassified"
         stat = stats[event["product"]]
-        if event["tool"] == "unknown":
-            stat["invalid"] += 1
-            continue
-        stat["known"] += 1
-        stat[event["outcome"]] += 1
-        stat["tools"][event["tool"]] += 1
-        stat["surfaces"][event["surface"]] += 1
-        stat["origins"][event["origin"]] += 1
+        _count_dispatch(stat, event)
+        _count_dispatch(stat["traffic_classes"][traffic_class], event)
     return stats
 
 
@@ -301,14 +358,15 @@ def _counter_summary(values: Counter, limit: int = 3) -> str:
 def _activation_summary(product: str, activations: dict | None,
                         armed: dict[str, float], cutoff: float,
                         now: float, window_s: int) -> str:
+    label = "seiche (retired host)" if product == "seiche" else product
     armed_at = armed.get(product)
     if armed_at is None:
-        return f"{product}: n/a — telemetry not armed"
+        return f"{label}: n/a — telemetry not armed"
     coverage_s = max(0.0, now - max(cutoff, armed_at))
     coverage_h = min(window_s, coverage_s) / 3600
     coverage = "" if coverage_s >= window_s - 60 else f"; coverage {coverage_h:.1f}h"
     if activations is None:
-        return f"{product}: n/a — journal query failed{coverage}"
+        return f"{label}: n/a — journal query failed{coverage}"
     stat = activations.get(product, _activation_stat())
     detail = ""
     if stat["known"]:
@@ -317,9 +375,16 @@ def _activation_summary(product: str, activations: dict | None,
         origins = _counter_summary(stat["origins"])
         detail = f"; origins {origins}; tools {tools}; surfaces {surfaces}"
     invalid = f"; invalid probes {stat['invalid']}" if stat["invalid"] else ""
+    attribution = ""
+    for key, description in (("operator_verification", "operator verification"),
+                             ("unclassified", "unclassified")):
+        group = stat["traffic_classes"][key]
+        attribution += (f"; {description} {group['known']} "
+                        f"({group['success']} ok, {group['error']} error, "
+                        f"{group['invalid']} invalid)")
     return (
-        f"{product}: {stat['known']} known calls "
-        f"({stat['success']} ok, {stat['error']} error){invalid}{detail}{coverage}"
+        f"{label}: {stat['known']} raw known-tool events "
+        f"({stat['success']} ok, {stat['error']} error){invalid}{attribution}{detail}{coverage}"
     )
 
 
@@ -330,6 +395,10 @@ def render_digest(*, now: float, window_s: int, edge: dict,
     day = datetime.fromtimestamp(now, timezone.utc).strftime("%d %b")
     hours = window_s / 3600
     lines = [f"📈 Fleet usage — {hours:g}h to {day} (UTC)",
+             "Seiche Railway completion coverage: unavailable in this host digest.",
+             "Known-tool and edge-origin events are not verified external use "
+             "or proof of useful evidence.",
+             "Customer identity, retention and payment attribution: unknown.",
              "Edge traffic (reachability; not tool usage):"]
     transport_posts = 0
     shown = set()
@@ -351,11 +420,11 @@ def render_digest(*, now: float, window_s: int, edge: dict,
             f"{len(stat['ips'])} IPs, known-auto {stat['automation_req']} req/"
             f"{stat['automation_post']} POST"
             f"{auto_detail}, unclassified {unknown}{err}")
-    if len(lines) == 2:
+    if len(lines) == 5:
         lines.append("no edge traffic recorded — check Caddy logging")
     lines.append(f"MCP transport POSTs: {transport_posts} (not activations)")
 
-    lines.append("Actual MCP tool calls (post-dispatch):")
+    lines.append("Recorded MCP dispatches (Seiche: retired host only):")
     lines.extend(_activation_summary(
         product, activations, armed, cutoff, now, window_s)
         for product in ACTIVATION_PRODUCTS)
