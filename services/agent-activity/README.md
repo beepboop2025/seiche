@@ -117,5 +117,4 @@ Primary source references checked 2026-10-14:
 - [Alpaca OAuth](https://docs.alpaca.markets/us/docs/using-oauth2-and-trading-api)
 - [Base public RPC status and limits](https://status.base.org/)
 
-See [operations](ops/RUNBOOK.md), [pilot and commercial validation](PILOT.md),
-and [third-party ABI notice](THIRD_PARTY.md).
+See [operations](ops/RUNBOOK.md) and the [third-party ABI notice](THIRD_PARTY.md).
