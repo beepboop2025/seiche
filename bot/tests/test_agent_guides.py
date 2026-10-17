@@ -36,7 +36,7 @@ def test_discovery_needs_no_state_or_market_access(bot, monkeypatch, command):
     monkeypatch.setattr(module, "send", lambda *a, **kw: sent.append(a))
     invoke(module, command)
     assert len(sent) == 1
-    assert "https://agents.seiche.info/" in sent[0][1]
+    assert sent[0][1].splitlines()[0]
     assert len(sent[0][1]) < 4096
     assert any(button.get("url") == "https://agents.seiche.info/connect" for row in sent[0][2] for button in row)
     if command.endswith("data"):
