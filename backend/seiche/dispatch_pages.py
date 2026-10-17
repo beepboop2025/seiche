@@ -826,6 +826,19 @@ The Telegram delivery surfaces are https://t.me/seiche_desk_bot for the bot
 and https://t.me/LiquidityLabDesk for the public channel. They deliver the
 same product; the callable contract remains the MCP server above.
 
+## Current packages and agent integrations
+
+Reviewed 18 October 2026: Seiche Python/MCP 0.16.5 provides compact funding
+context and exact metric retrieval with compatible diagnostics. Python 3.12 or
+later is required. Package publication, hosted deployment identity and source
+observation freshness remain separate evidence states.
+
+- [Seiche 0.16.5 on PyPI](https://pypi.org/project/seiche/0.16.5/)
+- [Accepted release source](https://github.com/beepboop2025/seiche/tree/793dc42b391141c20aee911f6d18f000bd3feb8a)
+- [Current release and discovery hub](https://beepboop2025.github.io/financial-evidence-skills/distribution/): Financial Evidence Python 0.1.13, npm AI SDK 0.1.2, MCP/API setup and existing marketplace listings. NoiseFloor local Python/MCP is 0.4.2; its hosted service remains 0.4.0.
+- [Seiche Glama repository listing](https://glama.ai/mcp/servers/beepboop2025/seiche) and [separate hosted connector](https://glama.ai/mcp/connectors/io.github.beepboop2025/seiche)
+- [Dated technical usage](https://liquilens.in/usage/2026-10-17/): application windows end 17 October 2026 at 23:18 UTC. Unclassified calls can include operator checks and monitoring; customer adoption and revenue remain unverified.
+
 ## Related products
 
 - [LiquiLens](https://liquilens.in/): the institution layer, ranking which banks and lenders should feel funding stress first
