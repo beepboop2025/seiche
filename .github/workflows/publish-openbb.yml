@@ -121,7 +121,7 @@ jobs:
           echo "artifact_name=openbb-seiche-candidate-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Upload the reproducible candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.candidate_identity.outputs.artifact_name }}
           path: openbb-candidate/
@@ -199,7 +199,7 @@ jobs:
           test "$OPENBB_VERSION" = "$package_version"
 
       - name: Download the untrusted build candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.build.outputs.candidate_artifact_name }}
           path: openbb-candidate
@@ -271,7 +271,7 @@ jobs:
           sha256sum openbb-verified/*
 
       - name: Upload the immutable verified OpenBB distributions
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.artifact_identity.outputs.verified_artifact_name }}
           path: openbb-verified/
@@ -297,7 +297,7 @@ jobs:
           python-version: "3.12.12"
 
       - name: Download the immutable verified distributions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.verify.outputs.verified_artifact_name }}
           path: openbb-verified
@@ -385,7 +385,7 @@ jobs:
       EXPECTED_SDIST_SHA256: ${{ needs.verify.outputs.sdist_sha256 }}
     steps:
       - name: Download the immutable verified distributions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.verify.outputs.verified_artifact_name }}
           path: openbb-verified
