@@ -20,8 +20,8 @@ headline GOF failure — a constant background rate absorbing regime drift
 into fake self-excitation — is the reason Microseism's baseline is
 calendar-gated (Swell's classify_days buckets) and the null it must beat is
 a calendar-Poisson, in-sample (LR test) and walk-forward (Brier/AUROC).
-This also resolves IDEAS.md #13's identification question
-(Filimonov–Sornette vs Hardiman–Bouchaud) with the calendar gate.
+The calendar gate distinguishes the two identification methods
+(Filimonov–Sornette and Hardiman–Bouchaud).
 
 First real-data read (2026-07-10, catalog ≥2bp, n=357 shocks): branching
 0.58 (LR p≈0 vs the calendar null), aftershock half-life ~8bd, and the
@@ -70,7 +70,7 @@ Read for its multi-layer fragility framing. Verdict: weaker than the title —
 the implemented system is a correlation-layer GNN with no closed-form
 fragility index, erratic early-warning results (COVID AUROC 0.000, FPR 1.0
 in two of three crises), and no lead-time numbers. Nothing to adopt that
-Hydrophone (absorption ratio) and Basin Tomography (IDEAS.md #10) don't
+Hydrophone (absorption ratio) and Basin Tomography don't
 already cover better. Kept as a reminder that "graph + GNN" is not by itself
 an early-warning method.
 

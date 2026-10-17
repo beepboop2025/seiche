@@ -1,4 +1,4 @@
-"""Microseism — the shock catalog nobody kept (IDEAS.md #13 made real).
+"""Microseism — the shock catalog nobody kept.
 
 Seismology keeps a catalog of every tremor, not just the earthquakes, because
 aftershock statistics — does one shock raise the hazard of the next? — are

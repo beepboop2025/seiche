@@ -1039,7 +1039,7 @@ ROGUE_BOOT_N = 400             # bootstrap reps for the CIs (fixed seed)
 ROGUE_SEED = 7
 ROGUE_SENS_PCTLS = (70.0, 80.0, 85.0, 90.0)  # threshold-sensitivity table
 
-# Microseism — the shock catalog (IDEAS.md #13). Calendar-gated Hawkes on
+# Microseism — the shock catalog. Calendar-gated Hawkes on
 # the SHARED pop statistic: micro-shocks >= MICRO_POP_BP (not declustered —
 # clustering IS the signal), baseline = expanding calendar-bucket rates
 # (Swell's classify_days, shrunk by MICRO_SHRINK_K pseudo-days), branching

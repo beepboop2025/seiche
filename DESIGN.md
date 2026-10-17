@@ -1,36 +1,7 @@
-# Seiche — Design Document
+# Seiche design reference
 
-> **Historical.** 2026-07-06 v1 design log — not current product documentation. Current source version: 0.13.1 estuary; verify the live release identity separately.
-
-> A **seiche** is a standing wave in an enclosed body of water: invisible from the shore,
-> until it sloshes over the edge. Funding stress behaves the same way. This tool detects
-> the slosh before it crests.
-
-**One-line pitch:** The opinionated funding-stress and leveraged-positioning terminal for
-people who can't expense Bloomberg — money market plumbing + capital market fragility in
-one pane, built entirely on free keyless public APIs.
-
-**Date:** 2026-07-06 · **Status:** v1 build
-
----
-
-## 1. Why this, why now (research verdict, 2026-07)
-
-- **Regime:** QT ended Dec 1 2025. ON RRP ≈ $0–7B — the shock absorber is gone. Reserves
-  ~$2.97T are testing the "ample" floor. Fed is doing Reserve Management Purchases
-  (~$40B/mo bills). Fed funds 3.50–3.75%, hawkish hold. Every Treasury settlement now
-  hits reserves directly.
-- **Every 2026-era stress event was front-run by plumbing, not price:** Sep 15 2025
-  (SOFR 4.51%, +18bp over EFFR), mid-Sep 2025 (SRF $18.5B), Oct 31 2025 (SRF $50B),
-  Dec 31 2025 (SRF $74.6B record, repo 4.0%), Apr 2025 basis unwind, Mar 2026
-  correlation shock. Screens looked calm until each break.
-- **The RV complex migrated and tooling didn't:** basis trade ~$1–1.5T (sources disagree
-  — itself a gap), swap-spread trade doubled to ~$631B. HF net repo borrowing ~$1.8T.
-  The Fed is only "experimenting" with fusing futures OI × dealer repo. No vendor owns it.
-- **White space (verified against incumbents + open source):** nobody fuses
-  FRED + OFR STFM + NY Fed Markets + Treasury FiscalData + CFTC TFF into a
-  forward-looking, alerting, provenance-honest instrument. Prior art is single-formula
-  net-liquidity charts. Bloomberg has the data and no opinion at $32k/seat.
+Historical implementation notes. Use the current API documentation and live
+release identity for supported interfaces and deployed behavior.
 
 ## 2. The seven engines (the inventions)
 
@@ -247,12 +218,8 @@ Driven by an honest self-review. Every criticism got a fix or a declaration:
 
 # v2.3 addendum — the forecast layer (2026-07-07)
 
-Built in tandem across two Claude Code sessions: session A shipped **Tide
-Tables** (analog forecasting, PR #1) with a pattern-first roadmap
-(docs/IDEAS.md); session B built on top of that branch, shipping the roadmap's
-highest-ranked items plus the piece neither list had. Design intent: v2 told
-you how stressed the basin is TODAY; v2.3 tells you WHEN — with every forecast
-carrying its own walk-forward evidence.
+Tide Tables supplies analog forecasting. Forecasts retain their own
+walk-forward evidence alongside the current funding-state reading.
 
 **1. Undertow — the damping gauge (critical slowing down).** Systems
 approaching a regime shift relax more slowly (Scheffer et al., Nature 2009 —

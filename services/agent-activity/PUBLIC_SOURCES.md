@@ -1,16 +1,16 @@
-# Building the public evidence product before partnerships
+# Public source coverage and attribution
 
-Reviewed 14 October 2026. Public-first collection can start before negotiated
-platform partnerships. Ordinary API terms, infrastructure costs, operator consent
-and the right to redistribute data remain separate questions.
+Public-source availability, operator consent and redistribution rights are
+separate requirements. The following records retain their stated coverage and
+attribution limits.
 
-## What we can collect
+## Source evidence and limits
 
 | Route | Obtainable evidence | Attribution boundary | Current implementation |
 | --- | --- | --- | --- |
 | Olas marketplace contract on Gnosis | Finalized marketplace request and delivery event logs, transaction references, chain timestamps and source receipts | Protocol association, not independently verified AI authorship, service quality or unique buyers | Public starter RPC collector; no credentials or partnership |
 | Virtuals ACP on Base | Selected contract job events | A protocol event is not verified revenue or AI authorship | Collector exists; public Base endpoint currently returns 429 |
-| ERC-8004 registries | Registered identities and declared services; wallet linkage when supported by the deployed registry | Registration and wallet control do not prove autonomous trading | Rolling registry metadata sampling; wallet attribution enrichment is future work |
+| ERC-8004 registries | Registered identities and declared services; wallet linkage when supported by the deployed registry | Registration and wallet control do not prove autonomous trading | Rolling registry metadata sampling; independent wallet attribution is not established |
 | x402 discovery | Paid-service listings and facilitator-reported activity | A service or payer is not necessarily an agent; listings are not purchase receipts | Rolling catalog sampling |
 | Hyperliquid public API | Public market trades, and documented account fills for an identified public account | A trader is not automatically an AI agent; API agent wallets can mean signing delegates | Existing reviewed-account collector; market-read feasibility checked separately |
 | Polymarket public Data API | Public trade records and account activity | No inherent AI identifier; version, history and reuse limits need source-specific review | Five-record read verified; not admitted to recurring production collection |
@@ -20,33 +20,6 @@ and the right to redistribute data remain separate questions.
 The Olas contract configuration in the maintained repository supersedes legacy
 addresses still present in some documentation. Source review must pin both the
 contract and event definitions, rather than copying an address from an old example.
-
-## Open-source components and their role
-
-- The existing collector, encrypted contribution SDK, SQLite evidence store and
-  dashboard are in this repository under AGPL-3.0-or-later.
-- [web3.py](https://github.com/ApeWorX/web3.py) provides MIT-licensed Ethereum
-  interfaces. [Ponder](https://github.com/ponder-sh/ponder) is an open-source
-  indexing option if we later need a larger indexed application. Neither gives
-  private account access or creates a data license. The initial collector can
-  use ordinary HTTP and pinned ABI material without adding these dependencies.
-- [Olas marketplace contracts](https://github.com/valory-xyz/autonolas-marketplace)
-  provide the event definitions and current deployment configuration. Its MIT
-  notice is retained in `THIRD_PARTY.md`.
-- [Running our own Base node](https://docs.base.org/specifications/node-operators/run-a-node)
-  reduces dependence on a hosted RPC provider. It needs substantial storage,
-  reliable connectivity and maintenance; it is not a zero-cost shortcut. Base's
-  [hardware guidance](https://docs.base.org/specifications/node-operators/performance-tuning)
-  recommends 8+ CPU cores, at least 32 GB RAM and local NVMe storage sized for
-  current chain data and restoration headroom. No node has been provisioned.
-- A self-service RPC account can be obtained without a strategic data partnership.
-  [Coinbase Node](https://docs.cdp.coinbase.com/data/node/overview) documents a free
-  allowance with metered use beyond it. Availability, budget and terms must be
-  checked when provisioning. No account, payment plan or API key was created.
-
-Open-source licensing covers software. Public API availability, collection
-permission, attribution, publication and commercial redistribution are evaluated
-independently. Record-level resale and shared training remain off.
 
 ## Measurement rules
 
@@ -65,27 +38,6 @@ independently. Record-level resale and shared training remain off.
    a count of completed jobs or revenue.
 5. Report coverage only for named contracts, topics, accounts and time windows.
    The worldwide population and our share of it remain unknown.
-
-## Practical rollout
-
-First collect the Olas public event history prospectively and verify automatic
-recurrence. Continue existing registry and service discovery. Then obtain an
-ordinary Base RPC connection, or provision a suitable node, to activate ACP at a
-reliable cadence. Do not repeatedly rotate public endpoints around errors.
-
-Next add reviewed account links and consented runtime instrumentation. Independent
-operators can opt in directly through a standard participation flow; a negotiated
-agreement with their broker or agent-platform vendor is not always necessary to
-access their own authorized records. Platform API rules still apply.
-
-Expand to other public protocols only after pinning current deployments, reading
-the applicable API terms and proving data quality. Use a narrow useful product:
-protocol activity history, source coverage, attributed agent dossiers where
-evidence supports them, and reproducible research extracts with clear rights.
-Do not wait for a global census or promise a worldwide majority.
-
-Commercial redistribution, institutional qualification and model training require
-their own acceptance decisions. This public pilot does not activate those gates.
 
 ## Primary references
 
