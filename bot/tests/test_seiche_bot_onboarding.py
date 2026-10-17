@@ -33,8 +33,8 @@ def test_profile_metadata_fits_telegram_limits_and_names_the_audience():
     assert "Seiche" in bot.BOT_DISPLAY_NAME
     assert bot.BOT_DISPLAY_NAME != "Seiche"
     assert "dollar-funding" in bot.BOT_SHORT_DESCRIPTION.lower()
-    assert "11:30 UTC" in bot.BOT_SHORT_DESCRIPTION
-    assert "state-change alerts" in bot.BOT_SHORT_DESCRIPTION
+    assert "AI agents" in bot.BOT_SHORT_DESCRIPTION
+    assert "state-change alerts" in bot.BOT_DESCRIPTION
     assert "research only" in bot.BOT_SHORT_DESCRIPTION.lower()
     assert "joint" not in bot.BOT_SHORT_DESCRIPTION.lower()
     assert "joint" not in bot.BOT_DESCRIPTION.lower()
@@ -62,7 +62,7 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
     assert calls[1][1]["commands"] is bot.BOT_COMMANDS
     names = [command["command"] for command in calls[1][1]["commands"]]
     assert names == [
-        "menu", "funding", "trend", "community", "settings",
+        "agents", "updates", "data", "menu", "funding", "trend", "community", "settings",
         "research",
         "now",
         "snap",
@@ -78,7 +78,7 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
         "start",
         "stop",
     ]
-    assert 8 <= len(names) <= 20
+    assert 8 <= len(names) <= 24
     assert any(
         command == {"command": "help",
                     "description": "Full command list and desk guide"}
