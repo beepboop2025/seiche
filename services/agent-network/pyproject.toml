@@ -9,7 +9,7 @@ description = "Permissioned financial-agent identities, contacts and durable evi
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
 dependencies = [
-  "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "cryptography>=44,<51",
+  "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "cryptography>=50,<51",
   "sqlalchemy>=2.0,<3", "psycopg[binary]>=3.2,<4", "mcp>=1.30,<2",
 ]
 
