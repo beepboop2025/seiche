@@ -2473,6 +2473,79 @@ def _safe_record_activation(chat_id: int, command: str) -> bool:
 HELP += '\n\n/menu — research workflows · /funding — dated funding changes · /trend SOFR — source history · /community — discussion · /settings — delivery controls'
 
 
+
+
+# Static discovery only: no subscriptions, data enrollment, market reads or orders.
+AGENT_GUIDE_REPLIES = {
+    '/agents': """Build with the LiquiLens evidence platform
+
+Connect hosted MCP and REST tools for institution evidence, funding, market liquidity, China/public-source research and public economic context.
+
+1. Open https://agents.seiche.info/connect
+2. Choose a product and copy its connection and first task.
+3. Ask for source dates, missing inputs and evidence limits.
+
+Example: Review dollar funding, a covered bank and BTC exit liquidity as separate findings; identify what is stale or unavailable.
+
+Public research tools need no account. Optional private workspaces support agent collaboration. Client/model costs and fair-use limits may apply.
+
+Use this as evidence infrastructure for research, monitoring and human review. These tools do not authorize credit, execute trades, move funds or promise returns.
+
+/updates — recent upgrades
+/data — participation and source rights""",
+    '/updates': """Product update | 18 October 2026
+
+AVAILABLE: hosted MCP/API connections for AI agents; bank-filing monitoring; dated funding context and exact source metrics; size-specific exit-liquidity research; persistent clients and source-status streams.
+
+WORKFLOW KIT: recurring research hooks, saved comparisons, usefulness feedback, linked outcomes and optional delivery, with Python, LangGraph and AI SDK examples. Follow the current workflow guide and its version requirements.
+
+ECONOMIC CONTEXT: Wake adds aggregate AI-usage and retail-commerce observations. These describe their source coverage, not identified buyers or completed agent trades.
+
+PAPER RESEARCH: controlled rehearsals and Riptide paper records support review. These tools do not place live orders or establish profitability.
+
+Connect: https://agents.seiche.info/connect
+Workflow guide: https://github.com/beepboop2025/financial-evidence-skills/blob/main/docs/start/agent-workflows.md
+
+/data — current participation and source-rights rules.""",
+    '/data': """Agent data | choice, provenance and permissions
+
+Public tools work without contributing data. Joining a Telegram group or opening these guides does not enroll you in data sharing.
+
+The workspace participation contract supports owner-enabled, structured task and outcome reports. They are self-reported, not proof of trades or purchases. Active reports can be withdrawn and erased under that contract.
+
+Public-source observations and Wake's aggregate AI-usage/retail context retain their coverage limits. Source access does not grant training or resale rights. Private evidence, research training, commercial training and publication require their own permission and review.
+
+Use the documented workspace controls for participation. Do not submit prompts, private chats, portfolios, transaction details or credentials in these groups.
+
+Participation contract: https://agents.seiche.info/v1/participation/contract
+Learning and permission guide: https://github.com/beepboop2025/financial-evidence-skills/blob/main/docs/start/learning.md""",
+}
+AGENT_GUIDE_KEYBOARD = [
+    [
+        {
+            "text": "Connect an AI agent",
+            "url": "https://agents.seiche.info/connect"
+        },
+        {
+            "text": "Try a workflow",
+            "url": "https://beepboop2025.github.io/financial-evidence-skills/start/workflows.html"
+        }
+    ],
+    [
+        {
+            "text": "Data participation rules",
+            "url": "https://agents.seiche.info/v1/participation/contract"
+        },
+        {
+            "text": "Workflow source guide",
+            "url": "https://github.com/beepboop2025/financial-evidence-skills/blob/main/docs/start/agent-workflows.md"
+        }
+    ]
+]
+
+
+HELP += "\n\nAI-agent platform: /agents\nRecent upgrades: /updates\nData participation and rights: /data"
+
 def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     raw_cmd, _, arg = text.strip().partition(" ")
     cmd, _, suffix = raw_cmd.partition("@")
@@ -2482,6 +2555,14 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     # A plain question in a private chat IS /ask — the desk answers,
     # grounded in the live board. Groups keep command-only discipline:
     # non-command group chatter gets silence, never a help wall.
+    guide_command = cmd
+    if cmd == "/start" and arg.strip() in {
+        "tool_agents", "tool_updates", "tool_data",
+    }:
+        guide_command = "/" + arg.strip()[5:]
+    if guide_command in AGENT_GUIDE_REPLIES:
+        send(chat_id, AGENT_GUIDE_REPLIES[guide_command], AGENT_GUIDE_KEYBOARD)
+        return
     if not cmd.startswith("/"):
         if chat_type == "private" and text.strip():
             cmd, arg = "/ask", text.strip()
@@ -2882,18 +2963,12 @@ def run_alert_scan() -> None:
 
 
 BOT_DISPLAY_NAME = "Seiche | Dollar Funding Desk"
-BOT_SHORT_DESCRIPTION = (
-    "Public US dollar-funding board, one daily 11:30 UTC letter, "
-    "state-change alerts. Research only."
-)
-BOT_DESCRIPTION = (
-    "Public US dollar-funding board from Fed, NY Fed, OFR and Treasury "
-    "records. /funding for rates and cash buffers; /trend for history; "
-    "/community to discuss evidence. One daily letter at 11:30 UTC, plus state-change alerts. "
-    "Research context only; not investment advice. Free, no sign-in: "
-    "seiche.info"
-)
+BOT_SHORT_DESCRIPTION = "Dollar-funding evidence for people and AI agents. Dated rates, source histories and MCP. Research only."
+BOT_DESCRIPTION = "Funding and money-market evidence for people and AI agents. /funding reads dated rates and cash buffers; /trend follows source history. /agents connects MCP/API workflows; /updates shows new capabilities; /data explains participation and source rights. Public research needs no account. /start follows the 11:30 UTC letter and state-change alerts; /stop unsubscribes. Research context, no trade execution. https://agents.seiche.info/connect"
 BOT_COMMANDS = [
+    {"command": "agents", "description": "Connect AI agents to the evidence platform"},
+    {"command": "updates", "description": "Recent upgrades and available research tools"},
+    {"command": "data", "description": "Optional agent data: permissions and limits"},
     {"command": "menu", "description": "Choose a funding research workflow"},
     {"command": "funding", "description": "Dated rates, cash buffers and funding changes"},
     {"command": "trend", "description": "20 published observations: /trend SOFR"},
