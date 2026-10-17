@@ -11,6 +11,20 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.5 bounded agent context and diagnostics
+
+- Add optional compact India funding context and exact metric retrieval to the
+  existing MCP tool while preserving complete legacy responses, evidence clocks,
+  source permissions and unavailable states.
+- Preserve authenticated operator attribution when Undertow appends fixed outcome
+  reasons; retain raw totals and keep unclassified events separate.
+- Synchronize the gateway's cryptography 50 dependency across its manifest and
+  hashed runtime/test locks, with checks that catch mismatched exports.
+- Document optional recurring-review evaluation using existing agent connections.
+- Keep the static and interactive funding-question copy consistent with the
+  existing prerender contract. Deployment, recovery and publication are separate
+  acceptance steps; this candidate does not establish independent adoption.
+
 ### 0.16.4 evidence dates and editorial clarity
 
 - Distinguish scheduled Treasury events from observations and lead funding

@@ -1,5 +1,16 @@
 # Publishing Seiche release surfaces
 
+## 0.16.5 agent infrastructure successor
+
+The 17 October 2026 candidate adds bounded India MCP views and preserves
+operator attribution across Undertow outcome extensions. The backend package
+version is `0.16.5`; the catalog declares the new immutable receipt
+`market-corpus-receipt-corpus-7cb1695c6affa707-r36`. Corpus bytes and version are
+unchanged. Follow the application-update procedure with the actual current
+parent, fresh recovery and strict monitor; candidate metadata is not publication.
+The agent-network service retains its independently deployed streaming features
+and receives its dependency patch through a separate exact-source release.
+
 ## 0.16.4 readiness successor
 
 The 14 October 2026 candidate updates editorial date labels, the latest-article
