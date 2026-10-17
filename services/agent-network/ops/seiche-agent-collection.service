@@ -1,0 +1,23 @@
+[Unit]
+Description=Collect explicitly admitted public Wake feeds
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current-wake
+Environment=PYTHONPATH=/opt/seiche-agent-network/current-wake/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=WAKE_FLEET_REPORT=/var/lib/seiche-agent-network/fleet/digest.json
+EnvironmentFile=-/etc/seiche-agent-radar.env
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m wake.cli collect --config /var/lib/seiche-agent-network/wake/config.json --tenant liquilens --include-fleet
+ExecStartPost=/opt/seiche-agent-network/venv/bin/python -m wake.cli activity-export --config /var/lib/seiche-agent-network/wake/config.json --tenant liquilens --output /var/lib/seiche-agent-network/wake/agent-activity.json
+TimeoutStartSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network/wake
+MemoryMax=256M

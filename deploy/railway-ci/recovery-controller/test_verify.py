@@ -17,6 +17,41 @@ import native_docker
 import verify
 
 
+class CapacityTests(unittest.TestCase):
+    def test_recurring_growth_is_bounded_even_when_scratch_space_is_available(self):
+        import recurring
+        cases = ((3 * 1024**3 + 1, True),
+                 (6 * 1024**3 + 32 * 1024**2, True),
+                 (6 * 1024**3 + 32 * 1024**2 + 1, False))
+        for size, accepted in cases:
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                (root / "proof").mkdir()
+                item = root / "bundle"
+                # A sparse file exercises the actual stat-based size gate without
+                # writing a multi-gigabyte test fixture or skipping any code path.
+                with item.open("wb") as stream:
+                    stream.truncate(size)
+                with mock.patch.object(verify.shutil, "disk_usage", return_value=mock.Mock(free=64 * 1024**3)):
+                    if accepted:
+                        recurring.seal_restore_inputs(root)
+                        self.assertEqual(item.stat().st_mode & 0o777, 0o444)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "bounded restore size"):
+                            recurring.seal_restore_inputs(root)
+
+    def test_restore_reserve_uses_the_selected_filesystem_and_rejects_one_byte_short(self):
+        total = 3 * 1024**3 + 1
+        required = total * 5 + 1024**3
+        root = Path("/different-mounted-scratch/restore")
+        with mock.patch.object(verify.shutil, "disk_usage", return_value=mock.Mock(free=required)) as usage:
+            verify.require_restore_space(root, total)
+            usage.assert_called_once_with(root)
+        with mock.patch.object(verify.shutil, "disk_usage", return_value=mock.Mock(free=required - 1)):
+            with self.assertRaisesRegex(RuntimeError, "insufficient bounded scratch"):
+                verify.require_restore_space(root, total)
+
+
 class RecoveryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

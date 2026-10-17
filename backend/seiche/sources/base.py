@@ -31,23 +31,25 @@ class Series:
 
     @property
     def asof(self) -> str | None:
-        if self.points.empty:
+        observed = self.points.dropna()
+        if observed.empty:
             return None
-        return self.points.index[-1].date().isoformat()
+        return observed.index[-1].date().isoformat()
 
     @property
     def staleness(self) -> str:
         """fresh | aging | stale | dead — measured against expected cadence."""
-        if self.points.empty:
+        asof = self.asof
+        if asof is None:
             return "dead"
         policy = publication_freshness(
-            self.source, self.remote_id, self.freq, self.asof,
+            self.source, self.remote_id, self.freq, asof,
             now=datetime.now(timezone.utc),
         )
         if policy is not None:
             return policy["staleness"]
         grace = STALENESS_GRACE_DAYS.get(self.freq, 7)
-        age = (datetime.now(timezone.utc).date() - self.points.index[-1].date()).days
+        age = (datetime.now(timezone.utc).date() - pd.Timestamp(asof).date()).days
         if age <= grace:
             return "fresh"
         if age <= grace * 2:
@@ -57,16 +59,19 @@ class Series:
         return "dead"
 
     def provenance(self) -> dict:
+        # Source tables may append dated placeholders before an observation is
+        # available. Their dates must not freshen the values consumed/exported.
+        asof = self.asof
         policy = publication_freshness(
-            self.source, self.remote_id, self.freq, self.asof,
+            self.source, self.remote_id, self.freq, asof,
             now=datetime.now(timezone.utc),
         )
         grace = STALENESS_GRACE_DAYS.get(self.freq, 7)
         age_days = None
-        if self.asof is not None and not pd.isna(self.points.index[-1]):
+        if asof is not None and not pd.isna(pd.Timestamp(asof)):
             age_days = max(
                 0,
-                (datetime.now(timezone.utc).date() - self.points.index[-1].date()).days,
+                (datetime.now(timezone.utc).date() - pd.Timestamp(asof).date()).days,
             )
         return {
             "mnemonic": self.mnemonic,
@@ -75,13 +80,13 @@ class Series:
             "label": self.label,
             "unit": self.unit,
             "freq": self.freq,
-            "asof": self.asof,
+            "asof": asof,
             "fetched_at": self.fetched_at,
             "staleness": policy["staleness"] if policy is not None else self.staleness,
             "age_days": age_days,
             "freshness_grace_days": grace,
             "freshness_basis": "age of latest observation versus this series' native publication cadence",
-            "n_obs": int(len(self.points)),
+            "n_obs": int(self.points.count()),
             **(policy or {}),
         }
 

@@ -85,6 +85,21 @@ def test_material_change_publishes_current_argument(fake_snap):
     )
 
 
+def test_scheduled_settlement_is_not_presented_as_an_observation(fake_snap):
+    snap = _current_snap(fake_snap)
+    snap["editorial"]["evidence"][0].update({
+        "asof": "2026-07-31",
+        "evidence_type": "scheduled_event",
+    })
+    story = _story(snap)
+    story["newsworthiness"]["decision"] = "full_story"
+    article = build_article(snap, story, date="2026-07-10", model_config=None)
+    assert "Scheduled event date: 2026-07-31" in article["body_md"]
+    assert "Evidence date: 2026-07-09" in article["body_md"]
+    assert "observation is dated 2026-07-31" not in article["body_md"]
+    assert article["quality_gate"]["status"] == "PASS"
+
+
 def test_unsupported_model_number_forces_safe_fallback(fake_snap, monkeypatch):
     story = _story(fake_snap)
     fallback = build_article(fake_snap, story, date="2026-07-10", model_config=None)

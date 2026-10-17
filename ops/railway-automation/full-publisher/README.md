@@ -7,7 +7,7 @@ The separate frontend-only receipt cannot authorize new engine output.
 No repository autodeploy or public endpoint. Build and install commands execute
 as UID10001 without deployment credentials; all descendants are stopped before
 bounded regular-file output is sealed. Git and Cloudflare writes are performed
-only by the immutable reviewed controller after fresh current-main checks.
+only by the immutable reviewed controller after fresh selected-source checks.
 
 Sealed output lives in a new private directory under the trusted release
 checkout, so the original catalog verifier's root-containment and exact-byte
@@ -23,6 +23,28 @@ volume. The original four-hour cron is `23 2,6,10,14,18,22 * * *`, restart NEVER
 one replica, 5400-second total deadline. Activate its schedule only after a full
 preparation/publication proof and coordinated retirement of the old publisher.
 
+## Approved-source refresh mode
+
+`PUBLICATION_SOURCE_MODE=receipt` selects the exact commit named by the existing
+`PUBLICATION_EQUIVALENCE_TAG`. The remote ref must be an annotated tag whose
+peeled commit equals its full-SHA suffix, and that commit must already be an
+ancestor of repository main. The unchanged signed equivalence verifier then
+authenticates the receipt, controller, engine and finite desk-data snapshot;
+ref selection alone grants no publication authority. All package, runtime,
+artifact, mirror ownership and public-byte checks still run.
+
+This mode refreshes data with the approved engine and frontend even when main
+contains unreleased monitoring or application changes. It does not publish those
+changes or pick up later editorial commits. A new code or desk-data snapshot
+requires a new reviewed receipt and explicit pin update. The controller checks
+the selected ref again before every write and public verification; a missing,
+lightweight or moved-to-another-source tag fails closed, without falling back to
+main. Source-selection logs and durable acceptance record both the selected
+publication source and the separately observed main SHA.
+
+The default remains `PUBLICATION_SOURCE_MODE=main`, retaining the original
+current-main checks and approved desk-descendant behavior. Unknown modes fail.
+
 GDELT history is copied as bounded JSON and retained only after successful
 publication. Full tests may be reused only for the identical source and controller
 that completed publication. Every data generation still runs the release gate,
@@ -31,6 +53,28 @@ renderers, frontend tests/build, artifact gate and public dataset byte proof.
 Build bundle includes the exact reviewed publish.yml, verifier hash manifest,
 controller source receipt, known hosts and hash-locked social-card requirements.
 The original GitHub workflow remains active until an actual passing replacement.
+
+## Exact catalog-receipt publication
+
+`PUBLICATION_SOURCE_MODE=catalog` selects the annotated tag named by
+`PUBLICATION_CATALOG_RECEIPT_TAG`. Its peeled commit must equal the immutable
+controller bundle's source SHA, already merged into main. The source catalog
+must declare that same receipt. Missing, lightweight, moved or conflicting refs
+stop selection; this mode refuses a separate engine pin or equivalence tag.
+
+This is the ordinary full publication path with a pinned source, including
+static documentation from `frontend/public`. It does not use or enlarge the
+frontend-only overlay contract. The catalog gate still authenticates the pinned
+owner signature, exact receipt subject, signed Seiche and corpus versions, PyPI
+artifacts, hosted runtime and deep corpus evidence before building. All four
+verifier hashes remain bound to the reviewed controller. Full tests, sealed
+outputs, recovery and public-byte proof remain required. Source selection alone
+does not authorize publication.
+
+A newly approved publication requires a new receipt generation and controller
+bundle. Old tags remain immutable. Later main commits cannot enter a scheduled
+refresh through this receipt. Keep only this publisher scheduled after its full
+acceptance, and retain the previous controller and variable values for recovery.
 
 ## Bounded engine projection
 
@@ -75,10 +119,18 @@ checks the shell, referenced assets, sealed overview, catalog, declared absence
 and exact CSP in addition to the ordinary dataset proof. Thus a recurring data
 refresh retains the separately released frontend instead of restoring R's UI.
 
+Before that strict frontend proof, a bounded propagation check requires two
+consecutive observations of the sealed root and overview bytes on the canonical
+domain. It checks current source and mirror ownership each round, stops after
+60 seconds or ten observations, and never repeats a public write. Redirects,
+oversized responses and non-temporary HTTP failures stop immediately. The
+original signed verifier remains unchanged and still checks the full manifest;
+propagation readiness alone does not establish publication acceptance.
+
 Retained identity separates `publicationSourceSha` H, `controllerSourceSha` C,
 `engineSourceSha`/`rendererSourceSha` R, source-equivalence D, the input-manifest
 and desk-overlay digests, projection counts and live runtime identity. Main
-checks always compare H, including before each public write and after public
+checks always compare the selected H, including before each public write and after public
 verification; mirror compare-and-swap checks bind those writes to the observed
 mirror head. The old GitHub full-publish workflow does not consume D and stays
 incompatible with this new path. Retire it only after a replacement's complete

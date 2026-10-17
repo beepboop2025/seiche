@@ -467,6 +467,7 @@ STABLE_TOP_N = 6               # stablecoins shown on the peg board
 PEG_DEV_FLAG_BP = 30.0         # |peg deviation| worth flagging
 STABLE_DRAIN_FLAG_PCT = -3.0   # 30d total-mcap change that reads as redemptions
 
+# Check slow official publications daily; retain their monthly/quarterly observation clocks.
 OFR_SERIES = [
     # TGCR/BGCR are 404 on FRED's CSV endpoint — sourced from OFR instead.
     SeriesSpec("BGCR", "ofr", "FNYR-BGCR-A", "Broad general collateral rate", "%", "D", 360),
@@ -475,10 +476,10 @@ OFR_SERIES = [
     SeriesSpec("TRI_VOL", "ofr", "REPO-TRI_TV_TOT-P", "Tri-party repo total volume (preliminary)", "$B", "D", 360),
     SeriesSpec("DVP_RATE_OO", "ofr", "REPO-DVP_AR_OO-P", "DVP overnight/open avg rate", "%", "D", 360),
     SeriesSpec("TRI_RATE_OO", "ofr", "REPO-TRI_AR_OO-P", "Tri-party overnight/open avg rate", "%", "D", 360),
-    SeriesSpec("MMF_TOT", "ofr", "MMF-MMF_TOT-M", "Money market fund total assets", "$B", "M", 10080),
-    SeriesSpec("MMF_REPO_FICC", "ofr", "MMF-MMF_RP_wFICC-M", "MMF repo with FICC (sponsored)", "$B", "M", 10080),
-    SeriesSpec("MMF_REPO_FED", "ofr", "MMF-MMF_RP_wFR-M", "MMF repo with the Fed (RRP)", "$B", "M", 10080),
-    SeriesSpec("MMF_REPO_TOT", "ofr", "MMF-MMF_RP_TOT-M", "MMF total repo lending", "$B", "M", 10080),
+    SeriesSpec("MMF_TOT", "ofr", "MMF-MMF_TOT-M", "Money market fund total assets", "$B", "M", 1440),
+    SeriesSpec("MMF_REPO_FICC", "ofr", "MMF-MMF_RP_wFICC-M", "MMF repo with FICC (sponsored)", "$B", "M", 1440),
+    SeriesSpec("MMF_REPO_FED", "ofr", "MMF-MMF_RP_wFR-M", "MMF repo with the Fed (RRP)", "$B", "M", 1440),
+    SeriesSpec("MMF_REPO_TOT", "ofr", "MMF-MMF_RP_TOT-M", "MMF total repo lending", "$B", "M", 1440),
 ]
 
 # ---------------------------------------------------------------------------
@@ -586,17 +587,17 @@ CRYPTO_SERIES = [
 # loud instead of serving stale). remote_id = {dataflow}/{version}/{key}.
 BIS_SERIES = [
     SeriesSpec("GLI_OFFSHORE_USD", "bis", "WS_GLI/1.0/Q.USD.3P.N.A.I.B.USD",
-               "USD credit to non-banks outside the US (BIS GLI)", "$M", "QL", 10080, start="2000-01-01"),
+               "USD credit to non-banks outside the US (BIS GLI)", "$M", "QL", 1440, start="2000-01-01"),
     SeriesSpec("GLI_OFFSHORE_LOANS", "bis", "WS_GLI/1.0/Q.USD.3P.N.B.I.G.USD",
-               "USD bank loans to non-banks outside the US", "$M", "QL", 10080, start="2000-01-01"),
+               "USD bank loans to non-banks outside the US", "$M", "QL", 1440, start="2000-01-01"),
     SeriesSpec("GLI_OFFSHORE_DEBT", "bis", "WS_GLI/1.0/Q.USD.3P.N.A.I.D.USD",
-               "USD debt securities of non-banks outside the US", "$M", "QL", 10080, start="2000-01-01"),
+               "USD debt securities of non-banks outside the US", "$M", "QL", 1440, start="2000-01-01"),
     SeriesSpec("GLI_EME_USD", "bis", "WS_GLI/1.0/Q.USD.4T.N.A.I.B.USD",
-               "USD credit to non-banks in EMEs (BIS GLI)", "$M", "QL", 10080, start="2000-01-01"),
+               "USD credit to non-banks in EMEs (BIS GLI)", "$M", "QL", 1440, start="2000-01-01"),
     SeriesSpec("CREDIT_GAP_US", "bis", "WS_CREDIT_GAP/1.0/Q.US.P.A.C",
-               "US credit-to-GDP gap (actual − HP trend)", "pp", "QL", 10080, start="2000-01-01"),
+               "US credit-to-GDP gap (actual − HP trend)", "pp", "QL", 1440, start="2000-01-01"),
     SeriesSpec("CREDIT_GAP_CN", "bis", "WS_CREDIT_GAP/1.0/Q.CN.P.A.C",
-               "China credit-to-GDP gap (actual − HP trend)", "pp", "QL", 10080, start="2000-01-01"),
+               "China credit-to-GDP gap (actual − HP trend)", "pp", "QL", 1440, start="2000-01-01"),
 ]
 
 ALL_SERIES: dict[str, SeriesSpec] = {

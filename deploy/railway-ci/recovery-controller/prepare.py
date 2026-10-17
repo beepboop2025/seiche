@@ -199,7 +199,7 @@ def export_start_date(value, today):
 
 
 def add_recurring_assembly(repository, output, revision, target_path, public_key_path, signer_public_key,
-                           export_not_before=None):
+                           export_not_before=None, application_source=None):
     """Add a disarmed native job around the original scripts and strict monitor."""
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("recurring source must be one immutable commit")
@@ -214,10 +214,13 @@ def add_recurring_assembly(repository, output, revision, target_path, public_key
         (output / name).write_text(body)
     target = json.loads(target_path.read_text())
     # The reused monitor validates the fixed production IDs/origin and controller signature.
-    subprocess.run(["python", str(Path(__file__).parent.parent / "recovery-monitor/prepare.py"),
+    monitor_command = ["python", str(Path(__file__).parent.parent / "recovery-monitor/prepare.py"),
                     "--repository", str(repository), "--revision", revision,
                     "--output", str(output / "monitor"), "--target", str(target_path),
-                    "--signer-public-key", str(signer_public_key)], check=True)
+                    "--signer-public-key", str(signer_public_key)]
+    if application_source is not None:
+        monitor_command += ["--application-source", application_source]
+    subprocess.run(monitor_command, check=True)
     names = subprocess.check_output(["git", "-C", str(repository), "ls-tree", "-r", "--name-only", revision, "backend"], text=True).splitlines()
     names += [*RECOVERY_HELPERS, *RECOVERY_GOVERNANCE, WORKFLOW]
     for name in names:
@@ -233,6 +236,13 @@ def add_recurring_assembly(repository, output, revision, target_path, public_key
                   controller_service_id="1edc46a6-25e8-4497-941f-0903eb8f6e5d")
     if export_not_before is not None:
         policy["export_not_before"] = export_not_before
+    if application_source is not None:
+        # Keep the historical case's application_source intact. The monitor
+        # independently admits this signed live runtime before every export.
+        monitor_policy = json.loads((output / "monitor/policy.json").read_text())
+        if monitor_policy["source"] != application_source or monitor_policy["verifier_source"] != revision:
+            raise ValueError("native monitor runtime or verifier source differs")
+        policy["runtime_source"] = application_source
     policy["recurring_steps_sha256"] = digest(json.dumps(
         [{name: step[name] for name in ("name", "run", "env") if name in step}
          for step in original["jobs"]["export-recovery"]["steps"] if step.get("name") in RECURRING_STEPS.values()],
@@ -253,10 +263,13 @@ if __name__ == "__main__":
     parser.add_argument("--recurring-source")
     parser.add_argument("--production-target", type=Path)
     parser.add_argument("--execution-public-key", type=Path)
+    parser.add_argument("--application-source", help="Exact signed live runtime ancestor of recurring-source")
     parser.add_argument("--export-not-before", help="First export UTC date; at most tomorrow")
     args = parser.parse_args()
     if args.export_not_before and not args.recurring_source:
         parser.error("an export start date requires a recurring assembly")
+    if args.application_source and not args.recurring_source:
+        parser.error("an application source requires a recurring assembly")
     prepare(args.repository, args.output, args.case, json.loads(args.target.read_text()), args.public_key)
 
     if args.recurring_source:
@@ -264,4 +277,4 @@ if __name__ == "__main__":
             parser.error("recurring preparation requires fixed production target and evidence public key")
         add_recurring_assembly(args.repository, args.output, args.recurring_source,
                                args.production_target, args.execution_public_key, args.public_key,
-                               args.export_not_before)
+                               args.export_not_before, args.application_source)

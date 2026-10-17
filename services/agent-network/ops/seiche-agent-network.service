@@ -1,0 +1,29 @@
+[Unit]
+Description=Seiche financial agent platform
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seiche-network
+Group=seiche-network
+WorkingDirectory=/opt/seiche-agent-network/current
+EnvironmentFile=/etc/seiche-agent-network.env
+Environment=PYTHONPATH=/opt/seiche-agent-network/current/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/seiche-agent-network/venv/bin/python -m seiche_agent_network.cli serve --host 127.0.0.1 --port 18796 --public-url https://agents.seiche.info --allow-host api.seiche.info --allow-host agents.seiche.info --allow-host 127.0.0.1 --gateway
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=4096
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

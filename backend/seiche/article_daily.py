@@ -814,7 +814,12 @@ def _evidence_paragraphs(editorial: dict) -> str:
         claim = _clean(row.get("claim") or "")
         asof = _clean(row.get("asof") or "date unavailable")
         source = _clean(row.get("source") or "published source")
-        parts.append(f"**{label}.** {claim} The observation is dated {asof}; source: {source}.")
+        clock_label = (
+            "Scheduled event date"
+            if row.get("evidence_type") == "scheduled_event"
+            else "Evidence date"
+        )
+        parts.append(f"**{label}.** {claim} {clock_label}: {asof}; source: {source}.")
     return "\n\n".join(parts)
 
 
@@ -891,7 +896,7 @@ def _current_body(snap: dict, story: dict, echo: dict) -> tuple[str, str, str]:
         f"A {confidence} reading of the dollar-funding system, with the evidence "
         "for it, the evidence against it, and the date that can prove it wrong."
     )
-    body = f"""The daily dispatch records every section of the board. This article makes one narrower argument: **{thesis}** The distinction matters because a market funnel should earn attention with a mechanism and a test, not with a louder adjective. Today's editorial confidence is **{confidence}**. {confidence_note}
+    body = f"""**{thesis}** Today's assessment carries **{confidence}** confidence. {confidence_note} For a funding review, the practical question is whether dated pressure on reserves is reaching the price and availability of overnight cash. The evidence below separates the structural warning from its market confirmation, identifies the strongest counter-case, and sets out the next published dates on which to test that assessment.
 
 ## The mechanism
 

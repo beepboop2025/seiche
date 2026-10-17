@@ -1,0 +1,12 @@
+[Unit]
+Description=Check due agent activity sources every five minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=seiche-agent-activity-collect.service
+
+[Install]
+WantedBy=timers.target

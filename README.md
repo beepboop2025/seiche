@@ -1,5 +1,27 @@
 # SEICHE
 
+## Connect and ask one question
+
+Hosted Streamable HTTP MCP; no local server or API key for public read-only tools.
+Add the products you need to Claude Code:
+
+```sh
+claude mcp add --transport http seiche https://api.seiche.info/mcp
+claude mcp add --transport http liquilens https://api.liquilens.in/mcp
+claude mcp add --transport http undertow https://api.seiche.info/undertow/mcp
+```
+
+**Try this first:** What is the current US funding stress regime, and which dated funding events are next? Cite source dates and missing evidence.
+
+[Try it in your browser](https://liquilens.in/start/?task=funding) ·
+[Cursor configuration](https://liquilens.in/agents/cursor.json) ·
+[Codex commands](https://liquilens.in/agents/codex.txt) ·
+[Free three-product starter kit and skill](https://liquilens.in/agents/#connect)
+
+For a connected review, ask for institution evidence → funding context → BTC
+exit estimates, with each source date, coverage gap and limitation kept separate.
+Client/model costs and fair-use limits may apply. Research calls do not execute trades.
+
 Public US dollar funding research from source-dated Fed and Treasury observations. Live board: [seiche.info](https://seiche.info/).
 
 [Dated answers to common research questions](https://seiche.info/questions/) explain the numbers, source dates and limits.
@@ -66,12 +88,12 @@ ledger status. The auditable source of truth is
 
 | Surface | What is available | Status |
 |---|---|---|
-| **OpenBB** | Typed provider and `obb.seiche` router for funding stress, world markets, and data health ([extension](integrations/openbb/)) | Usable/tested in repo; signed 0.1.0 PyPI publication and current ecosystem-list submission packet prepared |
+| **OpenBB** | Typed provider and `obb.seiche` router for funding stress, world markets, and data health ([extension](integrations/openbb/)) | [0.1.1 published on PyPI](https://pypi.org/project/openbb-seiche/0.1.1/); ecosystem PR #13 archived/unmerged; official family Marketplace application submitted, review and fee waiver pending |
 | **Zenodo** | Release deposition metadata, citation identity, and related-source records ([metadata](.zenodo.json)) | Prepared; no deposit or DOI claimed |
 | **Hugging Face** | Rights-reviewed direct-OFR dataset card and staging layout ([dataset card](distribution/datasets/huggingface/README.md)) | Validated draft; upload prepared |
 | **Kaggle** | Dataset metadata and reference-only staging layout ([metadata](distribution/datasets/kaggle/dataset-metadata.json)) | Validated draft; upload prepared |
-| **Smithery** | Owner-published hosted endpoint entry ([live record](https://smithery.ai/servers/mrinallovesbhature/seiche)) | Listed; authenticated refresh accepted, cached aliases may lag |
-| **MCP directories** | Official Registry, Glama, Smithery, and eight additional live indexes ([dated inventory](distribution/MCP_DIRECTORIES.md)) | 11 live records; claim/freshness gaps tracked |
+| **Smithery** | Owner-published hosted endpoint entry ([live record](https://smithery.ai/servers/mrinallovesbhature/seiche)) | Listed; authenticated refresh accepted, cached aliases may lag. Public inventory rechecked 11 October: 16 tools |
+| **MCP directories** | Official Registry, Glama, Smithery, and eight additional live indexes ([dated inventory](distribution/MCP_DIRECTORIES.md)) | 11 existing records; current checks and older observations dated separately |
 | **Research notebooks** | Commit-pinned, hash-checking direct-OFR workflow ([notebook](notebooks/seiche_direct_ofr_research.ipynb)) | Usable in repo |
 | **Python / R / JavaScript** | Zero-secret world-markets API clients with evidence-contract checks ([clients](clients/)) | Usable in repo |
 | **Market Atlas + structured corpus** | Interactive canonical market observations, rights-aware dataset receipts, full normalized BIS records, Seiche partitions, public API and MCP ([contract](docs/MARKET_CORPUS.md)) | Live gateway; protected exports remain restricted and bulk records use bounded snapshot cursors |
@@ -79,7 +101,9 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.16.2; immutable availability is authoritative only on the linked PyPI project |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository version 0.16.3; immutable availability is authoritative only on the linked PyPI project |
+
+Version **0.16.3 estuary** checks the four monthly OFR money-market-fund series and six quarterly BIS series daily while preserving their observation dates and native release cadence. Signed deployment and publication acceptance are required before this source change is live.
 
 Version **0.16.2 estuary** prepares the [reviewed Google-Extended policy](docs/GOOGLE-EXTENDED-POLICY.md), three dated dollar-funding answers and Riptide's public paper allocation beside the Market desk. The policy permits grounding/training only on three reviewed original explanations; source data, archives and other pages remain excluded. New signed application and publication receipts are required before these changes are live. The inherited **0.16.1** release connects the [UAE DONIA reference](docs/UAE_DONIA.md) to GIFT City's AED card and retains [country funding and sovereign references](docs/COUNTRY_FUNDING.md) for China, Japan, South Korea, Taiwan, Australia, the United Kingdom, all 21 euro-area countries and seven other European countries. Official observations retain their source dates, native frequency and gaps. The sixteen public MCP tools expose the country catalog through `money_market_context(section="countries")`; add `country="JP"` for a country desk or use `section="india"` for the India desk.
 New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding

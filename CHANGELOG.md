@@ -11,6 +11,25 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.4 evidence dates and editorial clarity
+
+- Distinguish scheduled Treasury events from observations and lead funding
+  articles with the argument, evidence and strongest counter-case.
+- Derive series freshness and observation counts from non-missing values;
+  preserve retrieval clocks, historical rows and valid zero observations.
+- Describe the latest article by its actual publication date rather than
+  implying that every retrieved edition was published today.
+- Prepare a new package version and immutable corpus publication receipt.
+  Deployment, recovery acceptance and publication remain separate gates.
+
+### 0.16.3 daily source checks
+
+- Check the six BIS quarterly series and four OFR monthly money-market-fund
+  series every day. Their actual observation dates, publication frequency and
+  freshness limits remain unchanged.
+- Source-fetch cadence changes require the ordinary signed application and
+  recovery acceptance before production activation.
+
 ### 0.16.2 release candidate
 
 - Limit Google-Extended grounding/training permission to the three reviewed original

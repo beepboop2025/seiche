@@ -1,3 +1,4 @@
+import "./family-upgrades.css";
 import { useEffect, useState } from "react";
 import FundingPreview from "./FundingPreview";
 import EditorialPreview from "./EditorialPreview";
@@ -59,6 +60,14 @@ function FundingFlow() {
   </figure>;
 }
 
+export function ConnectedUpgrades() {
+  return <>
+{/* CONNECTED-UPGRADES:START */}
+<section className="family-upgrades" aria-labelledby="connected-upgrades-heading" data-upgrade-revision="a634f37ec4223ac3f3752e4f268bfb161e6e420b5261c8ce2c4482631da6e57f"><div className="family-upgrades-intro"><h2 id="connected-upgrades-heading">A connected review, from evidence to follow-up</h2><p>Connect bank-disclosure research, dollar-funding context and market-liquidity evidence through public pages, MCP and source-history APIs.</p><a href="https://liquilens.in/updates/">What changed and what each tool can do</a></div><div className="family-upgrades-grid"><article><h3>Keep missing evidence in the review</h3><p>Inspect source-dated changes, overdue fields and visibility gaps across tracked banks and lenders. Open the live review queue and its original disclosures.</p><small>Available for research</small><a href="https://liquilens.in/banking/monitoring/">Open institution monitoring</a></article><article><h3>Connect research to your AI workflow</h3><p>Use the central MCP connections, Financial Evidence Python 0.1.10 or AI SDK 0.1.1 to bring bank, funding and market-liquidity evidence into a repeatable review.</p><small>Available for research</small><a href="https://beepboop2025.github.io/financial-evidence-skills/connect/">Choose a research connection</a></article><article><h3>Inspect what moves together</h3><p>Use NoiseFloor 0.4.0 to inspect shared-factor concentration and rolling correlations. Explore a separate synthetic Dyson reference and retain source restrictions and gaps.</p><small>Available for caller-supplied evidence</small><a href="https://liquilens.in/agents/correlation/">Open correlation workbench</a></article><article><h3>Rehearse the controls around an action</h3><p>Explore the paper workbench: inspect refusals, duplicate protection, STOP and reconciliation before considering an execution workflow.</p><small>Paper rehearsal; execution disabled</small><a href="https://beepboop2025.github.io/financial-evidence-skills/agents/execution.html">Explore the paper workbench</a></article><article><h3>Retrieve dated source histories</h3><p>Read funding histories, bank filings and Bitcoin or Liquid settlement observations through the shared source-data API and MCP. Keep units, observation dates and capture times attached.</p><small>Public read-only research</small><a href="https://liquilens.in/agents/#source-data">Explore the source-data connection</a></article><article><h3>Receive source-status updates</h3><p>Use reusable MCP sessions and bounded source-status updates. Clients retain expiry, source clocks, rights and missingness when a connection resets.</p><small>Research metadata; no market quotes</small><a href="https://beepboop2025.github.io/financial-evidence-skills/agents/low-latency.md">Read the client and status-stream guide</a></article><article><h3>Separate bank updates from filings</h3><p>Review provisional business updates beside accepted filings, with distinct reporting and publication dates. Compare only the fields and periods the source actually discloses.</p><small>Source-dated institution research</small><a href="https://liquilens.in/banking/">Inspect the bank evidence workspace</a></article><article><h3>Inspect public agent activity evidence</h3><p>Browse selected agent registries, service catalogs and protocol events, with source and collection dates. Review what each observation can establish.</p><small>Bounded public observations</small><a href="https://agents.seiche.info/activity/">Open agent activity research</a></article></div><p className="family-upgrades-boundary">Each source keeps its dates, coverage and permissions. These tools support human review; they do not produce a combined risk score or authorize credit or trading.</p></section>
+{/* CONNECTED-UPGRADES:END */}
+  </>;
+}
+
 export default function ProductHome() {
   return <div className="product-home">
     <a className="product-skip" href="#product-content">Skip to content</a>
@@ -71,6 +80,7 @@ export default function ProductHome() {
         <FundingFlow />
       </section>
       <FundingPreview />
+      <ConnectedUpgrades />
       <EditorialPreview />
       <section className="product-section product-capabilities" aria-labelledby="capabilities-heading">
         <div className="product-section__intro"><h2 id="capabilities-heading">See where<br/>pressure begins.</h2><p>Start with a question. Move from the funding picture to the observations that explain it.</p></div>

@@ -1,0 +1,9 @@
+[Unit]
+Description=Check due public commerce feeds every five minutes
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20
+Persistent=true
+[Install]
+WantedBy=timers.target
