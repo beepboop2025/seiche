@@ -139,7 +139,7 @@ jobs:
           backend/tests/test_railway_stateful_recovery.py
           backend/tests/test_railway_telegram.py
       - name: Run Telegram bot contracts
-        run: python -m pytest -q bot/tests
+        run: python -m pytest -q backend/tests/test_bot.py bot/tests
 
       - name: Prove the stateful runtime tools can back up PostgreSQL 18
         timeout-minutes: 8
