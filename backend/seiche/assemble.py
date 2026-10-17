@@ -380,7 +380,7 @@ _build_generation = 0  # completed build/lock epochs; restores do not advance it
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.16.2"
+VERSION = "0.16.4"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
@@ -2095,7 +2095,7 @@ def _provenance(src: dict) -> list[dict]:
             prov.append({
                 **series.provenance(),
                 **metadata,
-                "availability": "empty" if series.points.empty else "available",
+                "availability": "empty" if series.asof is None else "available",
             })
         else:
             reason = (

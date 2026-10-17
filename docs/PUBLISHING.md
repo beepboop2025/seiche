@@ -1,5 +1,21 @@
 # Publishing Seiche release surfaces
 
+## 0.16.4 readiness successor
+
+The 14 October 2026 candidate updates editorial date labels, the latest-article
+description and non-missing observation freshness. Its package version is
+`0.16.4`, and its catalog declares the new immutable receipt
+`market-corpus-receipt-corpus-7cb1695c6affa707-r35`. Existing corpus bytes and
+version remain unchanged. Scientific metadata uses the candidate preparation
+date; it is not evidence of deployment or publication.
+
+Follow the application-update runbook below with the current accepted parent
+and fresh recovery proof. Never reuse the historical source IDs, version tags
+or receipt examples in the older release notes as authority for this successor.
+The original receipts and interrupted generated editions remain intact.
+
+## Historical 0.16.2 release notes
+
 This runbook covers **0.16.2 estuary**, the reviewed search-policy, dated-answer
 and paper-allocation successor. Google grounding/training remains restricted to
 three reviewed original explanations; source data and archives stay excluded.

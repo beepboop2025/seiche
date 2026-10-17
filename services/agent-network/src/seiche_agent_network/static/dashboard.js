@@ -9,7 +9,7 @@
   const fmt = new Intl.NumberFormat("en", {maximumFractionDigits: 1});
   let regions;
   try { regions = new Intl.DisplayNames(["en"], {type: "region"}); } catch (_) { regions = null; }
-  const session = {token: "", usage: null, freshness: null, demand: null, generation: 0, controller: null, loading: false, timer: null};
+  const session = {token: "", usage: null, freshness: null, demand: null, history: null, ecosystem: null, generation: 0, controller: null, loading: false, timer: null};
   const safe = (value, fallback = "Unavailable") => typeof value === "string" && value.length ? value.slice(0, 300) : fallback;
   const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
   const count = (value) => number(value) === null ? "—" : fmt.format(value);
@@ -264,11 +264,60 @@
     else empty(cards, "No source monitor assessment exists for this product.");
   }
 
-  function renderSelected() { renderCountries(); renderProducts(); renderTools(); renderDemand(); renderFreshness(); }
+  function renderEcosystem() {
+    const report = session.ecosystem;
+    const source = byId("ecosystem-source").value;
+    const search = byId("ecosystem-search").value.trim().toLowerCase();
+    const cards = byId("ecosystem-sources"), body = byId("ecosystem-rows");
+    cards.replaceChildren(); body.replaceChildren();
+    if (!report || report._unavailable || !["ok", "stale_report"].includes(report.status)) {
+      byId("ecosystem-summary").textContent = "The scheduled ecosystem report is unavailable. No external activity counts are inferred.";
+      byId("ecosystem-count").textContent = ""; return;
+    }
+    array(report.sources).forEach((item) => {
+      const card = node("article", null, "source-card"), heading = node("div", null, "source-top");
+      heading.append(node("h3", safe(item.label)), badge(item.fresh === true ? "fresh" : item.status === "not_admitted" ? "restricted" : "unknown"));
+      card.append(heading, node("p", safe(item.measurement)), node("p", "Last collected: " + timestamp(item.knowledge_time)), node("p", safe(item.limits), "small-note"));
+      cards.append(card);
+    });
+    const meta = array(report.sources).find((item) => item.source === source);
+    byId("ecosystem-summary").textContent = (report.report_current ? "" : "Previous report; collection status is stale. ") + safe(meta?.measurement) + ". " + safe(meta?.rights) + ".";
+    const captured = Array.isArray(report.observations) ? report.observations.slice(0, 5000) : [];
+    const rows = captured.filter((row) => row.source === source && (!search || [row.item, row.model, row.dimension, ...(Array.isArray(row.tags) ? row.tags : [])].join(" ").toLowerCase().includes(search)));
+    rows.slice(0, 100).forEach((row) => {
+      const tr = node("tr"), name = tableCell(safe(row.item || row.model || row.product));
+      if (row.dimension) name.append(node("span", safe(row.dimension).replaceAll("_", " "), "secondary"));
+      let measure = "Unavailable", window = safe(row.window, "Observed listing; no usage count");
+      if (row.kind === "dataset_popularity") measure = count(row.downloads_30d) + " downloads · " + count(row.likes) + " likes";
+      if (row.kind === "ai_crawler_distribution") { measure = safe(row.value) + "% · confidence " + count(row.confidence_level) + "/5"; window = timestamp(row.period_start) + " — " + timestamp(row.period_end); }
+      if (row.kind === "usage_aggregate") { measure = safe(row.tokens_display) + " tokens"; window = timestamp(row.period_start) + " — " + timestamp(row.period_end); }
+      if (row.kind === "mcp_server_listing") measure = safe(row.listing_status) + " · " + safe(row.version);
+      if (row.kind === "tool_dispatch_window") measure = count(row.calls) + " calls · " + count(row.errors) + " errors";
+      tr.append(name, tableCell(measure), tableCell(window)); body.append(tr);
+    });
+    if (!rows.length) { const tr = node("tr"), td = tableCell(meta?.status === "not_admitted" ? (source === "cloudflare_radar" ? "Cloudflare requires a reviewed commercial grant and a Radar Read token." : "This source is not enabled in the scheduled collector.") : "No observations match this source and filter.", "empty-message"); td.colSpan = 3; tr.append(td); body.append(tr); }
+    byId("ecosystem-count").textContent = "Showing " + count(Math.min(rows.length, 100)) + " of " + count(rows.length) + " captured observations for this filter. Source samples may overlap. Full captured rows are available from the authenticated agent-activity API.";
+  }
+
+  function renderDemandHistory() {
+    const report = session.history, body = byId("demand-history-rows"), selected = byId("product-filter").value;
+    if (!report || report._unavailable) { emptyTable(body, "Daily data-demand history is unavailable."); return; }
+    const rows = array(report.rows).filter((row) => selected === "all" || row.product === selected).sort((a, b) => safe(b.day).localeCompare(safe(a.day)));
+    byId("demand-history-summary").textContent = "Closed UTC days from " + safe(report.cutoff_day) + ". Synthetic, internal and discovery requests excluded. " + (report.truncated ? "The report is truncated. " : "") + "Showing " + count(Math.min(rows.length, 100)) + " of " + count(rows.length) + " dataset-day observations.";
+    if (!rows.length) { emptyTable(body, "No completed-day dataset requests have been observed in this window."); return; }
+    body.replaceChildren(...rows.slice(0, 100).map((row) => {
+      const tr = node("tr"), label = tableCell(safe(row.dataset_id));
+      label.append(node("span", productName(row.product), "secondary"));
+      tr.append(tableCell(safe(row.day)), label, tableCell(count(row.requests)), tableCell(count(row.registered_agents)), tableCell(count(row.returning_registered_agents)));
+      return tr;
+    }));
+  }
+
+  function renderSelected() { renderCountries(); renderProducts(); renderTools(); renderDemand(); renderDemandHistory(); renderFreshness(); renderEcosystem(); }
 
   function clearSession(message = "Disconnected. The credential and loaded reports have been cleared.", error = false) {
     session.generation += 1; session.controller?.abort(); session.controller = null;
-    session.token = ""; session.usage = null; session.freshness = null; session.demand = null; session.loading = false;
+    session.token = ""; session.usage = null; session.freshness = null; session.demand = null; session.history = null; session.ecosystem = null; session.loading = false;
     clearInterval(session.timer); session.timer = null;
     byId("auto-refresh").checked = false; byId("report-token").value = "";
     byId("connect-form").hidden = false; byId("connection-actions").hidden = true;
@@ -279,6 +328,9 @@
     for (const id of ["coverage-notice", "report-window", "report-scope", "freshness-summary", "updated-label", "tool-count", "demand-summary", "demand-count", "country-count"]) byId(id).textContent = "";
     byId("product-filter").replaceChildren(node("option", "All products")); byId("product-filter").firstChild.value = "all";
     byId("tool-search").value = ""; byId("demand-traffic").value = "non_test";
+    for (const id of ["ecosystem-sources", "ecosystem-rows", "ecosystem-summary", "ecosystem-count"]) byId(id).replaceChildren();
+    byId("demand-history-rows").replaceChildren(); byId("demand-history-summary").textContent = "";
+    byId("ecosystem-search").value = "";
     status(message, error);
   }
 
@@ -299,7 +351,7 @@
     byId("connect-button").disabled = true; byId("refresh-button").disabled = true; byId("demand-traffic").disabled = true;
     status("Loading private operational reports…");
     try {
-      const [usage, freshness, demand] = await Promise.allSettled([getReport("/v1/operator/usage", signal), getReport("/v1/operator/freshness", signal), getReport("/v1/operator/dataset-usage?traffic=" + encodeURIComponent(byId("demand-traffic").value) + "&limit=200", signal)]);
+      const [usage, freshness, demand, ecosystem, history] = await Promise.allSettled([getReport("/v1/operator/usage", signal), getReport("/v1/operator/freshness", signal), getReport("/v1/operator/dataset-usage?traffic=" + encodeURIComponent(byId("demand-traffic").value) + "&limit=200", signal), getReport("/v1/operator/agent-activity", signal), getReport("/v1/operator/demand-history", signal)]);
       if (generation !== session.generation) return;
       if (usage.status !== "fulfilled") {
         const code = usage.reason?.status;
@@ -313,13 +365,15 @@
       session.usage = usage.value;
       session.freshness = freshness.status === "fulfilled" ? freshness.value : {_unavailable: true};
       session.demand = demand.status === "fulfilled" && demand.value?.scope === "operator_global" ? demand.value : {_unavailable: true};
+      session.ecosystem = ecosystem.status === "fulfilled" && ecosystem.value?.scope === "operator_global" ? ecosystem.value : {_unavailable: true};
+      session.history = history.status === "fulfilled" && history.value?.scope === "operator_global" ? history.value : {_unavailable: true};
       byId("connect-form").hidden = true; byId("connection-actions").hidden = false;
       byId("report-token").value = "";
       byId("report-view").hidden = false; byId("disconnected-view").hidden = true;
       byId("connection-tag").textContent = "Connected"; byId("connection-tag").className = "connection-tag connected";
       byId("updated-label").textContent = "Fetched " + timestamp(new Date().toISOString());
       renderOverview(session.usage); renderFilters(); renderSelected();
-      const incomplete = freshness.status !== "fulfilled" || session.demand._unavailable;
+      const incomplete = freshness.status !== "fulfilled" || session.demand._unavailable || session.history._unavailable || session.ecosystem._unavailable;
       status(incomplete ? "Usage loaded. One or more additional reports are unavailable; see their sections below." : "Reports loaded. Coverage and source limitations are shown below.", incomplete);
     } catch (_) {
       if (generation === session.generation) status("The report could not be displayed. Refresh to retry; no readiness conclusion was made.", true);
@@ -344,6 +398,8 @@
   byId("product-filter").addEventListener("change", renderSelected);
   byId("tool-search").addEventListener("input", renderTools);
   byId("demand-traffic").addEventListener("change", refresh);
+  byId("ecosystem-source").addEventListener("change", renderEcosystem);
+  byId("ecosystem-search").addEventListener("input", renderEcosystem);
   byId("auto-refresh").addEventListener("change", () => {
     clearInterval(session.timer); session.timer = null;
     if (byId("auto-refresh").checked && session.token) session.timer = setInterval(refresh, 60000);

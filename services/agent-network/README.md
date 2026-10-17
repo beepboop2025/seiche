@@ -43,6 +43,8 @@ OpenBB Workspace can use `https://agents.seiche.info/v1/research` as its custom 
 
 NoiseFloor REST is available at `/v1/noisefloor`: GET `/healthz`, `/v1/capabilities`, `/openapi.json`, and POST `/v1/market/assess`, `/v1/narrative/triage`, `/v1/spectral/assess`, `/v1/research/dyson`. These exact POST routes accept at most 2 MiB of strict JSON and use the pinned 0.4.0 input contract. All other request-body limits remain unchanged. Four concurrent NoiseFloor REST requests are admitted per gateway process. Submitted panels and headlines are transient computation inputs; the service records reviewed tool families and HTTP outcomes, never these bodies, arbitrary source URLs or query text. The native service still determines assessment availability and does not collect external feeds or execute trades.
 
+The Caddy route example exempts only those four exact POST paths from its general 64 KiB body cap. The application still bounds their streamed input at 2 MiB before parsing and returns JSON 413 above that limit, including chunked uploads. Keeping Caddy's smaller cap on these paths would reject valid panels and, on Caddy 2.6, surface body-read errors as proxy 502 responses. Other paths and methods retain the existing edge cap. Matchers run after `/agents` is stripped; preserve the separate commerce and learning handlers when installing this additive configuration.
+
 Public browser CORS is scoped to the reviewed data operations for the published Financial Evidence site, OpenBB Workspace and LiquiLens workbench origins. Those origins receive no workspace or operator-report access. Caller credentials authenticate only at the central gateway and are never forwarded to native services. Versioned hosted-surface discovery is included in `/v1/data-catalog`; historical offline packages and source-hash-bound client archives remain independently usable.
 
 Source Data uses the separate `/v1/source-data/` workspace, `/products/research-data/mcp` and `/v1/source-data/openapi.json`. Its eight reviewed read tools and nine REST operations preserve `liquilens.research-data.v1`, source receipts, pagination, native units and captured-vintage boundaries. The REST routes admit only sixteen reviewed dataset identifiers, pages up to 10,000 rows (500 for tracked institutions), offsets through 10,000,000 and descriptive windows through 260 observations. They retain no search text, entity, series or date selectors. The packaged workspace derives from Source Data 1.2.0 (`research_data/index.html` SHA256 `b63c7c132d496c9f574e491fd7ccd2493ba255324bc9123942e45ed8a6db7b43`); its JavaScript and CSS are served locally under the existing strict CSP. Browser reads omit credentials, reject redirects, enforce a 4 MiB response limit and time out after 30 seconds. Source API availability gates the UI response. Native errors and the source revision header remain visible.
@@ -182,3 +184,28 @@ The measured PostgreSQL qualification used a temporary PostgreSQL 16 container l
 These are persistence-layer observations, including submission queues, not HTTP/model latency, production capacity, independent adoption or an SLA. Database transactions currently serialize through a global lock to preserve revocation and sequence correctness. Benchmark higher concurrency and change the lock design only with equivalent policy/race tests. The optional gateway also bounds connections, sessions, payloads and stream duration.
 
 The PostgreSQL suite passed 66 tests with no skips for the recorded source snapshot. Later edits require their own validation; release evidence must identify the exact snapshot. A separate PostgreSQL 16 backup/restore qualification passed all nine checks, including restored private messages, delegated credentials, matching service keys, signed chains, refusal of a populated restore target and unchanged source contents. Five backup security/regression tests also passed. This recovery proof used separate synthetic databases in the temporary qualification container and did not activate a restored service or alter a production database.
+
+
+## AI ecosystem observatory
+
+The private operator dashboard now compares first-party dataset demand with
+Wake's attributed external observations: Hugging Face dataset download metadata,
+a finance keyword sample, the official MCP Registry and OpenRouter model usage.
+It links to Cloudflare Radar and supports seven Radar traffic distributions after
+a separate commercial-use review and a Radar Read token have been configured.
+Cloudflare API data is CC BY-NC 4.0 by default; credentials do not grant commercial
+reuse. This release does not enable that collector without recorded permission.
+
+`GET /v1/operator/agent-activity` requires the existing separate operator report
+credential. Set `SEICHE_AGENT_ACTIVITY_REPORT` to the private atomic projection
+produced by `wake activity-export`; the collection unit refreshes it after each
+run. Reports older than twenty minutes are visibly stale even if their source
+receipts were previously fresh. No third-party script, iframe, credential
+forwarding or new public report CORS is added.
+
+Each metric keeps its scope and unit. Registry entries show published services,
+not active agents. Downloads include non-agent activity. Crawler traffic covers
+Cloudflare's observations, not private queries. Underlying dataset licenses,
+training rights and aggregate resale permissions remain distinct. These external
+sources do not enter institutional commerce exports. The authenticated JSON
+endpoint returns the full captured sample; the UI shows up to 100 filtered rows.

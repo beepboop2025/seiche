@@ -1,0 +1,22 @@
+[Unit]
+Description=Encrypted agent activity backup and bounded retention
+
+[Service]
+Type=oneshot
+User=seiche-agent-activity
+Group=seiche-agent-activity
+WorkingDirectory=/opt/seiche-agent-activity/current
+Environment=PYTHONPATH=/opt/seiche-agent-activity/current/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/seiche-agent-activity/current/.venv/bin/python /opt/seiche-agent-activity/current/ops/backup.py
+TimeoutStartSec=10min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-activity /var/backups/seiche-agent-activity
+MemoryMax=1G
+CPUQuota=50%
+Nice=15
+CapabilityBoundingSet=

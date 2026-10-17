@@ -1,5 +1,10 @@
 # Source freshness for the agent platform
 
+Native series provenance uses the latest non-missing observation for `asof`,
+age and publication-schedule checks. Dated null placeholders remain in source
+history but cannot freshen a series or count toward `n_obs`. An all-null capture
+retains its retrieval clock and exposes `availability: "empty"`.
+
 The central monitor checks the clocks exposed by each native product. It does
 not refresh a native source, modify a signed publication, grant data rights, or
 approve a trade. Transport availability, publication age, observation age,

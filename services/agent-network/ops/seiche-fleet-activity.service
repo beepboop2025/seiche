@@ -1,0 +1,17 @@
+[Unit]
+Description=Export print-only host MCP dispatch aggregates for Wake
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I -B /opt/seiche-agent-network/current/ops/fleet_activity_export.py
+TimeoutStartSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-network/fleet
+MemoryMax=256M

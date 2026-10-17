@@ -65,6 +65,9 @@ def test_editorial_leads_with_argument_and_countercase():
     assert brief["evidence"][0]["engine"] == "ledger"
     assert "SOFR" in brief["countercase"][0]["claim"]
     assert brief["watch"][0]["date"] == "2026-08-11"
+    scheduled = next(row for row in brief["evidence"] if row["engine"] == "weather")
+    assert scheduled["evidence_type"] == "scheduled_event"
+    assert scheduled["asof"] == "2026-08-11"
 
 
 def test_fault_cuts_editorial_confidence_before_interpretation():

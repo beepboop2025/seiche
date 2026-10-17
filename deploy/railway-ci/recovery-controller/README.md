@@ -1,5 +1,15 @@
 # Railway recovery execution
 
+The signed controller admits at most 6 GiB of immutable recovery objects, with
+the existing additional 32 MiB allowance for recurring workspace proofs. Both
+historical verification and recurring restoration require five times the actual
+input size plus 1 GiB of free scratch space on the selected filesystem. The
+larger ceiling accommodates observed snapshot growth beyond the former 3 GiB
+limit; it does not increase provider resources or extend job deadlines. Object
+versions, content hashes, signatures, retention and isolated restore checks are
+unchanged. A replacement image must complete the full actual-image qualification
+and signed installation procedure before use.
+
 Native continuity probes retain the original 15-second total deadline per
 endpoint. Connection setup has a three-second limit and may be attempted up to
 three times. Each response can use the remaining part of the original deadline;
@@ -108,6 +118,17 @@ the repository root. The image tests load that registry through the production
 command validator's default path. Backend tests and the existing dispatch content directory
 are excluded from runtime admission. The original strict 26-hour monitor still
 runs first with its three existing isolated inputs.
+
+When rebuilding the controller while the accepted application remains on an
+older release, pass `--application-source <full SHA>` alongside
+`--recurring-source`. The monitor verifies that this runtime commit is signed by
+the established owner and is an ancestor of the selected verifier revision.
+Its health checks remain pinned to that runtime; helper bytes and workflow
+semantics remain pinned to the separately selected verifier. The assembled
+policy records `runtime_source` without changing the historical qualification
+case's `application_source`. Reproduction must supply the same option. Omitting
+it preserves the existing single-revision behavior. The signed installation,
+strict freshness checks and original export/restore gates remain required.
 
 A replacement can be assembled with `--export-not-before YYYY-MM-DD`. This UTC
 date is part of the image manifest and therefore bound by the signed installation.

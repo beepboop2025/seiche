@@ -1,0 +1,28 @@
+[Unit]
+Description=Bounded collection and reconciliation of agent activity
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=seiche-agent-activity
+Group=seiche-agent-activity
+WorkingDirectory=/opt/seiche-agent-activity/current
+Environment=PYTHONPATH=/opt/seiche-agent-activity/current/src
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=ACTIVITY_RPC_CONFIG=/etc/seiche-agent-activity/base-rpc.json
+ExecStart=/opt/seiche-agent-activity/current/.venv/bin/python -m agent_activity.cli --state /var/lib/seiche-agent-activity collect
+ExecStart=/opt/seiche-agent-activity/current/.venv/bin/python -m agent_activity.cli --state /var/lib/seiche-agent-activity reconcile
+ExecStart=/opt/seiche-agent-activity/current/.venv/bin/python /opt/seiche-agent-activity/current/ops/check.py
+SuccessExitStatus=2
+TimeoutStartSec=12min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/seiche-agent-activity
+MemoryMax=768M
+CPUQuota=70%
+Nice=10
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=

@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Activity API</title><link rel="stylesheet" href="./style.css"></head><body><header><a href="./">Agent Activity</a><a href="./openapi.json">OpenAPI schema</a></header><main><section class="intro"><div class="eyebrow">DEVELOPER INTERFACE</div><h1>Economic evidence API</h1><p class="lead">Public discovery and coverage. Private, explicitly authorized contributor records.</p></section><section><h2>Public reads</h2><p>Base URL: <code>https://agents.seiche.info/activity</code></p><pre>GET /v1/coverage
+GET /v1/entities?kind=registered_agent&amp;limit=25&amp;offset=0
+GET /v1/protocol-events?limit=20
+GET /v1/protocol-events?source=olas_marketplace
+GET /v1/receipts/{receipt_id}
+GET /v1/contract
+GET /health</pre><p>Discovery metadata does not verify economic activity or AI authorship. The coverage report preserves unknown population denominators and individual source failures.</p></section><section><h2>Read-only MCP</h2><p>POST JSON-RPC to <code>https://agents.seiche.info/activity/mcp</code>. Available tools: <code>agent_activity_coverage</code> and <code>agent_activity_sources</code>. Public tools need no credential.</p></section><section><h2>Contributor API</h2><p>Source review and a separately issued contributor credential are required. Ordinary network, product and learning credentials cannot be used here. Send the credential in the Authorization bearer header.</p><pre>POST /v1/events
+POST /v1/identity-claims
+GET /v1/me
+DELETE /v1/me</pre><p>Read <a href="./v1/contract">the contract and complete schemas</a> before sending records. Events require immutable IDs, UTC event time, agent and version, mode, venue and an evidence digest. Prompts, credentials, raw tool arguments and personal payment details are excluded. Repeated identical IDs return the original receipt; changed content returns 409.</p><p>Submitted events remain source-reported. Independent reconciliation requires a reviewed identity link and matching external evidence. Withdrawal deletes active private records and invalidates affected export eligibility.</p></section><section><h2>Python integration</h2><pre>from agent_activity.sdk import Client, Outbox
+import os
+
+client = Client("https://agents.seiche.info/activity",
+                os.environ["AGENT_ACTIVITY_CREDENTIAL"])
+outbox = Outbox("/private/app/activity-outbox", client)
+outbox.enqueue(event)  # event follows the contract; no automatic tracing
+outbox.flush()</pre><p>Run delivery regularly, retain rejected delivery status, and stop the queue when permission is withdrawn. Payloads expire locally after seven days. No import enables collection automatically.</p></section><section><h2>Access and commercial use</h2><p>Raw source snapshots and research dossiers require an operator credential. Private contributor events are never public tools. Institutional aggregate candidates require a closed week, independently reconciled live outcomes, at least 20 distinct reviewed trading accounts, three independent contributors, concentration limits and current separate resale grants. Empty or insufficient datasets cannot be released.</p><p><a href="./#participate">Request a reviewed pilot</a>.</p></section></main></body></html>
