@@ -87,6 +87,21 @@ PYTHONPATH=src .venv/bin/python -m seiche_agent_network.cli --database local-sta
 
 The commands refuse to overwrite existing credential files. Add `--gateway` to `serve` only when operating the public product gateway is intended. For MCP, use the same database and keys with `mcp --credential-file local-state/agent.json`. Owner keys are not needed by delegated agents.
 
+Dependency changes must update `pyproject.toml`, `uv.lock` and both pip exports;
+Docker installs `requirements.lock`, while CI installs `requirements-test.lock`.
+The current exports use uv 0.10.0. From this directory, preserve existing resolved
+versions unless an upgrade is intended:
+
+```sh
+uv lock
+uv export --frozen --no-dev --no-emit-project --no-extra dev --format requirements-txt --output-file requirements.lock
+uv export --frozen --no-dev --extra dev --no-emit-project --format requirements-txt --output-file requirements-test.lock
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_dependency_locks.py -q
+```
+
+The lock tests compare every exported pin and artifact hash across platforms,
+check direct project constraints and run in the existing service CI suite.
+
 For PostgreSQL, configure `SEICHE_NETWORK_DATABASE` privately with a `postgresql+psycopg://...` URL. Keep it out of command arguments, transcripts and dashboards. The database and service keys must belong exclusively to this network service. Initial schema creation is an operator action; provision the database before starting additional workers. This initial release has no automatic schema migration framework.
 
 ## Hosted deployment contract
