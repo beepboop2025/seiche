@@ -15,12 +15,23 @@ The daily digest deliberately separates two different signals:
 
 Raw known-tool totals and all existing dimensions are retained for continuity.
 Each raw event also belongs to exactly one separate attribution bucket:
-`operator_verification` for the exact authenticated-service log suffix, or
+`operator_verification` for the validated authenticated-service log field, or
 `unclassified` for other events, including old logs. Known/success/error/invalid
 counts and tool/surface/origin dimensions remain separate in both buckets. The
 operator count is excluded from the unclassified count; neither count is a
 verified customer or adoption metric. Missing, unsupported, malformed or
 conflicting classification suffixes stay unclassified rather than being guessed.
+
+The optional `reason` field accepts the fixed `undertow.mcp-call-outcome.v1`
+reasons alongside `traffic_class`. `completed` must accompany `success`; other
+reasons must accompany `error`. A missing reason preserves older log behavior.
+Unknown fields or values, duplicate fields, malformed field spacing, oversized metadata,
+and contradictory outcomes leave the entire metadata extension unclassified;
+raw event totals are still counted. Reason values are not added to the digest.
+Log consumers should reuse `activation_metadata(suffix, outcome=...)` on the text
+after `ACTIVATION_RE` matches, instead of comparing the whole suffix to a string.
+Install and verify this parser compatibility update **before** releasing the
+Undertow producer that appends `reason=...`, so operator counts stay continuous.
 
 Payment offers remain funnel events, not verified payment or adoption. An
 unknown tool is reported separately as an invalid probe. Customer identity,

@@ -66,6 +66,13 @@ LEGACY_UNDERTOW_RE = re.compile(
     r"tool=(?P<tool>[A-Za-z0-9_.:-]+) "
     r"outcome=(?P<outcome>success|error)"
 )
+# The optional log extension follows undertow.mcp-call-outcome.v1. Keep the
+# allowlist fixed so arbitrary diagnostics cannot become parsed metadata.
+ACTIVATION_REASONS = frozenset({
+    "completed", "access_required", "scope_denied", "invalid_arguments",
+    "unknown_tool", "source_unavailable", "quota_exhausted",
+    "meter_unavailable", "internal_failure",
+})
 
 # Explicit automation only. Generic runtimes (node, undici, python-httpx,
 # go-http-client, blank UAs) remain unclassified because real clients use them.
@@ -258,6 +265,38 @@ def _count_dispatch(stat: dict, event: dict) -> None:
     stat["origins"][event["origin"]] += 1
 
 
+def activation_metadata(suffix: str, *, outcome: str) -> dict[str, str | None]:
+    """Validate optional event fields together; ambiguous metadata fails closed.
+
+    Consumers should pass the text after ACTIVATION_RE's match rather than
+    comparing that text to an exact traffic_class suffix. Raw event counting
+    does not depend on whether these optional fields are valid.
+    """
+    unclassified = {"traffic_class": "unclassified", "reason": None}
+    if len(suffix) > 128 or outcome not in ("success", "error"):
+        return unclassified
+    fields = suffix.strip().split(" ") if suffix.strip() else []
+    if len(fields) > 2:
+        return unclassified
+    metadata = {}
+    for field in fields:
+        key, separator, value = field.partition("=")
+        if not separator or key in metadata:
+            return unclassified
+        if key == "traffic_class":
+            if value not in ("operator_verification", "unclassified"):
+                return unclassified
+        elif key == "reason":
+            if value not in ACTIVATION_REASONS:
+                return unclassified
+            if (value == "completed") != (outcome == "success"):
+                return unclassified
+        else:
+            return unclassified
+        metadata[key] = value
+    return {**unclassified, **metadata}
+
+
 def parse_activation_lines(lines: Iterable[str]) -> dict:
     """Parse only the fixed event grammar; arbitrary journal prose is ignored."""
     stats = defaultdict(_activation_stat)
@@ -266,14 +305,9 @@ def parse_activation_lines(lines: Iterable[str]) -> dict:
         if match:
             event = match.groupdict()
             event["origin"] = event.get("origin") or "unknown"
-            # Only the exact, single authenticated service classification is
-            # attributed to owned verification. Missing, future, malformed or
-            # conflicting suffixes remain unclassified, never external users.
-            traffic_class = (
-                "operator_verification"
-                if line[match.end():].strip() == "traffic_class=operator_verification"
-                else "unclassified"
-            )
+            metadata = activation_metadata(
+                line[match.end():], outcome=event["outcome"])
+            traffic_class = metadata["traffic_class"]
         else:
             legacy = LEGACY_UNDERTOW_RE.search(line)
             if not legacy:

@@ -118,6 +118,7 @@ jobs:
           backend/tests/test_world_model_delivery.py
           backend/tests/test_fleet_watchdog.py
           backend/tests/test_fleet_mac_heartbeat.py
+          ops/fleet-usage/test_usage_digest.py
           backend/tests/test_social_cards.py
       - name: Run Railway release, snapshot, stateful, and Telegram contracts
         run: >-
