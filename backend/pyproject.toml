@@ -1,7 +1,7 @@
 [project]
 name = "seiche"
 version = "0.16.5"
-description = "Funding, money-market and FX evidence for Python and AI agents, with source dates, provenance and explicit data-access boundaries."
+description = "Funding-stress and leveraged-positioning research terminal with public, credentialed-official, licensed, and fail-closed market-data boundaries."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]

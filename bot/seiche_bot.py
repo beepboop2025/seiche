@@ -65,11 +65,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
-import http.client
 import json
 import os
 import re
-import socket
 import sys
 import time
 import urllib.error
@@ -245,36 +243,6 @@ def _read_json_response(stream):
     return json.loads(raw)
 
 
-# Keep TCP/TLS setup separate from Telegram's intentional long-poll wait.
-TG_CONNECT_TIMEOUT = 2.0
-
-
-class _TelegramHTTPSConnection(http.client.HTTPSConnection):
-    def connect(self):
-        read_timeout = self.timeout
-        if read_timeout is socket._GLOBAL_DEFAULT_TIMEOUT:
-            read_timeout = socket.getdefaulttimeout()
-        self.timeout = (TG_CONNECT_TIMEOUT if read_timeout is None
-                        else min(TG_CONNECT_TIMEOUT, read_timeout))
-        try:
-            # Retain stdlib address fallback and certificate/hostname checks.
-            super().connect()
-        finally:
-            self.timeout = read_timeout
-        if self.sock is not None:
-            self.sock.settimeout(read_timeout)
-
-
-class _TelegramHTTPSHandler(urllib.request.HTTPSHandler):
-    def https_open(self, request):
-        return self.do_open(_TelegramHTTPSConnection, request,
-                            context=self._context)
-
-
-# This opener affects Telegram only; product API transports stay independent.
-_TELEGRAM_OPENER = urllib.request.build_opener(_TelegramHTTPSHandler())
-
-
 def tg_call(method: str, payload: dict) -> dict | None:
     req = urllib.request.Request(
         f"{TG}/{method}",
@@ -282,7 +250,7 @@ def tg_call(method: str, payload: dict) -> dict | None:
         headers={"Content-Type": "application/json"},
     )
     try:
-        with _TELEGRAM_OPENER.open(req, timeout=POLL_TIMEOUT + 10) as r:
+        with urllib.request.urlopen(req, timeout=POLL_TIMEOUT + 10) as r:
             return _read_json_response(r)
     except urllib.error.HTTPError as exc:
         # Telegram answers errors with a JSON body (error_code/description);
@@ -861,7 +829,7 @@ def send_photo(chat_id: int, png: bytes, caption: str,
         f"{TG}/sendPhoto", data=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
-        with _TELEGRAM_OPENER.open(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=60) as r:
             response = _read_json_response(r)
             return isinstance(response, dict) and bool(response.get("ok"))
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
