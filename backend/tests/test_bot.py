@@ -807,6 +807,7 @@ def test_setup_registers_the_research_command_tray(sent):
                         if method == "setMyCommands")
     commands = [item["command"] for item in command_call["commands"]]
     assert commands == [
+        "agents", "updates", "data",
         "menu", "funding", "trend", "community", "settings",
         "research", "now", "snap", "ask", "letter", "tandem", "atlas", "china", "where",
         "privacy", "delete_me", "help", "start", "stop",
