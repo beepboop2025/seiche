@@ -1,6 +1,6 @@
 {
   "schema": "liquidity-lab.product-card.v1",
-  "updated": "2026-10-02",
+  "updated": "2026-10-05",
   "product": {
     "name": "Seiche",
     "canonical_url": "https://seiche.info/",
@@ -343,5 +343,25 @@
     "capital_market_transmission_workflow": "Seiche. Capital-market transmission research workflow. https://seiche.info/use-cases/capital-market-transmission/",
     "china_economy_evidence_workflow": "Seiche. China economy evidence and information-controls workflow. https://seiche.info/use-cases/china-economy-evidence/",
     "direct_ofr_dataset": "Seiche. Audited direct-OFR research snapshot. https://seiche.info/datasets/direct-ofr/"
+  },
+  "company": {
+    "name": "LiquiLens",
+    "legal_name": "LIQUILENS PRIVATE LIMITED",
+    "entity_type": "Registered private limited company",
+    "jurisdiction": "India",
+    "registered_city": "Jaipur",
+    "incorporated_on": "2026-08-05",
+    "registration_number": "U62011RJ2026PTC116792",
+    "website": "https://liquilens.in/",
+    "investors_url": "https://liquilens.in/investors/",
+    "contact": "mailto:mrinal@liquilens.in?subject=LiquiLens%20investor%20conversation",
+    "profile_url": "https://liquilens.in/company-profile.json"
+  },
+  "portfolio": {
+    "company_profile": "https://liquilens.in/company-profile.json",
+    "investors": "https://liquilens.in/investors/",
+    "role": "Funding conditions",
+    "connected_workflow": "https://liquilens.in/start/",
+    "relationship": "Complementary evidence in one review; independent source clocks, coverage and scoring."
   }
 }
