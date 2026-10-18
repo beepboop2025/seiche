@@ -22,6 +22,23 @@ For a connected review, ask for institution evidence → funding context → BTC
 exit estimates, with each source date, coverage gap and limitation kept separate.
 Client/model costs and fair-use limits may apply. Research calls do not execute trades.
 
+### Choose the tool by the answer you need
+
+For the current US funding regime, start with `funding_stress_now`; use
+`data_health` to check the inputs. The broader tools have different jobs:
+
+| Needed output | Tool | First arguments |
+| --- | --- | --- |
+| Cross-market summary and coverage gaps | `world_markets_context` | `{"section":"summary"}` |
+| Detailed rates, spreads and funding-desk evidence | `money_market_context` | `{"section":"summary"}` |
+| Dated FX observations and accepted China annual histories | `market_workbench` | `{"provider":"h10","base":"USD","quote":"CNY","days":365}` |
+| Dataset catalog and links to sibling-product tools | `research_network` | `{"topic":"institutions","offset":0,"limit":12}` |
+| Compact cached funding metadata for an automated guard | `trade_safety_risk_context` | `{}` |
+
+Start with the row matching the task. The
+[tool selection guide](docs/MCP-TOOL-ROUTING.md) includes all public tools,
+example questions and a repeatable funding-review workflow.
+
 Public US dollar funding research from source-dated Fed and Treasury observations. Live board: [seiche.info](https://seiche.info/).
 
 [Dated answers to common research questions](https://seiche.info/questions/) explain the numbers, source dates and limits.

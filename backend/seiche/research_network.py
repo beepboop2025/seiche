@@ -31,9 +31,18 @@ MAX_DATASETS = 1000
 INPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "topic": {"type": "string", "enum": list(TOPICS), "default": "all"},
-        "offset": {"type": "integer", "minimum": 0, "maximum": MAX_DATASETS, "default": 0},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 12},
+        "topic": {
+            "type": "string", "enum": list(TOPICS), "default": "all",
+            "description": "Research topic used to filter dataset metadata and select suggested sibling-product tools. This does not query those tools or retrieve dataset values.",
+        },
+        "offset": {
+            "type": "integer", "minimum": 0, "maximum": MAX_DATASETS, "default": 0,
+            "description": "Zero-based offset within the filtered catalog. Use the returned next_offset while keeping topic and limit unchanged.",
+        },
+        "limit": {
+            "type": "integer", "minimum": 1, "maximum": 25, "default": 12,
+            "description": "Maximum dataset metadata entries per page; suggested research steps are separate from this page size.",
+        },
     },
     "additionalProperties": False,
 }

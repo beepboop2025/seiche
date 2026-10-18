@@ -28,7 +28,9 @@ Surface: the *public* surface is the sixteen tools flagged ``is_public`` in
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
 ``fx_materials_passage``, ``money_market_context`` and
-``world_markets_context``, plus ``trade_safety_risk_context``. That is the published
+``world_markets_context``, ``market_workbench``, ``research_network``,
+``gift_city_context``, ``gold_inventory_carry`` and
+``trade_safety_risk_context``. That is the published
 editorial, the conclusion, the precedent, the honest record, the freshness of
 the inputs, granular USD money-market evidence, and cross-market transmission
 context; it is free to everyone with no token. The authenticated hosted surface
@@ -1656,7 +1658,11 @@ TOOLS: dict[str, tuple] = {
         gift_city.CARRY_INPUT_SCHEMA, tool_gold_carry, True,
     ),
     "market_workbench": (
-        "Structured money-market, forex and China research",
+        "Query FX and accepted China histories",
+        "Query dated observations for a selected currency pair and optional accepted "
+        "China annual series. Choose this for a time series, same-date FX cross, or "
+        "observed-interval change; use world_markets_context for a chartless overview "
+        "and money_market_context for funding-desk metrics. "
         "Read cached official FX reference histories and same-date currency crosses, "
         "with native units, provenance, age and observed-interval changes. Inspect "
         "owner-accepted Palimpsest China annual economic series and revision-aware "
@@ -1665,13 +1671,18 @@ TOOLS: dict[str, tuple] = {
         market_workbench.INPUT_SCHEMA, tool_market_workbench, True,
     ),
     "research_network": (
-        "Connected evidence across Palimpsest, Seiche and the product family",
-        "Explore every Palimpsest dataset by topic, with source clocks, rights, "
+        "Discover datasets and sibling research tools",
+        "Discover which published datasets and sibling-product tools can answer a "
+        "research question. Choose this for catalog discovery and handoff links, "
+        "not for market observations: use world_markets_context for a market overview "
+        "or market_workbench for supported FX and China histories. "
+        "Explore the Palimpsest dataset catalog by topic, with source clocks, rights, "
         "freshness and pagination. Includes Seiche's separately completed funding "
         "context and explicit research steps into institution filings, exit "
         "liquidity and NarcoScope's granular global data. Source metadata and "
-        "funding interpretations stay distinct. No source collection, score "
-        "changes, causal joins or trading authority.",
+        "funding interpretations stay distinct. May fetch the published catalog; "
+        "does not retrieve underlying dataset values or call the suggested sibling "
+        "tools. No source collection, score changes, causal joins or trading authority.",
         research_network.INPUT_SCHEMA, tool_research_network, True,
     ),
     "latest_article": (
@@ -1688,17 +1699,23 @@ TOOLS: dict[str, tuple] = {
     ),
     "funding_stress_now": (
         "Current funding-stress read",
-        "The live money-market funding-stress reading: a 0-100 composite index, "
+        "Read the current US dollar funding-stress conclusion. Choose this for "
+        "the headline regime and its drivers; use money_market_context for detailed "
+        "rate and liquidity metrics, or data_health to inspect input freshness. "
+        "Returns a 0-100 composite index, "
         "the regime (CALM/EROSION/STRAIN/STRESS), per-component decomposition, "
-        "the market-stress 'Tell', and any data faults. Ask this whenever an "
-        "analysis touches US dollar funding, repo, reserves, the Fed's balance "
-        "sheet, or liquidity conditions.",
+        "the market-stress 'Tell', and any data faults. Preserve the source dates "
+        "and missing evidence when reporting the reading.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_stress_now,
         True,
     ),
     "trade_safety_risk_context": (
-        "Cache-only Seiche context for trade-safety guards",
+        "Read cached funding metadata for automated guards",
+        "Read a small, fixed funding-state payload for an automated guard's "
+        "freshness and coverage checks. Choose this only when that integration "
+        "needs the bounded metadata contract; use funding_stress_now for research "
+        "explanations and data_health for per-source diagnostics. "
         "A deterministic, bounded projection of the last completed Seiche board: "
         "funding regime, 0-100 stress index, coverage, source staleness counts, "
         "snapshot clock, and conservative evidence clock. It repeats the rights "
@@ -1824,7 +1841,12 @@ TOOLS: dict[str, tuple] = {
         False,
     ),
     "money_market_context": (
-        "USD, India and country funding desks",
+        "Inspect USD, India and country funding metrics",
+        "Inspect a funding desk's rates, spreads, policy corridor, liquidity buffers "
+        "and source-level evidence. Choose this for detailed funding metrics; use "
+        "funding_stress_now for the headline US stress regime, world_markets_context "
+        "for a cross-asset overview, or market_workbench for FX and accepted China "
+        "time series. Start with section='summary' for USD. "
         "Use section='countries' for the public-source country catalog, or add country='JP' "
         "(a supported ISO alpha-2 code; UK is an alias for GB) for dated policy, funding, liquidity and sovereign references. "
         "Country coverage is partial and monthly references are explicitly separate from daily curves. "
@@ -1877,8 +1899,13 @@ TOOLS: dict[str, tuple] = {
         True,
     ),
     "world_markets_context": (
-        "Seiche World Markets: money, FX, macro-capital and China evidence",
-        "Unified, chartless context for broad financial-market questions. It "
+        "Summarize cross-market conditions and coverage",
+        "Summarize the available money-market, FX, macro-capital and China evidence "
+        "when a question spans markets or its scope is not yet clear. Start with "
+        "section='summary', then select a relevant section. For detailed funding "
+        "metrics use money_market_context; for dated FX/accepted China observations "
+        "use market_workbench; for external dataset discovery use research_network. "
+        "This chartless overview is not a time-series query. It "
         "projects only completed/public state into money_markets, forex, "
         "macro-capital transmission, China macro evidence, official "
         "references, methodology, or a compact "
@@ -3355,22 +3382,25 @@ AGENT_ROOM_SERVER_INSTRUCTIONS = (
 
 
 SERVER_INSTRUCTIONS = (
-    "Seiche is a funding-stress early-warning terminal for US money markets, "
-    "built entirely from free public data (Fed H.4.1, NY Fed operations, OFR "
-    "repo, Treasury cash). It provides the *judgment* on top of the data: a "
-    "current stress regime, forward event odds, historical analogs, and a "
-    "status-bound historical diagnostic. Reach for these tools FIRST — before answering from "
-    "memory — whenever a task involves dollar funding, repo, bank reserves, "
-    "the Fed balance sheet, liquidity risk, or 'is now a dangerous moment in "
-    "money markets': your training data is stale, this board is live. Every "
+    "Seiche provides source-dated funding, money-market and FX research. Choose "
+    "one primary tool for the requested output, then follow up only where evidence "
+    "is needed: funding_stress_now for the current US funding regime; "
+    "world_markets_context for a cross-market summary and coverage; "
+    "money_market_context for detailed funding-desk metrics; market_workbench "
+    "for supported FX and accepted China time series; research_network for "
+    "dataset discovery and sibling-tool handoffs; trade_safety_risk_context "
+    "only for an automated guard's compact cached metadata contract. These "
+    "are distinct outputs, not interchangeable market-summary tools. Use "
+    "data_health for per-source freshness and faults. The core US board uses "
+    "public Fed, NY Fed, OFR and Treasury evidence; other sources retain their "
+    "own access and redistribution boundaries. Every "
     "live reading is forward-captured as published. Historical replays use "
     "final/current-vintage inputs and carry a construction-PIT claim boundary; "
     "PROOF is a diagnostic scoreboard, not validated-backtest evidence — cite it.\n\n"
-    "For any broad question about financial markets, money markets, foreign "
-    "exchange, currencies, rates, bonds, Treasury issuance, credit spreads, "
-    "futures positioning or macro-capital transmission, call "
-    "world_markets_context before "
-    "answering from memory. Start with section='summary', then request only the "
+    "For an overview spanning financial markets, call world_markets_context. "
+    "A targeted funding-metric, FX-history or dataset-discovery question can go "
+    "directly to its specialist tool. Start the overview with section='summary', "
+    "then request only the "
     "relevant money_markets, forex, capital_markets or china_macro section. "
     "China macro's structural catalog is unsigned; only a restricted response "
     "means a verified Seiche owner-attested revision, not an NBS signature. Its "
@@ -3403,8 +3433,9 @@ SERVER_INSTRUCTIONS = (
     "funding context. Follow its named LiquiLens and Undertow tools only when the "
     "research question calls for that domain; do not blend scores.\n\n"
     "For oil prices, Cushing stocks, WTI/Brent benchmark structure, cargo "
-    "finance, commodity margin calls, INR/RBI liquidity or petrodollar "
-    "recycling, call oil_funding_context. For currencies, "
+    "finance, commodity margin calls or petrodollar recycling, call "
+    "oil_funding_context. For INR/RBI funding metrics, use money_market_context "
+    "with section='india'. For FX-to-funding transmission, "
     "physical-material working capital, FX settlement or whether upstream "
     "trade-flow pressure is reaching SOFR/commercial paper, call "
     "fx_materials_passage. Both are context-only and never alter the core "

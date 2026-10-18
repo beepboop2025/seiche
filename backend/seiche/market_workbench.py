@@ -62,11 +62,26 @@ INPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "provider": {"type": "string", "enum": ["h10", "ecb"], "default": "h10"},
-        "base": {"type": "string", "enum": list(CURRENCIES), "default": "USD"},
-        "quote": {"type": "string", "enum": list(CURRENCIES), "default": "CNY"},
-        "days": {"type": "integer", "minimum": 30, "maximum": 3650, "default": 365},
-        "china_series": {"type": "string", "maxLength": 120},
+        "provider": {
+            "type": "string", "enum": ["h10", "ecb"], "default": "h10",
+            "description": "Official FX reference source. Both currencies must be supported by this provider; the response lists its currencies.",
+        },
+        "base": {
+            "type": "string", "enum": list(CURRENCIES), "default": "USD",
+            "description": "Base currency: each returned value is quote-currency units per one base unit. Must differ from quote.",
+        },
+        "quote": {
+            "type": "string", "enum": list(CURRENCIES), "default": "CNY",
+            "description": "Quote currency for the selected pair's dated history; must be supported by provider and differ from base.",
+        },
+        "days": {
+            "type": "integer", "minimum": 30, "maximum": 3650, "default": 365,
+            "description": "Calendar-day FX lookback from today, not an observation count. Only cached observations on shared dates are returned; gaps are not filled.",
+        },
+        "china_series": {
+            "type": "string", "maxLength": 120,
+            "description": "Optional exact cn.wdi.* identifier from the response's china.series catalog. Omit to select the first accepted series, if available; never invent an ID or infer withheld values.",
+        },
     },
 }
 
