@@ -2798,8 +2798,9 @@ def _servable_snapshot(payload: object) -> bool:
 
 def _stateful_preactivation_read_only() -> bool:
     """Return whether this API process has verification but no writer authority."""
+    from seiche import standby
 
-    return os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip() in {
+    return standby.enabled() or os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip() in {
         "shadow",
         "cutover_candidate",
     }
@@ -2833,6 +2834,26 @@ def restore_cached_snapshot(*, read_only: bool = False) -> str | None:
     """
     if not isinstance(read_only, bool):
         raise TypeError("read_only must be a boolean")
+    from seiche import standby
+
+    if standby.enabled():
+        # A portable standby must admit only the explicitly restored parent.
+        # No legacy/static fallback may conceal a missing or changed handoff.
+        from seiche.repository import PostgresMarketRepository, get_repository
+
+        receipt = standby.require_initialized()
+        repository = get_repository()
+        if not isinstance(repository, PostgresMarketRepository):
+            raise standby.StandbyError("standby requires restored PostgreSQL")
+        payload, release_receipt, producer_sha, handoff_id = standby.validate_parent(
+            repository.load_active_release_handoff_read_only(), receipt
+        )
+        _cache.update(
+            at=0.0, payload=payload, source="standby_parent",
+            release_receipt=release_receipt, release_handoff_id=handoff_id,
+            producer_sha=producer_sha,
+        )
+        return "standby_parent"
     # Do not let an indirect cache-hydration caller accidentally reopen the
     # legacy SQLite migration path inside a point-in-time shadow/candidate.
     read_only = read_only or _stateful_preactivation_read_only()
@@ -2993,6 +3014,12 @@ def _valid_release_sha(value: object) -> bool:
 
 
 def _release_sha() -> str:
+    from seiche import standby
+
+    if standby.enabled():
+        # Standby startup already verified HEAD, tree and clean source before
+        # denying child processes. An environment value alone is insufficient.
+        return standby.require_initialized()["code"]["commit"]
     checkout = Path(__file__).resolve().parents[2]
     explicit = os.getenv("SEICHE_RELEASE_SHA")
     if explicit is not None:
@@ -3377,6 +3404,19 @@ async def snapshot(force: bool = False) -> dict:
     Cold start / force → build inline; boot warming makes cold rare.
     """
     global _refreshing
+    from seiche import standby
+
+    if standby.enabled():
+        receipt = standby.require_initialized()
+        payload = _cache.get("payload")
+        if (
+            _cache.get("source") != "standby_parent"
+            or _cache.get("producer_sha") != receipt["parent"]["commit"]
+            or _cache.get("release_handoff_id") != receipt["parent"]["handoff_id"]
+            or not isinstance(payload, dict)
+            or _snapshot_digest(payload) != receipt["parent"]["payload_sha256"]
+        ):
+            raise standby.StandbyError("standby parent snapshot is not hydrated")
     cached = _safe_memory_snapshot()
     if _stateful_preactivation_read_only():
         # The restored handoff is the complete candidate board.  Staleness is
@@ -3455,6 +3495,10 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
     rights work, but none of the local evidence or handoff mutations.
     """
     global _build_generation
+    from seiche import standby
+
+    if standby.enabled():
+        raise standby.StandbyError("standby cannot build or collect a snapshot")
     src, faults = await _gather_sources()
     src = _rights_eligible_sources(src)
     drv = _derived(src)

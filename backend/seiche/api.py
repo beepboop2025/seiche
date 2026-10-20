@@ -44,6 +44,7 @@ from seiche import (
     methodology,
     provisioning,
     public_view,
+    standby,
     stateful_control,
     store,
     subscribe as subscribe_list,
@@ -157,9 +158,13 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     # (mcp_server._run has the full story).
     mcp_server.set_main_loop(asyncio.get_running_loop())
     refresh_task: asyncio.Task[None] | None = None
-    if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
+    if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1" or standby.enabled():
         stateful_mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip()
-        preactivation = stateful_mode in {"shadow", "cutover_candidate"}
+        preactivation = standby.enabled() or stateful_mode in {"shadow", "cutover_candidate"}
+        if standby.enabled():
+            # This verifies Git before installing the no-child-process guard.
+            # Subsequent release capture reuses that accepted source identity.
+            await asyncio.to_thread(standby.initialize)
         # Freeze the process identity before any background work starts. A
         # rollback may later move the editable checkout, but it must never be
         # able to relabel an in-flight candidate build as the old release.
@@ -569,6 +574,43 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
 @app.middleware("http")
 async def _railway_cutover_edge_guard(request: Request, call_next):
     """Keep the Railway candidate private and read-only until authority moves."""
+    if standby.enabled():
+        try:
+            receipt = standby.require_initialized()
+        except Exception:
+            return JSONResponse(
+                status_code=503, content={"status": "standby_unavailable"},
+                headers={"Cache-Control": "no-store"},
+            )
+        token = request.headers.get("x-seiche-standby-token", "")
+        if not secrets.compare_digest(
+            token.encode("utf-8"),
+            os.environ["SEICHE_STANDBY_EDGE_TOKEN"].encode("ascii"),
+        ):
+            return JSONResponse(
+                status_code=404, content={"detail": "not found"},
+                headers={"Cache-Control": "no-store"},
+            )
+        if request.method not in {"GET", "HEAD"} or request.url.path not in standby.READ_PATHS:
+            return JSONResponse(
+                status_code=503, content={"status": "standby_read_only"},
+                headers={"Cache-Control": "no-store"},
+            )
+        if request.headers.get("authorization"):
+            # The private standby uses only its edge capability. Subscriber
+            # authentication may initialize the historical SQLite account store.
+            return JSONResponse(
+                status_code=400, content={"status": "standby_edge_auth_only"},
+                headers={"Cache-Control": "no-store"},
+            )
+        response = await call_next(request)
+        response.headers["X-Seiche-Provider"] = "hetzner"
+        response.headers["X-Seiche-Authority"] = "standby"
+        response.headers["X-Seiche-Candidate"] = receipt["candidate_id"]
+        response.headers["X-Seiche-Release-SHA"] = receipt["code"]["commit"]
+        response.headers["X-Seiche-Snapshot-Producer"] = receipt["parent"]["commit"]
+        response.headers["Cache-Control"] = "no-store"
+        return response
     mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "")
     if mode == "shadow" and request.method not in {"GET", "HEAD", "OPTIONS"}:
         return JSONResponse(
@@ -3525,6 +3567,39 @@ def _health_response(
     include_release_candidate: bool,
 ):
     """Return cached health while keeping controller evidence private."""
+    if standby.enabled():
+        try:
+            receipt = standby.require_initialized()
+            payload = assemble.cached_snapshot()
+            if (
+                not mcp_server.agent_room_release_ready()
+                or assemble._cache.get("source") != "standby_parent"
+                or not isinstance(payload, dict)
+                or assemble._snapshot_digest(payload) != receipt["parent"]["payload_sha256"]
+            ):
+                raise standby.StandbyError("standby parent is unavailable")
+        except Exception:
+            return JSONResponse(
+                status_code=503, content={"status": "standby_unavailable"},
+                headers={"Cache-Control": "no-store"},
+            )
+        if require_rebuilt:
+            return JSONResponse(
+                status_code=503, content={
+                    "status": "standby_not_production_ready",
+                    "serving_generated_at": payload.get("generated_at"),
+                }, headers={"Cache-Control": "no-store"},
+            )
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "status": "standby_retained_evidence", "provider": "hetzner",
+            "authority": "standby", "production_ready": False,
+            "release_sha": receipt["code"]["commit"],
+            "snapshot_producer_sha": receipt["parent"]["commit"],
+            "generated_at": payload["generated_at"], "version": payload.get("version"),
+            "faults": project_public_faults(payload["faults"]),
+            "provenance": payload["provenance"],
+        }
     if require_rebuilt and _PROD and not mcp_server.agent_room_release_ready():
         return JSONResponse(
             status_code=503,

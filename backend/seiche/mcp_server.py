@@ -311,8 +311,9 @@ def _production_environment() -> bool:
 
 def _stateful_preactivation_environment() -> bool:
     """Return whether this process must verify state without changing it."""
+    from seiche import standby
 
-    return os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip() in {
+    return standby.enabled() or os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip() in {
         "shadow",
         "cutover_candidate",
     }
@@ -320,6 +321,11 @@ def _stateful_preactivation_environment() -> bool:
 
 def _stateful_agent_room_expected_key_id() -> str | None:
     """Return the receipt-bound key, empty unprovisioned sentinel, or no gate."""
+    from seiche import standby
+
+    if standby.enabled():
+        value = standby.require_initialized()["agent_room"]["expected_key_id"]
+        return "" if value == "unprovisioned" else value
 
     mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip()
     if mode not in {"shadow", "cutover_candidate", "production"}:

@@ -493,6 +493,10 @@ class PostgresMarketRepository:
             import psycopg
         except ImportError as exc:  # pragma: no cover - deployment dependency
             raise RuntimeError("PostgreSQL selected; install seiche[postgres]") from exc
+        from seiche import standby
+
+        if standby.enabled():
+            standby.validate_database(self.dsn, standby.require_initialized())
         options = {} if connect_timeout is None else {"connect_timeout": connect_timeout}
         return psycopg.connect(self.dsn, **options)
 
@@ -519,6 +523,23 @@ class PostgresMarketRepository:
             )
 
     def _ensure_schema(self) -> None:
+        from seiche import standby
+
+        if standby.enabled():
+            # A restored standby cannot converge schema, even on a read path.
+            # The independent restore acceptance proved the schema. Restrict
+            # this connection to a non-superuser, read-only transaction; any
+            # attempted DDL/DML remains rejected by PostgreSQL.
+            with self._connect() as connection, connection.transaction():
+                connection.execute("SET TRANSACTION READ ONLY")
+                row = connection.execute(
+                    "SELECT current_setting('transaction_read_only'), "
+                    "rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls "
+                    "FROM pg_roles WHERE rolname=current_user"
+                ).fetchone()
+                if row != ("on", False, False, False, False, False):
+                    raise standby.StandbyError("standby database role is not restricted")
+            return
         if self._initialized:
             return
         with self._init_lock:
