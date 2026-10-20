@@ -15,7 +15,7 @@ on:
         required: false
         type: string
       source_health_package:
-        description: "Explicit owner-signed catalog-only source health package; operator must durably claim this exact publication request before dispatch"
+        description: "Owner-signed catalog-only package, at most 65535 bytes; larger proofs require the native file transport; durably claim this request before dispatch"
         required: false
         type: string
   push:
@@ -177,21 +177,37 @@ jobs:
           git show "${GITHUB_SHA}:ops/release/verify_catalog_publication.py" >"$verifier"
           test "$(git hash-object "$verifier")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/verify_catalog_publication.py")"
           source_health_args=()
-          if [ -n "$SOURCE_HEALTH_PACKAGE" ]; then
-            case "$GITHUB_EVENT_NAME" in workflow_dispatch|native_manual) ;; *) exit 1 ;; esac
+          if [ -n "$SOURCE_HEALTH_PACKAGE" ] || [ -n "${SOURCE_HEALTH_PACKAGE_FILE:-}" ]; then
+            case "$GITHUB_EVENT_NAME" in
+              workflow_dispatch) test -z "${SOURCE_HEALTH_PACKAGE_FILE:-}" ;;
+              native_manual)
+                test -z "$SOURCE_HEALTH_PACKAGE"
+                test "${SOURCE_HEALTH_PACKAGE_FILE:-}" = "$RUNNER_TEMP/catalog-source-health.json"
+                ;;
+              *) exit 1 ;;
+            esac
             test -z "$FRONTEND_RECEIPT_TAG"
             source_helper="$RUNNER_TEMP/source_degradation.py"
             git show "${GITHUB_SHA}:ops/release/source_degradation.py" >"$source_helper"
             test "$(git hash-object "$source_helper")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/source_degradation.py")"
             python -I -S - <<'PY'
           import os
+          import stat
           from pathlib import Path
-          value = os.environ["SOURCE_HEALTH_PACKAGE"].encode("utf-8")
-          if not 0 < len(value) <= 65535:
-              raise SystemExit("explicit source health package is missing or oversized")
           destination = Path(os.environ["RUNNER_TEMP"]) / "catalog-source-health.json"
-          with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
-              stream.write(value)
+          if os.environ["GITHUB_EVENT_NAME"] == "native_manual":
+              with os.fdopen(os.open(destination, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+                  info = os.fstat(stream.fileno())
+                  if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                          or info.st_uid != os.geteuid() or info.st_mode & 0o077
+                          or not 0 < len(stream.read(1024 * 1024 + 1)) <= 1024 * 1024):
+                      raise SystemExit("native source health package is not bounded private owner data")
+          else:
+              value = os.environ["SOURCE_HEALTH_PACKAGE"].encode("utf-8")
+              if not 0 < len(value) <= 65535:
+                  raise SystemExit("explicit source health package is missing or oversized")
+              with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as stream:
+                  stream.write(value)
           PY
             source_health_args=(--source-health-package "$RUNNER_TEMP/catalog-source-health.json")
           fi

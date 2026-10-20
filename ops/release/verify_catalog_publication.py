@@ -1021,7 +1021,9 @@ def _source_health_gate(*, verified_source: bytes | None = None):
         return _SOURCE_HEALTH_MODULE
     path = Path(__file__).with_name("source_degradation.py")
     if path.is_symlink() or not path.is_file():
-        raise PublicationGateError("source health verifier is not a regular source file")
+        raise PublicationGateError(
+            "source health verifier is not a regular source file"
+        )
     spec = importlib.util.spec_from_file_location("catalog_source_degradation", path)
     if spec is None or spec.loader is None:
         raise PublicationGateError("source health verifier cannot be loaded")
@@ -1036,23 +1038,34 @@ def _source_health_gate(*, verified_source: bytes | None = None):
 
 def _fetch_health_observation(url: str) -> dict[str, Any]:
     """One bounded public observation, with no redirect or upstream retry."""
+
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             raise PublicationGateError("source health observation cannot redirect")
 
     parsed = urllib.parse.urlsplit(url)
     if (parsed.scheme, parsed.netloc, parsed.path) != (
-        "https", "api.seiche.info", "/api/health"
+        "https",
+        "api.seiche.info",
+        "/api/health",
     ) or parsed.fragment:
         raise PublicationGateError("source health observation target differs")
-    request = urllib.request.Request(url, headers={
-        "Accept": "application/json", "User-Agent": "seiche-publication-gate/1",
-        "Cache-Control": "no-cache",
-    })
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "seiche-publication-gate/1",
+            "Cache-Control": "no-cache",
+        },
+    )
     try:
-        with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
+        with urllib.request.build_opener(NoRedirect()).open(
+            request, timeout=30
+        ) as response:
             if response.status != 200 or response.geturl() != url:
-                raise PublicationGateError("source health observation transport differs")
+                raise PublicationGateError(
+                    "source health observation transport differs"
+                )
             raw = response.read(MAX_JSON_BYTES + 1)
             identity = {
                 "source_sha": response.headers.get("x-seiche-release-sha"),
@@ -1063,12 +1076,18 @@ def _fetch_health_observation(url: str) -> dict[str, Any]:
         raise PublicationGateError("source health observation fetch failed") from None
     if len(raw) > MAX_JSON_BYTES:
         raise PublicationGateError("source health observation is oversized")
-    return {"body": _load_json_bytes(raw, label="public source health"), "identity": identity}
+    return {
+        "body": _load_json_bytes(raw, label="public source health"),
+        "identity": identity,
+    }
 
 
 def verify_catalog_source_health(
-    package: dict[str, Any], *, expected_context: dict[str, Any],
-    current_public: dict[str, Any], now: datetime,
+    package: dict[str, Any],
+    *,
+    expected_context: dict[str, Any],
+    current_public: dict[str, Any],
+    now: datetime,
 ) -> dict[str, Any]:
     """Verify an explicitly owner-signed origin proof and fresh public readback.
 
@@ -1078,42 +1097,78 @@ def verify_catalog_source_health(
     """
     helper = _source_health_gate()
     try:
-        if not isinstance(package, dict) or set(package) != {
-            "schema", "intent_id", "publication_request_id",
-            "body_b64", "signature_b64", "health_pair",
-        } or package["schema"] != "seiche.catalog-source-health.v1":
+        if (
+            not isinstance(package, dict)
+            or set(package)
+            != {
+                "schema",
+                "intent_id",
+                "publication_request_id",
+                "body_b64",
+                "signature_b64",
+                "health_pair",
+            }
+            or package["schema"] != "seiche.catalog-source-health.v1"
+        ):
             raise PublicationGateError("catalog source health package shape differs")
         if expected_context.get("purpose") != "catalog_metadata":
             raise PublicationGateError("catalog source health purpose differs")
-        if package["intent_id"] != expected_context["intent_id"] or \
-                package["publication_request_id"] != expected_context["operation"]["publication_request_id"]:
+        if (
+            package["intent_id"] != expected_context["intent_id"]
+            or package["publication_request_id"]
+            != expected_context["operation"]["publication_request_id"]
+        ):
             raise PublicationGateError("catalog source health request differs")
         pair = package["health_pair"]
         if not isinstance(pair, dict) or set(pair) != {"origin", "public"}:
             raise PublicationGateError("catalog source health pair shape differs")
         if len(helper.canonical(package)) > MAX_JSON_BYTES:
             raise PublicationGateError("catalog source health package is oversized")
-        if helper.digest(helper.canonical(pair)) != expected_context["operation"]["health_pair_sha256"]:
+        if (
+            helper.digest(helper.canonical(pair))
+            != expected_context["operation"]["health_pair_sha256"]
+        ):
             raise PublicationGateError("catalog source health pair digest differs")
         body = base64.b64decode(package["body_b64"], validate=True)
         signature = base64.b64decode(package["signature_b64"], validate=True)
         assessment = helper.assess(
-            body, signature, expected_context=expected_context,
-            origin=pair["origin"], public=pair["public"], now=now,
+            body,
+            signature,
+            expected_context=expected_context,
+            origin=pair["origin"],
+            public=pair["public"],
+            now=now,
         )
         if helper.canonical(pair["public"]) != helper.canonical(current_public):
-            raise PublicationGateError("current public health differs from the signed origin/public proof")
+            raise PublicationGateError(
+                "current public health differs from the signed origin/public proof"
+            )
         # Recheck current identity, clocks, provenance and complete faults too.
-        helper.assess(body, signature, expected_context=expected_context,
-                      origin=pair["origin"], public=current_public, now=now)
-        execution = {"kind": "catalog_publication",
-                     "publication_request_id": package["publication_request_id"]}
-        generated = datetime.fromisoformat(current_public["body"]["generated_at"].replace("Z", "+00:00"))
-        return {**assessment, "claim_document": helper.claim_document(assessment, execution=execution),
-                "claim_persistence": "external_operator",
-                "health_valid_until": (generated + timedelta(seconds=900)).isoformat()}
+        helper.assess(
+            body,
+            signature,
+            expected_context=expected_context,
+            origin=pair["origin"],
+            public=current_public,
+            now=now,
+        )
+        execution = {
+            "kind": "catalog_publication",
+            "publication_request_id": package["publication_request_id"],
+        }
+        generated = datetime.fromisoformat(
+            current_public["body"]["generated_at"].replace("Z", "+00:00")
+        )
+        return {
+            **assessment,
+            "claim_document": helper.claim_document(assessment, execution=execution),
+            "claim_persistence": "external_operator",
+            "health_valid_until": (generated + timedelta(seconds=900)).isoformat(),
+        }
     except (helper.AdmissionError, ValueError, TypeError, KeyError):
-        raise PublicationGateError("catalog source health admission is invalid") from None
+        raise PublicationGateError(
+            "catalog source health admission is invalid"
+        ) from None
 
 
 def _post_json(url: str, payload: Any, *, expected_host: str) -> Any:
@@ -1499,13 +1554,19 @@ def verify_public_receipts(
     health_url = f"https://api.seiche.info/api/health?release={quoted}"
     assessment = None
     if (source_health_package is None) != (source_health_context is None):
-        raise PublicationGateError("catalog source health package and context are required together")
+        raise PublicationGateError(
+            "catalog source health package and context are required together"
+        )
     if source_health_package is not None:
         current_public = fetch_health_observation(health_url)
-        health = current_public.get("body") if isinstance(current_public, dict) else None
+        health = (
+            current_public.get("body") if isinstance(current_public, dict) else None
+        )
         assessment = verify_catalog_source_health(
-            source_health_package, expected_context=source_health_context,
-            current_public=current_public, now=now or datetime.now(timezone.utc),
+            source_health_package,
+            expected_context=source_health_context,
+            current_public=current_public,
+            now=now or datetime.now(timezone.utc),
         )
     else:
         health = fetch_json(health_url, expected_host="api.seiche.info")
@@ -1550,15 +1611,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--signer-fingerprint", required=True)
     parser.add_argument("--published-catalog", type=Path)
-    parser.add_argument("--source-health-package", type=Path,
-                        help="Explicit owner-signed metadata-only admission and current origin/public proof")
-    parser.add_argument("--recheck-source-health-only", action="store_true",
-                        help="Recheck this signed source scope immediately before a public write; not a full publication gate")
+    parser.add_argument(
+        "--source-health-package",
+        type=Path,
+        help="Explicit owner-signed metadata-only admission and current origin/public proof",
+    )
+    parser.add_argument(
+        "--recheck-source-health-only",
+        action="store_true",
+        help="Recheck this signed source scope immediately before a public write; not a full publication gate",
+    )
     args = parser.parse_args(argv)
     root = args.root.resolve()
     try:
         if args.recheck_source_health_only and args.source_health_package is None:
-            raise PublicationGateError("source health recheck requires an explicit package")
+            raise PublicationGateError(
+                "source health recheck requires an explicit package"
+            )
         version, _entry = verify_local_identity(root)
         tag = verify_signed_release(
             root,
@@ -1576,42 +1645,80 @@ def main(argv: list[str] | None = None) -> int:
         if args.source_health_package is not None:
             helper_path = Path(__file__).with_name("source_degradation.py")
             if helper_path.is_symlink() or not helper_path.is_file():
-                raise PublicationGateError("source health verifier is not a regular source file")
+                raise PublicationGateError(
+                    "source health verifier is not a regular source file"
+                )
             helper_source = helper_path.read_bytes()
-            if helper_source != \
-                    _run_git_bytes(root, "show", f"{args.expected_sha}:ops/release/source_degradation.py").stdout:
-                raise PublicationGateError("source health verifier differs from the exact signed source")
+            if (
+                helper_source
+                != _run_git_bytes(
+                    root,
+                    "show",
+                    f"{args.expected_sha}:ops/release/source_degradation.py",
+                ).stdout
+            ):
+                raise PublicationGateError(
+                    "source health verifier differs from the exact signed source"
+                )
             source_package = _read_json(args.source_health_package)
             helper = _source_health_gate(verified_source=helper_source)
-            if not isinstance(source_package, dict) or not isinstance(source_package.get("health_pair"), dict):
+            if not isinstance(source_package, dict) or not isinstance(
+                source_package.get("health_pair"), dict
+            ):
                 raise PublicationGateError("catalog source health package is malformed")
             current_public = _fetch_health_observation(
                 f"https://api.seiche.info/api/health?release={urllib.parse.quote(version, safe='')}"
             )
             source_context = {
-                "purpose": "catalog_metadata", "intent_id": source_package.get("intent_id"),
+                "purpose": "catalog_metadata",
+                "intent_id": source_package.get("intent_id"),
                 "controller_source_sha": args.expected_sha,
-                "runtime_source_sha": _run_git(root, "rev-parse", f"{tag}^{{commit}}").stdout.strip(),
+                "runtime_source_sha": _run_git(
+                    root, "rev-parse", f"{tag}^{{commit}}"
+                ).stdout.strip(),
                 "target": dict(SOURCE_HEALTH_TARGET),
                 "deployment_id": current_public["identity"]["deployment_id"],
-                "expected_version": version, "expected_authority": "production",
+                "expected_version": version,
+                "expected_authority": "production",
                 "operation": {
-                    "publication_request_id": source_package.get("publication_request_id"),
-                    "catalog_sha256": hashlib.sha256((root / AI_CATALOG_PATH).read_bytes()).hexdigest(),
-                    "health_pair_sha256": helper.digest(helper.canonical(source_package["health_pair"])),
+                    "publication_request_id": source_package.get(
+                        "publication_request_id"
+                    ),
+                    "catalog_sha256": hashlib.sha256(
+                        (root / AI_CATALOG_PATH).read_bytes()
+                    ).hexdigest(),
+                    "health_pair_sha256": helper.digest(
+                        helper.canonical(source_package["health_pair"])
+                    ),
                 },
             }
             if args.recheck_source_health_only:
                 assessment = verify_catalog_source_health(
-                    source_package, expected_context=source_context, current_public=current_public,
+                    source_package,
+                    expected_context=source_context,
+                    current_public=current_public,
                     now=datetime.now(timezone.utc),
                 )
-                print(json.dumps({"scope": "source_health_recheck_only", "assessment": assessment},
-                                 sort_keys=True, separators=(",", ":")))
+                print(
+                    json.dumps(
+                        {
+                            "scope": "source_health_recheck_only",
+                            "assessment": assessment,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
                 return 0
-        receipt = verify_public_receipts(version) if source_package is None else verify_public_receipts(
-            version, source_health_package=source_package, source_health_context=source_context,
-            fetch_health_observation=lambda url: current_public,
+        receipt = (
+            verify_public_receipts(version)
+            if source_package is None
+            else verify_public_receipts(
+                version,
+                source_health_package=source_package,
+                source_health_context=source_context,
+                fetch_health_observation=lambda url: current_public,
+            )
         )
         corpus_receipt = verify_market_corpus_receipts(corpus_entry)
         if args.published_catalog is not None:

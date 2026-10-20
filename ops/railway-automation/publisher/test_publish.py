@@ -30,7 +30,7 @@ class PublisherBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "private owner"):
                 publisher.read_source_health_package(path)
             path.chmod(0o600)
-            path.write_bytes(b"x" * 65536)
+            path.write_bytes(b"x" * (publisher.MAX_SOURCE_HEALTH_PACKAGE_BYTES + 1))
             with self.assertRaisesRegex(RuntimeError, "oversized"):
                 publisher.read_source_health_package(path)
             link = root / "link"
@@ -92,6 +92,71 @@ class PublisherBoundaryTests(unittest.TestCase):
             temp = publisher.private_gate_temp(root)
             self.assertEqual(temp.stat().st_mode & 0o777, 0o700)
 
+    def test_complete_large_proof_uses_private_file_and_small_child_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            temp = publisher.private_gate_temp(root)
+            proof = json.dumps({"health_pair": {"origin": {"provenance": ["x" * 1024] * 125},
+                                              "public": {"provenance": ["x" * 1024] * 125}}})
+            self.assertGreater(len(proof), 250_000)
+            source = root / "input.json"
+            source.write_text(proof)
+            source.chmod(0o600)
+            captured = publisher.read_source_health_package(source)
+            env = publisher.clean_env(publisher.capture_source_health_package(temp, captured))
+            self.assertEqual(env["SOURCE_HEALTH_PACKAGE"], "")
+            self.assertLess(max(map(len, env.values())), 4096)
+            copied = Path(env["SOURCE_HEALTH_PACKAGE_FILE"])
+            self.assertEqual(copied.read_bytes(), proof.encode("utf-8"))
+            self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
+            source.write_text("changed after capture")
+            self.assertEqual(copied.read_bytes(), proof.encode("utf-8"))
+            with self.assertRaises(FileExistsError):
+                publisher.capture_source_health_package(temp, captured)
+
+    def test_native_workflow_gate_consumes_large_file_without_inline_environment(self):
+        workflow_path = Path(__file__).with_name("publish-static.yml")
+        if not workflow_path.exists():
+            workflow_path = Path(__file__).resolve().parents[3] / ".github/workflows/publish-static.yml"
+        workflow = publisher.yaml.safe_load(workflow_path.read_text())
+        command = next(step["run"] for step in workflow["jobs"]["copy-static"]["steps"]
+                       if step.get("name") == "Gate catalog on the signed release, runtime, and PyPI receipts")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            temp = publisher.private_gate_temp(root)
+            proof = json.dumps({"health_pair": {"origin": {"provenance": ["x" * 1024] * 125},
+                                              "public": {"provenance": ["x" * 1024] * 125}}})
+            binary = root / "bin"
+            binary.mkdir()
+            (binary / "python").symlink_to(sys.executable)
+            verifier = ("import hashlib,pathlib,sys\n"
+                        "p=pathlib.Path(sys.argv[sys.argv.index('--source-health-package')+1])\n"
+                        "print(hashlib.sha256(p.read_bytes()).hexdigest())\n")
+            fake_git = binary / "git"
+            fake_git.write_text("#!" + sys.executable + "\nimport sys\n"
+                                "if sys.argv[1] == 'show':\n"
+                                "    print(" + repr(verifier) + " if sys.argv[2].endswith('verify_catalog_publication.py') else '')\n"
+                                "else: print('test-only-matching-git-blob')\n")
+            fake_git.chmod(0o700)
+            env = publisher.clean_env({
+                **publisher.capture_source_health_package(temp, proof),
+                "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                "RUNNER_TEMP": str(temp), "GITHUB_SHA": "a" * 40,
+                "GITHUB_EVENT_NAME": "native_manual", "FRONTEND_RECEIPT_TAG": "",
+                "RELEASE_SIGNING_KEY_FINGERPRINT": "test-only",
+            })
+            result = subprocess.run(["bash", "-euo", "pipefail", "-c", command],
+                                    cwd=root, env=env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), hashlib.sha256(proof.encode()).hexdigest())
+            self.assertLess(max(map(len, env.values())), 4096)
+            for event in ("workflow_dispatch", "push", "native_controller"):
+                with self.subTest(event=event):
+                    changed = dict(env, GITHUB_EVENT_NAME=event)
+                    rejected = subprocess.run(["bash", "-euo", "pipefail", "-c", command],
+                                              cwd=root, env=changed, capture_output=True, timeout=15)
+                    self.assertNotEqual(rejected.returncode, 0)
+
     @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0,
                          "Builder UID boundary is verified in the qualified Linux image")
     def test_builder_cannot_read_source_health_package(self):
@@ -111,7 +176,7 @@ class PublisherBoundaryTests(unittest.TestCase):
         with patch.object(publisher, "run") as run:
             self.assertIsNone(publisher.recheck_source_health(Path("/trusted"), {}))
             run.assert_not_called()
-            env = {"SOURCE_HEALTH_PACKAGE": "signed", "RUNNER_TEMP": "/private/temp",
+            env = {"SOURCE_HEALTH_PACKAGE_FILE": "/private/temp/catalog-source-health.json", "RUNNER_TEMP": "/private/temp",
                    "GITHUB_SHA": "a" * 40, "RELEASE_SIGNING_KEY_FINGERPRINT": "pinned"}
             run.side_effect = RuntimeError("expired")
             with self.assertRaisesRegex(RuntimeError, "expired"):

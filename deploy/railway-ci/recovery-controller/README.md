@@ -257,5 +257,8 @@ source, deployment, manifest digest and exact UTC execution day, plus the review
 application source/deployment/target. The installation gate captures and verifies
 these bytes before the daily lock. The monitor and pre/post-export checks retain
 the degraded assessment; expiry/day are revalidated immediately before export.
+With an admission envelope, the native monitor fetches the original health pair
+once and applies the full signed validator. The ordinary healthy-snapshot retry
+helper remains the default when no envelope is supplied.
 The existing execution lock and immutable daily index remain in force. No
 admission is an assertion that a later natural recurrence has succeeded.

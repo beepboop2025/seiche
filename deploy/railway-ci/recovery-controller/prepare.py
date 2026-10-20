@@ -166,6 +166,7 @@ def prepare(repository, output, case, target, public_key):
         ("ops/release/source_degradation.py", "trusted/ops/release/source_degradation.py"),
         (WORKFLOW, "source-health-workflow.yml"),
         ("deploy/railway-ci/recovery-monitor/test_monitor.py", "source-health-monitor-fixtures.py"),
+        ("deploy/railway-ci/recovery-monitor/prepare.py", "source-health-monitor-prepare.py"),
     ):
         destination = output / destination_path
         destination.parent.mkdir(parents=True, exist_ok=True)

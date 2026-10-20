@@ -1378,44 +1378,79 @@ def source_health_package(monkeypatch):
     monkeypatch.setattr(gate, "_source_health_gate", lambda: helper)
     monkeypatch.setattr(helper, "verify_owner_signature", lambda body, signature: None)
     now = datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
-    fault = {"source": "cbuae_donia", "status": "FAILED", "category": "HTTP_ERROR",
-             "detail": helper.HTTP_DETAIL}
+    fault = {
+        "source": "cbuae_donia",
+        "status": "FAILED",
+        "category": "HTTP_ERROR",
+        "detail": helper.HTTP_DETAIL,
+    }
     observation = {
-        "body": {"version": "0.16.6 estuary", "generated_at": now.isoformat(),
-                 "faults": [fault], "provenance": [{"source": "cbuae_donia",
-                 "observed_at": "2026-10-19T22:35:00Z"}]},
-        "identity": {"source_sha": "3" * 40, "deployment_id": "12345678-1234-1234-1234-123456789012",
-                     "authority": "production"},
+        "body": {
+            "version": "0.16.6 estuary",
+            "generated_at": now.isoformat(),
+            "faults": [fault],
+            "provenance": [
+                {"source": "cbuae_donia", "observed_at": "2026-10-19T22:35:00Z"}
+            ],
+        },
+        "identity": {
+            "source_sha": "3" * 40,
+            "deployment_id": "12345678-1234-1234-1234-123456789012",
+            "authority": "production",
+        },
     }
     pair = {"origin": copy.deepcopy(observation), "public": copy.deepcopy(observation)}
     context = {
-        "purpose": "catalog_metadata", "intent_id": "1" * 64,
-        "controller_source_sha": "2" * 40, "runtime_source_sha": "3" * 40,
+        "purpose": "catalog_metadata",
+        "intent_id": "1" * 64,
+        "controller_source_sha": "2" * 40,
+        "runtime_source_sha": "3" * 40,
         "target": dict(gate.SOURCE_HEALTH_TARGET),
         "deployment_id": observation["identity"]["deployment_id"],
-        "expected_version": "0.16.6", "expected_authority": "production",
-        "operation": {"publication_request_id": "4" * 64, "catalog_sha256": "5" * 64,
-                      "health_pair_sha256": helper.digest(helper.canonical(pair))},
+        "expected_version": "0.16.6",
+        "expected_authority": "production",
+        "operation": {
+            "publication_request_id": "4" * 64,
+            "catalog_sha256": "5" * 64,
+            "health_pair_sha256": helper.digest(helper.canonical(pair)),
+        },
     }
-    admission = {"schema": helper.SCHEMA, "context": context,
-                 "issued_at": (now - timedelta(minutes=1)).isoformat(),
-                 "expires_at": (now + timedelta(hours=3)).isoformat(),
-                 "faults": [fault], "faults_sha256": helper.digest(helper.canonical([fault])),
-                 "limits": dict(helper.LIMITS)}
-    package = {"schema": "seiche.catalog-source-health.v1", "intent_id": context["intent_id"],
-               "publication_request_id": context["operation"]["publication_request_id"],
-               "body_b64": base64.b64encode(helper.canonical(admission)).decode(),
-               "signature_b64": base64.b64encode(b"test-only-signature").decode(), "health_pair": pair}
+    admission = {
+        "schema": helper.SCHEMA,
+        "context": context,
+        "issued_at": (now - timedelta(minutes=1)).isoformat(),
+        "expires_at": (now + timedelta(hours=3)).isoformat(),
+        "faults": [fault],
+        "faults_sha256": helper.digest(helper.canonical([fault])),
+        "limits": dict(helper.LIMITS),
+    }
+    package = {
+        "schema": "seiche.catalog-source-health.v1",
+        "intent_id": context["intent_id"],
+        "publication_request_id": context["operation"]["publication_request_id"],
+        "body_b64": base64.b64encode(helper.canonical(admission)).decode(),
+        "signature_b64": base64.b64encode(b"test-only-signature").decode(),
+        "health_pair": pair,
+    }
     return helper, now, context, admission, package, observation
 
 
-def test_catalog_scoped_metadata_admission_preserves_faults_and_all_package_receipts(source_health_package):
+def test_catalog_scoped_metadata_admission_preserves_faults_and_all_package_receipts(
+    source_health_package,
+):
     helper, now, context, _, package, observation = source_health_package
     pypi, _, discovery, bodies = _receipts()
     before = copy.deepcopy(package)
-    receipt = _verify(pypi, observation["body"], discovery, bodies,
-                      source_health_package=package, source_health_context=context,
-                      fetch_health_observation=lambda url: observation, now=now)
+    receipt = _verify(
+        pypi,
+        observation["body"],
+        discovery,
+        bodies,
+        source_health_package=package,
+        source_health_context=context,
+        fetch_health_observation=lambda url: observation,
+        now=now,
+    )
     assessment = receipt["sourceHealthAssessment"]
     assert assessment["evidence_status"] == "degraded"
     assert assessment["admitted_source_faults"] == observation["body"]["faults"]
@@ -1423,19 +1458,42 @@ def test_catalog_scoped_metadata_admission_preserves_faults_and_all_package_rece
     assert "runtime_ready" not in assessment
     assert len(receipt["artifacts"]) == 2
     assert package == before
-    helper.verify_claim(assessment["claim_document"], assessment, execution={
-        "kind": "catalog_publication", "publication_request_id": package["publication_request_id"],
-    })
+    helper.verify_claim(
+        assessment["claim_document"],
+        assessment,
+        execution={
+            "kind": "catalog_publication",
+            "publication_request_id": package["publication_request_id"],
+        },
+    )
 
 
-@pytest.mark.parametrize("mutation", [
-    "pair", "public_fault", "public_clock", "public_identity", "old_pair",
-    "request", "intent", "catalog", "source", "target", "purpose", "extra_key", "bad_encoding",
-])
-def test_catalog_source_health_rejects_unsigned_drift_and_other_purposes(source_health_package, mutation):
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "pair",
+        "public_fault",
+        "public_clock",
+        "public_identity",
+        "old_pair",
+        "request",
+        "intent",
+        "catalog",
+        "source",
+        "target",
+        "purpose",
+        "extra_key",
+        "bad_encoding",
+    ],
+)
+def test_catalog_source_health_rejects_unsigned_drift_and_other_purposes(
+    source_health_package, mutation
+):
     helper, now, context, admission, package, observation = source_health_package
     if mutation == "pair":
-        package["health_pair"]["origin"]["body"]["provenance"][0]["observed_at"] = now.isoformat()
+        package["health_pair"]["origin"]["body"]["provenance"][0]["observed_at"] = (
+            now.isoformat()
+        )
     elif mutation == "public_fault":
         observation["body"]["faults"] = []
     elif mutation == "public_clock":
@@ -1455,7 +1513,9 @@ def test_catalog_source_health_rejects_unsigned_drift_and_other_purposes(source_
         elif mutation == "source":
             admission["context"]["controller_source_sha"] = "f" * 40
         else:
-            admission["context"]["target"]["project_id"] = "abcdefab-1234-1234-1234-123456789012"
+            admission["context"]["target"]["project_id"] = (
+                "abcdefab-1234-1234-1234-123456789012"
+            )
         package["body_b64"] = base64.b64encode(helper.canonical(admission)).decode()
     elif mutation == "purpose":
         context["purpose"] = "recovery"
@@ -1464,8 +1524,9 @@ def test_catalog_source_health_rejects_unsigned_drift_and_other_purposes(source_
     else:
         package["signature_b64"] = "!invalid!"
     with pytest.raises(gate.PublicationGateError):
-        gate.verify_catalog_source_health(package, expected_context=context,
-                                          current_public=observation, now=now)
+        gate.verify_catalog_source_health(
+            package, expected_context=context, current_public=observation, now=now
+        )
 
 
 def test_catalog_admission_does_not_relax_pypi_or_discovery(source_health_package):
@@ -1473,26 +1534,49 @@ def test_catalog_admission_does_not_relax_pypi_or_discovery(source_health_packag
     pypi, _, discovery, bodies = _receipts()
     pypi["urls"][0]["digests"]["sha256"] = "f" * 64
     with pytest.raises(gate.PublicationGateError, match="bytes differ"):
-        _verify(pypi, observation["body"], discovery, bodies, source_health_package=package,
-                source_health_context=context, fetch_health_observation=lambda url: observation, now=now)
+        _verify(
+            pypi,
+            observation["body"],
+            discovery,
+            bodies,
+            source_health_package=package,
+            source_health_context=context,
+            fetch_health_observation=lambda url: observation,
+            now=now,
+        )
     pypi, _, discovery, bodies = _receipts()
     discovery["servers"][0]["version"] = "0.16.5"
     with pytest.raises(gate.PublicationGateError, match="discovery has not activated"):
-        _verify(pypi, observation["body"], discovery, bodies, source_health_package=package,
-                source_health_context=context, fetch_health_observation=lambda url: observation, now=now)
+        _verify(
+            pypi,
+            observation["body"],
+            discovery,
+            bodies,
+            source_health_package=package,
+            source_health_context=context,
+            fetch_health_observation=lambda url: observation,
+            now=now,
+        )
 
 
 def test_static_source_health_is_explicit_manual_and_pins_helper_before_gate():
     workflow = (ROOT / ".github/workflows/publish-static.yml").read_text()
     assert "source_health_package:" in workflow
-    assert 'case "$GITHUB_EVENT_NAME" in workflow_dispatch|native_manual)' in workflow
+    assert 'case "$GITHUB_EVENT_NAME" in' in workflow
+    assert 'workflow_dispatch) test -z "${SOURCE_HEALTH_PACKAGE_FILE:-}"' in workflow
+    assert (
+        'test "${SOURCE_HEALTH_PACKAGE_FILE:-}" = "$RUNNER_TEMP/catalog-source-health.json"'
+        in workflow
+    )
     assert 'test -z "$FRONTEND_RECEIPT_TAG"' in workflow
     assert 'git show "${GITHUB_SHA}:ops/release/source_degradation.py"' in workflow
-    assert 'source_health_args=(--source-health-package' in workflow
-    assert workflow.index('source_health_args=(--source-health-package') < workflow.index(
-        "Prepare static files from the recoverable site mirror"
+    assert "source_health_args=(--source-health-package" in workflow
+    assert workflow.index(
+        "source_health_args=(--source-health-package"
+    ) < workflow.index("Prepare static files from the recoverable site mirror")
+    assert workflow.index("--recheck-source-health-only") < workflow.index(
+        "git push -q origin main"
     )
-    assert workflow.index("--recheck-source-health-only") < workflow.index("git push -q origin main")
     assert "preCommands: >-" in workflow
     assert workflow.count("--recheck-source-health-only") == 2
 

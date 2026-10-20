@@ -270,6 +270,97 @@ class SourceHealthTests(unittest.TestCase):
         result = run()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('twenty percent headroom', result.stderr)
+        evidence['native-proof.json']['data']['environment']['volumeInstances']['edges'][0]['node']['currentSizeMB'] = 500
+
+        # Execute the generated native fetch branch and the complete unchanged
+        # final validator. The healthy retry helper must not reject the reviewed
+        # fault pair first, and the envelope-presence branch must grant nothing.
+        prepare_path = here / 'source-health-monitor-prepare.py'
+        if not prepare_path.is_file():
+            prepare_path = here.parent / 'recovery-monitor/prepare.py'
+        spec = importlib.util.spec_from_file_location('monitor_preparation_fixture', prepare_path)
+        preparation = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(preparation)
+        transformed = preparation.health_wait_proof(step['run'])
+        self.assertEqual(transformed.split('OUTPUT="$GITHUB_OUTPUT"', 1)[1],
+                         step['run'].split('OUTPUT="$GITHUB_OUTPUT"', 1)[1])
+        start = transformed.index('if test -n "${SOURCE_HEALTH_ADMISSION:-}"; then')
+        finish = transformed.index('\nPY\n', transformed.index('OUTPUT="$GITHUB_OUTPUT"')) + len('\nPY\n')
+        script = self.root / 'native-fetch-and-validate.sh'
+        script.write_text('set -euo pipefail\n' + transformed[start:finish])
+        fixture_dir, binaries = self.root / 'fetch-fixtures', self.root / 'bin'
+        fixture_dir.mkdir()
+        binaries.mkdir()
+        (binaries / 'python3').symlink_to(sys.executable)
+        curl = binaries / 'curl'
+        curl.write_text('#!' + sys.executable + '\n' + '''
+import json
+import os
+from pathlib import Path
+import sys
+args = sys.argv[1:]
+with Path('curl-arguments.jsonl').open('a') as stream:
+    stream.write(json.dumps(args) + '\\n')
+for flag in ('--dump-header', '--output'):
+    target = args[args.index(flag) + 1]
+    Path(target).write_bytes((Path(os.environ['FETCH_FIXTURES']) / target).read_bytes())
+print('200', end='')
+''')
+        curl.chmod(0o700)
+        policy = {'controller_source': 'a' * 40, 'application_source_sha': 'b' * 40,
+                  'application_deployment_id': UUID, 'application_expected_version': '0.16.5',
+                  'controller_deployment_id': UUID, 'controller_manifest_sha256': 'd' * 64,
+                  **{'application_' + k + '_id': UUID for k in ('project', 'environment', 'service')},
+                  'source_health_admission': self.value}
+        policy['source_health_admission'] = self.sign(bridge.native_context(policy, self.now))
+        environment.update(
+            PATH=str(binaries) + ':/usr/bin:/bin', FETCH_FIXTURES=str(fixture_dir),
+            RAILWAY_ORIGIN='https://fixture.up.railway.app', RAILWAY_EDGE_TOKEN='fixture-token',
+            RAILWAY_VOLUME_ID='volume', RAILWAY_ENVIRONMENT_ID='environment',
+            RAILWAY_SERVICE_ID='service', RAILWAY_POSTGRES_SERVICE_ID='postgres',
+            GITHUB_OUTPUT=str(self.root / 'native-outputs'), GITHUB_EVENT_NAME='schedule',
+            RAILWAY_DEPLOYMENT_ID=UUID, RAILWAY_REPLICA_ID=UUID)
+        def native_run():
+            for name, value in evidence.items():
+                body = value if isinstance(value, str) else json.dumps(value)
+                (self.root / name).write_text(body)
+                if name in ('origin.json', 'public.json', 'origin.headers', 'public.headers'):
+                    (fixture_dir / name).write_text(body)
+            environment.update(NATIVE_SOURCE_HEALTH_POLICY=json.dumps(policy),
+                               SOURCE_HEALTH_ADMISSION=json.dumps(policy['source_health_admission']))
+            (self.root / 'source-health-assessment.json').unlink(missing_ok=True)
+            return subprocess.run(['bash', str(script)], cwd=self.root, env=environment,
+                                  capture_output=True, text=True)
+        result = native_run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        recorded = json.loads((self.root / 'source-health-assessment.json').read_bytes())
+        self.assertEqual(recorded['admitted_source_faults'], self.faults)
+        self.assertEqual(recorded['observed_execution']['platform'], 'railway')
+        calls = [json.loads(line) for line in (self.root / 'curl-arguments.jsonl').read_text().splitlines()]
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([call[-1] for call in calls],
+                         ['https://fixture.up.railway.app/api/health', 'https://api.seiche.info/api/health'])
+        self.assertEqual(calls[0][calls[0].index('--header') + 1], 'X-Seiche-Edge-Token: fixture-token')
+        self.assertNotIn('--header', calls[1])
+        self.assertTrue(all('--location' not in call and '-L' not in call for call in calls))
+        valid = copy.deepcopy(policy['source_health_admission'])
+        for failure in ('invalid_signature', 'expired'):
+            with self.subTest(native_admission=failure):
+                if failure == 'invalid_signature':
+                    policy['source_health_admission'] = {**valid, 'signature_b64': base64.b64encode(b'invalid').decode()}
+                else:
+                    with mock.patch.object(self, 'now', self.now - timedelta(hours=3)):
+                        policy['source_health_admission'] = self.sign(bridge.native_context(policy, self.now))
+                result = native_run()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / 'source-health-assessment.json').exists())
+        # No envelope preserves the original healthy-only snapshot helper.
+        (self.root / 'health_wait.py').write_text("raise SystemExit('strict-health-wait-reached')\n")
+        environment.pop('SOURCE_HEALTH_ADMISSION')
+        result = subprocess.run(['bash', str(script)], cwd=self.root, env=environment,
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('strict-health-wait-reached', result.stderr)
 
 
 class NativeGateSourceHealthTests(unittest.TestCase):

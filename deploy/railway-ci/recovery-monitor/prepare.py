@@ -52,7 +52,16 @@ def health_wait_proof(body):
     original = body[start:finish]
     if hashlib.sha256(original.encode()).hexdigest() != "02658664b62464004202549ddb88ecbdebc886f03bcf6e680534e3e460f32d32":
         raise ValueError("Reviewed health fetch semantics changed")
-    replacement = 'python3 -I -S "$(dirname -- "${BASH_SOURCE[0]}")/health_wait.py"'
+    # A degraded pair cannot enter the healthy-snapshot retry helper. Fetch it
+    # once with the original transport, then require the unchanged final signed
+    # admission validator below. Presence alone grants no health admission.
+    replacement = (
+        'if test -n "${SOURCE_HEALTH_ADMISSION:-}"; then\n'
+        + original
+        + '\nelse\n'
+        'python3 -I -S "$(dirname -- "${BASH_SOURCE[0]}")/health_wait.py"\n'
+        'fi'
+    )
     return body[:start] + replacement + body[finish:]
 
 

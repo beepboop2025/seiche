@@ -125,3 +125,9 @@ source and deployment before expiry. The manual input cannot be combined with
 a frontend-only receipt. Automatic and full-publisher invocations remain strict;
 no environment switch grants an exception, and no Actions workflow is enabled
 by this code.
+
+The native file transport accepts at most 1 MiB and keeps the complete proof
+in a private captured file. Subprocesses receive only the file path, never the
+raw package in an environment variable or command argument. GitHub's optional
+inline manual input is bounded to 65,535 bytes; use the native file transport
+when the complete pair exceeds that bound.

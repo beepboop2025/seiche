@@ -28,7 +28,11 @@ the newly qualified controller accepts an explicit
 owner-owned regular file contains the signed package documented in
 `docs/SOURCE_HEALTH_ADMISSION.md`. The assembly separately pins the source-health
 helper bytes in `controller-source.json`. An environment value alone never
-activates this path; ordinary cron runs remain strict.
+activates this path; ordinary cron runs remain strict. The native file may be
+at most 1 MiB. The controller captures it once into a private file and passes
+only that path to subprocesses, preserving the complete health provenance
+without exceeding operating-system environment limits. The optional GitHub
+manual input remains limited to 65,535 bytes; larger proofs use the native path.
 
 The manual path requires the exact current application source and rejects
 frontend-only, source-equivalence and ancestor selections. All existing source,

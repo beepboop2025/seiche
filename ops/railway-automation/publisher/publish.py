@@ -27,6 +27,7 @@ GATES = (
     "ops/release/verify_public_dataset.py",
 )
 SOURCE_HEALTH_HELPER = "ops/release/source_degradation.py"
+MAX_SOURCE_HEALTH_PACKAGE_BYTES = 1024 * 1024
 
 
 def clean_env(extra=None):
@@ -362,8 +363,8 @@ def read_source_health_package(path):
         if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                 or info.st_uid != os.geteuid() or info.st_mode & 0o077):
             raise RuntimeError("Manual source health package is not private owner data")
-        raw = stream.read(65536)
-    if not 0 < len(raw) <= 65535:
+        raw = stream.read(MAX_SOURCE_HEALTH_PACKAGE_BYTES + 1)
+    if not 0 < len(raw) <= MAX_SOURCE_HEALTH_PACKAGE_BYTES:
         raise RuntimeError("Manual source health package is missing or oversized")
     return raw.decode("utf-8")
 
@@ -385,8 +386,22 @@ def private_gate_temp(root):
     return temp
 
 
+def capture_source_health_package(temp, value):
+    """Keep the complete proof in a privileged file, never a process argument."""
+    if not value:
+        return {"SOURCE_HEALTH_PACKAGE": "", "SOURCE_HEALTH_PACKAGE_FILE": ""}
+    raw = value.encode("utf-8")
+    if not 0 < len(raw) <= MAX_SOURCE_HEALTH_PACKAGE_BYTES:
+        raise RuntimeError("Manual source health package is missing or oversized")
+    destination = temp / "catalog-source-health.json"
+    with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                           0o600), "wb") as stream:
+        stream.write(raw)
+    return {"SOURCE_HEALTH_PACKAGE": "", "SOURCE_HEALTH_PACKAGE_FILE": str(destination)}
+
+
 def recheck_source_health(trusted, env):
-    if not env.get("SOURCE_HEALTH_PACKAGE"):
+    if not env.get("SOURCE_HEALTH_PACKAGE_FILE"):
         return None
     value = json.loads(run([
         "python", "-I", "-S", str(Path(env["RUNNER_TEMP"]) / "verify_catalog_publication.py"),
@@ -529,7 +544,7 @@ def main(argv=None):
                 "RELEASE_SIGNING_KEY_FINGERPRINT": signer,
                 "GITHUB_RUN_ATTEMPT": str(time.time_ns()),
                 "GITHUB_EVENT_NAME": "native_manual" if source_health_package else "native_controller",
-                "SOURCE_HEALTH_PACKAGE": source_health_package,
+                **capture_source_health_package(temp, source_health_package),
             }
         )
         for name in (
