@@ -11,6 +11,17 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.6 upstream access and refresh diagnostics
+
+- Stop FRED retries for authentication, access and legal restrictions; honor safe
+  rate-limit delays within a bounded retry budget and keep source payloads private.
+- Preserve cached observation clocks while exposing the failed refresh explicitly.
+- Preserve upstream HTTP 401, 403, 429 and 451 through the agent gateway with
+  sanitized reasons, human next steps and safe rate-limit timing. A 403 reports
+  access denied; it does not assert a legal prohibition or authorize a fallback.
+- Keep provider permissions, caller-token isolation and source rights unchanged.
+  Deployment, recovery, package and publication acceptance remain separate gates.
+
 ### 0.16.5 bounded agent context and diagnostics
 
 - Add optional compact India funding context and exact metric retrieval to the
