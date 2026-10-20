@@ -22,6 +22,30 @@ requires a reviewed controller update.
 This adapts publish-static only. It does not replace full evidence collection,
 daily articles, Telegram announcements, or package/release attestations.
 
+For a finite manual metadata publication during a reviewed source HTTP failure,
+the newly qualified controller accepts an explicit
+`--source-health-package /evidence/private-package.json` argument. The private,
+owner-owned regular file contains the signed package documented in
+`docs/SOURCE_HEALTH_ADMISSION.md`. The assembly separately pins the source-health
+helper bytes in `controller-source.json`. An environment value alone never
+activates this path; ordinary cron runs remain strict.
+
+The manual path requires the exact current application source and rejects
+frontend-only, source-equivalence and ancestor selections. All existing source,
+package, corpus, isolated-builder, sealed-output and durable-recovery gates
+remain. It performs a fresh signed-health recheck after preparation and
+immediately before each mirror/Pages write. Before a write, an exclusive,
+fsynced claim in `/evidence/source-health-claims/` binds the original publication
+intent to the exact admission and metadata request. A different or partial
+claim fails; exact-operation resumption does not extend expiry. The signed
+package and initial assessment are retained with the recovery archive.
+
+The origin proof must still be less than 900 seconds old at each write and
+match current public health exactly. A long build, changed snapshot or expired
+admission therefore stops safely. Preparation alone does not authorize reuse
+of an old package for a later apply run. A fresh owner-observed package must
+be supplied for that run; no source is retried or hidden to satisfy the gate.
+
 An application publisher without a frontend receipt may follow daily/weekly
 desk descendants of its immutable controller source. Source selection uses the
 existing linear desk author, subject, path and mode checks without the optional

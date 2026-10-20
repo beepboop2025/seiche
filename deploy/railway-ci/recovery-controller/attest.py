@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 
 import verify
+import source_health
 
 
 REPOSITORY = "beepboop2025/seiche"
@@ -96,15 +97,19 @@ def runtime_identity(live, policy, now):
     health, _ = live.health(ORIGIN + "/healthz")
     require(health.get("status") == "ready" and health.get("mode") == "production", "production runtime is not ready")
     identities = []
+    observations = []
     for url in (ORIGIN + "/api/health", PUBLIC + "/api/health"):
         body, headers = live.health(url)
         generated = datetime.fromisoformat(body["generated_at"].replace("Z", "+00:00"))
         require(generated.tzinfo is not None and 0 <= (now - generated).total_seconds() <= 900,
                 "production API evidence is stale or future dated")
-        require(isinstance(body.get("version"), str) and bool(body["version"]) and body.get("faults") == []
+        require(isinstance(body.get("version"), str) and bool(body["version"]) and (body.get("faults") == [] or "source_health_admission" in policy)
                 and isinstance(body.get("provenance"), list) and bool(body["provenance"]), "production API evidence is unhealthy")
         require(headers.get("x-seiche-railway-authority") == "production", "production edge authority differs")
         identities.append((headers.get("x-seiche-railway-deployment"), headers.get("x-seiche-release-sha")))
+        observations.append(source_health.observation(body, headers))
+    if "source_health_admission" in policy:
+        source_health.native_assessment(policy, observations[0], observations[1], now)
     require(identities[0] == identities[1], "public and origin identities differ")
     deployment, source = identities[0]
     require(UUID.fullmatch(deployment or "") and SHA.fullmatch(source or ""), "production edge identity is malformed")
@@ -262,6 +267,7 @@ def validate_tail_inputs(root, inputs, tracked_backend):
     root = root.resolve()
     required = {"deploy/railway-ci/recovery-controller/attest.py", "deploy/railway-ci/recovery-controller/verify.py",
                 "deploy/railway-ci/recovery-controller/requirements.lock", "ops/railway/resume_recovery.py",
+                "deploy/railway-ci/recovery-controller/source_health.py", "ops/release/source_degradation.py",
                 "ops/deploy/seiche-s3-object-lock.sh", "governance/railway-control-signers.json", *tracked_backend}
     require(tracked_backend and isinstance(inputs, dict) and required <= set(inputs), "tail input manifest omits local module or governance inputs")
     for name, expected in inputs.items():

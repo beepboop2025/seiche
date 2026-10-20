@@ -18,6 +18,129 @@ spec.loader.exec_module(publisher)
 
 
 class PublisherBoundaryTests(unittest.TestCase):
+    def test_manual_health_package_is_private_bounded_and_captured_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / "package.json"
+            path.write_text('{"fixture":true}')
+            path.chmod(0o600)
+            self.assertEqual(publisher.read_source_health_package(path), '{"fixture":true}')
+            path.chmod(0o644)
+            with self.assertRaisesRegex(RuntimeError, "private owner"):
+                publisher.read_source_health_package(path)
+            path.chmod(0o600)
+            path.write_bytes(b"x" * 65536)
+            with self.assertRaisesRegex(RuntimeError, "oversized"):
+                publisher.read_source_health_package(path)
+            link = root / "link"
+            link.symlink_to(path)
+            with self.assertRaises(OSError):
+                publisher.read_source_health_package(link)
+            with self.assertRaisesRegex(RuntimeError, "absolute"):
+                publisher.read_source_health_package(Path("relative"))
+            fifo = root / "fifo"
+            os.mkfifo(fifo, 0o600)
+            with self.assertRaisesRegex(RuntimeError, "private owner"):
+                publisher.read_source_health_package(fifo)
+
+    def test_source_health_claim_resumes_only_exact_metadata_operation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory).resolve()
+            assessment = {"context": {"intent_id": "a" * 64}, "claim_document": {
+                "schema": "seiche.source-degradation-claim.v1", "admission_sha256": "b" * 64,
+                "execution": {"kind": "catalog_publication", "publication_request_id": "c" * 64}}}
+            publisher.claim_source_health(evidence, assessment)
+            path = evidence / "source-health-claims" / ("a" * 64 + ".json")
+            before = path.read_bytes()
+            publisher.claim_source_health(evidence, assessment)
+            self.assertEqual(path.read_bytes(), before)
+            changed = json.loads(json.dumps(assessment))
+            changed["claim_document"]["admission_sha256"] = "d" * 64
+            with self.assertRaisesRegex(RuntimeError, "another publication"):
+                publisher.claim_source_health(evidence, changed)
+            self.assertEqual(path.read_bytes(), before)
+            path.write_bytes(b"partial")
+            with self.assertRaisesRegex(RuntimeError, "another publication"):
+                publisher.claim_source_health(evidence, assessment)
+
+    def test_source_health_claim_rejects_symlinks_and_exposed_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory).resolve()
+            assessment = {"context": {"intent_id": "a" * 64}, "claim_document": {}}
+            parent = evidence / "source-health-claims"
+            parent.mkdir(mode=0o755)
+            parent.chmod(0o755)
+            with self.assertRaisesRegex(RuntimeError, "private owner"):
+                publisher.claim_source_health(evidence, assessment)
+            parent.chmod(0o700)
+            external = evidence / "external"
+            external.write_text("unchanged")
+            (parent / ("a" * 64 + ".json")).symlink_to(external)
+            with self.assertRaises(OSError):
+                publisher.claim_source_health(evidence, assessment)
+            self.assertEqual(external.read_text(), "unchanged")
+            (parent / ("a" * 64 + ".json")).unlink()
+            os.mkfifo(parent / ("a" * 64 + ".json"), 0o600)
+            with self.assertRaisesRegex(RuntimeError, "another publication"):
+                publisher.claim_source_health(evidence, assessment)
+
+    def test_privileged_gate_temp_is_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            root.chmod(0o755)
+            temp = publisher.private_gate_temp(root)
+            self.assertEqual(temp.stat().st_mode & 0o777, 0o700)
+
+    @unittest.skipUnless(sys.platform == "linux" and os.geteuid() == 0,
+                         "Builder UID boundary is verified in the qualified Linux image")
+    def test_builder_cannot_read_source_health_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            root.chmod(0o755)
+            temp = publisher.private_gate_temp(root)
+            package = temp / "catalog-source-health.json"
+            package.write_text("test-only-private-admission")
+            package.chmod(0o600)
+            result = subprocess.run(["setpriv", "--reuid=10001", "--regid=10001", "--init-groups",
+                                     "cat", str(package)], capture_output=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(b"test-only-private-admission", result.stdout)
+
+    def test_manual_health_recheck_is_explicit_and_propagates_failure(self):
+        with patch.object(publisher, "run") as run:
+            self.assertIsNone(publisher.recheck_source_health(Path("/trusted"), {}))
+            run.assert_not_called()
+            env = {"SOURCE_HEALTH_PACKAGE": "signed", "RUNNER_TEMP": "/private/temp",
+                   "GITHUB_SHA": "a" * 40, "RELEASE_SIGNING_KEY_FINGERPRINT": "pinned"}
+            run.side_effect = RuntimeError("expired")
+            with self.assertRaisesRegex(RuntimeError, "expired"):
+                publisher.recheck_source_health(Path("/trusted"), env)
+            self.assertIn("--recheck-source-health-only", run.call_args.args[0])
+            self.assertIn("/private/temp/catalog-source-health.json", run.call_args.args[0])
+
+    def test_manual_helper_must_match_independent_controller_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            helper = root / publisher.SOURCE_HEALTH_HELPER
+            helper.parent.mkdir(parents=True)
+            helper.write_text("reviewed")
+            (root / "controller-source.json").write_text(json.dumps({
+                "sourceHealthHelperSha256": hashlib.sha256(helper.read_bytes()).hexdigest()}))
+            with patch.object(publisher, "CONTROLLER", root):
+                publisher.verify_source_health_helper(root)
+                helper.write_text("changed")
+                with self.assertRaisesRegex(RuntimeError, "reviewed controller"):
+                    publisher.verify_source_health_helper(root)
+
+    def test_both_native_public_writes_have_immediate_source_scope_rechecks(self):
+        source = Path(publisher.__file__).read_text()
+        mirror = source.index('git(["push", "origin", "HEAD:main"]')
+        self.assertIn("recheck_source_health(trusted, env)", source[mirror - 350:mirror])
+        self.assertIn("claim_source_health(evidence, current_health)", source[mirror - 350:mirror])
+        pages = source.index('"/opt/node22/bin/node"', mirror)
+        self.assertIn("recheck_source_health(trusted, env)", source[pages - 400:pages])
+        self.assertIn("claim_source_health(evidence, current_health)", source[pages - 400:pages])
+
     def test_builder_environment_never_inherits_credentials(self):
         with patch.dict(
             os.environ,
@@ -313,6 +436,7 @@ class AssemblerTests(unittest.TestCase):
             repo.mkdir()
             publisher.git(["init", "--quiet", "-b", "main"], repo)
             files = list(self.assembler.FILES) + [
+                publisher.SOURCE_HEALTH_HELPER,
                 ".github/workflows/publish-static.yml", ".github/workflows/publish.yml",
                 "ops/requirements-social-cards.txt", "ops/railway-automation/publisher/github-known-hosts",
             ]
@@ -331,7 +455,9 @@ class AssemblerTests(unittest.TestCase):
             static, full = root / "static", root / "full"
             self.assembler.assemble_context(repo, static)
             self.assembler.assemble_context(repo, full, kind="full", source=sha, engine_source=sha)
-            self.assertEqual(json.loads((static / "controller-source.json").read_text()), {"sha": sha})
+            self.assertEqual(json.loads((static / "controller-source.json").read_text()), {
+                "sha": sha, "sourceHealthHelperSha256": hashlib.sha256(
+                    ("committed " + publisher.SOURCE_HEALTH_HELPER).encode()).hexdigest()})
             full_identity = json.loads((full / "controller-source.json").read_text())
             self.assertEqual(full_identity["sha"], sha)
             self.assertEqual(full_identity["engineSourceSha"], sha)

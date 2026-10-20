@@ -50,6 +50,11 @@ def assemble_context(root, output, *, source="HEAD", kind="static", engine_sourc
         {name: hashlib.sha256(blob(sha, name)).hexdigest() for name in FILES}, indent=2
     ).encode()
     identity = {"sha": sha}
+    if kind == "static":
+        helper = "ops/release/source_degradation.py"
+        exists = subprocess.check_output(["git", "ls-tree", sha, "--", helper], cwd=root)
+        if exists:
+            identity["sourceHealthHelperSha256"] = hashlib.sha256(blob(sha, helper)).hexdigest()
     if engine_source is not None:
         engine_sha = resolve(engine_source)
         identity.update({

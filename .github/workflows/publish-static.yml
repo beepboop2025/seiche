@@ -14,6 +14,10 @@ on:
         description: "Reviewed immutable frontend-publication-<exact main SHA> tag; empty uses the application release gate"
         required: false
         type: string
+      source_health_package:
+        description: "Explicit owner-signed catalog-only source health package; operator must durably claim this exact publication request before dispatch"
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -45,6 +49,7 @@ on:
       - "!frontend/public/ampleness.html"
       - "!frontend/public/referee.html"
       - "ops/release/verify_catalog_publication.py"
+      - "ops/release/source_degradation.py"
       - "ops/release/verify_frontend_publication.py"
       - "ops/release/frontend_site_proof.py"
       - "ops/release/verify_public_dataset.py"
@@ -165,11 +170,31 @@ jobs:
       - name: Gate catalog on the signed release, runtime, and PyPI receipts
         env:
           RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
+          SOURCE_HEALTH_PACKAGE: ${{ inputs.source_health_package || '' }}
         run: |
           set -euo pipefail
           verifier="${RUNNER_TEMP}/verify_catalog_publication.py"
           git show "${GITHUB_SHA}:ops/release/verify_catalog_publication.py" >"$verifier"
           test "$(git hash-object "$verifier")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/verify_catalog_publication.py")"
+          source_health_args=()
+          if [ -n "$SOURCE_HEALTH_PACKAGE" ]; then
+            case "$GITHUB_EVENT_NAME" in workflow_dispatch|native_manual) ;; *) exit 1 ;; esac
+            test -z "$FRONTEND_RECEIPT_TAG"
+            source_helper="$RUNNER_TEMP/source_degradation.py"
+            git show "${GITHUB_SHA}:ops/release/source_degradation.py" >"$source_helper"
+            test "$(git hash-object "$source_helper")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/source_degradation.py")"
+            python -I -S - <<'PY'
+          import os
+          from pathlib import Path
+          value = os.environ["SOURCE_HEALTH_PACKAGE"].encode("utf-8")
+          if not 0 < len(value) <= 65535:
+              raise SystemExit("explicit source health package is missing or oversized")
+          destination = Path(os.environ["RUNNER_TEMP"]) / "catalog-source-health.json"
+          with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+              stream.write(value)
+          PY
+            source_health_args=(--source-health-package "$RUNNER_TEMP/catalog-source-health.json")
+          fi
           if [ -n "$FRONTEND_RECEIPT_TAG" ]; then
             mkdir "$RUNNER_TEMP/frontend-publication-proof"
             frontend_verifier="$RUNNER_TEMP/verify_frontend_publication.py"
@@ -184,7 +209,8 @@ jobs:
             python -I -S "$verifier" \
               --root . \
               --expected-sha "$GITHUB_SHA" \
-              --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
+              --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT" \
+              "${source_health_args[@]}"
           fi
 
       - name: Prepare static files from the recoverable site mirror
@@ -310,6 +336,8 @@ jobs:
 
       - name: Push static files to the live site repo
         id: publish-site
+        env:
+          RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
         run: |
           set -euo pipefail
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
@@ -331,6 +359,11 @@ jobs:
             if [ "$current_main" != "$GITHUB_SHA" ]; then
               echo "::error title=Stale static publish::origin/main is $current_main, not triggering SHA $GITHUB_SHA"
               exit 1
+            fi
+            if [ -f "$RUNNER_TEMP/catalog-source-health.json" ]; then
+              python -I -S "$RUNNER_TEMP/verify_catalog_publication.py" --root "$GITHUB_WORKSPACE" \
+                --expected-sha "$GITHUB_SHA" --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT" \
+                --source-health-package "$RUNNER_TEMP/catalog-source-health.json" --recheck-source-health-only
             fi
             git push -q origin main
           fi
@@ -372,10 +405,18 @@ jobs:
       # repository fixtures.
       - name: Deploy static fast path to Cloudflare Pages
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        env:
+          RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "3.90.0"
+          preCommands: >-
+            if [ -f "$RUNNER_TEMP/catalog-source-health.json" ]; then
+            python -I -S "$RUNNER_TEMP/verify_catalog_publication.py" --root "$GITHUB_WORKSPACE"
+            --expected-sha "$GITHUB_SHA" --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
+            --source-health-package "$RUNNER_TEMP/catalog-source-health.json" --recheck-source-health-only;
+            fi
           command: pages deploy /tmp/cloudflare-site --project-name=seiche --branch=main
 
       - name: Prove the canonical dataset landing and DCAT catalog are live

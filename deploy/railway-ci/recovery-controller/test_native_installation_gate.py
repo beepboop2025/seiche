@@ -42,7 +42,7 @@ class InstallationGateTests(unittest.TestCase):
                                   'RAILWAY_STATEFUL_SERVICE_ID': self.uuid},
             'storage_target': {'S3_ENDPOINT': 'https://fixture.invalid', 'S3_BUCKET': 'fixture', 'S3_PREFIX': 'private/recovery'}}
         members = {'policy.json': (json.dumps(self.assembled, sort_keys=True) + '\n').encode(), 'native_installation_gate.py': b'reviewed gate\n',
-                   'attest.py': b'reviewed attest\n', 'verify.py': b'reviewed verify\n', 'requirements.lock': b'pinned\n',
+                   'attest.py': b'reviewed attest\n', 'source_health.py': b'reviewed source health\n', 'verify.py': b'reviewed verify\n', 'requirements.lock': b'pinned\n',
                    'empty.py': b''}
         self.manifest = {name: verify.digest(body) for name, body in members.items()}
         for name, body in members.items():
@@ -62,7 +62,7 @@ class InstallationGateTests(unittest.TestCase):
             'storage_endpoint': 'https://fixture.invalid', 'storage_bucket': 'fixture', 'storage_prefix': 'private/recovery',
             'tail_inputs': {**self.assembled['trusted_source_sha256'], **{
                 'deploy/railway-ci/recovery-controller/' + name: self.manifest[name]
-                for name in ('attest.py', 'verify.py', 'requirements.lock')}}}
+                for name in ('attest.py', 'verify.py', 'requirements.lock', 'source_health.py')}}}
         self.raw = {}
         self.sign_all()
 

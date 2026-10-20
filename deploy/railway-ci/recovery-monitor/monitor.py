@@ -62,10 +62,9 @@ def admit(source, policy, env):
         pinned = ROOT / "trusted" / path
         if hashlib.sha256(body).hexdigest() != expected or body != pinned.read_bytes():
             raise RuntimeError("Reviewed recovery helper changed: " + path)
-        if path.startswith("backend/"):
-            destination = source / path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(pinned.read_bytes())
+        destination = source / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(pinned.read_bytes())
     workflow = checked(["git", "show", f"{sha}:{WORKFLOW}"], env=env, cwd=source)
     if digest(selected_steps(yaml.safe_load(workflow))) != policy["workflow_steps_sha256"]:
         raise RuntimeError("Reviewed monitor semantics changed; controller update required")
@@ -142,6 +141,12 @@ def main():
             "GITHUB_STEP_SUMMARY": str(temporary / "summary"),
             "ALLOW_EMPTY_EXPORT_PROOF": "false",
         })
+        if os.environ.get("NATIVE_SOURCE_HEALTH_POLICY"):
+            admitted = json.loads(os.environ["NATIVE_SOURCE_HEALTH_POLICY"])
+            env.update(NATIVE_SOURCE_HEALTH_POLICY=json.dumps(admitted, sort_keys=True),
+                       SOURCE_HEALTH_ADMISSION=json.dumps(admitted["source_health_admission"], sort_keys=True),
+                       RAILWAY_DEPLOYMENT_ID=os.environ["RAILWAY_DEPLOYMENT_ID"],
+                       RAILWAY_REPLICA_ID=os.environ["RAILWAY_REPLICA_ID"])
         header = temporary / "edge-header"
         header.write_text("X-Seiche-Edge-Token: " + env["RAILWAY_EDGE_TOKEN"] + "\n")
         try:
@@ -164,6 +169,9 @@ def main():
                      "railway_deployment": deployment, "bootstrap": False,
                      "observed_at": datetime.now(timezone.utc).isoformat(),
                      **identity, **pair}
+            assessment = evidence / "source-health-assessment.json"
+            if assessment.exists():
+                proof["source_health"] = json.loads(assessment.read_bytes())
         finally:
             cleanup_probe(temporary / "postgres-health-probe")
     (evidence / "monitor-proof.json").write_text(json.dumps(proof, sort_keys=True) + "\n")

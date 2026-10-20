@@ -124,10 +124,10 @@ class NativeAdmissionTests(unittest.TestCase):
         self.patch(mock.patch.object(recurring, "ROOT", self.controller))
         self.patch(mock.patch.object(recurring, "TRUSTED", self.controller / "trusted"))
         self.patch(mock.patch.object(recurring, "Path", side_effect=lambda path: self.root / "evidence" if str(path) == "/evidence/native" else Path(path)))
-        self.patch(mock.patch.object(native_installation_gate, "admit", return_value={}))
+        self.patch(mock.patch.object(native_installation_gate, "admit", return_value=({}, {})))
         self.keys = self.patch(mock.patch.object(recurring, "validate_signers", side_effect=lambda *args: self.trace.append("keys")))
         self.source_check = self.patch(mock.patch.object(recurring, "source_identity", side_effect=lambda *args: self.trace.append("source") or self.source))
-        self.monitor = self.patch(mock.patch.object(recurring, "monitor", side_effect=lambda *args: self.trace.append("monitor") or {"deployment_id": self.uuid, "release_sha": self.source}))
+        self.monitor = self.patch(mock.patch.object(recurring, "monitor", side_effect=lambda *args, **kwargs: self.trace.append("monitor") or {"deployment_id": self.uuid, "release_sha": self.source}))
         self.runtime = {"deployment_id": self.uuid, "source": self.source, "replica_id": self.uuid, "status": "RUNNING", "observed_at": datetime.now(timezone.utc).isoformat()}
         self.live = self.patch(mock.patch.object(attest, "live_runtime", side_effect=lambda *args: self.trace.append("runtime") or dict(self.runtime)))
         self.storage_module = types.SimpleNamespace(validate_location=mock.Mock(side_effect=lambda env: self.trace.append("location")))
@@ -238,6 +238,24 @@ class NativeAdmissionTests(unittest.TestCase):
                 self.assertRaises(ExportReached):
             recurring.main()
         self.assertEqual(self.stage.call_args.args[2], 7195)
+
+    def test_source_health_expiry_after_preflight_cannot_request_export(self):
+        admitted = {'source_health_admission': {'fixture': True},
+                    'application_source_sha': self.source, 'application_deployment_id': self.uuid,
+                    'application_expected_version': '0.16.5',
+                    'controller_source': self.policy['controller_source'],
+                    'controller_deployment_id': self.uuid, 'controller_manifest_sha256': 'f' * 64,
+                    **{'application_' + field + '_id': self.uuid for field in ('project', 'environment', 'service')},
+                    'tail_inputs': {'large_unused_map': 'must not pass to monitor'}}
+        import source_health
+        with mock.patch.object(native_installation_gate, 'admit', return_value=({}, admitted)), \
+                mock.patch.object(source_health, 'native_admission', side_effect=ValueError('admission expired')) as check:
+            with self.assertRaisesRegex(ValueError, 'admission expired'):
+                recurring.main()
+        self.assertEqual(self.trace, ['keys', 'source', 'monitor', 'location', 'bucket', 'runtime', 'index'])
+        self.assertNotIn('tail_inputs', self.monitor.call_args.kwargs['health_policy'])
+        check.assert_called_once()
+        self.stage.assert_not_called()
 
     def test_invalid_timing_cannot_reach_signers_or_export(self):
         for timing in (None, {}, {"job_seconds": True, "readiness_seconds": 4500},

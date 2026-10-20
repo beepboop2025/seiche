@@ -1,5 +1,6 @@
 """Reviewed Railway controller for Seiche's bounded static publication path."""
 
+import argparse
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ GATES = (
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
 )
+SOURCE_HEALTH_HELPER = "ops/release/source_degradation.py"
 
 
 def clean_env(extra=None):
@@ -347,7 +349,105 @@ def verify_publication(steps, trusted, candidate, env, receipt):
         run(["bash", "-euo", "pipefail", "-c", command], trusted, env)
 
 
-def main():
+def read_source_health_package(path):
+    """Capture one private regular file; it is never exposed to the builder."""
+    path = Path(path)
+    if not path.is_absolute():
+        raise RuntimeError("Manual source health package requires an absolute path")
+    assert_plain_path(path.parent, Path(path.anchor))
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_uid != os.geteuid() or info.st_mode & 0o077):
+            raise RuntimeError("Manual source health package is not private owner data")
+        raw = stream.read(65536)
+    if not 0 < len(raw) <= 65535:
+        raise RuntimeError("Manual source health package is missing or oversized")
+    return raw.decode("utf-8")
+
+
+def verify_source_health_helper(trusted):
+    identity = json.loads((CONTROLLER / "controller-source.json").read_text())
+    expected = identity.get("sourceHealthHelperSha256")
+    path = trusted / SOURCE_HEALTH_HELPER
+    assert_plain_path(path.parent, trusted)
+    if (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected)
+            or not stat.S_ISREG(path.lstat().st_mode)
+            or hashlib.sha256(path.read_bytes()).hexdigest() != expected):
+        raise RuntimeError("Manual source health helper differs from the reviewed controller")
+
+
+def private_gate_temp(root):
+    temp = root / "temp"
+    temp.mkdir(mode=0o700)
+    return temp
+
+
+def recheck_source_health(trusted, env):
+    if not env.get("SOURCE_HEALTH_PACKAGE"):
+        return None
+    value = json.loads(run([
+        "python", "-I", "-S", str(Path(env["RUNNER_TEMP"]) / "verify_catalog_publication.py"),
+        "--root", str(trusted), "--expected-sha", env["GITHUB_SHA"],
+        "--signer-fingerprint", env["RELEASE_SIGNING_KEY_FINGERPRINT"],
+        "--source-health-package", str(Path(env["RUNNER_TEMP"]) / "catalog-source-health.json"),
+        "--recheck-source-health-only",
+    ], trusted, env, capture=True))
+    if value.get("scope") != "source_health_recheck_only":
+        raise RuntimeError("Source health recheck scope differs")
+    return value["assessment"]
+
+
+def claim_source_health(evidence, assessment):
+    """Atomic durable intent binding for this original metadata publication."""
+    intent = assessment["context"]["intent_id"]
+    if not re.fullmatch(r"[0-9a-f]{64}", intent):
+        raise RuntimeError("Source health publication intent is malformed")
+    raw = (json.dumps(assessment["claim_document"], sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, allow_nan=False) + "\n").encode("ascii")
+    parent = evidence / "source-health-claims"
+    parent.mkdir(mode=0o700, exist_ok=True)
+    assert_plain_path(parent, evidence)
+    info = parent.stat()
+    if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise RuntimeError("Source health claim directory is not private owner data")
+    directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    name = intent + ".json"
+    try:
+        try:
+            descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o600, dir_fd=directory)
+        except FileExistsError:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or
+                        info.st_uid != os.geteuid() or info.st_mode & 0o077 or
+                        stream.read(16385) != raw):
+                    raise RuntimeError("Source health intent was claimed by another publication")
+        else:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    descriptor = os.open(evidence, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-health-package", type=Path)
+    args = parser.parse_args(argv)
+    source_health_package = read_source_health_package(args.source_health_package) if args.source_health_package else ""
+    if source_health_package and (os.environ.get("FRONTEND_RECEIPT_TAG") or os.environ.get("PUBLICATION_EQUIVALENCE_TAG")):
+        raise RuntimeError("Manual source health publication requires the exact application source")
     current_source_sha = current_main()
     source_sha = current_source_sha
     expected = os.environ.get("PUBLICATION_SOURCE_SHA", current_source_sha)
@@ -396,12 +496,15 @@ def main():
             source_sha, receipt, source_admission = select_publication_source(
                 trusted, current_source_sha, os.environ.get("FRONTEND_RECEIPT_TAG", "")
             )
+        if source_health_package:
+            if receipt or source_sha != current_source_sha:
+                raise RuntimeError("Manual source health publication cannot select a frontend or ancestor receipt")
+            verify_source_health_helper(trusted)
         identity = publication_identity(source_admission, current_source_sha, source_sha)
         if identity:
             identity["buildTreeKind"] = "signed_frontend_with_sealed_mirror_data"
             identity["deskOverlayApplied"] = False
-        temp = root / "temp"
-        temp.mkdir()
+        temp = private_gate_temp(root)
         env = clean_env(
             {
                 "GITHUB_SHA": source_sha,
@@ -410,6 +513,8 @@ def main():
                 "FRONTEND_RECEIPT_TAG": receipt,
                 "RELEASE_SIGNING_KEY_FINGERPRINT": signer,
                 "GITHUB_RUN_ATTEMPT": str(time.time_ns()),
+                "GITHUB_EVENT_NAME": "native_manual" if source_health_package else "native_controller",
+                "SOURCE_HEALTH_PACKAGE": source_health_package,
             }
         )
         for name in (
@@ -575,6 +680,7 @@ def main():
         if current_main() != current_source_sha:
             raise RuntimeError("Source main advanced during preparation")
         require_current_publication(current_source_sha, mirror, previous_sha)
+        source_health_assessment = recheck_source_health(trusted, env)
         print(
             f"RAILWAY_STATIC_PREPARE_PASS source={source_sha} current_main={current_source_sha} previous_site={previous_sha} receipt={receipt or 'application'}",
             flush=True,
@@ -584,7 +690,11 @@ def main():
         if not os.path.ismount(evidence):
             raise RuntimeError("Durable recovery volume is required before publication")
         recovery = evidence / (source_sha + "-" + root.name)
-        recovery.mkdir(parents=True, exist_ok=False)
+        recovery.mkdir(mode=0o700, parents=True, exist_ok=False)
+        if source_health_assessment is not None:
+            (recovery / "source-health-package.json").write_text(source_health_package)
+            (recovery / "source-health-package.json").chmod(0o600)
+            (recovery / "source-health-assessment.json").write_text(json.dumps(source_health_assessment, sort_keys=True) + "\n")
         if (
             git(["ls-remote", "origin", "refs/heads/main"], mirror).split()[0]
             != previous_sha
@@ -654,6 +764,9 @@ def main():
             if current_main() != current_source_sha:
                 raise RuntimeError("Source main advanced before mirror publication")
             require_current_publication(current_source_sha, mirror, previous_sha, publish_env)
+            current_health = recheck_source_health(trusted, env)
+            if current_health is not None:
+                claim_source_health(evidence, current_health)
             git(["push", "origin", "HEAD:main"], mirror, publish_env)
         site_sha = git(["rev-parse", "HEAD"], mirror)
         if (
@@ -666,6 +779,9 @@ def main():
         if current_main() != current_source_sha:
             raise RuntimeError("Source main advanced before canonical publication")
         require_current_publication(current_source_sha, mirror, site_sha, publish_env)
+        current_health = recheck_source_health(trusted, env)
+        if current_health is not None:
+            claim_source_health(evidence, current_health)
         run(
             [
                 "/opt/node22/bin/node",

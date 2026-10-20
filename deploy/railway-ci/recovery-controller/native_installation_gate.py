@@ -18,6 +18,7 @@ import tempfile
 import time
 
 import attest
+import source_health
 import verify
 
 ROOT = Path('/controller')
@@ -133,7 +134,8 @@ def validate(raw, identity, assembled, manifest, now):
     extra = {'tail_source', 'installation_sha256', 'installation_signature_sha256', 'tail_inputs',
              'application_project_id', 'application_environment_id', 'application_service_id',
              'storage_endpoint', 'storage_bucket', 'storage_prefix'}
-    require(set(policy) == set(attest.INSTALLATION_BINDINGS) | extra, 'tail policy fields differ')
+    optional = set(source_health.NATIVE_FIELDS) if 'source_health_admission' in policy else set()
+    require(set(policy) == set(attest.INSTALLATION_BINDINGS) | extra | optional, 'tail policy fields differ')
     require(all(policy.get(name) == value for name, value in identity.items()), 'tail policy installation identity differs')
     require(policy['tail_source'] == identity['controller_source'], 'tail policy source differs')
     for field in ('project', 'environment', 'service'):
@@ -146,7 +148,7 @@ def validate(raw, identity, assembled, manifest, now):
     require(isinstance(inputs, dict) and inputs, 'tail source inputs are missing')
     for name, expected in assembled['trusted_source_sha256'].items():
         require(inputs.get(name) == expected, 'tail executable input differs')
-    for name in ('attest.py', 'verify.py', 'requirements.lock'):
+    for name in ('attest.py', 'verify.py', 'requirements.lock', 'source_health.py'):
         require(inputs.get('deploy/railway-ci/recovery-controller/' + name) == manifest.get(name)
                 and name in manifest, 'tail verifier differs from native image')
     payload = {**identity, 'observed_at': now.isoformat()}
@@ -155,10 +157,14 @@ def validate(raw, identity, assembled, manifest, now):
     # can_execute/can_publish flags as a grant to change production authority.
     require(installation['controller_deployment_id'] == identity['controller_deployment_id'],
             'installation is for a different deployment')
+    if optional:
+        require(policy['application_source_sha'] == assembled.get('runtime_source', assembled['source']),
+                'source health runtime source differs from assembled monitor')
+        source_health.native_admission(policy, now)
     return {name: hashlib.sha256(value).hexdigest() for name, value in raw.items()}
 
 
-def admit():
+def admit(*, include_policy=False):
     require(os.geteuid() == 0, 'native gate must run under the reviewed root image')
     identity, assembled, manifest = installed_identity(os.environ, ROOT)
     folder = ADMISSIONS / identity['controller_deployment_id']
@@ -186,4 +192,4 @@ def admit():
         require(time.monotonic() <= deadline, 'signed native installation admission exceeded its deadline')
         verify.event('native_recovery_installation_admitted', deployment=identity['controller_deployment_id'],
                      source=identity['controller_source'], hashes=hashes)
-        return hashes
+        return (hashes, document(raw['policy.json'])) if include_policy else hashes

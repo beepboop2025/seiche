@@ -197,3 +197,65 @@ validation-project API credential. The native controller remains the restore
 executor, and only GitHub's original attestation action supplies the GitHub OIDC
 issuer. An owner-signed installation receipt is installation-time evidence, not a
 claim of continuous live image inspection.
+
+## Scoped source-health admission
+
+Normal recovery health remains strict. An owner-signed admission may qualify the
+exact reviewed `HTTP_ERROR` / `FAILED` source faults for one operation, for at most
+four hours. It does not grant source access, suppress the recorded faults, change
+snapshot clocks, or authorize an export. All existing provider identity, backup,
+PITR, storage, confirmation, signed-command and restore checks still apply.
+
+The shared closed contract is `ops/release/source_degradation.py`. The
+`source_health_admission` workflow input is one JSON object with exactly
+`intent_id` (64 lowercase hex), `body_b64` (canonical admission bytes), and
+`signature_b64` (owner SSH signature in `seiche-source-degradation-v1`). The
+workflow reconstructs source, target, deployment and operation context. The
+signed body supplies the owner's expected version constraint, never a value
+inferred from a live response. Monitor-only checks record the observed run and
+assessment without acquiring storage credentials or consuming an intent.
+
+For a manual export, dispatch does not yet know the GitHub run ID. The operator
+must first persist an atomic, durable local binding from admission digest and
+intent to the observed run ID and attempt. Reuse is allowed only for that exact
+operation while the admission is valid. Only after that binding succeeds may the
+operator sign `claim_document(assessment, execution=...)`, where execution is:
+
+```json
+{"kind":"github_actions","repository":"beepboop2025/seiche","run_id":"123","run_attempt":"1"}
+```
+
+Sign those canonical claim bytes with the established owner key in the distinct
+SSH namespace `seiche-source-degradation-execution-claim-v1`. Upload this canonical
+object (including the trailing newline) into the existing protected SSE-C,
+versioned COMPLIANCE store:
+
+```json
+{"schema":"seiche.source-degradation-execution-envelope.v1","claim_b64":"...","signature_b64":"..."}
+```
+
+The exact object key is
+`S3_PREFIX/source-health-claims/INTENT/github-actions/RUN_ID/RUN_ATTEMPT/claim.json`.
+Its `sha256` metadata must hash the complete envelope bytes. The workflow performs
+only HEAD and version-pinned GET on this object. It waits at most 600 seconds only
+for an explicit missing-object response, validates retention/encryption, owner
+signature, admission digest, context, actual run/attempt and expiry, then observes
+both health edges again before the original export command. Invalid objects,
+access denial and uncertain transport outcomes fail closed. It never substitutes
+HEAD followed by PUT for atomic intent binding. This matters because the current
+Hetzner store does not support conditional writes on versioned buckets.
+
+Manual evidence is retained as `source-health-assessment.json` in the monitor
+artifact and `proof/source-health-claim.json` in the export artifact. The original
+export request ID and command schema are unchanged.
+
+Native admission is delivered after the image build inside the owner-signed tail
+`policy.json`, avoiding a manifest/signature cycle. Add all four fields together:
+`source_health_admission`, `application_source_sha`, `application_deployment_id`,
+and `application_expected_version`. Its context binds the actual controller
+source, deployment, manifest digest and exact UTC execution day, plus the reviewed
+application source/deployment/target. The installation gate captures and verifies
+these bytes before the daily lock. The monitor and pre/post-export checks retain
+the degraded assessment; expiry/day are revalidated immediately before export.
+The existing execution lock and immutable daily index remain in force. No
+admission is an assertion that a later natural recurrence has succeeded.

@@ -24,6 +24,8 @@ INPUTS = [
     "backend/seiche/recovery_inspection_io.py",
     "ops/railway/retry_read.py",
     "ops/railway/wait_production_ready.py",
+    "ops/release/source_degradation.py",
+    "deploy/railway-ci/recovery-controller/source_health.py",
 ]
 
 

@@ -111,10 +111,12 @@ def original_restore(work, private, public, identity, timeout=2700):
     return accepted_restore_output(work, before)
 
 
-def monitor(policy, credentials, private, native_environment):
+def monitor(policy, credentials, private, native_environment, *, health_policy=None):
     output = private / "monitor.log"
     env = {**verify.environment(private), **native_environment,
            **{"MONITOR_" + name: value for name, value in credentials.items()}}
+    if health_policy is not None:
+        env["NATIVE_SOURCE_HEALTH_POLICY"] = json.dumps(health_policy, sort_keys=True)
     # This trusted subcontroller receives only its three existing read/probe inputs.
     with output.open("wb") as stream:
         subprocess.run(["python", str(ROOT / "monitor/monitor.py")], env=env, stdout=stream,
@@ -209,15 +211,15 @@ def main():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     os.umask(0o077)
     import native_installation_gate
-    native_installation_gate.admit()
+    _, admitted_policy = native_installation_gate.admit(include_policy=True)
     lock_root = Path("/evidence/native")
     lock_root.mkdir(parents=True, mode=0o700, exist_ok=True)
     with (lock_root / ".execution.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return run_locked()
+        return run_locked(admitted_policy=admitted_policy)
 
 
-def run_locked():
+def run_locked(*, admitted_policy=None):
     import attest
     from prepare import export_start_date
     manifest_body = (ROOT / "manifest.json").read_bytes()
@@ -258,7 +260,16 @@ def run_locked():
         private, public = Path(private_name), Path(public_name)
         public.chmod(0o755)
         current_source = source_identity(policy, private)
-        monitor_proof = monitor(policy, monitor_inputs, private, native)
+        health_policy = None
+        if admitted_policy is not None and "source_health_admission" in admitted_policy:
+            from source_health import NATIVE_FIELDS
+            health_fields = (*NATIVE_FIELDS, 'controller_source', 'controller_deployment_id',
+                             'controller_manifest_sha256', 'application_project_id',
+                             'application_environment_id', 'application_service_id')
+            # The already-verified full tail input map can exceed an environment
+            # member's size limit; pass only the authenticated health context.
+            health_policy = {name: admitted_policy[name] for name in health_fields}
+        monitor_proof = monitor(policy, monitor_inputs, private, native, health_policy=health_policy)
         (evidence / "monitor-proof.json").write_bytes(verify.canonical(monitor_proof))
         observed = datetime.now(timezone.utc)
         if first_export is not None and observed.date() < first_export:
@@ -283,6 +294,9 @@ def run_locked():
                     storage_bucket=storage_inputs["S3_BUCKET"], storage_prefix=storage_inputs["S3_PREFIX"],
                     application_project_id=target["RAILWAY_PROJECT_ID"], application_environment_id=target["RAILWAY_ENVIRONMENT_ID"],
                     application_service_id=target["RAILWAY_STATEFUL_SERVICE_ID"])
+        if health_policy is not None:
+            from source_health import NATIVE_FIELDS
+            flat.update({name: health_policy[name] for name in NATIVE_FIELDS})
         clean = verify.environment(private)
         production = {**clean, "RAILWAY_TOKEN": monitor_inputs["RAILWAY_TOKEN"], "RAILWAY_EDGE_TOKEN": monitor_inputs["RAILWAY_EDGE_TOKEN"]}
         storage_env = {**clean, **storage_inputs, "RUNNER_TEMP": str(private), "GITHUB_WORKSPACE": str(TRUSTED)}
@@ -326,6 +340,11 @@ def run_locked():
                      "GITHUB_WORKSPACE": str(TRUSTED), "NATIVE_OUTPUT": str(private / "export.outputs"),
                      "NATIVE_SUMMARY": str(private / "summary"), "EVIDENCE_ROOT": str(work)}
         (private / "edge-header").write_text("X-Seiche-Edge-Token: " + monitor_inputs["RAILWAY_EDGE_TOKEN"] + "\n")
+        if health_policy is not None:
+            # Source admission may expire during read-only preflight or restore
+            # workspace preparation. Recheck before the original export boundary.
+            import source_health
+            source_health.native_admission(flat, datetime.now(timezone.utc))
         run_original_stage("export-native.sh", stage_env, stage_budget(export_deadline, job_seconds))
         identity = outputs(private / "export.outputs", {"snapshot_id", "request_id", "receipt_sha256", "receipt_path", "evidence_root"})
         if identity["evidence_root"] != str(work) or identity["receipt_path"] != str(work / "recovery-receipt.json"):

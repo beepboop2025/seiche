@@ -19,7 +19,7 @@ FINGERPRINT = "SHA256:yhoa/PIDMM6M/ZennILp8jtRJy5pArncJRARbQssTMI"
 RECOVERY_HASH = "f10919a2dc77d6a73cff45ecfc00941a7aff529b115a9588474811e185d930a2"
 OFFSITE_HASH = "0c0093b0afcc5c8e7233fdbb6f8e916d3d4600160286e21bfacca1ac86bdda68"
 METADATA = ("activation-receipt.json", "candidate-receipt.json", "shadow-receipt.json", "request.json", "recovery-receipt.json", "offsite-receipt.json")
-FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md", "recurring.py", "attest.py", "test_attest.py", "test_recurring.py", "health_probe.py", "test_health_probe.py", "native_installation_gate.py", "test_native_installation_gate.py", "test_prepare_timing.py")
+FILES = ("Dockerfile", "verify.py", "native_docker.py", "restore.sh", "prepare.py", "test_verify.py", "requirements.lock", "README.md", "recurring.py", "attest.py", "test_attest.py", "test_recurring.py", "health_probe.py", "test_health_probe.py", "native_installation_gate.py", "test_native_installation_gate.py", "test_prepare_timing.py", "source_health.py", "source_health_claim.py", "test_source_health.py")
 
 
 def digest(body):
@@ -160,6 +160,16 @@ def prepare(repository, output, case, target, public_key):
         destination = output / "trusted" / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(show(ORIGINAL_SOURCE, name))
+    # These qualification inputs follow the signed controller, independently of
+    # the historical restore workflow retained above. Pin all bytes in manifest.
+    for source_path, destination_path in (
+        ("ops/release/source_degradation.py", "trusted/ops/release/source_degradation.py"),
+        (WORKFLOW, "source-health-workflow.yml"),
+        ("deploy/railway-ci/recovery-monitor/test_monitor.py", "source-health-monitor-fixtures.py"),
+    ):
+        destination = output / destination_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(show(controller, source_path))
     (output / "case").mkdir()
     for name in METADATA:
         (output / "case" / name).write_bytes((case / name).read_bytes())
@@ -176,7 +186,8 @@ def prepare(repository, output, case, target, public_key):
 
 
 RECOVERY_HELPERS = ("ops/railway/resume_recovery.py", "ops/railway/retry_read.py", "ops/railway/fetch_recovery_logs.py",
-                    "ops/railway/wait_production_ready.py", "ops/deploy/seiche-s3-object-lock.sh")
+                    "ops/railway/wait_production_ready.py", "ops/deploy/seiche-s3-object-lock.sh",
+                    "ops/release/source_degradation.py", "deploy/railway-ci/recovery-controller/source_health.py")
 RECOVERY_GOVERNANCE = ("governance/railway-control-signers.json",)
 
 

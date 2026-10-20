@@ -183,6 +183,7 @@ class TailTests(unittest.TestCase):
             backend = ["backend/seiche/deferred.py", "backend/governance/authority.json"]
             paths = ["deploy/railway-ci/recovery-controller/attest.py", "deploy/railway-ci/recovery-controller/verify.py",
                      "deploy/railway-ci/recovery-controller/requirements.lock", "ops/railway/resume_recovery.py",
+                     "deploy/railway-ci/recovery-controller/source_health.py", "ops/release/source_degradation.py",
                      "ops/deploy/seiche-s3-object-lock.sh", "governance/railway-control-signers.json", *backend]
             for item in paths:
                 path = root / item

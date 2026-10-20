@@ -48,6 +48,10 @@ on:
         description: "export-recovery only: digest of the protected, time-bounded historical activation manifest"
         required: false
         type: string
+      source_health_admission:
+        description: "Optional signed source-health envelope: persisted intent_id, body_b64, signature_b64"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -1001,6 +1005,7 @@ jobs:
           REPAIR_SOURCE_SHA: ${{ inputs.repair_source_sha }}
           DEGRADED_COLLECTOR_FAULT_SHA256: ${{ inputs.degraded_collector_fault_sha256 }}
           RECOVERY_OPERATION: ${{ inputs.operation }}
+          SOURCE_HEALTH_ADMISSION: ${{ inputs.source_health_admission }}
           ALLOW_EMPTY_EXPORT_PROOF: ${{ github.event_name == 'workflow_dispatch' && (inputs.operation == 'export-recovery' || (inputs.operation == 'resume-offsite' && github.ref == 'refs/heads/main')) }}
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-monitor
         run: |
@@ -1263,6 +1268,19 @@ jobs:
               deployment or "",
           ) is None or re.fullmatch(r"[0-9a-f]{40}", release or "") is None:
               raise SystemExit("production edge identity is malformed")
+          source_assessment = None
+          if os.environ.get("SOURCE_HEALTH_ADMISSION"):
+              if os.environ.get("REPAIR_SOURCE_SHA") or os.environ.get("DEGRADED_COLLECTOR_FAULT_SHA256"):
+                  raise SystemExit("source and collector admission modes cannot be combined")
+              import importlib.util
+              module_path = Path(os.environ["GITHUB_WORKSPACE"]) / "deploy/railway-ci/recovery-controller/source_health.py"
+              spec = importlib.util.spec_from_file_location("recovery_source_health", module_path)
+              admission = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(admission)
+              source_assessment = admission.workflow_assessment(
+                  os.environ, admission.observation(load("origin.json"), origin),
+                  admission.observation(load("public.json"), public), now)
+              Path("source-health-assessment.json").write_text(json.dumps(source_assessment, sort_keys=True) + "\n")
           degraded = {}
           for name in ("origin.json", "public.json"):
               body = load(name)
@@ -1275,7 +1293,7 @@ jobs:
                   or not timedelta(0) <= now - generated <= timedelta(minutes=15)
               ):
                   raise SystemExit("production API health is invalid")
-              if recovery_fault_admission(
+              if source_assessment is None and recovery_fault_admission(
                   body.get("faults"),
                   expected_digest=os.environ.get("DEGRADED_COLLECTOR_FAULT_SHA256", ""),
                   repair_source=os.environ.get("REPAIR_SOURCE_SHA", ""),
@@ -1396,6 +1414,9 @@ jobs:
               proof["status"] = "recovery_only_degraded"
               proof["degraded_health_sha256"] = hashlib.sha256(degraded_path.read_bytes()).hexdigest()
               proof["repair_source_sha"] = json.loads(degraded_path.read_bytes())["repair_source"]
+          source_health_path = root / "source-health-assessment.json"
+          if source_health_path.exists():
+              proof["source_health"] = json.loads(source_health_path.read_bytes())
           destination = root / "monitor-proof.json"
           destination.write_text(json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n")
           PYMONITOR
@@ -1407,6 +1428,7 @@ jobs:
           path: |
             ${{ runner.temp }}/railway-recovery-monitor/monitor-proof.json
             ${{ runner.temp }}/railway-recovery-monitor/recovery-only-degraded.json
+            ${{ runner.temp }}/railway-recovery-monitor/source-health-assessment.json
           if-no-files-found: error
           retention-days: 90
 
@@ -1516,6 +1538,8 @@ jobs:
         id: export
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_HEALTH_ADMISSION: ${{ inputs.source_health_admission }}
+          RECOVERY_OPERATION: ${{ inputs.operation }}
           DURABLE_BOOTSTRAP_SHA256: ${{ inputs.durable_bootstrap_sha256 }}
           DURABLE_BOOTSTRAP_ZLIB_BASE64: ${{ secrets.RECOVERY_DURABLE_BOOTSTRAP_ZLIB_BASE64 }}
           AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
@@ -1686,6 +1710,8 @@ jobs:
           # original signed request and all export/restore/sealing gates run.
           printf '%s\n' "$replica_id" >proof/replica-id.txt
           printf '%s\n' "$replica_id" >proof/submission-replica-id.txt
+          # Claim only health qualification; original request_id and signed command remain unchanged.
+          python3 -B "$GITHUB_WORKSPACE/deploy/railway-ci/recovery-controller/source_health_claim.py"
           snapshot_id=$(date -u +%Y%m%dT%H%M%SZ)
           requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           download_expires_at=$(date -u -d '+110 minutes' +%Y-%m-%dT%H:%M:%SZ)
@@ -1765,6 +1791,7 @@ jobs:
           ) &
           continuity_pid=$!
           trap 'touch proof/stop-continuity; wait "$continuity_pid" || true; rm -f -- "$bearer_path"' EXIT
+          python3 -B "$GITHUB_WORKSPACE/deploy/railway-ci/recovery-controller/source_health_claim.py" --recheck
           issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           expires_at=$(date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)
           nonce=$(openssl rand -hex 32)
