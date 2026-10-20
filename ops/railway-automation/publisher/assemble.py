@@ -13,6 +13,8 @@ FILES = (
     "ops/release/verify_frontend_publication.py",
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
+    "ops/release/hetzner_release.py",
+    "ops/release/source_degradation.py",
 )
 
 def assemble_context(root, output, *, source="HEAD", kind="static", engine_source=None):

@@ -18,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 import yaml
 
@@ -29,6 +30,8 @@ GATES = (
     "ops/release/verify_frontend_publication.py",
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
+    "ops/release/hetzner_release.py",
+    "ops/release/source_degradation.py",
 )
 
 
@@ -708,7 +711,94 @@ def verify_runtime_identity(backend, engine_sha):
         ))
 
 
+def healthy_hetzner_package(path):
+    """A scheduled FULL run may carry recovery proof, never a fault exception."""
+    if not path:
+        return None
+    selected = Path(path)
+    if not selected.is_absolute():
+        raise RuntimeError("Hetzner FULL evidence path must be absolute")
+    assert_plain_path(selected.parent, Path(selected.anchor))
+    with os.fdopen(os.open(selected, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise RuntimeError("Hetzner FULL evidence is not private owner data")
+        raw = stream.read(1024 * 1024 + 1)
+    if not 0 < len(raw) <= 1024 * 1024:
+        raise RuntimeError("Hetzner FULL evidence exceeds bound")
+    value = json.loads(raw)
+    if (not isinstance(value, dict) or value.get("schema") != "seiche.hetzner-catalog-source-health.v1"
+            or value.get("body_b64") is not None or value.get("signature_b64") is not None
+            or set(value.get("health_pair", {})) != {"origin", "public"}
+            or any(item.get("body", {}).get("faults") != [] for item in value["health_pair"].values())):
+        raise RuntimeError("Scheduled FULL requires healthy Hetzner evidence without source admission")
+    return raw
+
+
+def hetzner_gate(trusted, source, signer, package, *, catalog=None, recheck=False):
+    command = ["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
+               "--expected-sha", source, "--signer-fingerprint", signer,
+               "--source-health-package", str(package)]
+    if catalog is not None:
+        command += ["--published-catalog", str(catalog)]
+    if recheck:
+        command.append("--recheck-source-health-only")
+    value = json.loads(run(command, trusted, clean_env(), capture=True))
+    if recheck:
+        if value.get("scope") != "source_health_recheck_only":
+            raise RuntimeError("Hetzner FULL recheck scope differs")
+        assessment = value["assessment"]
+        if assessment.get("source_health_admitted") is not False or assessment.get("evidence_status") != "healthy":
+            raise RuntimeError("Scheduled FULL cannot admit source faults")
+        return assessment
+    return value
+
+
+def claim_healthy_hetzner(evidence, assessment):
+    value = assessment["claim_document"]
+    if value.get("schema") != "seiche.hetzner-healthy-publication-claim.v1":
+        raise RuntimeError("FULL healthy claim schema differs")
+    intent = value["context"]["intent_id"]
+    if not re.fullmatch(r"[0-9a-f]{64}", intent):
+        raise RuntimeError("FULL healthy publication intent differs")
+    parent = evidence / "hetzner-health-claims"
+    parent.mkdir(mode=0o700, exist_ok=True)
+    assert_plain_path(parent, evidence)
+    if parent.stat().st_uid != os.geteuid() or parent.stat().st_mode & 0o077:
+        raise RuntimeError("FULL healthy claim directory differs")
+    raw = (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False) + "\n").encode()
+    path = parent / (intent + ".json")
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_mode & 0o077 or stream.read(16385) != raw:
+                raise RuntimeError("FULL healthy intent belongs to another publication")
+    else:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+    fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    fd = os.open(evidence, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if any(datetime.now(timezone.utc) >= datetime.fromisoformat(assessment[key].replace("Z", "+00:00"))
+           for key in ("expires_at", "health_valid_until")):
+        raise RuntimeError("FULL healthy proof expired before public write")
+
+
 def main():
+    hetzner_bytes = healthy_hetzner_package(os.environ.get("HETZNER_HEALTH_PACKAGE_FILE"))
+    if hetzner_bytes and (os.environ.get("PUBLICATION_EQUIVALENCE_TAG") or source_mode() != "main"):
+        raise RuntimeError("Hetzner FULL requires the exact current application source")
     apply = os.environ.get("PUBLISH_APPLY") == "1"
     if apply:
         missing = [name for name in ("SITE_DEPLOY_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")
@@ -779,6 +869,12 @@ def main():
         receipt = ""  # Full engine output requires the original backend release gate.
         temp = root / "temp"
         temp.mkdir()
+        hetzner_package = None
+        if hetzner_bytes:
+            temp.chmod(0o700)
+            hetzner_package = temp / "hetzner-health.json"
+            with os.fdopen(os.open(hetzner_package, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as stream:
+                stream.write(hetzner_bytes)
         env = clean_env(
             {
                 "GITHUB_SHA": engine_sha,
@@ -795,6 +891,10 @@ def main():
             "Gate catalog on the signed release, runtime, and PyPI receipts",
         ):
             print("RAILWAY_FULL_STEP " + name, flush=True)
+            if hetzner_package and name == "Gate catalog on the signed release, runtime, and PyPI receipts":
+                hetzner_gate(trusted, engine_sha, signer, hetzner_package,
+                             catalog=trusted / "frontend/public/.well-known/ai-catalog.json")
+                continue
             command = steps[name]["run"].replace("frontend/dist/.well-known/ai-catalog.json",
                                                    "frontend/public/.well-known/ai-catalog.json")
             run(["bash", "-euo", "pipefail", "-c", command], trusted, env)
@@ -877,10 +977,13 @@ def main():
             candidate, frontend_manifest = build_signed_frontend(
                 root, controller_checkout, trusted, candidate, source_admission, signer)
             identity["frontendSourceSha"] = source_admission["sourceEquivalence"]["controllerSourceSha"]
-        run(["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
-             "--expected-sha", engine_sha, "--signer-fingerprint", signer,
-             "--published-catalog", str(candidate / ".well-known/ai-catalog.json")],
-            trusted, clean_env())
+        if hetzner_package:
+            hetzner_gate(trusted, engine_sha, signer, hetzner_package, catalog=candidate / ".well-known/ai-catalog.json")
+        else:
+            run(["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
+                 "--expected-sha", engine_sha, "--signer-fingerprint", signer,
+                 "--published-catalog", str(candidate / ".well-known/ai-catalog.json")],
+                trusted, clean_env())
         if identity:
             identity["runtimeIdentity"] = verify_runtime_identity(trusted, engine_sha)
         if current_source() != source_sha:
@@ -896,6 +999,8 @@ def main():
             raise RuntimeError("Durable recovery volume is required before publication")
         recovery = evidence / (source_sha + "-" + root.name)
         recovery.mkdir(parents=True, exist_ok=False)
+        if hetzner_package:
+            (recovery / "hetzner-health-package.json").write_bytes(hetzner_bytes)
         if (
             git(["ls-remote", "origin", "refs/heads/main"], mirror).split()[0]
             != previous_sha
@@ -954,6 +1059,8 @@ def main():
             if current_source() != source_sha:
                 raise RuntimeError("Publication source changed before mirror publication")
             require_current_publication(source_sha, mirror, previous_sha, publish_env)
+            if hetzner_package:
+                claim_healthy_hetzner(evidence, hetzner_gate(trusted, engine_sha, signer, hetzner_package, recheck=True))
             git(["push", "origin", "HEAD:main"], mirror, publish_env)
         site_sha = git(["rev-parse", "HEAD"], mirror)
         if (
@@ -966,6 +1073,8 @@ def main():
         if current_source() != source_sha:
             raise RuntimeError("Publication source changed before canonical publication")
         require_current_publication(source_sha, mirror, site_sha, publish_env)
+        if hetzner_package:
+            claim_healthy_hetzner(evidence, hetzner_gate(trusted, engine_sha, signer, hetzner_package, recheck=True))
         run(
             [
                 "/opt/node22/bin/node",

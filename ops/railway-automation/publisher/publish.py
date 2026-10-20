@@ -25,6 +25,7 @@ GATES = (
     "ops/release/verify_frontend_publication.py",
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
+    "ops/release/hetzner_release.py",
 )
 SOURCE_HEALTH_HELPER = "ops/release/source_degradation.py"
 MAX_SOURCE_HEALTH_PACKAGE_BYTES = 1024 * 1024

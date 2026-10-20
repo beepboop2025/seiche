@@ -20,6 +20,9 @@ from typing import Any
 SCHEMA = "seiche.source-degradation.v1"
 CLAIM_SCHEMA = "seiche.source-degradation-claim.v1"
 SIGNATURE_NAMESPACE = "seiche-source-degradation-v1"
+HETZNER_SCHEMA = "seiche.hetzner-source-degradation.v1"
+HETZNER_CLAIM_SCHEMA = "seiche.hetzner-source-degradation-claim.v1"
+HETZNER_SIGNATURE_NAMESPACE = "seiche-hetzner-source-degradation-v1"
 OWNER_PUBLIC = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBuJV6o8YL2XXR9q4vcwpHuc2z1GEBawSmrJWGrgwzFV"
 MAX_BYTES = 16_384
 MAX_LIFETIME = timedelta(hours=4)
@@ -114,11 +117,16 @@ def _now(now: datetime) -> None:
 
 
 def validate_context(context: dict[str, Any]) -> None:
-    _require(isinstance(context, dict) and set(context) == {
+    _require(isinstance(context, dict), "operation context has an invalid shape")
+    hetzner = context.get("provider") == "hetzner"
+    fields = {
         "purpose", "intent_id", "controller_source_sha", "runtime_source_sha",
         "target", "deployment_id", "expected_version", "expected_authority",
         "operation",
-    }, "operation context has an invalid shape")
+    }
+    if hetzner:
+        fields = (fields - {"deployment_id"}) | {"provider", "runtime_id"}
+    _require(set(context) == fields, "operation context has an invalid shape")
     purpose = context["purpose"]
     _require(isinstance(purpose, str) and purpose in PURPOSES,
              "operation purpose is not allowed")
@@ -126,13 +134,27 @@ def validate_context(context: dict[str, Any]) -> None:
     _require(all(_matches(context[name], _SHA) for name in
                  ("controller_source_sha", "runtime_source_sha")),
              "operation source identity is malformed")
-    _require(_matches(context["deployment_id"], _UUID),
-             "application deployment identity is malformed")
     target = context["target"]
-    _require(isinstance(target, dict) and set(target) ==
-             {"project_id", "environment_id", "service_id"} and
-             all(_matches(value, _UUID) for value in target.values()),
-             "application target is malformed")
+    if hetzner:
+        _require(purpose == "catalog_metadata" and context["expected_authority"] == "production"
+                 and context["controller_source_sha"] == context["runtime_source_sha"]
+                 and _matches(context["runtime_id"], _DIGEST),
+                 "Hetzner catalog runtime identity is malformed")
+        _require(isinstance(target, dict) and set(target) == {
+            "host_identity", "volume_uuid", "image_digest", "grant_sha256", "recovery_sha256"}
+            and all(_matches(target[key], _DIGEST) for key in
+                    ("host_identity", "grant_sha256", "recovery_sha256"))
+            and _matches(target["volume_uuid"], _UUID)
+            and isinstance(target["image_digest"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", target["image_digest"]) is not None,
+            "Hetzner catalog target is malformed")
+    else:
+        _require(_matches(context["deployment_id"], _UUID),
+                 "application deployment identity is malformed")
+        _require(isinstance(target, dict) and set(target) ==
+                 {"project_id", "environment_id", "service_id"} and
+                 all(_matches(value, _UUID) for value in target.values()),
+                 "application target is malformed")
     _require(_matches(context["expected_version"], _VERSION),
              "expected application version is malformed")
     _require(context["expected_authority"] in ("production", "candidate"),
@@ -193,7 +215,9 @@ def normalized_faults(faults: Any, *, allow_empty: bool = False) -> list[dict[st
     return sorted(clean, key=lambda item: item["source"])
 
 
-def verify_owner_signature(body: bytes, signature: bytes) -> None:
+def verify_owner_signature(body: bytes, signature: bytes, *, namespace=None) -> None:
+    if namespace is None:
+        namespace = SIGNATURE_NAMESPACE
     _require(isinstance(signature, bytes) and 0 < len(signature) <= 8192,
              "owner signature is missing or oversized")
     # No key or namespace from the document is trusted. Temp artifacts contain
@@ -205,7 +229,7 @@ def verify_owner_signature(body: bytes, signature: bytes) -> None:
             (root / "signature").write_bytes(signature)
             result = subprocess.run(
                 ["ssh-keygen", "-Y", "verify", "-f", str(root / "signers"),
-                 "-I", "owner", "-n", SIGNATURE_NAMESPACE, "-s", str(root / "signature")],
+                 "-I", "owner", "-n", namespace, "-s", str(root / "signature")],
                 input=body, capture_output=True, timeout=15, check=False,
                 env={"PATH": "/usr/bin:/bin", "HOME": name},
             )
@@ -221,10 +245,15 @@ def verify_admission(
     _now(now)
     validate_context(expected_context)
     value = document(body)
+    hetzner = expected_context.get("provider") == "hetzner"
     _require(set(value) == {"schema", "context", "issued_at", "expires_at",
-                            "faults", "faults_sha256", "limits"} and value["schema"] == SCHEMA,
+                            "faults", "faults_sha256", "limits"}
+             and value["schema"] == (HETZNER_SCHEMA if hetzner else SCHEMA),
              "admission schema is not supported")
-    verify_owner_signature(body, signature)
+    if hetzner:
+        verify_owner_signature(body, signature, namespace=HETZNER_SIGNATURE_NAMESPACE)
+    else:
+        verify_owner_signature(body, signature)
     validate_context(value["context"])
     _require(canonical(value["context"]) == canonical(expected_context),
              "admission differs from the expected operation")
@@ -248,13 +277,21 @@ def _observe(observation: dict[str, Any], context: dict[str, Any], now: datetime
              "health observation is malformed")
     expected_identity = {
         "source_sha": context["runtime_source_sha"],
-        "deployment_id": context["deployment_id"],
         "authority": context["expected_authority"],
     }
+    if context.get("provider") == "hetzner":
+        expected_identity.update(provider="hetzner", runtime_id=context["runtime_id"], cache_control="no-store")
+    else:
+        expected_identity["deployment_id"] = context["deployment_id"]
     _require(observation["identity"] == expected_identity,
              "health observation identity differs")
     body = observation["body"]
     _require(isinstance(body, dict), "health body is malformed")
+    if context.get("provider") == "hetzner":
+        _require(body.get("provider") == "hetzner" and body.get("authority") == "production"
+                 and body.get("release_sha") == context["runtime_source_sha"]
+                 and body.get("snapshot_producer_sha") == context["runtime_source_sha"],
+                 "Hetzner health body authority or producer differs")
     generated = _time(body.get("generated_at"))
     _require(timedelta(0) <= now - generated <= MAX_SNAPSHOT_AGE,
              "health snapshot is stale or future dated")
@@ -354,7 +391,8 @@ def claim_document(assessment: dict[str, Any], *, execution: dict[str, Any]) -> 
                                "publication_request_id": operation["publication_request_id"]},
                  "claim must bind the actual catalog publication")
     return {
-        "schema": CLAIM_SCHEMA, "admission_sha256": assessment["admission_sha256"],
+        "schema": HETZNER_CLAIM_SCHEMA if context.get("provider") == "hetzner" else CLAIM_SCHEMA,
+        "admission_sha256": assessment["admission_sha256"],
         "context": context, "execution": dict(execution), "expires_at": assessment["expires_at"],
     }
 
