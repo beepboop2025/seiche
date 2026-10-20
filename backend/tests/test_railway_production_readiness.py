@@ -120,7 +120,12 @@ def test_workflow_takes_fresh_edge_samples_after_runtime_ready():
     step = step.split("- name: Remove the private PostgreSQL probe transport", 1)[0]
     assert step.index('wait_production_ready.py"') < step.index("origin_status=$(curl")
     assert "timedelta(minutes=15)" in step
-    # The separate admission tests execute both strict and recovery-only cases.
-    # This workflow step must pass each freshly sampled body's faults to them.
-    assert 'if recovery_fault_admission(\n                  body.get("faults"),' in step
+    # Separate admission tests execute signed-pair and strict/recovery-only cases.
+    # Fresh samples must reach the signed validator before the legacy fallback.
+    signed_pair = "source_assessment = admission.workflow_assessment("
+    fallback = "if source_assessment is None and recovery_fault_admission("
+    assert step.index(signed_pair) < step.index(fallback)
+    assert 'admission.observation(load("origin.json"), origin)' in step
+    assert 'admission.observation(load("public.json"), public), now)' in step
+    assert fallback + '\n                  body.get("faults"),' in step
     assert 'runtime.get("mode") != "production"' in step
