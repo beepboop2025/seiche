@@ -158,6 +158,59 @@ async def test_cancelled_upstream_releases_ingress_slot(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('route', ['mcp', 'dataset'])
+@pytest.mark.parametrize('status', [401, 403, 429, 451])
+async def test_access_refusal_closes_unread_body_and_preserves_failure_semantics(tmp_path, route, status):
+    from starlette.datastructures import QueryParams
+    from starlette.requests import Request
+    from seiche_agent_network import data_catalog
+    from seiche_agent_network.gateway import Gateway
+
+    class RefusedBody(httpx.AsyncByteStream):
+        read = False
+        closed = False
+        async def __aiter__(self):
+            self.read = True
+            raise AssertionError('access-refusal bytes must never be consumed')
+            yield b''
+        async def aclose(self):
+            self.closed = True
+
+    stream, requests = RefusedBody(), []
+    async def upstream(request):
+        requests.append(request)
+        return httpx.Response(status, stream=stream, headers={
+            'content-type': 'text/html', 'content-encoding': 'unsupported',
+            'retry-after': '90', 'mcp-session-id': 'private-session',
+            'set-cookie': 'private-cookie', 'www-authenticate': 'Bearer private-credential',
+        })
+
+    store = Store(tmp_path / 'db', **generate_keys())
+    gateway = Gateway(store, transport=httpx.MockTransport(upstream))
+    async def receive():
+        return {'type': 'http.request', 'body': b'{"jsonrpc":"2.0","id":1,"method":"initialize"}', 'more_body': False}
+    request = Request({'type': 'http', 'method': 'POST' if route == 'mcp' else 'GET',
+                       'path': '/products/seiche/mcp' if route == 'mcp' else '/v1/data/seiche.money_markets',
+                       'query_string': b'', 'headers': [], 'server': ('testserver', 80), 'scheme': 'http'}, receive)
+    try:
+        if route == 'mcp':
+            response = await gateway.proxy('seiche', request)
+        else:
+            url, params, classification = data_catalog.fixed_request('seiche.money_markets', QueryParams())
+            response = await gateway.fixed_response(request, url, params, classification)
+        assert response.status_code == status and len(requests) == 1
+        assert response.headers.get('retry-after') == ('90' if status == 429 else None)
+        assert json.loads(response.body)['error']['upstream_status'] == status
+        assert not stream.read and stream.closed and gateway.active == 0 and not gateway.sessions
+        assert not {'authorization', 'cookie'} & set(requests[0].headers)
+        assert 'private-' not in response.body.decode() + str(response.headers)
+        assert gateway.report(None)['totals']['requests'] == 1
+    finally:
+        await gateway.aclose()
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_compressed_response_rejected_before_reading_body(tmp_path):
     from starlette.requests import Request
     from seiche_agent_network.gateway import Gateway

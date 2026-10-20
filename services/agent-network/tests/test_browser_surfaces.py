@@ -140,7 +140,7 @@ def test_full_monitor_and_filing_history_are_distinct_and_unchanged(platform):
     ('/v1/source-data/export.csv?dataset=ofr-repo&series=x&limit=1', surfaces.SOURCE_ORIGIN + '/export.csv'),
     ('/v1/economy/series/SOFR.csv', surfaces.ECONOMY_ORIGIN + '/SOFR.csv'),
 ])
-def test_csv_bytes_and_rights_failures_are_preserved(platform, route, target):
+def test_csv_bytes_and_availability_preserved_with_sanitized_access_failures(platform, route, target):
     client, _, _, requests, reply, _ = platform
     reply.update(content=b'\xef\xbb\xbf# source and clocks\r\ndate,value\r\n2025-01-01,1.0\r\n',
                  headers={'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="source.csv"',
@@ -150,10 +150,18 @@ def test_csv_bytes_and_rights_failures_are_preserved(platform, route, target):
     assert str(requests[-1].url).split('?')[0] == target
     assert response.headers['content-disposition'] == 'attachment; filename="source.csv"'
     assert response.headers['x-seiche-release-sha'] == 'c' * 40 and 'set-cookie' not in response.headers
-    for status in (403, 404, 422, 429, 503):
+    for status in (401, 403, 404, 422, 429, 451, 503):
         set_json(reply, {'detail': 'Native rights or availability restriction'}, status)
         response = client.get(route)
-        assert response.status_code == status and response.content == reply['content']
+        assert response.status_code == status
+        if status in (401, 403, 429, 451):
+            failure = response.json()['error']
+            assert failure['upstream_status'] == status and failure['failure_scope'] == 'upstream'
+            assert failure['retryable'] is (status == 429) and failure['automatic_retry'] is False
+            assert failure['next_step'] and 'Native rights' not in response.text
+            assert response.headers['x-source-url'] == target
+        else:
+            assert response.content == reply['content']
         assert response.headers['content-type'].startswith('application/json')
 
 

@@ -8,9 +8,11 @@ import asyncio
 import base64
 from collections import Counter
 from datetime import datetime, timezone
+from email.utils import format_datetime, parsedate_to_datetime
 import json
 import math
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -40,6 +42,49 @@ METHODS = {"initialize", "notifications/initialized", "notifications/cancelled",
 METADATA_PENDING_LIMIT = 8
 METADATA_WAIT_SECONDS = 0.05
 UPSTREAM_CLOSE_SECONDS = 5.0
+
+
+def _safe_retry_after(value):
+    """Accept only delay-seconds or a canonical HTTP date, never arbitrary text."""
+    if not isinstance(value, str) or len(value) > 128:
+        return None
+    if re.fullmatch(r"[0-9]{1,10}", value):
+        return str(int(value))
+    try:
+        date = parsedate_to_datetime(value)
+        if date.utcoffset() == timezone.utc.utcoffset(date) and format_datetime(date, usegmt=True) == value:
+            return value
+    except (ValueError, TypeError, OverflowError):
+        pass
+    return None
+
+
+def _upstream_access_response(upstream, headers):
+    """Keep source access failures actionable without consuming their payloads."""
+    reasons = {
+        401: ("upstream_authentication_required", "The source requires authentication.",
+              "Ask the operator to review the source credential before retrying."),
+        403: ("upstream_access_denied", "The source denied access.",
+              "Ask the operator to review source access before retrying; do not change routes to bypass the refusal."),
+        429: ("upstream_rate_limited", "The source rate limit was reached.",
+              "Honor Retry-After when supplied; otherwise use bounded backoff on the same authorized route."),
+        451: ("upstream_restricted", "The source reported an access restriction.",
+              "Ask the operator to review the source restriction before retrying."),
+    }
+    status = upstream.status_code
+    if status not in reasons:
+        return None
+    code, message, next_step = reasons[status]
+    output = {**headers, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+    if status == 429:
+        retry_after = _safe_retry_after(upstream.headers.get("retry-after"))
+        if retry_after is not None:
+            output["Retry-After"] = retry_after
+    return JSONResponse({"error": {
+        "code": code, "message": message, "upstream_status": status,
+        "failure_scope": "upstream", "retryable": status == 429,
+        "automatic_retry": False, "next_step": next_step,
+    }}, status_code=status, headers=output)
 
 
 def _mcp_name(value):
@@ -383,6 +428,13 @@ class Gateway:
             self.active -= 1
             await self._record(principal,product,method,traffic,502,round((self.clock()-now)*1000),tool=tool,country=country)
             raise NetworkError("upstream_unavailable", "Product temporarily unavailable", 502)
+        refusal = _upstream_access_response(upstream, {"X-Product": product})
+        if refusal is not None:
+            self.active -= 1
+            await self._cleanup(upstream,
+                (principal,product,method,traffic,upstream.status_code,round((self.clock()-now)*1000)),
+                {"tool":tool,"country":country})
+            return refusal
         if 300 <= upstream.status_code < 400:
             self.active -= 1
             await self._cleanup(upstream,(principal,product,method,traffic,502,round((self.clock()-now)*1000)),{"tool":tool,"country":country})
@@ -517,6 +569,10 @@ class Gateway:
             outbound.headers.pop("cookie", None)
             async with asyncio.timeout(120):
                 upstream = await self.client.send(outbound, stream=True)
+                refusal = _upstream_access_response(upstream, output)
+                if refusal is not None:
+                    status = upstream.status_code
+                    return refusal
                 if 300 <= upstream.status_code < 400:
                     raise NetworkError("upstream_redirect", "Dataset redirect requires operator review", 502)
                 if upstream.headers.get("content-encoding", "identity").strip().lower() != "identity":

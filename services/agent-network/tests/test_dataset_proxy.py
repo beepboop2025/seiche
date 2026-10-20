@@ -72,6 +72,55 @@ def test_empty_and_native_errors_preserve_status_and_are_counted(platform, statu
     assert totals['empty_responses'] == int(status in {200,204,205})
 
 
+@pytest.mark.parametrize('status,code', [
+    (401, 'upstream_authentication_required'), (403, 'upstream_access_denied'),
+    (429, 'upstream_rate_limited'), (451, 'upstream_restricted'),
+])
+@pytest.mark.parametrize('content,media', [
+    (b'<html>private-token challenge</html>', 'text/html'),
+    (b'{"error":"private-token"}', 'application/json'),
+])
+def test_access_failures_preserve_status_without_forwarding_source_body(platform, status, code, content, media):
+    client, store, owner, requests, reply, gateway = platform
+    reply.update(status=status, content=content, headers={
+        'content-type': media, 'content-encoding': 'unsupported',
+        'retry-after': '60', 'set-cookie': 'private-token',
+        'location': 'https://private-token.example', 'www-authenticate': 'Bearer private-token',
+    })
+    result = client.get('/v1/data/seiche.money_markets',
+                        headers={'Authorization': 'Bearer ' + owner['owner_token'], 'Cookie': 'private-token'})
+    assert result.status_code == status
+    failure = result.json()['error']
+    assert failure['code'] == code and failure['upstream_status'] == status
+    assert failure['failure_scope'] == 'upstream' and failure['automatic_retry'] is False
+    assert failure['retryable'] is (status == 429) and failure['next_step']
+    assert result.headers.get('retry-after') == ('60' if status == 429 else None)
+    assert result.headers['x-dataset-id'] == 'seiche.money_markets'
+    assert result.headers['x-source-url'] == FIXED_DATA['seiche.money_markets'][2]
+    assert set(result.headers['cache-control'].split(', ')) == {'no-store'}
+    assert 'private-token' not in result.text + str(result.headers)
+    assert not {'authorization', 'cookie'} & set(requests[0].headers)
+    assert len(requests) == 1 and gateway.active == 0 and not gateway.sessions
+    totals = demand.report(store)['totals']
+    assert totals['requests'] == 1 and totals['http_errors'] == 1 and totals['empty_responses'] == 0
+
+
+@pytest.mark.parametrize('retry_after,expected', [
+    ('0', '0'), ('00060', '60'), ('9999999999', '9999999999'),
+    ('Wed, 21 Oct 2026 07:28:00 GMT', 'Wed, 21 Oct 2026 07:28:00 GMT'),
+    ('-1', None), ('1.5', None), ('+60', None), ('private-token', None),
+    ('Wed, 21 Oct 2026 07:28:00 GMT private-token', None),
+    ('Thu, 21 Oct 2026 07:28:00 GMT', None), ('9' * 129, None),
+])
+def test_rate_limit_retry_after_is_strictly_bounded_metadata(platform, retry_after, expected):
+    client, _, _, requests, reply, _ = platform
+    reply.update(status=429, content=b'<html>private-token</html>',
+                 headers={'content-type': 'text/html', 'retry-after': retry_after})
+    result = client.get('/v1/data/seiche.money_markets')
+    assert result.status_code == 429 and result.headers.get('retry-after') == expected
+    assert len(requests) == 1 and 'private-token' not in result.text + str(result.headers)
+
+
 @pytest.mark.parametrize('status,content,headers', [
     (302,b'{}',{'location':'https://private.example','content-type':'application/json'}),
     (200,b'{}',{'content-encoding':'br','content-type':'application/json'}),

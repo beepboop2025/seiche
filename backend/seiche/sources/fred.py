@@ -11,6 +11,7 @@ import asyncio
 import io
 import random
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 import httpx
 import pandas as pd
@@ -25,9 +26,69 @@ BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
 # fredgraph.csv throttles bursts hard — keep concurrency low and back off.
 _sem = asyncio.Semaphore(2)
+_MAX_ATTEMPTS = 4
+_MAX_RETRY_WAIT_SECONDS = 30.0
 
 
-async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str | None = None) -> Series:
+def _retryable(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status in {408, 425, 429} or 500 <= status < 600
+    return False
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    value = exc.response.headers.get("Retry-After", "").strip()
+    if not value:
+        return None
+    if value.isascii() and value.isdecimal():
+        # Avoid oversized integer conversion while still deferring a valid
+        # provider deadline that cannot fit within this refresh's wait budget.
+        if len(value) > 12:
+            return _MAX_RETRY_WAIT_SECONDS + 1
+        return float(value)
+    try:
+        deadline = parsedate_to_datetime(value)
+        if deadline.tzinfo is None:
+            return None
+        return max(0.0, (deadline - datetime.now(UTC)).total_seconds())
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _refresh_failure(
+    spec: SeriesSpec, exc: Exception, *, cache_used: bool, retry_deferred: bool,
+) -> dict:
+    status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+    if status in {401, 403, 451}:
+        reason = "upstream_access_denied"
+    elif status == 429:
+        reason = "upstream_rate_limited"
+    elif _retryable(exc):
+        reason = "upstream_unavailable"
+    else:
+        reason = "source_refresh_failed"
+    # An upstream response body or exception URL is not public diagnostic text.
+    detail = f"{spec.remote_id}: {reason} ({f'HTTP {status}' if status else type(exc).__name__})"
+    if retry_deferred:
+        detail += "; retry delay exceeds this refresh's wait budget"
+    if cache_used:
+        detail += "; cached observations retained with unchanged observation and retrieval clocks"
+    return {
+        "source": "fred", "series": spec.mnemonic, "detail": detail,
+        "reason": reason, "http_status": status, "refresh_status": "failed",
+        "cache_used": cache_used, "retry_deferred": retry_deferred,
+    }
+
+
+async def fetch_series(
+    client: httpx.AsyncClient, spec: SeriesSpec, start: str | None = None,
+    *, faults: list[dict] | None = None,
+) -> Series:
     if await run_store(store.is_fresh, spec.mnemonic, spec.ttl_minutes):
         cached = await run_store(store.load_series, spec.mnemonic)
         if cached is not None:
@@ -37,10 +98,11 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str |
                 cached.fetched_at, now=datetime.now(UTC),
             ):
                 return cached
+    retry_deferred = False
     try:
         r = None
-        last_exc: Exception | None = None
-        for attempt in range(4):  # fredgraph.csv is slow and throttles — retry w/ backoff
+        waited = 0.0
+        for attempt in range(_MAX_ATTEMPTS):
             try:
                 async with _sem:
                     # No custom User-Agent here — see FRED note in config.py.
@@ -52,11 +114,19 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str |
                 r.raise_for_status()
                 break
             except Exception as exc:
-                last_exc = exc
                 r = None
-                await asyncio.sleep(1.5 * (2 ** attempt) + random.random())
-        if r is None:
-            raise last_exc  # type: ignore[misc]
+                if not _retryable(exc) or attempt == _MAX_ATTEMPTS - 1:
+                    raise
+                delay = max(
+                    1.5 * (2 ** attempt) + random.random(),
+                    _retry_after_seconds(exc) or 0.0,
+                )
+                if delay > _MAX_RETRY_WAIT_SECONDS - waited:
+                    retry_deferred = True
+                    raise
+                await asyncio.sleep(delay)
+                waited += delay
+        assert r is not None
         df = pd.read_csv(io.StringIO(r.text))
         df.columns = ["date", "value"]
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
@@ -67,11 +137,16 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str |
         )
         await run_store(store.save_series, s)
         return s
-    except Exception as exc:  # serve stale on failure, fail-loud via staleness
+    except Exception as exc:
         cached = await run_store(store.load_series, spec.mnemonic)
+        fault = _refresh_failure(
+            spec, exc, cache_used=cached is not None, retry_deferred=retry_deferred,
+        )
+        if faults is not None:
+            faults.append(fault)
         if cached is not None:
             return cached
-        raise SourceFault("fred", f"{spec.remote_id}: {type(exc).__name__}: {exc}") from exc
+        raise SourceFault("fred", fault["detail"]) from exc
 
 
 async def fetch_many(
@@ -84,10 +159,11 @@ async def fetch_many(
 
     async def one(m: str):
         try:
-            out[m] = await fetch_series(client, ALL_SERIES[m])
-        except SourceFault as e:
-            if faults is not None:
-                faults.append({"source": e.source, "detail": e.detail})
+            out[m] = await fetch_series(client, ALL_SERIES[m], faults=faults)
+        except SourceFault:
+            # fetch_series records both cold failures and retained-cache
+            # failures once, keeping failed refreshes visible to the assembler.
+            pass
 
     await asyncio.gather(*(one(m) for m in mnemonics))
     return out
