@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -136,10 +137,22 @@ class PublisherBoundaryTests(unittest.TestCase):
         source = Path(publisher.__file__).read_text()
         mirror = source.index('git(["push", "origin", "HEAD:main"]')
         self.assertIn("recheck_source_health(trusted, env)", source[mirror - 350:mirror])
-        self.assertIn("claim_source_health(evidence, current_health)", source[mirror - 350:mirror])
+        self.assertIn("claim_current_source_health(evidence, current_health)", source[mirror - 350:mirror])
         pages = source.index('"/opt/node22/bin/node"', mirror)
         self.assertIn("recheck_source_health(trusted, env)", source[pages - 400:pages])
-        self.assertIn("claim_source_health(evidence, current_health)", source[pages - 400:pages])
+        self.assertIn("claim_current_source_health(evidence, current_health)", source[pages - 400:pages])
+
+    def test_claim_crossing_signed_expiry_or_snapshot_deadline_cannot_publish(self):
+        for field in ("expires_at", "health_valid_until"):
+            with self.subTest(field=field):
+                future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+                assessment = {"expires_at": future, "health_valid_until": future}
+                def delayed_claim(*args):
+                    assessment[field] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+                with patch.object(publisher, "claim_source_health", side_effect=delayed_claim) as claim:
+                    with self.assertRaisesRegex(RuntimeError, "expired during durable claim"):
+                        publisher.claim_current_source_health(Path("/evidence"), assessment)
+                    claim.assert_called_once()
 
     def test_builder_environment_never_inherits_credentials(self):
         with patch.dict(

@@ -1108,8 +1108,10 @@ def verify_catalog_source_health(
                       origin=pair["origin"], public=current_public, now=now)
         execution = {"kind": "catalog_publication",
                      "publication_request_id": package["publication_request_id"]}
+        generated = datetime.fromisoformat(current_public["body"]["generated_at"].replace("Z", "+00:00"))
         return {**assessment, "claim_document": helper.claim_document(assessment, execution=execution),
-                "claim_persistence": "external_operator"}
+                "claim_persistence": "external_operator",
+                "health_valid_until": (generated + timedelta(seconds=900)).isoformat()}
     except (helper.AdmissionError, ValueError, TypeError, KeyError):
         raise PublicationGateError("catalog source health admission is invalid") from None
 

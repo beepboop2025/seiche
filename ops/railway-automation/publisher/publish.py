@@ -1,6 +1,7 @@
 """Reviewed Railway controller for Seiche's bounded static publication path."""
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -441,6 +442,20 @@ def claim_source_health(evidence, assessment):
         os.close(descriptor)
 
 
+def claim_current_source_health(evidence, assessment):
+    claim_source_health(evidence, assessment)
+    # fsync can stall. Recheck both signed expiry and the observed snapshot
+    # deadline after durable I/O, immediately before the public write.
+    now = datetime.now(timezone.utc)
+    for field in ("expires_at", "health_valid_until"):
+        try:
+            deadline = datetime.fromisoformat(assessment[field].replace("Z", "+00:00"))
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("Source health deadline is invalid") from None
+        if deadline.tzinfo is None or not now < deadline:
+            raise RuntimeError("Source health admission or snapshot expired during durable claim")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-health-package", type=Path)
@@ -766,7 +781,7 @@ def main(argv=None):
             require_current_publication(current_source_sha, mirror, previous_sha, publish_env)
             current_health = recheck_source_health(trusted, env)
             if current_health is not None:
-                claim_source_health(evidence, current_health)
+                claim_current_source_health(evidence, current_health)
             git(["push", "origin", "HEAD:main"], mirror, publish_env)
         site_sha = git(["rev-parse", "HEAD"], mirror)
         if (
@@ -781,7 +796,7 @@ def main(argv=None):
         require_current_publication(current_source_sha, mirror, site_sha, publish_env)
         current_health = recheck_source_health(trusted, env)
         if current_health is not None:
-            claim_source_health(evidence, current_health)
+            claim_current_source_health(evidence, current_health)
         run(
             [
                 "/opt/node22/bin/node",
