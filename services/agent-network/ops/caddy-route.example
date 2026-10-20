@@ -1,5 +1,12 @@
 # Insert within the existing api.seiche.info site only after canary qualification.
 # This is an additive route; preserve every existing route and native publisher.
+# At SITE level, replace the existing `encode zstd gzip` directive with these
+# two lines. Do not add a second encode directive or put this in handle_path:
+# this matcher must see /agents before handle_path strips that prefix.
+# Caddy 2.6.2's compressor does not flush SSE frames when reverse_proxy flushes.
+@agent_context_compressible not path /agents/v1/context/events
+encode @agent_context_compressible zstd gzip
+
 handle_path /agents/commerce/* {
     request_body {
         max_size 64KiB
@@ -35,6 +42,10 @@ handle_path /agents/* {
         defer
     }
     header Cache-Control "no-store, no-transform"
+    # SSE auto-flushes without -1; retain upstream cancellation on disconnect.
+    # This matcher sees the path after handle_path strips /agents.
+    @agent_context_events path /v1/context/events
+    reverse_proxy @agent_context_events 127.0.0.1:18796
     reverse_proxy 127.0.0.1:18796 {
         flush_interval -1
     }

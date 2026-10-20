@@ -1,5 +1,86 @@
 # Free agent data and participation
 
+## Compact source context and change notifications
+
+With the hosted gateway enabled, `GET /v1/context/contract` describes the
+available source-status stream. `GET /v1/context/snapshot` returns a compact
+snapshot (at most 16 KiB), and `GET /v1/context/events` delivers Server-Sent
+Events. Both serve precomputed metadata from the existing
+`SEICHE_FRESHNESS_REPORT` file; client requests never trigger upstream collection.
+The background reader checks this atomic, private file every second. The source
+monitor's own schedule determines when new evidence becomes available.
+
+The stream contains product availability, coverage and rights states, the
+SOFR/EFFR/IORB source clocks, and Undertow's inspected research venue clocks.
+`omitted_clock_count` and `missing_products` make the subset explicit. Full
+source-status metadata remains at `/v1/data-status`. The stream includes no
+market prices, order book, customer strategy, execution authority, or verified
+trade outcome. `freshness_at_evaluation` preserves the monitor's assessment and
+each clock's cadence; a heartbeat is only evidence that the connection is alive.
+Freshness does not establish source entitlements or input eligibility.
+
+Snapshots use `seiche-agent-network.context.v1`, a process-specific `stream_id`,
+an increasing `sequence`, a SHA-256 content `revision`, and `published_at`.
+The publication time does not replace any observation time. Monitor reports
+older than 900 seconds, future-dated reports, missing files and invalid files
+produce `input_eligibility: blocked_monitor`. Current reports retain
+`input_eligibility: not_evaluated`; they never grant trading admission.
+Consumers must expire the report at `source_monitor.valid_until` using their
+own clock, even while disconnected. No latency SLA has been established.
+
+Every connection starts with `event: reset`, including requests with
+`Last-Event-ID`. The event ID is `stream_id:sequence`, and its JSON data is the
+complete snapshot plus `delivery: {reason, replay_complete: false}`. Apply it
+as a replacement. Later `snapshot` events also replace the complete state.
+There is no replay log: a slow subscriber may skip revisions, in which case a
+`reset` with reason `updates_coalesced` replaces its state. A new process uses a
+new stream ID. Never reconstruct a complete market event history from this
+source-status stream.
+
+Connections receive a transport-only `keepalive` every 15 seconds without a new
+event ID. Sessions end after 300 seconds; reconnect with backoff and accept the
+latest reset. Each process admits at most 64 subscribers; excess requests return
+503 with `Retry-After: 5`. Writes have a five-second deadline, cancellation
+releases capacity, and the latest-only design retains no per-client event queue.
+Production proxies must disable buffering for `/v1/context/events` and allow
+the session duration. The response includes `X-Accel-Buffering: no`.
+On Caddy 2.6.2, `flush_interval -1` does not flush the compression layer.
+At the `api.seiche.info` site level, replace the existing `encode zstd gzip`
+directive with the named matcher and `encode` directive in
+[`ops/caddy-route.example`](ops/caddy-route.example). The matcher excludes only
+`/agents/v1/context/events` and runs before `/agents` is stripped. Do not add a
+second encoder or install this matcher inside `handle_path`. Other paths retain
+their existing compression. Validate the complete Caddy configuration before
+reloading, then verify the initial reset through the public edge with compression
+accepted; local streaming alone cannot verify this boundary. The
+[Caddy encode syntax](https://caddyserver.com/docs/caddyfile/directives/encode)
+supports the request matcher; the
+[2.6.2 encoder implementation](https://github.com/caddyserver/caddy/blob/v2.6.2/modules/caddyhttp/encode/encode.go)
+explains the version-specific buffering behavior.
+
+Inside the `/agents/*` handler, the example also gives the exact rewritten path
+`/v1/context/events` its own proxy without an explicit `flush_interval -1`.
+Caddy automatically flushes `text/event-stream`; omitting the negative setting
+also retains upstream cancellation when the client disconnects, releasing the
+subscriber slot. The existing general proxy retains its settings. See the
+[streaming rules](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming)
+and [Caddy 2.6.2 proxy implementation](https://github.com/caddyserver/caddy/blob/v2.6.2/modules/caddyhttp/reverseproxy/reverseproxy.go).
+
+The CLI gives active requests ten seconds to drain on shutdown, then cancels
+them and runs application cleanup before the service unit's 30-second stop
+deadline. Clients reconnect and receive a new reset after a restart. This uses
+[Uvicorn's graceful-shutdown timeout](https://uvicorn.dev/settings/#timeouts).
+
+The normal public-origin allowlist applies to these GET endpoints and their
+preflights. `GET /v1/operator/context-metrics` reports process-local
+connection/frame counters only with the existing operator reporting bearer
+credential. Tenant owner and delegated-agent credentials cannot access global
+counters, and public research origins do not receive CORS access to this route.
+Counters split `synthetic` and `unknown` traffic, reset on restart, and do not
+measure independent users. Diagnostic clients should send
+`X-Financial-Evidence-Traffic-Class: synthetic`. No private identity, request
+arguments or response bodies are recorded by this stream.
+
 Start at [agents.seiche.info/connect](https://agents.seiche.info/connect): browse
 AI usage and retail context without an account, choose a topic and goal, and copy
 a starting prompt or hosted MCP connection. Seven public product connections are
@@ -105,6 +186,18 @@ check direct project constraints and run in the existing service CI suite.
 For PostgreSQL, configure `SEICHE_NETWORK_DATABASE` privately with a `postgresql+psycopg://...` URL. Keep it out of command arguments, transcripts and dashboards. The database and service keys must belong exclusively to this network service. Initial schema creation is an operator action; provision the database before starting additional workers. This initial release has no automatic schema migration framework.
 
 ## Hosted deployment contract
+
+`ops/seiche-agent-context-latency.timer` runs the bounded public-path observer
+every five minutes. It makes three anonymous, labelled synthetic snapshot reads
+and writes mode-0600 receipts to `/var/lib/seiche-agent-network/latency/latest.json`
+and a bounded history of 2,016 observations. The observer records response size,
+hash and transport time; it retains no source payload or credentials. It checks
+monitor timestamps again at receipt, rejects future/expired evidence, and
+reports transport success separately from source-monitor validity. Exit 1 means
+transport/contract failure; exit 2 means the source monitor is stale or invalid.
+Neither a successful invocation nor a short sample establishes an SLA, fresh
+market prices, source entitlements, or external adoption. Enable this timer only
+after the deployed context routes pass external readback.
 
 The canonical hosted endpoint is `https://agents.seiche.info`. The edge worker forwards to `https://api.seiche.info/agents`; the isolated application listens on `127.0.0.1:18796`. These addresses describe configuration and do not establish that deployment or public propagation has completed.
 

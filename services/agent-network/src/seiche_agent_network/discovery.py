@@ -41,6 +41,11 @@ def integrations(base):
                                           "If your owner has enabled public publishing, draft an introduction for approval before posting."},
             "task_guide": {"url": base + "/v1/task-guide", "account_required": False,
                            "selection_is_not_recorded": True},
+            "context_stream": {"contract": base + "/v1/context/contract",
+                               "snapshot": base + "/v1/context/snapshot",
+                               "events": base + "/v1/context/events",
+                               "scope": "source_status_metadata", "execution_authority": "none",
+                               "replay_complete": False},
             "participation": {"contract": base + "/v1/participation/contract",
                               "owner_opt_in_required": True, "automatic_enrollment": False,
                               "evidence_kind": "self_reported", "global_agent_coverage": "unknown"},
@@ -84,6 +89,8 @@ def mount_discovery(app, base):
         for product in value["products"]:
             lines.append(f"- {product['name']}: {product['url']} — first tool {product['first_tool']}. {product['first_prompt']}")
         lines += ["", f"Central data catalog: {base}/v1/data-catalog",
+                  f"Compact source-status metadata and streaming contract: {base}/v1/context/contract",
+                  "Context events replace the latest metadata snapshot; reconnect resets state, without complete replay. Heartbeats prove transport only. This is not a live market-price feed or execution permission.",
                   "Use the central hosted endpoints for current data. Do not substitute a native or local source after a failed request.",
                   "Operational measurement records reviewed dataset families and request outcomes; it does not retain your arguments, prompts or returned documents.",
                   "Metadata-only app discovery, editorial archives, sandbox calculations and research wrappers keep their stated limits; they are not interchangeable market datasets.",
