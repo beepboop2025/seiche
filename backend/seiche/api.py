@@ -40,6 +40,7 @@ from seiche import (
     agent_room,
     assemble,
     context_views,
+    hetzner_runtime,
     mcp_server,
     methodology,
     provisioning,
@@ -158,9 +159,11 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     # (mcp_server._run has the full story).
     mcp_server.set_main_loop(asyncio.get_running_loop())
     refresh_task: asyncio.Task[None] | None = None
-    if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1" or standby.enabled():
+    if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1" or standby.enabled() or hetzner_runtime.enabled():
         stateful_mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip()
         preactivation = standby.enabled() or stateful_mode in {"shadow", "cutover_candidate"}
+        if hetzner_runtime.enabled():
+            await asyncio.to_thread(hetzner_runtime.initialize)
         if standby.enabled():
             # This verifies Git before installing the no-child-process guard.
             # Subsequent release capture reuses that accepted source identity.
@@ -574,6 +577,32 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
 @app.middleware("http")
 async def _railway_cutover_edge_guard(request: Request, call_next):
     """Keep the Railway candidate private and read-only until authority moves."""
+    if hetzner_runtime.enabled():
+        try:
+            grant = hetzner_runtime.require_authority()
+        except Exception:
+            return JSONResponse(status_code=503, content={"status": "hetzner_authority_unavailable"},
+                                headers={"Cache-Control": "no-store"})
+        if not secrets.compare_digest(
+            request.headers.get("x-seiche-hetzner-token", "").encode("utf-8"),
+            os.environ["SEICHE_HETZNER_EDGE_TOKEN"].encode("ascii"),
+        ):
+            return JSONResponse(status_code=404, content={"detail": "not found"},
+                                headers={"Cache-Control": "no-store"})
+        response = await call_next(request)
+        # Recheck before releasing any bytes; a revoked process cannot return
+        # a successful result merely because the request began while active.
+        try:
+            hetzner_runtime.require_authority()
+        except Exception:
+            return JSONResponse(status_code=503, content={"status": "hetzner_authority_unavailable"},
+                                headers={"Cache-Control": "no-store"})
+        response.headers["X-Seiche-Provider"] = "hetzner"
+        response.headers["X-Seiche-Authority"] = "production"
+        response.headers["X-Seiche-Release-SHA"] = grant["code"]["commit"]
+        response.headers["X-Seiche-Runtime"] = grant["runtime_id"]
+        response.headers["Cache-Control"] = "no-store"
+        return response
     if standby.enabled():
         try:
             receipt = standby.require_initialized()
@@ -3642,6 +3671,22 @@ def _health_response(
             },
             headers={"Cache-Control": "no-store", "Retry-After": "10"},
         )
+    if require_rebuilt and hetzner_runtime.enabled():
+        grant = hetzner_runtime.require_authority()
+        if release_candidate.get("producer_sha") != grant["code"]["commit"]:
+            return JSONResponse(status_code=503, content={"status": "hetzner_producer_not_ready"},
+                                headers={"Cache-Control": "no-store"})
+        try:
+            repository = get_repository()
+            workers_ready = all(
+                hetzner_runtime.worker_heartbeat_ready(repository.load_worker_heartbeat(component))
+                for component in (COLLECTOR_WORKER_COMPONENT_ID, LEGACY_SOURCE_WORKER_COMPONENT_ID)
+            )
+        except Exception:
+            workers_ready = False
+        if not workers_ready:
+            return JSONResponse(status_code=503, content={"status": "hetzner_workers_not_ready"},
+                                headers={"Cache-Control": "no-store"})
     response.headers["Cache-Control"] = "no-store"
     faults = project_public_faults(snap["faults"])
     worker_checks = (
@@ -3663,6 +3708,12 @@ def _health_response(
         "faults": faults,
         "provenance": snap["provenance"],
     }
+    if hetzner_runtime.enabled():
+        grant = hetzner_runtime.require_authority()
+        content.update(
+            provider="hetzner", authority="production", release_sha=grant["code"]["commit"],
+            snapshot_producer_sha=assemble._cache.get("producer_sha"),
+        )
     if include_release_candidate and release_candidate is not None:
         content["release_candidate"] = release_candidate
     return content

@@ -493,8 +493,10 @@ class PostgresMarketRepository:
             import psycopg
         except ImportError as exc:  # pragma: no cover - deployment dependency
             raise RuntimeError("PostgreSQL selected; install seiche[postgres]") from exc
-        from seiche import standby
+        from seiche import hetzner_runtime, standby
 
+        if hetzner_runtime.enabled():
+            hetzner_runtime.validate_database(self.dsn, hetzner_runtime.require_authority())
         if standby.enabled():
             standby.validate_database(self.dsn, standby.require_initialized())
         options = {} if connect_timeout is None else {"connect_timeout": connect_timeout}

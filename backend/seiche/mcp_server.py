@@ -321,7 +321,11 @@ def _stateful_preactivation_environment() -> bool:
 
 def _stateful_agent_room_expected_key_id() -> str | None:
     """Return the receipt-bound key, empty unprovisioned sentinel, or no gate."""
-    from seiche import standby
+    from seiche import hetzner_runtime, standby
+
+    if hetzner_runtime.enabled():
+        value = hetzner_runtime.require_authority()["agent_room"]["expected_key_id"]
+        return "" if value == "unprovisioned" else value
 
     if standby.enabled():
         value = standby.require_initialized()["agent_room"]["expected_key_id"]

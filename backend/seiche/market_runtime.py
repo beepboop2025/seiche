@@ -642,8 +642,12 @@ async def run_worker(
     repository: MarketRepository | None = None,
     registry: MarketRegistry | None = None,
 ) -> None:
+    from seiche import hetzner_runtime
+
     if poll_seconds < 5:
         raise ValueError("collector poll interval must be at least five seconds")
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
     repo = repository or get_repository()
     markets = registry or default_registry()
     published_snapshots: dict[str, object] = {}
@@ -696,6 +700,8 @@ async def run_worker(
             _startup_nyfed_refresh_keys, repo, now=datetime.now(UTC)
         )
         while True:
+            if hetzner_runtime.enabled():
+                hetzner_runtime.require_authority()
             published_snapshots.clear()
             schedule_time = datetime.now(UTC).replace(microsecond=0)
             # Consume this selection before awaiting acquisition. Incomplete
@@ -709,6 +715,8 @@ async def run_worker(
                 else await supervisor.run_due(now=schedule_time)
             )
             if runs:
+                if hetzner_runtime.enabled():
+                    hetzner_runtime.require_authority()
                 cutoff = datetime.now(UTC).replace(microsecond=0)
                 previous_faults = frozenset(faulted_markets)
                 await asyncio.to_thread(

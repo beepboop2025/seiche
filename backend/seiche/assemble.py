@@ -2834,7 +2834,24 @@ def restore_cached_snapshot(*, read_only: bool = False) -> str | None:
     """
     if not isinstance(read_only, bool):
         raise TypeError("read_only must be a boolean")
-    from seiche import standby
+    from seiche import hetzner_runtime, standby
+
+    if hetzner_runtime.enabled():
+        from seiche.repository import PostgresMarketRepository, get_repository
+
+        hetzner_runtime.require_authority()
+        repository = get_repository()
+        if not isinstance(repository, PostgresMarketRepository):
+            raise hetzner_runtime.HetznerRuntimeError("Hetzner requires its isolated PostgreSQL")
+        payload, receipt, producer_sha, handoff_id = hetzner_runtime.restore_snapshot(
+            repository.load_active_release_handoff_read_only()
+        )
+        # Even a prior build of this same source remains dated startup evidence;
+        # strict readiness requires this API incarnation to finish a new build.
+        _cache.update(at=0.0, payload=payload, source="hetzner_retained",
+                      release_receipt=receipt, release_handoff_id=handoff_id,
+                      producer_sha=producer_sha)
+        return "hetzner_retained"
 
     if standby.enabled():
         # A portable standby must admit only the explicitly restored parent.
@@ -3014,7 +3031,10 @@ def _valid_release_sha(value: object) -> bool:
 
 
 def _release_sha() -> str:
-    from seiche import standby
+    from seiche import hetzner_runtime, standby
+
+    if hetzner_runtime.enabled():
+        return hetzner_runtime.require_authority()["code"]["commit"]
 
     if standby.enabled():
         # Standby startup already verified HEAD, tree and clean source before
@@ -3374,6 +3394,10 @@ async def _publish_rebuilt_snapshot(
     state; ordinary v1 memory/PIT publication remains the live process's
     established behavior while the candidate health gate runs.
     """
+    from seiche import hetzner_runtime
+
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
     _assert_snapshot_rights(payload)
     handoff_id = None
     if release_receipt is not None:
@@ -3381,6 +3405,8 @@ async def _publish_rebuilt_snapshot(
             _persist_pending_snapshot, payload, release_receipt
         )
     producer_sha = capture_process_release_sha() if handoff_id is not None else None
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
     # Keep the previous complete generation readable while its successor is
     # staged. Publishing the payload before this await cleared its evidence
     # and made an ordinary successful refresh transiently fail readiness.
@@ -3404,7 +3430,10 @@ async def snapshot(force: bool = False) -> dict:
     Cold start / force → build inline; boot warming makes cold rare.
     """
     global _refreshing
-    from seiche import standby
+    from seiche import hetzner_runtime, standby
+
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
 
     if standby.enabled():
         receipt = standby.require_initialized()
@@ -3495,7 +3524,10 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
     rights work, but none of the local evidence or handoff mutations.
     """
     global _build_generation
-    from seiche import standby
+    from seiche import hetzner_runtime, standby
+
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
 
     if standby.enabled():
         raise standby.StandbyError("standby cannot build or collect a snapshot")
@@ -3557,6 +3589,8 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
     # The complete internal board must clear the same boundary before the
     # Navigator sees it or PIT/notary/materialization performs any side effect.
     _assert_snapshot_rights(payload)
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
     # The Navigator commits AFTER the board is assembled (its whole world
     # is the context pack of this payload), once per data-day, cached —
     # a re-run must never let the model revise the morning's number.
@@ -3576,6 +3610,8 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
     payload["navigator"] = nav
     _assert_snapshot_rights(payload)
     if publish:
+        if hetzner_runtime.enabled():
+            hetzner_runtime.require_authority()
         _record_pit(engines, deep, nav)
         # v2 never collects at request time. The existing US cycle is the first
         # producer during migration: once its payload is complete, a pack-local

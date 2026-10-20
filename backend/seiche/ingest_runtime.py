@@ -163,6 +163,10 @@ async def _persist_summary(
     *,
     summary_writer: Callable[[str, object], None] | None = None,
 ) -> None:
+    from seiche import hetzner_runtime
+
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
     if summary_writer is None:
         # Keep the store import lazy for CLI startup and isolated unit tests.
         from seiche import store
@@ -177,7 +181,10 @@ async def collect_legacy_once(
     summary_writer: Callable[[str, object], None] | None = None,
 ) -> dict[str, Any]:
     """Run and summarize the legacy source sweep without assembling the board."""
+    from seiche import hetzner_runtime
 
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
     started_at = _utc_now(clock)
     try:
         # ``assemble`` imports every engine.  Keep it out of module/CLI import
@@ -310,9 +317,12 @@ async def run_legacy_worker(
     repository: MarketRepository | None = None,
 ) -> None:
     """Collect legacy sources forever with durable and systemd liveness."""
+    from seiche import hetzner_runtime
 
     if poll_seconds < 5:
         raise ValueError("legacy source poll interval must be at least five seconds")
+    if hetzner_runtime.enabled():
+        hetzner_runtime.require_authority()
     repo = repository or get_repository()
     heartbeat_interval = _positive_seconds(
         "SEICHE_SOURCE_HEARTBEAT_INTERVAL_SECONDS",
@@ -331,6 +341,10 @@ async def run_legacy_worker(
     heartbeat_task: asyncio.Task[None] | None = None
     try:
         while True:
+            # Authority loss is terminal, outside the retryable collector-error
+            # boundary. A later sweep must never run under a retired grant.
+            if hetzner_runtime.enabled():
+                hetzner_runtime.require_authority()
             try:
                 summary = await collect_legacy_once()
                 if not ready:
