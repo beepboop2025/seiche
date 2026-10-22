@@ -36,11 +36,11 @@ def packages(root):
 for root in (pathlib.Path("/"), pathlib.Path("/runtime-root")):
     before = packages(root)
     # The distroless root's ldconfig APK hook needs a shell during the update.
-    # Borrow the pinned builder's BusyBox only for that hook, then remove it.
+    # Borrow the pinned builder's Bash only for that hook, then remove it.
     shell = root / "usr/bin/sh" if root != pathlib.Path("/") else None
     if shell is not None:
         assert not shell.exists() and not shell.is_symlink(), "unexpected runtime shell"
-        shutil.copy2("/usr/bin/busybox", shell)
+        shutil.copy2("/usr/bin/bash", shell)
     try:
         subprocess.run(["apk", "--root", str(root), "--no-cache", "add", "--upgrade", "ca-certificates-bundle=20260909-r3"], check=True)
     finally:
