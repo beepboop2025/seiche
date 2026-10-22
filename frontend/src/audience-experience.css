@@ -7,6 +7,9 @@ html.research-interface .audience-hero h1{font-size:clamp(43px,4.8vw,67px);line-
 .audience-actions a{display:inline-flex;align-items:center;min-height:45px;padding:12px 18px;border:1px solid var(--research-line);border-radius:7px;color:var(--research-text);text-decoration:none;font-size:13px;font-weight:500;line-height:1.4}
 .audience-actions a:first-child{background:var(--research-accent);border-color:var(--research-accent);color:#101922}
 .audience-actions a:hover{border-color:var(--research-accent)}
+.audience-contact>p{max-width:78ch;font-size:15px;line-height:1.8;margin:15px 0;color:var(--research-muted)}
+.audience-contact .audience-actions{margin-top:24px}
+.audience-contact a:focus-visible{outline:3px solid var(--research-accent);outline-offset:5px}
 .audience-access{font-size:11px!important;color:var(--research-muted);line-height:1.7!important}
 .audience-preview{margin:0;background:#161e2a;border:1px solid #354155;border-radius:15px;padding:24px;min-width:0;box-shadow:0 24px 65px -45px #000;overflow:hidden}
 .audience-preview-top{display:flex;justify-content:space-between;gap:14px;color:#b2bfd0;font-size:11px;margin-bottom:20px}
