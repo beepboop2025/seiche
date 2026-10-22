@@ -5,6 +5,7 @@ import json
 import math
 import os
 import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -108,6 +109,33 @@ def _insert_legacy_postgres(connection, observation):
         f"INSERT INTO canonical_observations ({','.join(_OBSERVATION_INSERT_COLUMNS)}) "
         f"VALUES ({','.join(_OBSERVATION_INSERT_PLACEHOLDERS)})", _observation_values(observation),
     )
+
+
+def test_postgres_schema_initializes_empty_database_schema():
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    base_dsn = os.environ["SEICHE_TEST_POSTGRES_URL"]
+    schema = "fresh_schema_" + uuid4().hex
+    with psycopg.connect(base_dsn) as connection:
+        connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    repository = PostgresMarketRepository(make_conninfo(base_dsn, options=f"-csearch_path={schema}"))
+    try:
+        observation = _nullable_test_observation()
+        assert repository.save_observations([observation]) == 1
+        assert repository._initialized
+        assert repository.load_observation_revisions_as_of(
+            observation.market_id, observation.knowledge_time
+        ) == [observation]
+        repository.save_worker_heartbeat(
+            component_id="new-schema-worker", heartbeat_at=observation.knowledge_time,
+            expected_by=observation.knowledge_time + timedelta(minutes=2),
+        )
+        assert repository.load_worker_heartbeat("new-schema-worker") is not None
+    finally:
+        with psycopg.connect(base_dsn) as connection:
+            connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 def test_postgres_existing_nullable_migration_preserves_hashes_rows_and_indexes(isolated_legacy_postgres):
@@ -317,8 +345,8 @@ def test_postgres_migration_serializes_initializers_and_nullable_readers_need_no
         fresh_repository = PostgresMarketRepository(repository.dsn)
         connect = fresh_repository._connect
 
-        def bounded_connect():
-            connection = connect()
+        def bounded_connect(**kwargs):
+            connection = connect(**kwargs)
             connection.execute("SET LOCAL lock_timeout='5000ms'")
             return connection
 
@@ -370,6 +398,234 @@ def test_postgres_heartbeat_wait_is_bounded_by_statement_timeout() -> None:
             worker.join(timeout=7)
         assert not worker.is_alive()
     assert repository.load_worker_heartbeat("health-deadline-fixture") is None
+
+
+@contextmanager
+def _bounded_blocker(repository, statements):
+    """Release only this test's transaction if a missing deadline would hang."""
+    released = threading.Event()
+    timed_out = threading.Event()
+    with repository._connect() as blocker:
+        for statement in statements:
+            blocker.execute(statement)
+
+        def watchdog():
+            if not released.wait(20):
+                timed_out.set()
+                blocker.rollback()
+
+        worker = threading.Thread(target=watchdog)
+        worker.start()
+        try:
+            yield blocker
+        finally:
+            released.set()
+            worker.join(timeout=21)
+        assert not worker.is_alive()
+        assert not timed_out.is_set(), "database operation exceeded its own deadline"
+
+
+def test_fresh_worker_heartbeat_does_not_wait_for_active_ingestion(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    repository._ensure_schema()
+    heartbeat = datetime(2026, 10, 22, tzinfo=UTC)
+    with _bounded_blocker(repository, [
+        "LOCK TABLE canonical_observations IN ROW EXCLUSIVE MODE",
+        "LOCK TABLE forward_validation_records IN ROW EXCLUSIVE MODE",
+    ]) as blocker:
+        _insert_legacy_postgres(blocker, _nullable_test_observation())
+        fresh = PostgresMarketRepository(repository.dsn)
+        fresh.save_worker_heartbeat(
+            component_id="fresh-worker", heartbeat_at=heartbeat,
+            expected_by=heartbeat + timedelta(minutes=2),
+        )
+        assert fresh._initialized
+        assert fresh.load_worker_heartbeat("fresh-worker")["heartbeat_at"] == heartbeat.isoformat()
+        # The ingestion transaction remains open with its uncommitted row.
+        assert blocker.execute("SELECT count(*) FROM canonical_observations").fetchone() == (1,)
+        with repository._connect() as reader:
+            assert reader.execute("SELECT count(*) FROM canonical_observations").fetchone() == (0,)
+
+
+def test_missing_index_timeout_rolls_back_closes_and_can_retry(isolated_legacy_postgres, monkeypatch):
+    import psycopg
+
+    repository = isolated_legacy_postgres
+    repository._ensure_schema()
+    with repository._connect() as connection:
+        connection.execute("DROP INDEX canonical_observations_asof")
+        connection.execute("DROP INDEX market_snapshots_latest")
+    fresh = PostgresMarketRepository(repository.dsn)
+    connect = fresh._connect
+    connections = []
+
+    def traced_connect(**kwargs):
+        assert kwargs == {"connect_timeout": 2}
+        connection = connect(**kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(fresh, "_connect", traced_connect)
+    with _bounded_blocker(repository, ["LOCK TABLE market_snapshots IN ROW EXCLUSIVE MODE"]):
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            fresh._ensure_schema()
+        assert not fresh._initialized
+        assert connections and all(connection.closed for connection in connections)
+        with repository._connect() as connection:
+            # The earlier missing index was created in this attempt, and its
+            # creation must be rolled back along with the later blocked DDL.
+            assert connection.execute(
+                "SELECT to_regclass('canonical_observations_asof'), "
+                "to_regclass('market_snapshots_latest')"
+            ).fetchone() == (None, None)
+    fresh._ensure_schema()
+    assert fresh._initialized
+    with repository._connect() as connection:
+        assert connection.execute(
+            "SELECT to_regclass('canonical_observations_asof') IS NOT NULL, "
+            "to_regclass('market_snapshots_latest') IS NOT NULL"
+        ).fetchone() == (True, True)
+
+
+@pytest.mark.parametrize("definition", [
+    "ON canonical_observations (semantic_role, market_id, event_time, knowledge_time)",
+    "ON canonical_observations (market_id, semantic_role, event_time DESC, knowledge_time)",
+    "ON canonical_observations (market_id NULLS FIRST, semantic_role, event_time, knowledge_time)",
+    "ON canonical_observations (market_id text_pattern_ops, semantic_role, event_time, knowledge_time)",
+    'ON canonical_observations (market_id COLLATE "C", semantic_role, event_time, knowledge_time)',
+    "ON canonical_observations (market_id, semantic_role, event_time, knowledge_time) INCLUDE (source)",
+    "ON canonical_observations (market_id, semantic_role, event_time, knowledge_time) WHERE market_id='US-USD'",
+    "ON market_snapshots (market_id, product, knowledge_cutoff, sealed_at)",
+])
+def test_schema_rejects_existing_index_with_wrong_contract(isolated_legacy_postgres, definition):
+    repository = isolated_legacy_postgres
+    with repository._connect() as connection:
+        connection.execute("DROP INDEX canonical_observations_asof")
+        connection.execute("CREATE INDEX canonical_observations_asof " + definition)
+    with pytest.raises(RuntimeError, match="unexpected schema for index canonical_observations_asof"):
+        repository._ensure_schema()
+    assert not repository._initialized
+
+
+def test_schema_rejects_changed_partial_uniqueness(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    with repository._connect() as connection:
+        connection.execute("DROP INDEX forward_records_one_child")
+        connection.execute(
+            "CREATE UNIQUE INDEX forward_records_one_child ON forward_validation_records "
+            "(market_id, product, calibration_id, previous_record_hash) "
+            "WHERE market_id <> 'NZ-NZD'"
+        )
+    with pytest.raises(RuntimeError, match="unexpected schema for index forward_records_one_child"):
+        repository._ensure_schema()
+    assert not repository._initialized
+
+
+def test_schema_rejects_nullable_unique_index_key(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    with repository._connect() as connection:
+        connection.execute(
+            "ALTER TABLE forward_validation_records ALTER COLUMN previous_record_hash DROP NOT NULL"
+        )
+    with pytest.raises(RuntimeError, match="unexpected schema for index forward_records_one_child"):
+        repository._ensure_schema()
+    assert not repository._initialized
+
+
+def test_schema_rejects_unexpected_unique_index(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    with repository._connect() as connection:
+        connection.execute("DROP INDEX canonical_observations_asof")
+        connection.execute(
+            "CREATE UNIQUE INDEX canonical_observations_asof ON canonical_observations "
+            "(market_id, semantic_role, event_time, knowledge_time)"
+        )
+    with pytest.raises(RuntimeError, match="unexpected schema for index canonical_observations_asof"):
+        repository._ensure_schema()
+    assert not repository._initialized
+
+
+def test_schema_rejects_unfinished_concurrent_index(isolated_legacy_postgres):
+    import psycopg
+
+    repository = isolated_legacy_postgres
+    repository._ensure_schema()
+    with repository._connect() as connection:
+        connection.execute("DROP INDEX canonical_observations_asof")
+    with _bounded_blocker(repository, ["LOCK TABLE canonical_observations IN ROW EXCLUSIVE MODE"]):
+        with psycopg.connect(repository.dsn, autocommit=True) as connection:
+            connection.execute("SET statement_timeout='500ms'")
+            with pytest.raises(psycopg.errors.QueryCanceled):
+                connection.execute(
+                    "CREATE INDEX CONCURRENTLY canonical_observations_asof ON canonical_observations "
+                    "(market_id, semantic_role, event_time, knowledge_time)"
+                )
+            assert connection.execute(
+                "SELECT indisvalid FROM pg_index WHERE indexrelid='canonical_observations_asof'::regclass"
+            ).fetchone() == (False,)
+        fresh = PostgresMarketRepository(repository.dsn)
+        with pytest.raises(RuntimeError, match="unexpected schema for index canonical_observations_asof"):
+            fresh._ensure_schema()
+        assert not fresh._initialized
+
+
+def test_schema_creates_missing_generation_column_and_indexes(isolated_legacy_postgres):
+    repository = isolated_legacy_postgres
+    with repository._connect() as connection:
+        connection.execute("ALTER TABLE forward_validation_records DROP COLUMN chain_generation CASCADE")
+    repository._ensure_schema()
+    with repository._connect() as connection:
+        assert connection.execute(
+            "SELECT format_type(atttypid, atttypmod), attnotnull FROM pg_attribute "
+            "WHERE attrelid='forward_validation_records'::regclass AND attname='chain_generation'"
+        ).fetchone() == ("smallint", True)
+        assert connection.execute("SELECT to_regclass('forward_records_generation') IS NOT NULL").fetchone() == (True,)
+
+
+@pytest.mark.parametrize("change", [
+    "ALTER COLUMN chain_generation DROP NOT NULL",
+    "ALTER COLUMN chain_generation SET DEFAULT 2",
+    "ALTER COLUMN chain_generation TYPE INTEGER",
+])
+def test_schema_rejects_changed_generation_column(isolated_legacy_postgres, change):
+    repository = isolated_legacy_postgres
+    with repository._connect() as connection:
+        connection.execute("ALTER TABLE forward_validation_records " + change)
+    with pytest.raises(RuntimeError, match="unexpected schema for forward_validation_records.chain_generation"):
+        repository._ensure_schema()
+    assert not repository._initialized
+
+
+def test_worker_heartbeat_write_timeout_closes_connection_without_partial_update(isolated_legacy_postgres, monkeypatch):
+    import psycopg
+
+    repository = isolated_legacy_postgres
+    repository._ensure_schema()
+    heartbeat = datetime(2026, 10, 22, tzinfo=UTC)
+    repository.save_worker_heartbeat(
+        component_id="bounded-worker", heartbeat_at=heartbeat,
+        expected_by=heartbeat + timedelta(minutes=2),
+    )
+    fresh = PostgresMarketRepository(repository.dsn)
+    fresh._ensure_schema()
+    connect = fresh._connect
+    connections = []
+
+    def traced_connect(**kwargs):
+        assert kwargs == {"connect_timeout": 2}
+        connection = connect(**kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(fresh, "_connect", traced_connect)
+    with _bounded_blocker(repository, ["LOCK TABLE worker_heartbeats IN ACCESS EXCLUSIVE MODE"]):
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            fresh.save_worker_heartbeat(
+                component_id="bounded-worker", heartbeat_at=heartbeat + timedelta(minutes=1),
+                expected_by=heartbeat + timedelta(minutes=3),
+            )
+        assert connections and all(connection.closed for connection in connections)
+    assert repository.load_worker_heartbeat("bounded-worker")["heartbeat_at"] == heartbeat.isoformat()
 
 
 def test_postgres_round_trip_covers_the_complete_market_repository() -> None:

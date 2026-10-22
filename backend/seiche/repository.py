@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import threading
 from itertools import islice
 from collections.abc import Iterable, Mapping
@@ -524,6 +525,103 @@ class PostgresMarketRepository:
                 "ALTER COLUMN source_publication_time DROP NOT NULL"
             )
 
+    @staticmethod
+    def _schema_statement_is_current(connection, statement: str) -> bool:
+        """Verify warm additive migrations without acquiring their DDL locks.
+
+        PostgreSQL's CREATE INDEX IF NOT EXISTS still requests a table lock
+        before noticing an existing index. A fresh worker must not wait for an
+        unrelated observation batch merely to write its first heartbeat.
+        A matching name alone is insufficient: reject incomplete or different
+        definitions rather than declaring the repository initialized.
+        """
+        statement = " ".join(statement.split())
+        if statement == (
+            "ALTER TABLE forward_validation_records ADD COLUMN IF NOT EXISTS "
+            "chain_generation SMALLINT NOT NULL DEFAULT 1"
+        ):
+            connection.execute("LOCK TABLE forward_validation_records IN ACCESS SHARE MODE")
+            row = connection.execute(
+                """SELECT format_type(a.atttypid, a.atttypmod), a.attnotnull,
+                          pg_get_expr(d.adbin, d.adrelid)
+                     FROM pg_attribute a
+                     LEFT JOIN pg_attrdef d
+                       ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+                    WHERE a.attrelid='forward_validation_records'::regclass
+                      AND a.attname='chain_generation' AND NOT a.attisdropped"""
+            ).fetchone()
+            if row is None:
+                return False
+            if row != ("smallint", True, "1"):
+                raise RuntimeError("unexpected schema for forward_validation_records.chain_generation")
+            return True
+
+        index = re.fullmatch(
+            r"CREATE (UNIQUE )?INDEX IF NOT EXISTS ([a-z_]+) ON ([a-z_]+) "
+            r"\(\s*([a-z_, A-Z]+?)\s*\)(?: WHERE (.+))?",
+            statement,
+        )
+        if index is None:
+            return False
+        unique, name, table, columns, predicate = index.groups()
+        # Compatible with ingestion's ROW EXCLUSIVE lock; blocks ordinary
+        # exclusive table migrations while reading their index metadata.
+        # Concurrent index maintenance still needs separate coordination.
+        connection.execute(f"LOCK TABLE {table} IN ACCESS SHARE MODE")
+        definitions = [column.strip() for column in columns.split(",")]
+        expected_columns = [column.removesuffix(" DESC") for column in definitions]
+        # PostgreSQL's DESC default includes NULLS FIRST (bits 1 | 2).
+        expected_options = [3 if column.endswith(" DESC") else 0 for column in definitions]
+        expected_predicate = None
+        if predicate is not None:
+            # Preserve this exact partial uniqueness contract, including its
+            # grouping. Unknown future predicates must be reviewed explicitly.
+            if predicate != (
+                "NOT ( market_id = 'NZ-NZD' "
+                "AND calibration_id = 'nz-nzd-local-forward-v1' )"
+            ):
+                raise RuntimeError(f"unsupported schema index predicate: {name}")
+            expected_predicate = (
+                "(NOT ((market_id = 'NZ-NZD'::text) "
+                "AND (calibration_id = 'nz-nzd-local-forward-v1'::text)))"
+            )
+        row = connection.execute(
+            """SELECT c.relkind, i.indrelid=to_regclass(%s), am.amname,
+                      i.indisunique, i.indisvalid, i.indisready, i.indislive,
+                      i.indimmediate, i.indisexclusion, i.indnkeyatts=i.indnatts,
+                      i.indexprs IS NULL, pg_get_expr(i.indpred, i.indrelid),
+                      ARRAY(SELECT pg_get_indexdef(c.oid, k, false)
+                              FROM generate_series(1, i.indnatts) k),
+                      i.indoption::smallint[],
+                      NOT EXISTS (
+                        SELECT 1 FROM generate_series(0, i.indnatts - 1) k
+                        JOIN pg_attribute a ON a.attrelid=i.indrelid
+                                           AND a.attnum=i.indkey[k]
+                        JOIN pg_opclass op ON op.oid=i.indclass[k]
+                        WHERE NOT op.opcdefault OR op.opcmethod<>c.relam
+                           OR op.opcintype<>a.atttypid
+                           OR i.indcollation[k]<>a.attcollation),
+                      NOT i.indisunique OR NOT EXISTS (
+                        SELECT 1 FROM pg_attribute a
+                        WHERE a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey)
+                          AND NOT a.attnotnull)
+                 FROM pg_class c
+                 LEFT JOIN pg_index i ON i.indexrelid=c.oid
+                 LEFT JOIN pg_am am ON am.oid=c.relam
+                WHERE c.oid=to_regclass(%s)""",
+            (table, name),
+        ).fetchone()
+        if row is None:
+            return False
+        if row != (
+            "i", True, "btree", bool(unique), True, True, True, True, False,
+            True, True, expected_predicate, expected_columns, expected_options, True, True,
+        ):
+            raise RuntimeError(f"unexpected schema for index {name}")
+        # All keys of our unique index are NOT NULL (checked above), so PG15+'s
+        # NULLS NOT DISTINCT option cannot alter this uniqueness contract.
+        return True
+
     def _ensure_schema(self) -> None:
         from seiche import standby
 
@@ -547,18 +645,25 @@ class PostgresMarketRepository:
         with self._init_lock:
             if self._initialized:
                 return
-            with self._connect() as connection:
+            with self._connect(connect_timeout=2) as connection:
                 server_version = connection.info.server_version
                 if server_version < _MIN_POSTGRES_SERVER_VERSION:
                     raise RuntimeError(
                         "PostgreSQL 11 or newer is required for safe additive "
                         f"schema migration; server_version_num={server_version}"
                     )
+                # These deadlines apply only to schema readiness, never to an
+                # observation batch. A missing migration must fail and roll
+                # back rather than strand the worker in an unbounded DDL wait.
+                connection.execute("SET LOCAL lock_timeout = '2000ms'")
+                connection.execute("SET LOCAL statement_timeout = '30000ms'")
                 # Executing individual statements works with both psycopg's
                 # simple and extended query protocols.
                 for statement in _POSTGRES_SCHEMA.split(";"):
                     if statement.strip():
-                        connection.execute(statement)
+                        if not self._schema_statement_is_current(connection, statement):
+                            connection.execute(statement)
+                            self._schema_statement_is_current(connection, statement)
                         if statement.strip().startswith(
                             "CREATE TABLE IF NOT EXISTS canonical_observations"
                         ):
@@ -1786,7 +1891,8 @@ class PostgresMarketRepository:
         deadline = _utc(expected_by)
         if deadline < heartbeat:
             raise ValueError("worker heartbeat deadline cannot precede its timestamp")
-        with self._connect() as connection:
+        with self._connect(connect_timeout=2) as connection:
+            connection.execute("SET LOCAL statement_timeout = '2000ms'")
             connection.execute(
                 """INSERT INTO worker_heartbeats
                      (component_id, heartbeat_at, expected_by)

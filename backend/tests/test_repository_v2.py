@@ -64,7 +64,7 @@ def test_postgres_schema_preserves_bitemporal_and_snapshot_indexes() -> None:
 def test_postgres_schema_rejects_servers_older_than_version_11(monkeypatch) -> None:
     repository = PostgresMarketRepository("postgresql://example.invalid/seiche")
     connection = _FakeConnection(_MIN_POSTGRES_SERVER_VERSION - 1)
-    monkeypatch.setattr(repository, "_connect", lambda: connection)
+    monkeypatch.setattr(repository, "_connect", lambda **kwargs: connection)
 
     with pytest.raises(RuntimeError, match="PostgreSQL 11 or newer"):
         repository._ensure_schema()
