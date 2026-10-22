@@ -8,10 +8,10 @@ import { P } from "../palette";
 import { moneyMarketSharePath } from "../shareRoutes";
 import { MAX_WATCHED_MARKETS, filterWatchedMarkets, missingWatchedMarkets } from "../moneyMarketWatchlist";
 import { useMoneyMarketWatchlist } from "../useMoneyMarketWatchlist";
+import { moneyMarketDisplay } from "../snapshotStatus";
 import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
-type FetchMode = "live" | "usd-fallback" | "unavailable";
 type DeskView = "briefing" | "world" | "lab" | "china" | "india" | "countries" | "notes";
 
 interface MoneyMarketMetric {
@@ -1428,10 +1428,9 @@ export default function MoneyMarkets({ snap }: Props) {
     () => usdEngine ? fallbackAtlas(usdEngine, snap.generated_at) : null,
     [usdEngine, snap.generated_at],
   );
-  const latestFallback = useRef(usdFallback);
   const activeRequest = useRef<{ controller: AbortController; timeout: number } | null>(null);
-  const [atlas, setAtlas] = useState<MoneyMarketAtlas | null>(null);
-  const [mode, setMode] = useState<FetchMode>("unavailable");
+  const [liveAtlas, setLiveAtlas] = useState<MoneyMarketAtlas | null>(null);
+  const { atlas, mode } = moneyMarketDisplay(liveAtlas, usdFallback);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -1440,8 +1439,6 @@ export default function MoneyMarkets({ snap }: Props) {
   const [marketId, setMarketId] = useState("");
   const [expansionQuery, setExpansionQuery] = useState("");
   const hasChinaDesk = mode === "live" && Boolean(atlas?.markets.some((market) => market.market_id === "CN-CNY"));
-
-  useEffect(() => { latestFallback.current = usdFallback; }, [usdFallback]);
 
   useEffect(() => () => {
     const request = activeRequest.current;
@@ -1473,8 +1470,7 @@ export default function MoneyMarkets({ snap }: Props) {
         const parsed = parseAtlas(await response.json());
         if (!parsed) throw new Error("global atlas returned an invalid contract");
         if (activeRequest.current !== request) return;
-        setAtlas(parsed);
-        setMode("live");
+        setLiveAtlas(parsed);
       })
       .catch((reason: unknown) => {
         if (activeRequest.current !== request) return;
@@ -1483,13 +1479,7 @@ export default function MoneyMarkets({ snap }: Props) {
         } else {
           setError(reason instanceof Error ? reason.message : "global atlas unavailable");
         }
-        if (latestFallback.current) {
-          setAtlas(latestFallback.current);
-          setMode("usd-fallback");
-        } else {
-          setAtlas(null);
-          setMode("unavailable");
-        }
+        setLiveAtlas(null);
       })
       .finally(() => {
         window.clearTimeout(timeout);
@@ -1650,7 +1640,7 @@ export default function MoneyMarkets({ snap }: Props) {
         </div>
         <p>Keep a smaller set in view. Watching a market preserves its source status and publication clocks; it does not make missing or stale evidence current.</p>
         <div className="mm-watchlist__controls">
-          <label><span>Watch a market</span><select aria-label="Watch a market" value="" disabled={loading || !atlas}
+          <label><span>Watch a market</span><select aria-label="Watch a market" value="" disabled={!atlas}
             onChange={event => { if (event.target.value) watch.change(event.target.value, true); }}>
             <option value="">Choose a market…</option>
             {(atlas?.markets || []).filter(market => !watch.ids.includes(market.market_id)).map(market =>
@@ -1673,7 +1663,7 @@ export default function MoneyMarkets({ snap }: Props) {
             const missing = absentWatchIds.includes(id);
             return <li key={id} data-watched-market={id}>
               <div><strong>{market ? `${market.currency} · ${market.display_name}` : id}</strong>
-                {loading ? <p>Updating the atlas. Current presence and evidence status are not yet assessed.</p>
+                {loading && !market ? <p>Updating the atlas. Current presence and evidence status are not yet assessed.</p>
                   : missing ? <p>{mode === "live" ? "Not returned in the latest atlas. No previous reading is carried forward."
                     : mode === "usd-fallback" ? "Not present in the USD fallback. Global availability is not assessed."
                       : "Atlas unavailable. This market's current evidence cannot be assessed."}</p>
@@ -1682,7 +1672,7 @@ export default function MoneyMarkets({ snap }: Props) {
                       {benchmarkMetadata && isDerivedContext(benchmark) && <span>Derived-only context; raw benchmark values remain withheld.</span>}</p>}
               </div>
               <div className="mm-watchlist__actions">
-                {market && !loading && <button type="button" onClick={() => openMarket(id)} aria-label={`Open ${id} market lab`}>Open market lab</button>}
+                {market && <button type="button" onClick={() => openMarket(id)} aria-label={`Open ${id} market lab`}>Open market lab</button>}
                 <button type="button" onClick={() => watch.change(id, false)} aria-label={`Unwatch ${id}`}>Unwatch</button>
               </div>
             </li>;
@@ -1693,8 +1683,8 @@ export default function MoneyMarkets({ snap }: Props) {
 
       {mode === "usd-fallback" && (
         <div className="mm-mode-note" role="status">
-          <div><b>Global atlas unavailable.</b> Showing the last overview’s USD desk without inventing global calm.</div>
-          <button type="button" onClick={() => setRetryKey((value) => value + 1)}>Retry global atlas</button>
+          <div><b>{loading ? "Refreshing the global atlas." : "Global atlas unavailable."}</b> Showing the dated overview’s USD desk. Its observation dates remain unchanged; global availability is not assessed.{!loading && error ? ` ${error}.` : ""}</div>
+          <button type="button" disabled={loading} onClick={() => setRetryKey((value) => value + 1)}>{loading ? "Refreshing" : "Retry global atlas"}</button>
         </div>
       )}
 

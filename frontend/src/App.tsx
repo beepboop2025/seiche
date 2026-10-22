@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
 import { requestBoard } from "./boardRequest";
+import { apiCheckStatus } from "./snapshotStatus";
 import { Any } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
 import type { Command } from "./commands";
@@ -343,7 +344,7 @@ function AppInner() {
       <section className="research-observation-bar" aria-label="Snapshot status">
         <div><span>Funding research</span><strong>{live ? "API snapshot" : "Published snapshot"}</strong></div>
         <div><span>Snapshot assembled</span><strong>{snap.generated_at?.slice(0, 16).replace("T", " ") ?? "Unavailable"} UTC</strong></div>
-        <div><span>Last successful API check</span><strong>{checkedAt ? `${checkedAt.slice(11, 16)} UTC` : "Refresh pending"}</strong></div>
+        <div><span>API refresh status</span><strong>{apiCheckStatus(checkedAt, refreshError)}</strong></div>
         <a href="#system">Inspect source coverage</a>
       </section>
 
