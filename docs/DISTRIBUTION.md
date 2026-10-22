@@ -156,7 +156,9 @@ The Docker build uses APK signature verification and the configured vendor
 repository to install
 `ca-certificates-bundle=20260909-r3` in the builder and copied runtime root.
 It verifies the published bundle SHA-256 and rejects any other package-version
-change. The real APK database and replacement package SBOM remain in the image;
+change. A temporary shell from the pinned builder lets the runtime root execute
+its existing APK hook; it is removed before that root is copied into the final
+image. The real APK database and replacement package SBOM remain in the image;
 the superseded r2 SBOM is removed as part of that package replacement. This
 keeps the existing Python version and distroless runtime while the normal
 vulnerability and container smoke gates remain mandatory. Remove this temporary

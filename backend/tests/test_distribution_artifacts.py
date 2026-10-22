@@ -354,7 +354,10 @@ class ContainerContracts(unittest.TestCase):
             "ca-certificates-bundle-20260909-r2.spdx.json').unlink()",
             self.dockerfile,
         )
-        for bypass in ("--allow-untrusted", "--force", "--no-check-certificate"):
+        self.assertIn('"unexpected runtime shell"', self.dockerfile)
+        self.assertIn('"runtime shell retained"', self.dockerfile)
+        self.assertRegex(self.dockerfile, r"finally:\n\s+if shell is not None:\n\s+shell.unlink\(\)")
+        for bypass in ("--allow-untrusted", "--force", "--no-check-certificate", "--no-scripts"):
             self.assertNotIn(bypass, self.dockerfile)
 
     def test_runtime_is_non_root_and_has_a_liveness_probe(self) -> None:
