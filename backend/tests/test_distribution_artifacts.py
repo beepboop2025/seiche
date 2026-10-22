@@ -321,7 +321,7 @@ class ContainerContracts(unittest.TestCase):
         from_lines = [
             line for line in self.dockerfile.splitlines() if line.startswith("FROM ")
         ]
-        self.assertEqual(len(from_lines), 3)
+        self.assertEqual(len(from_lines), 4)
         for line in from_lines:
             self.assertRegex(line, r"@sha256:[0-9a-f]{64}(?:\s+AS\s+[\w-]+)?$")
         self.assertNotIn("COPY . ", self.dockerfile)
@@ -334,6 +334,31 @@ class ContainerContracts(unittest.TestCase):
         self.assertEqual(first_rule, "**")
         for forbidden in ("!.git", "!backend/data", "!backend/tests", "!node_modules"):
             self.assertNotIn(forbidden, self.dockerignore)
+
+    def test_ca_patch_preserves_the_pinned_runtime_and_package_inventory(self) -> None:
+        bases = dict(
+            (stage, image)
+            for image, stage in re.findall(
+                r"(?m)^FROM (\S+) AS ([\w-]+)$", self.dockerfile
+            )
+        )
+        self.assertEqual(bases["runtime-base"], bases["runtime"])
+        self.assertIn('"ca-certificates-bundle=20260909-r3"', self.dockerfile)
+        self.assertIn('assert packages(root) == expected', self.dockerfile)
+        self.assertIn(
+            "hashlib.sha256(bundle.read_bytes()).hexdigest() == expected_hash",
+            self.dockerfile,
+        )
+        self.assertIn("COPY --from=python-build /runtime-root/ /", self.dockerfile)
+        self.assertIn(
+            "ca-certificates-bundle-20260909-r2.spdx.json').unlink()",
+            self.dockerfile,
+        )
+        self.assertIn('"unexpected runtime shell"', self.dockerfile)
+        self.assertIn('"runtime shell retained"', self.dockerfile)
+        self.assertRegex(self.dockerfile, r"finally:\n\s+if shell is not None:\n\s+shell.unlink\(\)")
+        for bypass in ("--allow-untrusted", "--force", "--no-check-certificate", "--no-scripts"):
+            self.assertNotIn(bypass, self.dockerfile)
 
     def test_runtime_is_non_root_and_has_a_liveness_probe(self) -> None:
         self.assertIn("USER 65532:65532", self.dockerfile)
@@ -376,6 +401,19 @@ class ContainerContracts(unittest.TestCase):
             f'org.opencontainers.image.licenses="{LICENSE_EXPRESSION}"', self.dockerfile
         )
         self.assertIn(f"ARG SOURCE={REPOSITORY}", self.dockerfile)
+        runtime_image = re.search(
+            r"(?m)^FROM (\S+)@(sha256:[0-9a-f]{64}) AS runtime$",
+            self.dockerfile,
+        )
+        self.assertIsNotNone(runtime_image)
+        self.assertIn(
+            f'org.opencontainers.image.base.name="{runtime_image.group(1)}"',
+            self.dockerfile,
+        )
+        self.assertIn(
+            f'org.opencontainers.image.base.digest="{runtime_image.group(2)}"',
+            self.dockerfile,
+        )
 
     def test_compose_keeps_only_data_writable(self) -> None:
         for required in (

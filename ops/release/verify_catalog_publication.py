@@ -1043,7 +1043,9 @@ def _hetzner_release_gate(*, verified_source: bytes | None = None):
         return _HETZNER_RELEASE_MODULE
     path = Path(__file__).with_name("hetzner_release.py")
     if path.is_symlink() or not path.is_file():
-        raise PublicationGateError("Hetzner release verifier is not a regular source file")
+        raise PublicationGateError(
+            "Hetzner release verifier is not a regular source file"
+        )
     spec = importlib.util.spec_from_file_location("catalog_hetzner_release", path)
     if spec is None or spec.loader is None:
         raise PublicationGateError("Hetzner release verifier cannot be loaded")
@@ -1058,16 +1060,24 @@ def _hetzner_release_gate(*, verified_source: bytes | None = None):
 def _health_identity(headers):
     provider = headers.get("x-seiche-provider")
     if provider is not None:
-        if provider != "hetzner" or headers.get("x-seiche-railway-deployment") is not None \
-                or headers.get("x-seiche-railway-authority") is not None:
+        if (
+            provider != "hetzner"
+            or headers.get("x-seiche-railway-deployment") is not None
+            or headers.get("x-seiche-railway-authority") is not None
+        ):
             raise PublicationGateError("public health provider identity is ambiguous")
-        return {"provider": provider, "source_sha": headers.get("x-seiche-release-sha"),
-                "runtime_id": headers.get("x-seiche-runtime"),
-                "authority": headers.get("x-seiche-authority"),
-                "cache_control": headers.get("cache-control")}
-    return {"source_sha": headers.get("x-seiche-release-sha"),
-            "deployment_id": headers.get("x-seiche-railway-deployment"),
-            "authority": headers.get("x-seiche-railway-authority")}
+        return {
+            "provider": provider,
+            "source_sha": headers.get("x-seiche-release-sha"),
+            "runtime_id": headers.get("x-seiche-runtime"),
+            "authority": headers.get("x-seiche-authority"),
+            "cache_control": headers.get("cache-control"),
+        }
+    return {
+        "source_sha": headers.get("x-seiche-release-sha"),
+        "deployment_id": headers.get("x-seiche-railway-deployment"),
+        "authority": headers.get("x-seiche-railway-authority"),
+    }
 
 
 def _fetch_health_observation(url: str) -> dict[str, Any]:
@@ -1128,24 +1138,42 @@ def verify_catalog_source_health(
     helper = _source_health_gate()
     try:
         hetzner = expected_context.get("provider") == "hetzner"
-        keys = {"schema", "intent_id", "publication_request_id", "body_b64", "signature_b64", "health_pair"}
+        keys = {
+            "schema",
+            "intent_id",
+            "publication_request_id",
+            "body_b64",
+            "signature_b64",
+            "health_pair",
+        }
         if hetzner:
             keys.add("runtime_evidence")
         if (
             not isinstance(package, dict)
             or set(package) != keys
-            or package["schema"] != ("seiche.hetzner-catalog-source-health.v1" if hetzner
-                                     else "seiche.catalog-source-health.v1")
+            or package["schema"]
+            != (
+                "seiche.hetzner-catalog-source-health.v1"
+                if hetzner
+                else "seiche.catalog-source-health.v1"
+            )
         ):
             raise PublicationGateError("catalog source health package shape differs")
         if hetzner:
             recovery = _hetzner_release_gate()
-            accepted = recovery.validate_evidence(package["runtime_evidence"],
-                source=expected_context["runtime_source_sha"], now=now)
-            if accepted["target"] != expected_context["target"] \
-                    or accepted["runtime_id"] != expected_context["runtime_id"] \
-                    or accepted["health"] != package["health_pair"]:
-                raise PublicationGateError("Hetzner catalog recovery or runtime binding differs")
+            accepted = recovery.validate_evidence(
+                package["runtime_evidence"],
+                source=expected_context["runtime_source_sha"],
+                now=now,
+            )
+            if (
+                accepted["target"] != expected_context["target"]
+                or accepted["runtime_id"] != expected_context["runtime_id"]
+                or accepted["health"] != package["health_pair"]
+            ):
+                raise PublicationGateError(
+                    "Hetzner catalog recovery or runtime binding differs"
+                )
         if expected_context.get("purpose") != "catalog_metadata":
             raise PublicationGateError("catalog source health purpose differs")
         if (
@@ -1164,9 +1192,19 @@ def verify_catalog_source_health(
             != expected_context["operation"]["health_pair_sha256"]
         ):
             raise PublicationGateError("catalog source health pair digest differs")
-        healthy_hetzner = hetzner and package["body_b64"] is None and package["signature_b64"] is None
-        body = None if healthy_hetzner else base64.b64decode(package["body_b64"], validate=True)
-        signature = None if healthy_hetzner else base64.b64decode(package["signature_b64"], validate=True)
+        healthy_hetzner = (
+            hetzner and package["body_b64"] is None and package["signature_b64"] is None
+        )
+        body = (
+            None
+            if healthy_hetzner
+            else base64.b64decode(package["body_b64"], validate=True)
+        )
+        signature = (
+            None
+            if healthy_hetzner
+            else base64.b64decode(package["signature_b64"], validate=True)
+        )
         assessment = helper.assess(
             body,
             signature,
@@ -1199,10 +1237,15 @@ def verify_catalog_source_health(
             # Healthy publication needs no source-fault exception. Its original
             # protected controller request still consumes one exact recovery
             # and observation claim, with the same freshness deadline.
-            expires = recovery.clock(package["runtime_evidence"]["monitor"]["observed_at"]) + timedelta(minutes=15)
-            claim = {"schema": "seiche.hetzner-healthy-publication-claim.v1",
-                     "context": expected_context, "execution": execution,
-                     "expires_at": expires.isoformat()}
+            expires = recovery.clock(
+                package["runtime_evidence"]["monitor"]["observed_at"]
+            ) + timedelta(minutes=15)
+            claim = {
+                "schema": "seiche.hetzner-healthy-publication-claim.v1",
+                "context": expected_context,
+                "execution": execution,
+                "expires_at": expires.isoformat(),
+            }
             assessment["expires_at"] = expires.isoformat()
         else:
             claim = helper.claim_document(assessment, execution=execution)
@@ -1599,7 +1642,11 @@ def verify_public_receipts(
         raise PublicationGateError("PyPI receipt is missing a canonical distribution")
 
     health_url = f"https://api.seiche.info/api/health?release={quoted}"
-    if isinstance(source_health_package, dict) and source_health_package.get("schema") == "seiche.hetzner-catalog-source-health.v1":
+    if (
+        isinstance(source_health_package, dict)
+        and source_health_package.get("schema")
+        == "seiche.hetzner-catalog-source-health.v1"
+    ):
         health_url += "&require_rebuilt=true"
     assessment = None
     if (source_health_package is None) != (source_health_context is None):
@@ -1620,7 +1667,9 @@ def verify_public_receipts(
     else:
         health = fetch_json(health_url, expected_host="api.seiche.info")
         if isinstance(health, dict) and health.get("provider") == "hetzner":
-            raise PublicationGateError("Hetzner publication requires its complete authority and recovery package")
+            raise PublicationGateError(
+                "Hetzner publication requires its complete authority and recovery package"
+            )
     health_version = health.get("version") if isinstance(health, dict) else None
     if (
         not isinstance(health_version, str)
@@ -1718,7 +1767,10 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 raise PublicationGateError("catalog source health package is malformed")
             health_url = f"https://api.seiche.info/api/health?release={urllib.parse.quote(version, safe='')}"
-            if source_package.get("schema") == "seiche.hetzner-catalog-source-health.v1":
+            if (
+                source_package.get("schema")
+                == "seiche.hetzner-catalog-source-health.v1"
+            ):
                 health_url += "&require_rebuilt=true"
             current_public = _fetch_health_observation(health_url)
             source_context = {
@@ -1744,20 +1796,39 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 },
             }
-            if source_package.get("schema") == "seiche.hetzner-catalog-source-health.v1":
+            if (
+                source_package.get("schema")
+                == "seiche.hetzner-catalog-source-health.v1"
+            ):
                 release_path = Path(__file__).with_name("hetzner_release.py")
                 if release_path.is_symlink() or not release_path.is_file():
-                    raise PublicationGateError("Hetzner release verifier is not a regular source file")
+                    raise PublicationGateError(
+                        "Hetzner release verifier is not a regular source file"
+                    )
                 release_source = release_path.read_bytes()
-                if release_source != _run_git_bytes(root, "show",
-                        f"{args.expected_sha}:ops/release/hetzner_release.py").stdout:
-                    raise PublicationGateError("Hetzner release verifier differs from exact signed source")
+                if (
+                    release_source
+                    != _run_git_bytes(
+                        root,
+                        "show",
+                        f"{args.expected_sha}:ops/release/hetzner_release.py",
+                    ).stdout
+                ):
+                    raise PublicationGateError(
+                        "Hetzner release verifier differs from exact signed source"
+                    )
                 recovery = _hetzner_release_gate(verified_source=release_source)
-                accepted = recovery.validate_evidence(source_package.get("runtime_evidence"),
-                    source=args.expected_sha, now=datetime.now(timezone.utc))
+                accepted = recovery.validate_evidence(
+                    source_package.get("runtime_evidence"),
+                    source=args.expected_sha,
+                    now=datetime.now(timezone.utc),
+                )
                 source_context.pop("deployment_id")
-                source_context.update(provider="hetzner", runtime_id=accepted["runtime_id"],
-                                      target=accepted["target"])
+                source_context.update(
+                    provider="hetzner",
+                    runtime_id=accepted["runtime_id"],
+                    target=accepted["target"],
+                )
             if args.recheck_source_health_only:
                 assessment = verify_catalog_source_health(
                     source_package,
