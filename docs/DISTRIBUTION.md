@@ -150,6 +150,18 @@ The distribution contract checks all of the following before publication:
   the ZIP, gzip, and tar metadata before PyPI publication; the same reusable
   verifier runs again over immutable PyPI bytes before MCP publication.
 
+The Python 3.14 container pins predate the certificate-bundle fix for
+[CVE-2026-111943](https://support.chainguard.dev/hc/en-us/articles/57499369353755-ACTION-REQUIRED-Update-all-Chainguard-Images-to-remove-eMudhra-Intermediate-CA-Data).
+The Docker build uses APK signature verification and the configured vendor
+repository to install
+`ca-certificates-bundle=20260909-r3` in the builder and copied runtime root.
+It verifies the published bundle SHA-256 and rejects any other package-version
+change. The real APK database and replacement package SBOM remain in the image;
+the superseded r2 SBOM is removed as part of that package replacement. This
+keeps the existing Python version and distroless runtime while the normal
+vulnerability and container smoke gates remain mandatory. Remove this temporary
+package patch when both pinned Python bases contain the fixed bundle.
+
 PyPI is immutable. Creating a GitHub Release therefore verifies the existing
 PyPI artifacts and then publishes the MCP Registry record. It never attempts to
 upload the same package version a second time.
