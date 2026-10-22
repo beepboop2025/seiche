@@ -28,7 +28,7 @@ export default function Site(){
       <div className="rw-section-title"><h2 id="practitioner-review-title">Bring a funding question from your work</h2><p>For treasury, finance, risk and research teams.</p></div>
       <p>Share a recurring task, what makes it difficult and what a useful result would look like. We would welcome a 20-minute video call or an in-person discussion in Jaipur. General examples are enough; no confidential records are needed.</p>
       <p>If there is a fit, we can explore a small product evaluation and future collaboration.</p>
-      <div className="audience-actions"><a href="mailto:mrinal@liquilens.in?subject=Seiche%20practitioner%20discussion">Discuss a research workflow with Mrinal</a><a href="/guide">Read the practical guide</a></div>
+      <div className="audience-actions"><a href="mailto:mrinal@liquilens.in?subject=Seiche%20practitioner%20discussion">Discuss a research workflow with Mrinal</a><a href="/use-cases/money-market-research/">Read the money-market research guide</a></div>
     </section></div>
     </>}<Suspense fallback={<main id="main" className="research-page"><p className="rw-loading">Opening the funding research workspace…</p></main>}><Terminal/></Suspense>{entry && <div className="research-page"><ConnectedUpgrades /></div>}</>;
 }
