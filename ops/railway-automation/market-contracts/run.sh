@@ -26,8 +26,14 @@ for name in (
     'Prove the Linux control API and root journal permission boundary',
 ):
     print('RAILWAY_MARKET_CONTRACTS_STEP '+name,flush=True)
-    subprocess.run(['sudo','-u','runner','-H',
-        '--preserve-env=SEICHE_TEST_POSTGRES_URL,PYTHONPATH,OMP_NUM_THREADS,MKL_NUM_THREADS,OPENBLAS_NUM_THREADS,NUMEXPR_NUM_THREADS',
-        'bash','-euo','pipefail','-c',steps[name]['run']],check=True,timeout=1200)
+    command = ['bash','-euo','pipefail','-c',steps[name]['run']]
+    # This test starts as root, then drops to the real runtime UID itself.
+    # Dropping first would require sudo to regain privileges, which BuildKit's
+    # no-new-privileges policy correctly forbids. Keep the other suites unprivileged.
+    if name != 'Prove the Linux control API and root journal permission boundary':
+        command = ['sudo','-u','runner','-H',
+            '--preserve-env=SEICHE_TEST_POSTGRES_URL,PYTHONPATH,OMP_NUM_THREADS,MKL_NUM_THREADS,OPENBLAS_NUM_THREADS,NUMEXPR_NUM_THREADS',
+            *command]
+    subprocess.run(command,check=True,timeout=1200)
 PYTHON
 printf 'RAILWAY_MARKET_CONTRACTS_BUILD_PASS source=%s\n' "${RAILWAY_GIT_COMMIT_SHA:-unavailable}"

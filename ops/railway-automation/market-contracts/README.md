@@ -5,6 +5,11 @@ permission-boundary steps in `market-platform-ci.yml`. Commands are read directl
 from that source workflow so a changed test list cannot silently lose coverage.
 The image includes the pinned Caddy adapter and hash-locked social-card renderer.
 
+The first three suites run as the unprivileged runner. The root journal boundary
+step starts as root and drops to runtime UID 10001 inside the test, preserving
+the real permission checks under BuildKit's `no-new-privileges` policy without
+requiring a later privilege escalation. Its workflow command remains unchanged.
+
 The PostgreSQL18 Docker build/restore harness remains in the separately confined
 Railway rootless executor. Both proofs are required for complete original job
 coverage. Keep the original GitHub PR check until the Docker reporting App can
