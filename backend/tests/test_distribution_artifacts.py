@@ -540,8 +540,8 @@ class WorkflowContracts(unittest.TestCase):
             'docker pull --platform linux/arm64 "$IMAGE_NAME@$ARM_DIGEST"',
             "--bundle-from-oci",
             '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish-container.yml"',
-            '--source-ref "refs/tags/$RELEASE_TAG"',
-            '--source-digest "$REVISION"',
+            '--source-ref "$GITHUB_REF"',
+            '--source-digest "$GITHUB_SHA"',
             "--predicate-type https://cyclonedx.org/bom",
             "gh_2.98.0_linux_amd64.tar.gz",
             "3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de",
@@ -936,7 +936,11 @@ class WorkflowContracts(unittest.TestCase):
                     self.assertIn(required, workflow)
                 if path.name == "publish-container.yml":
                     self.assertIn("release:\n    types: [published]", workflow)
-                    self.assertNotIn("workflow_dispatch:", workflow)
+                    self.assertIn("workflow_dispatch:", workflow)
+                    self.assertIn('test "$GITHUB_REF_TYPE" = "tag"', workflow)
+                    self.assertIn('verify-tag "$GITHUB_REF_NAME"', workflow)
+                    self.assertIn('verify-commit "$GITHUB_SHA"', workflow)
+                    self.assertIn('git merge-base --is-ancestor "$release_sha" "$GITHUB_SHA"', workflow)
                     self.assertIn(
                         'test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"', workflow
                     )

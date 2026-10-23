@@ -3,12 +3,22 @@ name: publish-container
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing immutable SSH-signed release tag"
+        required: true
+        type: string
+      publish_latest:
+        description: "Promote the verified stable release to latest"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-container-${{ github.event.release.tag_name }}
+  group: publish-container-${{ github.event.release.tag_name || inputs.release_tag }}
   cancel-in-progress: false
 
 jobs:
@@ -22,7 +32,7 @@ jobs:
       BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
       DOCKER_BUILD_RECORD_UPLOAD: "false"
       IMAGE_NAME: ghcr.io/${{ github.repository }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
       RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
     outputs:
       candidate_artifact_id: ${{ steps.candidate.outputs.artifact-id }}
@@ -44,12 +54,23 @@ jobs:
         run: |
           release_sha="$(git rev-parse HEAD)"
           [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_EVENT_NAME" = "release"
-          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
-          test "$GITHUB_SHA" = "$release_sha"
+          case "$GITHUB_EVENT_NAME" in
+            release)
+              test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+              test "$GITHUB_SHA" = "$release_sha"
+              ;;
+            workflow_dispatch)
+              test "$GITHUB_REF_TYPE" = "tag"
+              [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-workflow\.[0-9]+$ ]]
+              ;;
+            *) exit 1 ;;
+          esac
           test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
-          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          case "$(git show -s --format=%ae HEAD)" in
+            beepboop2025@users.noreply.github.com|mrinal091997@gmail.com) ;;
+            *) echo "Release author is not an approved owner identity" >&2; exit 1 ;;
+          esac
           git fetch --no-tags origin \
             "+refs/heads/main:refs/remotes/origin/main"
           git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
@@ -66,6 +87,15 @@ jobs:
             verify-commit HEAD
           git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
             verify-tag "$RELEASE_TAG"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag"
+            test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
+            git merge-base --is-ancestor "$release_sha" "$GITHUB_SHA"
+            git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+              verify-commit "$GITHUB_SHA"
+            git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+              verify-tag "$GITHUB_REF_NAME"
+          fi
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
@@ -74,7 +104,7 @@ jobs:
       - name: Bind the image to the immutable release tag
         id: release
         env:
-          PUBLISH_LATEST: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+          PUBLISH_LATEST: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || (github.event_name == 'workflow_dispatch' && inputs.publish_latest) }}
         run: |
           python -I -S - <<'PY'
           import os
@@ -571,9 +601,17 @@ jobs:
       - name: Recheck the release event before granting registry authority
         run: |
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_EVENT_NAME" = "release"
-          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
-          test "$GITHUB_SHA" = "$REVISION"
+          case "$GITHUB_EVENT_NAME" in
+            release)
+              test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+              test "$GITHUB_SHA" = "$REVISION"
+              ;;
+            workflow_dispatch)
+              test "$GITHUB_REF_TYPE" = "tag"
+              [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-workflow\.[0-9]+$ ]]
+              ;;
+            *) exit 1 ;;
+          esac
 
       - name: Download the exact candidate artifact without a source checkout
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
@@ -903,9 +941,17 @@ jobs:
           REVISION: ${{ needs.build.outputs.revision }}
         run: |
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_EVENT_NAME" = "release"
-          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
-          test "$GITHUB_SHA" = "$REVISION"
+          case "$GITHUB_EVENT_NAME" in
+            release)
+              test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+              test "$GITHUB_SHA" = "$REVISION"
+              ;;
+            workflow_dispatch)
+              test "$GITHUB_REF_TYPE" = "tag"
+              [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-workflow\.[0-9]+$ ]]
+              ;;
+            *) exit 1 ;;
+          esac
 
       - name: Download the exact platform SBOMs without a source checkout
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
@@ -1040,8 +1086,8 @@ jobs:
             --bundle-from-oci
             --repo "$GITHUB_REPOSITORY"
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish-container.yml"
-            --source-ref "refs/tags/$RELEASE_TAG"
-            --source-digest "$REVISION"
+            --source-ref "$GITHUB_REF"
+            --source-digest "$GITHUB_SHA"
             --format json
           )
           # gh 2.98 requires a non-empty token before --bundle-from-oci. This
