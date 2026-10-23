@@ -55,6 +55,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "PyYAML==6.0.3",  # release tests import the publisher's workflow parser
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "httpx2>=2.0.0",  # supported transport for Starlette's TestClient
