@@ -27,10 +27,9 @@ RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     && printf 'RAILWAY_CI_SOURCE_ADMITTED head=%s base=%s\n' \
          "$RAILWAY_GIT_COMMIT_SHA" "$(git rev-parse refs/remotes/origin/main)" > /ci-source-admission \
     && cat /ci-source-admission
-# A failed portable check must fail Railway's native PR deployment status.
-RUN timeout --signal=TERM --kill-after=30 3600 /opt/controller/bin/python \
-      ops/railway-automation/distribution.py > /ci-proof.log 2>&1 \
-    || { tail -n 100 /ci-proof.log; exit 1; }
+# Stream the original proof as well as retaining it. Keep a failed check fatal
+# even when tee successfully writes its log.
+RUN ["/bin/bash", "-o", "pipefail", "-c", "timeout --signal=TERM --kill-after=30 3600 /opt/controller/bin/python -u ops/railway-automation/distribution.py 2>&1 | tee /ci-proof.log"]
 RUN grep '^RAILWAY_DISTRIBUTION_JOB_PASS' /ci-proof.log \
     && grep -F "RAILWAY_DISTRIBUTION_PORTABLE_PASS source=$RAILWAY_GIT_COMMIT_SHA" /ci-proof.log \
     && printf '%s' "$RAILWAY_GIT_COMMIT_SHA" > /ci-source \
