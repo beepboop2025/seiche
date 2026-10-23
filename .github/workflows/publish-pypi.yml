@@ -59,7 +59,10 @@ jobs:
           release_sha="$(git rev-parse HEAD)"
           [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
-          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          case "$(git show -s --format=%ae HEAD)" in
+            beepboop2025@users.noreply.github.com|mrinal091997@gmail.com) ;;
+            *) echo "Release author is not an approved owner identity" >&2; exit 1 ;;
+          esac
           git fetch --no-tags origin \
             "+refs/heads/main:refs/remotes/origin/main"
           git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
@@ -167,7 +170,10 @@ jobs:
           release_sha="$(git rev-parse HEAD)"
           [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
-          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          case "$(git show -s --format=%ae HEAD)" in
+            beepboop2025@users.noreply.github.com|mrinal091997@gmail.com) ;;
+            *) echo "Release author is not an approved owner identity" >&2; exit 1 ;;
+          esac
           git fetch --no-tags origin \
             "+refs/heads/main:refs/remotes/origin/main"
           git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main

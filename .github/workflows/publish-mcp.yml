@@ -74,7 +74,10 @@ jobs:
           release_sha="$(git rev-parse HEAD)"
           [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
-          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          case "$(git show -s --format=%ae HEAD)" in
+            beepboop2025@users.noreply.github.com|mrinal091997@gmail.com) ;;
+            *) echo "Release author is not an approved owner identity" >&2; exit 1 ;;
+          esac
           [[ "$RELEASE_SIGNING_KEY_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]]
           test "$(ssh-keygen -lf ops/deploy/release-allowed-signers -E sha256 | wc -l)" -eq 1
           actual_signer_fingerprint="$(
