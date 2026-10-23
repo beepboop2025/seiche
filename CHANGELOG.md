@@ -11,6 +11,14 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.7 publication reliability
+
+- Declare the pinned workflow parser in the backend development dependencies so
+  a clean FULL publisher can collect its release tests.
+- Accept the established owner signing identities in package and MCP publication,
+  and retain signed workflow recovery for container publication.
+- Keep publication, backup, source health and recurrence acceptance separate.
+
 ### 0.16.6 upstream access and refresh diagnostics
 
 - Stop FRED retries for authentication, access and legal restrictions; honor safe
