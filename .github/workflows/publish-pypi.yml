@@ -44,7 +44,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12.12"
 
@@ -123,7 +123,7 @@ jobs:
           echo "artifact_name=seiche-pypi-candidate-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Upload the reproducible candidate distributions
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.candidate_identity.outputs.artifact_name }}
           path: candidate-dist/
@@ -155,7 +155,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12.12"
 
@@ -197,7 +197,7 @@ jobs:
             verify-tag "$RELEASE_TAG"
 
       - name: Download the reproducible candidate distributions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.build.outputs.candidate_artifact_name }}
           path: candidate-dist
@@ -265,7 +265,7 @@ jobs:
           PY
 
       - name: Upload the immutable verified distributions
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.artifact_identity.outputs.verified_artifact_name }}
           path: verified-dist/
@@ -280,12 +280,12 @@ jobs:
     timeout-minutes: 15
     permissions: {}
     steps:
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12.12"
 
       - name: Download a disposable copy of the verified distributions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.verify.outputs.verified_artifact_name }}
           path: smoke-dist
@@ -330,7 +330,7 @@ jobs:
       EXPECTED_SDIST_SHA256: ${{ needs.verify.outputs.sdist_sha256 }}
     steps:
       - name: Download the immutable verified distributions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.verify.outputs.verified_artifact_name }}
           path: dist
@@ -497,7 +497,7 @@ jobs:
 
       - name: Publish to PyPI (trusted publishing)
         if: steps.pypi_state.outputs.needs_upload == 'true'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           packages-dir: publish-dist
           skip-existing: true
