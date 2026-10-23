@@ -5,7 +5,7 @@
 The 20 October 2026 candidate preserves upstream access restrictions and exposes
 failed FRED refreshes even when dated cached observations remain available. The
 backend package version is `0.16.6`; the catalog declares the new immutable
-receipt `market-corpus-receipt-corpus-7cb1695c6affa707-r40`. Corpus bytes and
+receipt `market-corpus-receipt-corpus-7cb1695c6affa707-r41`. Corpus bytes and
 version remain unchanged. Scientific metadata records preparation, not evidence
 of publication. Follow the application-update procedure with the actual current
 parent, fresh recovery and strict monitor. The agent-network gateway receives
