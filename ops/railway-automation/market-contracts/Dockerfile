@@ -31,9 +31,7 @@ RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
 RUN python -m pip install --no-cache-dir -e './backend[dev,collectors,postgres]' PyYAML==6.0.3 \
     && python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt
 RUN python -m unittest discover -s ops/railway-automation/market-contracts -p test_report.py \
-    && (/usr/bin/tini -s -- timeout --signal=TERM --kill-after=30 1500 bash ops/railway-automation/market-contracts/run.sh > /ci-market.log 2>&1 \
-        || { cat /ci-market.log; exit 1; }) \
-    && cat /ci-market.log \
+    && bash -o pipefail -c '/usr/bin/tini -s -- timeout --signal=TERM --kill-after=30 2100 bash ops/railway-automation/market-contracts/run.sh 2>&1 | tee /ci-market.log' \
     && cat /ci-source-admission
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["python", "ops/railway-automation/market-contracts/report.py"]
