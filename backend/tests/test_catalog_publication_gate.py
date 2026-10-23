@@ -18,6 +18,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+# Signed fixture repositories copy the current release identity files below.
+# Their synthetic tags must identify that same release after a version bump.
+RELEASE_VERSION = json.loads((ROOT / "server.json").read_text())["version"]
+RELEASE_TAG = f"v{RELEASE_VERSION}"
 SCRIPT = ROOT / "ops/release/verify_catalog_publication.py"
 SPEC = importlib.util.spec_from_file_location("verify_catalog_publication", SCRIPT)
 assert SPEC and SPEC.loader
@@ -234,7 +238,7 @@ def _verify_market(health, catalog, discovery, tools, *, entry=None):
 def test_local_catalog_release_identity_is_internally_exact():
     version, entry = gate.verify_local_identity(ROOT)
 
-    assert version == "0.16.6"
+    assert version == RELEASE_VERSION
     assert len(entry["capabilities"]) == 16
     assert "trade_safety_risk_context" in entry["capabilities"]
     assert entry["prompts"] == [
@@ -430,7 +434,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
 
     monkeypatch.setattr(gate, "_verify_annotated_signed_tag", stale_receipt_tag)
     monkeypatch.setattr(
-        gate, "verify_signed_release", lambda *_args, **_kwargs: "v0.16.6"
+        gate, "verify_signed_release", lambda *_args, **_kwargs: RELEASE_TAG
     )
     monkeypatch.setattr(
         gate,
@@ -465,7 +469,7 @@ def test_independent_corpus_receipt_retains_complete_application_history_checks(
             application if kwargs["tag"] == "market-corpus-v1.0.0" else receipt
         ),
     )
-    monkeypatch.setattr(gate, "verify_signed_release", lambda *_a, **_k: "v0.16.6")
+    monkeypatch.setattr(gate, "verify_signed_release", lambda *_a, **_k: RELEASE_TAG)
     queries = []
 
     def git(_root, *args, **kwargs):
@@ -559,7 +563,7 @@ def _sign_content_release(root, *, receipt=True):
     _content_git(root, "config", "user.signingkey", str(key))
     _content_git(root, "add", ".")
     _content_git(root, "commit", "-q", "--amend", "--no-edit", "-S")
-    tags = ["v0.16.6", "market-corpus-v1.0.0"]
+    tags = [RELEASE_TAG, "market-corpus-v1.0.0"]
     if receipt:
         tags.append(gate._market_corpus_publication_receipt(_market_entry())["tag"])
     for tag in tags:
@@ -619,9 +623,9 @@ def test_fresh_exact_head_corpus_receipt_keeps_existing_independent_release_path
     _content_git(root, "tag", "-s", "-m", "fresh exact-head receipt", tag)
     assert (
         gate.verify_signed_release(
-            root, version="0.16.6", expected_sha=head, signer_fingerprint=fingerprint
+            root, version=RELEASE_VERSION, expected_sha=head, signer_fingerprint=fingerprint
         )
-        == "v0.16.6"
+        == RELEASE_TAG
     )
     assert (
         gate.verify_market_corpus_release(
@@ -656,7 +660,7 @@ def test_generated_content_rejects_even_reverted_release_or_code_drift(
     head = _content_commit(root, {}, subject="week ahead: reverted drift")
     # The old endpoint-only release identity comparison still passes.
     gate.verify_signed_release(
-        root, version="0.16.6", expected_sha=head, signer_fingerprint=fingerprint
+        root, version=RELEASE_VERSION, expected_sha=head, signer_fingerprint=fingerprint
     )
     with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
         gate.verify_market_corpus_release(
@@ -877,17 +881,17 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
         assert (
             gate.verify_signed_release(
                 root,
-                version="0.16.6",
+                version=RELEASE_VERSION,
                 expected_sha=head,
                 signer_fingerprint=fingerprint,
             )
-            == "v0.16.6"
+            == RELEASE_TAG
         )
         receipt, _ = gate.verify_market_corpus_release(
             root, expected_sha=head, signer_fingerprint=fingerprint
         )
         assert _content_git(root, "rev-parse", f"{receipt}^{{commit}}") == release
-        assert _content_git(root, "rev-parse", "v0.16.6^{commit}") == release
+        assert _content_git(root, "rev-parse", f"{RELEASE_TAG}^{{commit}}") == release
         _content_git(root, "checkout", "-q", "--detach", current)
     # Exercise the real CLI identity output; public network receipt collection
     # is a separate concern and is intentionally stubbed in this offline test.
@@ -910,7 +914,7 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
     assert report["revision"] == head
     assert report["releaseRevision"] == release
     assert report["releaseRevision"] != report["revision"]
-    assert report["releaseTag"] == "v0.16.6"
+    assert report["releaseTag"] == RELEASE_TAG
 
 
 @pytest.mark.parametrize("failure", ["unsigned", "wrong-key", "missing-pin"])
