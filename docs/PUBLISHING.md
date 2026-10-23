@@ -1,11 +1,23 @@
 # Publishing Seiche release surfaces
 
+## 0.16.7 publication reliability successor
+
+The 24 October 2026 candidate declares the publisher's PyYAML test dependency,
+binds the catalog and release fixtures to package version `0.16.7`, and preserves
+complete native distribution test output. Its new immutable receipt is
+`market-corpus-receipt-corpus-7cb1695c6affa707-r41`; corpus bytes, counts, hashes
+and version remain unchanged. Preparation is not deployment or publication.
+Qualify the exact signed source, then follow the application-update procedure
+with fresh recovery and a strict parent monitor. Create the new release and
+receipt tags only after the corresponding runtime and corpus verification.
+Accept new STATIC and FULL publication runs before restoring their schedules.
+
 ## 0.16.6 upstream access successor
 
 The 20 October 2026 candidate preserves upstream access restrictions and exposes
 failed FRED refreshes even when dated cached observations remain available. The
 backend package version is `0.16.6`; the catalog declares the new immutable
-receipt `market-corpus-receipt-corpus-7cb1695c6affa707-r41`. Corpus bytes and
+receipt `market-corpus-receipt-corpus-7cb1695c6affa707-r40`. Corpus bytes and
 version remain unchanged. Scientific metadata records preparation, not evidence
 of publication. Follow the application-update procedure with the actual current
 parent, fresh recovery and strict monitor. The agent-network gateway receives
