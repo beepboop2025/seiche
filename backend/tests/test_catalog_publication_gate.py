@@ -623,7 +623,10 @@ def test_fresh_exact_head_corpus_receipt_keeps_existing_independent_release_path
     _content_git(root, "tag", "-s", "-m", "fresh exact-head receipt", tag)
     assert (
         gate.verify_signed_release(
-            root, version=RELEASE_VERSION, expected_sha=head, signer_fingerprint=fingerprint
+            root,
+            version=RELEASE_VERSION,
+            expected_sha=head,
+            signer_fingerprint=fingerprint,
         )
         == RELEASE_TAG
     )
