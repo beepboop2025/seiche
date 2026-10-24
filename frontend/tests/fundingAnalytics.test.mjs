@@ -6,7 +6,8 @@ const uri = source => 'data:text/javascript;base64,' + Buffer.from(ts.transpileM
 const read = name => readFile(new URL('../src/research/' + name, import.meta.url), 'utf8');
 const core = uri(await read('core.ts')), charts = uri(await read('analyticsCharts.ts'));
 const series = uri((await read('seriesModel.ts')).replace("from \"./core\"", `from '${core}'`));
-const funding = uri((await read('fundingAnalytics.ts')).replace("from './core'", `from '${core}'`).replace("from './seriesModel'", `from '${series}'`).replace("from './analyticsCharts'", `from '${charts}'`).replace("import './analytics.css';", ''));
+const history = uri((await read('fundingHistory.ts')).replace("from './core'", `from '${core}'`).replace("from './seriesModel'", `from '${series}'`));
+const funding = uri((await read('fundingAnalytics.ts')).replace("from './core'", `from '${core}'`).replace("from './seriesModel'", `from '${series}'`).replaceAll("from './fundingHistory'", `from '${history}'`).replace("from './analyticsCharts'", `from '${charts}'`).replace("import './analytics.css';", ''));
 const {difference, changes, dateValue, windowPoints, csv, number} = await import(charts);
 const {fundingPoints, moneyFundBillions, treasuryCurve, fundingSpecs} = await import(funding);
 const point = (date, y) => ({x: dateValue(date), y, label: date});
