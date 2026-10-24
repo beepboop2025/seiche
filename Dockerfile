@@ -16,9 +16,9 @@ FROM cgr.dev/chainguard/python:latest@sha256:1e64347fb2a3f1a57a8839fa05df8f0cb8c
 
 FROM cgr.dev/chainguard/python:latest-dev@sha256:85c70fe9ec4313b5c8b1adcb4f0e7fa45d171ae203d2c64c69c4ea3eb96fb7dc AS python-build
 
-# Patch the signed CA package without advancing these Python 3.14 images to
-# Python 3.15. apk verifies the existing repository keys and updates its real
-# package database. Remove this step when both base pins include the fixed CA.
+# Patch the signed CA and Brotli packages without advancing these Python 3.14
+# images to Python 3.15. apk verifies the existing repository keys and updates
+# its real package database. Remove this step once both pins include the fixes.
 USER 0
 COPY --from=runtime-base / /runtime-root/
 RUN python - <<'PYCA'
@@ -28,6 +28,7 @@ import shutil
 import subprocess
 
 expected_hash = "5961c0a3c65459931c023e0075c09733f09aea4ca439cb85bc4a08bb4f3f568b"
+brotli_packages = ("libbrotlicommon1", "libbrotlidec1", "libbrotlienc1")
 def packages(root):
     records = (root / "usr/lib/apk/db/installed").read_text().split("\n\n")
     fields = [dict(line.split(":", 1) for line in record.splitlines() if ":" in line) for record in records]
@@ -35,6 +36,7 @@ def packages(root):
 
 for root in (pathlib.Path("/"), pathlib.Path("/runtime-root")):
     before = packages(root)
+    assert all(before.get(name) == "1.2.0-r5" for name in brotli_packages), "unexpected pinned Brotli inventory"
     # The distroless root's ldconfig APK hook needs a shell during the update.
     # Borrow the pinned builder's Bash only for that hook, then remove it.
     shell = root / "usr/bin/sh" if root != pathlib.Path("/") else None
@@ -42,18 +44,24 @@ for root in (pathlib.Path("/"), pathlib.Path("/runtime-root")):
         assert not shell.exists() and not shell.is_symlink(), "unexpected runtime shell"
         shutil.copy2("/usr/bin/bash", shell)
     try:
-        subprocess.run(["apk", "--root", str(root), "--no-cache", "add", "--upgrade", "ca-certificates-bundle=20260909-r3"], check=True)
+        subprocess.run(["apk", "--root", str(root), "--no-cache", "add", "--upgrade",
+                        "ca-certificates-bundle=20260909-r3",
+                        "libbrotlicommon1=1.2.0-r7", "libbrotlidec1=1.2.0-r7",
+                        "libbrotlienc1=1.2.0-r7"], check=True)
     finally:
         if shell is not None:
             shell.unlink()
     if shell is not None:
         assert not shell.exists() and not shell.is_symlink(), "runtime shell retained"
-    expected = before | {"ca-certificates-bundle": "20260909-r3"}
-    assert packages(root) == expected, "CA update changed another package"
+    expected = before | {"ca-certificates-bundle": "20260909-r3", **dict.fromkeys(brotli_packages, "1.2.0-r7")}
+    assert packages(root) == expected, "security update changed another package"
     bundle = root / "etc/ssl/certs/ca-certificates.crt"
     assert hashlib.sha256(bundle.read_bytes()).hexdigest() == expected_hash, "unexpected CA bundle"
     assert not (root / "var/lib/db/sbom/ca-certificates-bundle-20260909-r2.spdx.json").exists()
     assert (root / "var/lib/db/sbom/ca-certificates-bundle-20260909-r3.spdx.json").is_file()
+    for name in brotli_packages:
+        assert not (root / f"var/lib/db/sbom/{name}-1.2.0-r5.spdx.json").exists()
+        assert (root / f"var/lib/db/sbom/{name}-1.2.0-r7.spdx.json").is_file()
 PYCA
 USER 65532:65532
 
@@ -81,6 +89,7 @@ FROM cgr.dev/chainguard/python:latest@sha256:1e64347fb2a3f1a57a8839fa05df8f0cb8c
 COPY --from=python-build /runtime-root/ /
 USER 0
 RUN ["/usr/bin/python", "-c", "import pathlib; pathlib.Path('/var/lib/db/sbom/ca-certificates-bundle-20260909-r2.spdx.json').unlink()"]
+RUN ["/usr/bin/python", "-c", "import pathlib; [pathlib.Path('/var/lib/db/sbom/' + name + '-1.2.0-r5.spdx.json').unlink() for name in ('libbrotlicommon1', 'libbrotlidec1', 'libbrotlienc1')]"]
 
 # The pinned distroless base includes CPython's package bootstrap module even
 # though it includes no pip executable. Remove that bootstrap as root during
