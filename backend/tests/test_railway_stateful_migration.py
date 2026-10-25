@@ -1270,8 +1270,9 @@ def test_active_sqlite_prefetch_stops_when_memory_headroom_falls(
     assert path.read_bytes() == b"contents remain unchanged"
 
 
+@pytest.mark.parametrize("change", ["size", "mtime", "inode"])
 def test_active_sqlite_prefetch_rejects_changed_file_and_closes_descriptor(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, change
 ):
     path = tmp_path / "seiche.sqlite"
     path.write_bytes(b"original")
@@ -1285,7 +1286,18 @@ def test_active_sqlite_prefetch_rejects_changed_file_and_closes_descriptor(
     def mutate(fd, size):
         descriptors.append(fd)
         block = read(fd, size)
-        path.write_bytes(b"replaced")
+        if change == "size":
+            path.write_bytes(b"replacement is longer")
+        elif change == "mtime":
+            before = path.stat()
+            path.write_bytes(b"replaced")
+            # Immediate writes can share a filesystem timestamp tick.
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+            assert path.stat().st_mtime_ns != before.st_mtime_ns
+        else:
+            replacement = path.with_suffix(".replacement")
+            replacement.write_bytes(b"replaced")
+            replacement.replace(path)
         return block
 
     monkeypatch.setattr(os, "read", mutate)

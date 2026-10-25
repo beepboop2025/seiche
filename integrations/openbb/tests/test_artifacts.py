@@ -61,6 +61,8 @@ classifiers = [
 requires-python = ">=3.10,<4"
 dependencies = [
     "httpx>=0.27,<1",
+    "certifi>=2026.10.23",
+    "aiohttp>=3.14.5,<4",
     "openbb-core>=1.6.10,<2.0.0",
     "PyJWT>=2.14,<3",
 ]
@@ -84,6 +86,12 @@ packages = [{ include = "openbb_seiche" }]
 requires = ["poetry-core==2.4.1"]
 build-backend = "poetry.core.masonry.api"
 """
+
+
+def test_real_source_pyproject_matches_publication_contract() -> None:
+    verifier._validate_source_pyproject(
+        VERIFIER_PATH.with_name("pyproject.toml").read_bytes()
+    )
 
 
 @dataclass(frozen=True)
