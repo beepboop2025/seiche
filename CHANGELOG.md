@@ -19,6 +19,8 @@ they change a public contract, methodology, or release artifact.
   and propagate pipeline failures.
 - Include deployment helpers in native recovery source verification so the
   controller and protected attestation tail verify the same input set.
+- Warm the active SQLite database cache before startup audits when measured
+  memory headroom permits; retain the full integrity and freshness checks.
 - Prepare package version 0.16.8 and a new immutable corpus receipt, r42.
   Existing corpus bytes and evidence clocks remain unchanged; preparation
   does not establish deployment, recovery or publication acceptance.

@@ -1178,6 +1178,125 @@ def _configure_agent_room_runtime(
     monkeypatch.setenv("SEICHE_ATTEST_DIR", str(api_data / "_attest"))
 
 
+@pytest.mark.parametrize(
+    ("limit", "used", "high", "available", "expected"),
+    [
+        ("8192", "1024", "max", "8", 7168),
+        ("8192", "1024", "4096", "8", 3072),
+        ("8192", "1024", "max", "2", 2048),
+        ("1024", "2048", "max", "8", 0),
+        ("max", "1024", "max", "8", 0),
+        ("invalid", "1024", "max", "8", 0),
+        ("8192", "-1", "max", "8", 0),
+        ("8192", "1024", "max", "invalid", 0),
+    ],
+)
+def test_active_sqlite_prefetch_respects_container_and_host_memory(
+    tmp_path, monkeypatch, limit, used, high, available, expected
+):
+    monkeypatch.setattr(migration.sys, "platform", "linux")
+    monkeypatch.setattr(migration, "_CGROUP_MEMORY_ROOT", tmp_path)
+    monkeypatch.setattr(migration, "_HOST_MEMINFO", tmp_path / "meminfo")
+    for name, value in (
+        ("memory.max", limit),
+        ("memory.current", used),
+        ("memory.high", high),
+        ("meminfo", f"MemAvailable: {available} kB\n"),
+    ):
+        (tmp_path / name).write_text(value)
+    assert migration._active_sqlite_memory_headroom() == expected
+
+
+def test_active_sqlite_prefetch_requires_observable_memory_limits(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(migration.sys, "platform", "linux")
+    monkeypatch.setattr(migration, "_CGROUP_MEMORY_ROOT", tmp_path)
+    assert migration._active_sqlite_memory_headroom() == 0
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+@pytest.mark.parametrize("prefetch", ["complete", "low_memory", "deadline"])
+def test_active_generation_prefetch_keeps_full_integrity_audit(
+    tmp_path, monkeypatch, capsys, corrupt, prefetch
+):
+    generation, receipt = _receipted_generation(tmp_path)
+    path = generation / "api" / "seiche.sqlite"
+    if corrupt:
+        with path.open("r+b") as handle:
+            handle.write(b"corrupt SQLite header")
+    before = path.read_bytes()
+    monkeypatch.setattr(migration, "_ACTIVE_SQLITE_PREFETCH_MIN_BYTES", 1)
+    monkeypatch.setattr(
+        migration,
+        "_active_sqlite_memory_headroom",
+        lambda: 0 if prefetch == "low_memory" else 2 * 1024**3,
+    )
+    if prefetch == "deadline":
+        monkeypatch.setattr(migration, "_ACTIVE_SQLITE_PREFETCH_SECONDS", 0)
+
+    def validate():
+        return migration.validate_active_generation(
+            generation, receipt, runtime_uid=os.geteuid(), runtime_gid=os.getegid()
+        )
+
+    if corrupt:
+        with pytest.raises(sqlite3.DatabaseError):
+            validate()
+    else:
+        validate()
+    assert path.read_bytes() == before
+    output = capsys.readouterr().out
+    if prefetch == "complete":
+        assert f"{len(before)}/{len(before)} bytes" in output
+    elif prefetch == "deadline":
+        assert f"0/{len(before)} bytes" in output
+    else:
+        assert "prefetch:" not in output
+
+
+def test_active_sqlite_prefetch_stops_when_memory_headroom_falls(
+    tmp_path, monkeypatch, capsys
+):
+    path = tmp_path / "seiche.sqlite"
+    path.write_bytes(b"contents remain unchanged")
+    headroom = iter((2 * 1024**3, 0))
+    monkeypatch.setattr(migration, "_ACTIVE_SQLITE_PREFETCH_MIN_BYTES", 1)
+    monkeypatch.setattr(
+        migration, "_active_sqlite_memory_headroom", lambda: next(headroom)
+    )
+    migration._prefetch_active_sqlite(path)
+    assert "0/25 bytes" in capsys.readouterr().out
+    assert path.read_bytes() == b"contents remain unchanged"
+
+
+def test_active_sqlite_prefetch_rejects_changed_file_and_closes_descriptor(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "seiche.sqlite"
+    path.write_bytes(b"original")
+    monkeypatch.setattr(migration, "_ACTIVE_SQLITE_PREFETCH_MIN_BYTES", 1)
+    monkeypatch.setattr(
+        migration, "_active_sqlite_memory_headroom", lambda: 2 * 1024**3
+    )
+    read = os.read
+    descriptors = []
+
+    def mutate(fd, size):
+        descriptors.append(fd)
+        block = read(fd, size)
+        path.write_bytes(b"replaced")
+        return block
+
+    monkeypatch.setattr(os, "read", mutate)
+    with pytest.raises(
+        migration.MigrationContractError, match="changed during prefetch"
+    ):
+        migration._prefetch_active_sqlite(path)
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+
+
 def test_active_generation_accepts_absent_room_bootstrap_and_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

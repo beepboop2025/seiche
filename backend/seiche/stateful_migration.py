@@ -50,6 +50,12 @@ RUNTIME_GID = 10001
 MAX_LOG_RECEIPT_BYTES = 16 * 1024
 MAX_LOG_RESULT_BYTES = 24 * 1024
 MAX_DEPLOYMENT_LOG_BYTES = 8 * 1024 * 1024
+_ACTIVE_SQLITE_PREFETCH_MIN_BYTES = 64 * 1024 * 1024
+_ACTIVE_SQLITE_PREFETCH_CHUNK_BYTES = 8 * 1024 * 1024
+_ACTIVE_SQLITE_PREFETCH_RESERVE_BYTES = 1024 * 1024 * 1024
+_ACTIVE_SQLITE_PREFETCH_SECONDS = 180
+_CGROUP_MEMORY_ROOT = Path("/sys/fs/cgroup")
+_HOST_MEMINFO = Path("/proc/meminfo")
 PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA = "seiche.palimpsest-china-activation-state.v1"
 
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
@@ -1013,6 +1019,100 @@ def _validate_sqlite(path: Path) -> None:
     with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as database:
         if database.execute("PRAGMA quick_check").fetchone() != ("ok",):
             raise MigrationContractError("restored API SQLite database is corrupt")
+
+
+def _active_sqlite_memory_headroom() -> int:
+    """Admit optional cache warming only under a measurable Linux memory limit."""
+    if sys.platform != "linux":
+        return 0
+    try:
+        limit = int((_CGROUP_MEMORY_ROOT / "memory.max").read_text())
+        used = int((_CGROUP_MEMORY_ROOT / "memory.current").read_text())
+        high = (_CGROUP_MEMORY_ROOT / "memory.high").read_text().strip()
+        if high != "max":
+            limit = min(limit, int(high))
+        available = next(
+            int(fields[1]) * 1024
+            for line in _HOST_MEMINFO.read_text().splitlines()
+            if len(fields := line.split()) == 3
+            and fields[0] == "MemAvailable:"
+            and fields[2] == "kB"
+        )
+        if limit <= 0 or used < 0 or available < 0:
+            return 0
+        return max(0, min(limit - used, available))
+    except (OSError, ValueError, StopIteration):
+        return 0
+
+
+def _prefetch_active_sqlite(path: Path) -> None:
+    """Warm a quiescent live file; the full SQLite audit remains mandatory.
+
+    A cold remote volume makes the audit's small, scattered reads expensive.
+    Sequential reads populate the kernel cache without changing SQLite bytes,
+    pragmas, or acceptance. Private recovery inspections retain their separate
+    cache policy and never call this active-generation optimization.
+    """
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise MigrationContractError("active API SQLite database is unsafe")
+    reserve = _ACTIVE_SQLITE_PREFETCH_RESERVE_BYTES
+    if (
+        metadata.st_size < _ACTIVE_SQLITE_PREFETCH_MIN_BYTES
+        or _active_sqlite_memory_headroom() < metadata.st_size + reserve
+    ):
+        return
+    identity_fields = (
+        "st_dev",
+        "st_ino",
+        "st_size",
+        "st_mode",
+        "st_uid",
+        "st_gid",
+        "st_nlink",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    identity = tuple(getattr(metadata, field) for field in identity_fields)
+
+    def unchanged(observed: os.stat_result) -> bool:
+        return tuple(getattr(observed, field) for field in identity_fields) == identity
+
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    flags |= getattr(os, "O_NOATIME", 0)
+    fd = os.open(path, flags)
+    count = 0
+    started = time.monotonic()
+    try:
+        if not unchanged(os.fstat(fd)):
+            raise MigrationContractError(
+                "active API SQLite database changed before prefetch"
+            )
+        while count < metadata.st_size:
+            if (
+                time.monotonic() - started >= _ACTIVE_SQLITE_PREFETCH_SECONDS
+                or _active_sqlite_memory_headroom() < reserve
+            ):
+                break
+            block = os.read(
+                fd, min(_ACTIVE_SQLITE_PREFETCH_CHUNK_BYTES, metadata.st_size - count)
+            )
+            if not block:
+                raise MigrationContractError(
+                    "active API SQLite database shortened during prefetch"
+                )
+            count += len(block)
+        if not unchanged(os.fstat(fd)) or not unchanged(path.lstat()):
+            raise MigrationContractError(
+                "active API SQLite database changed during prefetch"
+            )
+    finally:
+        os.close(fd)
+    print(
+        f"seiche active SQLite prefetch: {count}/{metadata.st_size} bytes "
+        f"in {time.monotonic() - started:.3f}s; full integrity audit follows",
+        flush=True,
+    )
 
 
 def absent_agent_room_audit(
@@ -2007,7 +2107,9 @@ def validate_active_generation(
                 raise MigrationContractError(
                     "active writable generation metadata is unsafe"
                 )
-    _validate_sqlite(generation_path / "api" / "seiche.sqlite")
+    sqlite_path = generation_path / "api" / "seiche.sqlite"
+    _prefetch_active_sqlite(sqlite_path)
+    _validate_sqlite(sqlite_path)
 
     expected_agent_room = validate_agent_room_audit(
         filesystem.get("agent_room_audit")
