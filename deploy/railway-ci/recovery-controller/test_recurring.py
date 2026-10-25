@@ -16,6 +16,7 @@ import attest
 import recurring
 import native_installation_gate
 import verify
+from prepare import RECOVERY_HELPERS
 
 
 class ExportReached(Exception):
@@ -44,11 +45,14 @@ class StrictMonitorAdmissionTests(unittest.TestCase):
 
 
 class SourceRegistryTests(unittest.TestCase):
-    def test_current_source_requires_the_same_control_registry(self):
+    def test_current_source_requires_the_same_control_registry_and_helpers(self):
         registry = "governance/railway-control-signers.json"
         workflow = ".github/workflows/railway-stateful-recovery.yml"
+        health_helper = "deploy/railway-ci/recovery-controller/source_health.py"
+        self.assertIn(health_helper, RECOVERY_HELPERS)
         contents = {"backend/seiche/example.py": b"pass\n", registry: b"reviewed signers\n",
                     workflow: b"reviewed timing\n"}
+        contents.update({name: b"reviewed helper\n" for name in RECOVERY_HELPERS})
         policy = {"trusted_source_sha256": {name: verify.digest(body) for name, body in contents.items()}}
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -87,6 +91,15 @@ class SourceRegistryTests(unittest.TestCase):
                 (repository / workflow).write_bytes(b"unreviewed timing\n")
                 commit()
                 with self.assertRaisesRegex(ValueError, "reviewed recovery source changed"):
+                    recurring.source_identity(policy, root)
+                (repository / workflow).write_bytes(contents[workflow])
+                (repository / health_helper).write_bytes(b"unreviewed helper\n")
+                commit()
+                with self.assertRaisesRegex(ValueError, "reviewed recovery source changed: deploy/"):
+                    recurring.source_identity(policy, root)
+                (repository / health_helper).unlink()
+                commit()
+                with self.assertRaisesRegex(ValueError, "input path set changed"):
                     recurring.source_identity(policy, root)
 
 
