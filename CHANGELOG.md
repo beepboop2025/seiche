@@ -21,6 +21,8 @@ they change a public contract, methodology, or release artifact.
   controller and protected attestation tail verify the same input set.
 - Warm the active SQLite database cache before startup audits when measured
   memory headroom permits; retain the full integrity and freshness checks.
+- Update the hash-locked image renderer and frontend tooling, and enforce
+  patched certificate-store and OpenBB HTTP client dependencies.
 - Prepare package version 0.16.8 and a new immutable corpus receipt, r42.
   Existing corpus bytes and evidence clocks remain unchanged; preparation
   does not establish deployment, recovery or publication acceptance.

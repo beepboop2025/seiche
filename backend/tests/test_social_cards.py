@@ -439,12 +439,12 @@ def test_social_card_toolchain_is_hash_locked_before_every_full_suite() -> None:
     requirements_path = ROOT / "ops" / "requirements-social-cards.txt"
     requirements = requirements_path.read_text()
     match = re.search(
-        r"Pillow==12\.3\.0\s+\\\s*--hash=sha256:([0-9a-f]{64})",
+        r"Pillow==13\.0\.0\s+\\\s*--hash=sha256:([0-9a-f]{64})",
         requirements,
     )
     assert match
     assert match.group(1) == (
-        "78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91"
+        "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca"
     )
     assert "Pillow" not in (ROOT / "backend" / "pyproject.toml").read_text()
     publication_gate = (
