@@ -19,13 +19,15 @@ from pathlib import Path
 import subprocess, yaml
 workflow=yaml.safe_load(Path('.github/workflows/market-platform-ci.yml').read_text())
 steps={step.get('name'): step for step in workflow['jobs']['contracts']['steps']}
-for name in (
-    'Run market architecture and PostgreSQL contracts',
-    'Run Railway release, snapshot, stateful, and Telegram contracts',
-    'Run Telegram bot contracts',
-    'Prove the Linux control API and root journal permission boundary',
+for name, timeout_seconds in (
+    ('Run market architecture and PostgreSQL contracts', 1800),
+    ('Run Railway release, snapshot, stateful, and Telegram contracts', 1200),
+    ('Run Telegram bot contracts', 1200),
+    ('Prove the Linux control API and root journal permission boundary', 1200),
 ):
-    print('RAILWAY_MARKET_CONTRACTS_STEP '+name,flush=True)
+    # The first stage contains over 1,800 tests and can exceed 20 minutes on
+    # a cold builder. Keep all workflow commands intact and the run bounded.
+    print(f'RAILWAY_MARKET_CONTRACTS_STEP {name} timeout_seconds={timeout_seconds}',flush=True)
     command = ['bash','-euo','pipefail','-c',steps[name]['run']]
     # This test starts as root, then drops to the real runtime UID itself.
     # Dropping first would require sudo to regain privileges, which BuildKit's
@@ -34,6 +36,6 @@ for name in (
         command = ['sudo','-u','runner','-H',
             '--preserve-env=SEICHE_TEST_POSTGRES_URL,PYTHONPATH,OMP_NUM_THREADS,MKL_NUM_THREADS,OPENBLAS_NUM_THREADS,NUMEXPR_NUM_THREADS',
             *command]
-    subprocess.run(command,check=True,timeout=1200)
+    subprocess.run(command,check=True,timeout=timeout_seconds)
 PYTHON
 printf 'RAILWAY_MARKET_CONTRACTS_BUILD_PASS source=%s\n' "${RAILWAY_GIT_COMMIT_SHA:-unavailable}"
