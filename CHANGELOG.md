@@ -11,6 +11,18 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.8 container security and recovery reliability
+
+- Install the signed Brotli library backports in both roots of the distributed
+  container and verify the exact package and SBOM changes.
+- Give native market CI a bounded 30-minute test window, retain complete logs,
+  and propagate pipeline failures.
+- Include deployment helpers in native recovery source verification so the
+  controller and protected attestation tail verify the same input set.
+- Prepare package version 0.16.8 and a new immutable corpus receipt, r42.
+  Existing corpus bytes and evidence clocks remain unchanged; preparation
+  does not establish deployment, recovery or publication acceptance.
+
 ### 0.16.7 publication reliability
 
 - Declare the pinned workflow parser in the backend development dependencies so

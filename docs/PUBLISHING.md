@@ -1,5 +1,18 @@
 # Publishing Seiche release surfaces
 
+## 0.16.8 container and recovery successor
+
+The 25 October 2026 candidate includes the signed Brotli library backports,
+bounded native CI timing, and consistent recovery source enumeration. Its
+package version is `0.16.8`; its new immutable corpus receipt is
+`market-corpus-receipt-corpus-7cb1695c6affa707-r42`. Corpus bytes, counts, hashes
+and version remain unchanged. Scientific metadata records the preparation
+date, not evidence of publication. Preserve the existing `v0.16.7` and r41
+tags. Qualify the exact signed candidate, then follow the application-update
+procedure with the current accepted parent, fresh recovery and a strict
+monitor. Create the new release and receipt tags after runtime and corpus
+verification. Accept actual publication output before restoring its schedules.
+
 ## 0.16.7 publication reliability successor
 
 The 24 October 2026 candidate declares the publisher's PyYAML test dependency,
