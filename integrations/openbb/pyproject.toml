@@ -1,6 +1,6 @@
 [project]
 name = "openbb-seiche"
-version = "0.1.1"
+version = "0.1.2"
 description = "Seiche funding-liquidity and world-markets evidence provider for OpenBB"
 readme = "README.md"
 license = "AGPL-3.0-or-later"

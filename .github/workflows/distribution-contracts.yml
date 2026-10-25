@@ -783,7 +783,7 @@ jobs:
             "$smoke/bin/python" - <<'PY'
           from importlib.metadata import entry_points, version
 
-          assert version("openbb-seiche") == "0.1.1"
+          assert version("openbb-seiche") == "0.1.2"
           assert version("PyJWT") == "2.14.0"
           for group in ("openbb_provider_extension", "openbb_core_extension"):
               matches = [entry for entry in entry_points(group=group) if entry.name == "seiche"]

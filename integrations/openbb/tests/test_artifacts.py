@@ -32,7 +32,7 @@ EPOCH = 1_787_351_583
 README = b"# OpenBB artifact fixture\n"
 VALID_PYPROJECT = b"""[project]
 name = "openbb-seiche"
-version = "0.1.1"
+version = "0.1.2"
 description = "Seiche funding-liquidity and world-markets evidence provider for OpenBB"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -352,7 +352,7 @@ def test_valid_artifacts_and_cli(tmp_path: Path, capsys: pytest.CaptureFixture[s
         == 0
     )
     output = capsys.readouterr()
-    assert "verified openbb_seiche-0.1.1-py3-none-any.whl sha256:" in output.out
+    assert "verified openbb_seiche-0.1.2-py3-none-any.whl sha256:" in output.out
     assert output.err == ""
 
 

@@ -441,7 +441,7 @@ class OpenBBPackageContracts(unittest.TestCase):
 
     def test_metadata_uses_pep_621_and_pep_639(self) -> None:
         self.assertEqual(self.project["name"], "openbb-seiche")
-        self.assertEqual(self.project["version"], "0.1.1")
+        self.assertEqual(self.project["version"], "0.1.2")
         self.assertEqual(self.project["license"], LICENSE_EXPRESSION)
         self.assertEqual(self.project["license-files"], ["LICENSE"])
         self.assertEqual(
@@ -704,7 +704,7 @@ class WorkflowContracts(unittest.TestCase):
             'cmp --silent "$artifact"',
             "python verify_artifacts.py",
             "Smoke wheel and sdist in separate clean environments",
-            'version("openbb-seiche") == "0.1.1"',
+            'version("openbb-seiche") == "0.1.2"',
         ):
             self.assertIn(required, job)
         self.assertEqual(

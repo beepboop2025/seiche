@@ -24,7 +24,7 @@ import zlib
 
 PROJECT_NAME = "openbb-seiche"
 NORMALIZED_NAME = "openbb_seiche"
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 SDIST_ROOT = f"{NORMALIZED_NAME}-{VERSION}"
 DIST_INFO = f"{NORMALIZED_NAME}-{VERSION}.dist-info"
 WHEEL_FILENAME = f"{NORMALIZED_NAME}-{VERSION}-py3-none-any.whl"
