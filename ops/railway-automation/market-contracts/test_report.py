@@ -1,6 +1,6 @@
 import unittest
 
-from report import validate_proof
+from report import validate_proof, validate_cold_result, prove_runtime_isolation
 
 
 class ReportProofTests(unittest.TestCase):
@@ -32,6 +32,40 @@ class ReportProofTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_proof(**{**self.values, key: value})
 
+
+
+class ColdRuntimeResultTests(unittest.TestCase):
+    def result(self, counts="", cases=""):
+        kernel = '<testcase name="test_real_linux_kernel_denies_native_and_descendant_production_writes"/>'
+        return '<testsuites><testsuite ' + counts + '>' + kernel + cases + '</testsuite></testsuites>'
+
+    def test_real_completed_kernel_proof(self):
+        self.assertEqual(validate_cold_result(self.result()), 1)
+
+    def test_failed_skipped_missing_and_inconsistent_results_are_rejected(self):
+        values = [
+            '<testsuites/>', '<testsuites><testsuite><testcase name="unrelated"/></testsuite></testsuites>',
+            self.result('skipped="1"'), self.result('failures="1"'), self.result('errors="1"'),
+            self.result(cases='<testcase name="hidden"><skipped/></testcase>'),
+            self.result(cases='<testcase name="hidden"><failure/></testcase>'),
+            self.result(cases='<testcase name="hidden"><error/></testcase>'),
+        ]
+        for raw in values:
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                validate_cold_result(raw)
+
+    def test_nonroot_runtime_is_rejected_before_tests(self):
+        from unittest.mock import patch
+        with patch("report.os.getuid", return_value=10001), self.assertRaises(ValueError):
+            prove_runtime_isolation()
+
+    def test_failed_runtime_tests_cannot_become_pass(self):
+        import subprocess
+        from unittest.mock import patch
+        with patch("report.os.getuid", return_value=0), patch("report.os.getgid", return_value=0), \
+                patch("report.subprocess.run", side_effect=subprocess.CalledProcessError(1, "pytest")), \
+                self.assertRaises(subprocess.CalledProcessError):
+            prove_runtime_isolation()
 
 if __name__ == "__main__":
     unittest.main()

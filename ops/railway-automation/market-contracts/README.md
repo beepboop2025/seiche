@@ -16,6 +16,9 @@ coverage. Keep the original GitHub PR check until the Docker reporting App can
 report both exact-head success and a deliberately failing owner PR.
 
 Connect only in the credential-free public PR base environment with no variables,
-volumes or production links. Build failure is the native App status; the short
-runtime receipt identifies the source/image that passed. The test database uses
+volumes or production links. Build failures and runtime isolation failures both prevent acceptance. The runtime
+report checks the exact source before and after the mandatory Linux UID/Landlock
+tests, requires zero failures and zero skips, then emits the final pass marker.
+The kernel boundary runs in the deployed container because BuildKit exposes a
+different sandbox; no isolation check is skipped or converted into a build pass. The test database uses
 only local throwaway credentials and is stopped at exit.
