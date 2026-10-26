@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Explicit cold successor operators; normal upgrade operators remain unchanged.
 
-Use a separately reviewed operator bundle with 0.16.9 bindings and fresh exact
+Use a separately reviewed operator bundle with 0.16.8 bindings and fresh exact
 source qualification. This module does not authorize a release on its own.
 Every mutating command is explicit; an uncertain upload must be reconciled.
 """
@@ -154,9 +154,9 @@ def load_operators(path):
     require(Path(op.__file__).resolve().parent == root
             and Path(publication.__file__).resolve().parent == root,
             "operator import escaped reviewed bundle")
-    require(op.RELEASE["version"] == "0.16.9"
+    require(op.RELEASE["version"] == "0.16.8"
             and op.RELEASE["version_label"] == "estuary",
-            "cold release requires separately qualified 0.16.9 bindings")
+            "cold release requires separately qualified 0.16.8 bindings")
     require(Path(op.RELEASE["worktree"]).resolve() == Path(__file__).resolve().parents[2],
             "cold operator is not from the qualified worktree")
     return op, publication
@@ -286,7 +286,7 @@ def submit(op, p, context):
     p.held(op.ROOT / "cold-submission-held.json")
     command = ["railway", "up", str(context), "--path-as-root", "--project", op.PROJECT,
                "--environment", op.ENVIRONMENT, "--service", op.SERVICE, "--detach", "--json",
-               "--message", "Seiche 0.16.9 explicit cold successor; preserve single-writer authority"]
+               "--message", "Seiche 0.16.8 explicit cold successor; preserve single-writer authority"]
     p.save(op.ROOT / "application-submission-intent.json",
            {"source": op.RELEASE["source"], "request_id": request["request_id"], "operation": OPERATION,
             "context": p.ref(op.ROOT / "application-context.json"), "preflight": pre,

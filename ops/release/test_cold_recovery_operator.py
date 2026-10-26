@@ -31,7 +31,7 @@ class ColdOperatorTests(unittest.TestCase):
                        "deployment_id": "parent", "grant_sha256": "parent-grant", "state": "active"},
             "accepted_grants": {"parent-request.json": "parent-grant"},
             "activation_approvals": {}}
-        self.basis = {"generated_at": self.now.isoformat(), "version": "0.16.9 estuary",
+        self.basis = {"generated_at": self.now.isoformat(), "version": "0.16.8 estuary",
                       "provenance": [{"source": "fresh", "status": "OK"}], "faults": []}
         self.topology = {"latestDeployment": {"id": "failed-candidate"},
                          "activeDeployments": []}
@@ -205,18 +205,18 @@ class ColdOperatorTests(unittest.TestCase):
 
     def test_exact_cold_health_passes_new_version_only(self):
         observed = {"body": self.basis}
-        cold.health_admitted(observed, observed, self.basis, version="0.16.9 estuary")
+        cold.health_admitted(observed, observed, self.basis, version="0.16.8 estuary")
         with self.assertRaises(ValueError):
-            cold.health_admitted(observed, observed, self.basis, version="0.16.8 estuary")
+            cold.health_admitted(observed, observed, self.basis, version="0.16.7 estuary")
 
     def test_changed_clock_provenance_faults_or_version_rejected(self):
         for field, value in (("generated_at", "stale"), ("provenance", []),
-                             ("faults", [{"source": "other"}]), ("version", "0.16.8 estuary")):
+                             ("faults", [{"source": "other"}]), ("version", "0.16.7 estuary")):
             changed = copy.deepcopy(self.basis)
             changed[field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 cold.health_admitted({"body": self.basis}, {"body": changed},
-                                     self.basis, version="0.16.9 estuary")
+                                     self.basis, version="0.16.8 estuary")
 
     def test_upload_identity_requires_single_exact_uuid(self):
         identifier = "898a0407-91d8-45b8-9392-2e555cf318ce"
