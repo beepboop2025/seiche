@@ -128,6 +128,58 @@ class ColdOperatorTests(unittest.TestCase):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 cold.provider(op, types.SimpleNamespace(api=lambda *a: {"deployment": {**row, **update}}), "parent")
 
+    def _provider_row(self, row, *, retired=("failed",), parent="parent"):
+        op = types.SimpleNamespace(
+            PROJECT="p", ENVIRONMENT="e", SERVICE="s",
+            RELEASE={"parent_deployment": parent,
+                     "cold_recovery": {"retired_deployments": list(retired)}},
+            bindings=types.SimpleNamespace(sha=lambda value, n: len(value) == n))
+        api = types.SimpleNamespace(api=lambda *args: {"deployment": copy.deepcopy(row)})
+        return cold.provider(op, api, row["id"])
+
+    def test_missing_image_is_preserved_for_upload_in_progress(self):
+        for status in ("INITIALIZING", "QUEUED", "BUILDING", "DEPLOYING"):
+            with self.subTest(status=status):
+                row = {**self.row, "id": "new", "status": status, "meta": {}}
+                self.assertEqual(self._provider_row(row)["meta"], {})
+
+    def test_removed_failed_upload_requires_reviewed_complete_teardown(self):
+        for status in ("REMOVED", "FAILED"):
+            row = {**self.row, "id": "failed", "status": status, "meta": {},
+                   "instances": [{"id": "replica", "status": "REMOVED"}]}
+            with self.subTest(status=status):
+                self.assertEqual(self._provider_row(row)["meta"], {})
+                cold.terminal_deployment(row, self.target, reviewed_id="failed")
+            changes = [
+                {"status": "SUCCESS"}, {"status": "CRASHED"},
+                {"deploymentStopped": False}, {"deploymentStopped": None},
+                {"instances": []}, {"instances": row["instances"] * 2},
+                {"instances": [{"id": "replica", "status": "RUNNING"}]},
+                {"instances": [{"id": "replica", "status": "EXITED"}]},
+                {"instances": [{"id": "replica", "status": "STOPPED"}]},
+                {"instances": [{"id": "replica", "status": "CRASHED"}]},
+                {"instances": [{"status": "REMOVED"}]},
+                {"meta": {"imageDigest": "malformed"}},
+            ]
+            for change in changes:
+                with self.subTest(status=status, change=change), self.assertRaises(ValueError):
+                    self._provider_row({**row, **change})
+            for kwargs in ({"retired": ()}, {"parent": "failed"}):
+                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                    self._provider_row(row, **kwargs)
+
+    def test_failed_history_cannot_substitute_for_parent_or_incomplete_removal(self):
+        row = {**self.row, "id": "failed", "status": "FAILED"}
+        for status in ("RUNNING", "STOPPED", "EXITED", "CRASHED"):
+            with self.subTest(status=status), self.assertRaises(ValueError):
+                cold.terminal_deployment(
+                    {**row, "instances": [{"id": "replica", "status": status}]},
+                    self.target, reviewed_id="failed")
+        with self.assertRaises(ValueError):
+            cold.terminal_deployment(
+                {**row, "instances": [{"id": "replica", "status": "REMOVED"}]},
+                self.target, parent=True, reviewed_id="failed")
+
     def test_topology_accepts_only_reviewed_terminal_history(self):
         cold.topology_admitted(self.topology, ["parent", "failed-candidate"])
         self.topology["activeDeployments"] = [

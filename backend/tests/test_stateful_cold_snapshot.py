@@ -251,3 +251,46 @@ def test_reader_rejects_untrusted_ingress(tmp_path, violation):
         os.chown(path, cold.CHILD_UID, cold.CHILD_GID)
     with pytest.raises((cold.ColdSnapshotError, OSError)):
         cold._read_artifact(path, os.getegid())
+
+
+def test_failed_compute_diagnostic_is_bounded_escaped_and_reports_exit_code():
+    import io
+
+    stream = io.BytesIO(b"discarded-prefix" + b"x" * 5000 + b"\nMemoryError\x1b[31m\xff")
+    message = cold._compute_failure(-6, stream)
+    assert "exit_code=-6" in message
+    assert "stderr_bytes=" in message
+    assert "discarded-prefix" not in message
+    assert "MemoryError" in message
+    assert "\n" not in message
+    assert "\x1b" not in message
+    encoded_tail = message.split("stderr_tail=", 1)[1][:-1]
+    assert len(json.loads(encoded_tail)) <= 4096
+    assert len(message) < 5000
+
+
+def test_fast_failed_worker_keeps_error_before_cleanup(tmp_path, monkeypatch):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(cold.tempfile, "mkdtemp", lambda **kwargs: str(scratch))
+    monkeypatch.setattr(cold.os, "chown", lambda *args: None)
+    monkeypatch.setattr(cold, "isolated_environment", lambda path: {})
+    monkeypatch.setattr(cold, "_stop_child", lambda process: None)
+
+    class FailedChild:
+        returncode = 17
+
+        def __init__(self, *args, **kwargs):
+            kwargs["stderr"].write(b"RuntimeError: cannot start worker\n")
+            kwargs["stderr"].flush()
+            kwargs["stdout"].write(b"payload-must-not-be-a-diagnostic")
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(cold.subprocess, "Popen", FailedChild)
+    with pytest.raises(cold.ColdSnapshotError, match="exit_code=17") as result:
+        cold._compute({}, python=sys.executable, timeout=10)
+    assert "cannot start worker" in str(result.value)
+    assert "payload-must-not-be-a-diagnostic" not in str(result.value)
+    assert not scratch.exists()

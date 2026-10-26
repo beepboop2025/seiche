@@ -299,6 +299,17 @@ def _stop_child(process):
         pass
 
 
+def _compute_failure(returncode, stderr):
+    # Only the isolated worker's error stream is read, never its payload or the
+    # parent's environment. Escape controls so upstream text cannot forge logs.
+    stderr.seek(0, os.SEEK_END)
+    size = stderr.tell()
+    stderr.seek(max(0, size - 4096))
+    tail = stderr.read(4096).decode("utf-8", errors="replace")
+    return (f"isolated cold compute failed (exit_code={returncode}, "
+            f"stderr_bytes={size}, stderr_tail={json.dumps(tail, ensure_ascii=True)})")
+
+
 def _compute(request, *, python, timeout, cancelled=None):
     backend = Path(__file__).resolve().parent.parent
     root = Path(tempfile.mkdtemp(prefix="seiche-cold-build-", dir="/tmp"))
@@ -331,7 +342,8 @@ def _compute(request, *, python, timeout, cancelled=None):
             _require(os.fstat(stdout.fileno()).st_size <= MAX_BYTES
                      and os.fstat(stderr.fileno()).st_size <= MAX_STDERR,
                      "cold compute output exceeded bound")
-            _require(result_code == 0, "isolated cold compute failed")
+            if result_code != 0:
+                raise ColdSnapshotError(_compute_failure(result_code, stderr))
             stdout.seek(0)
             raw = stdout.read(MAX_BYTES + 1)
             _require(0 < len(raw) <= MAX_BYTES, "cold compute payload size differs")

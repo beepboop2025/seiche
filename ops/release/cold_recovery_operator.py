@@ -50,17 +50,27 @@ def deadline(request, fence, generated_at, *, now=None, admission_expiry=None):
     return result.isoformat().replace("+00:00", "Z")
 
 
+def fully_removed_instances(rows):
+    """Require positive, distinct teardown evidence; an empty inventory is insufficient."""
+    return (isinstance(rows, list) and 0 < len(rows) <= 8
+            and all(isinstance(row, dict) and isinstance(row.get("id"), str)
+                    and row["id"] and row.get("status") == "REMOVED" for row in rows)
+            and len({row["id"] for row in rows}) == len(rows))
+
+
 def terminal_deployment(row, target, *, parent=False, reviewed_id=None):
     require(reviewed_id is not None and row["id"] == reviewed_id,
             "terminal deployment identity is not explicitly reviewed")
     require(row.get("deploymentStopped") is True, "deployment is not stopped")
     require(row["status"] == "REMOVED" if parent else
-            row["status"] in {"REMOVED", "SUCCESS", "CRASHED"},
+            row["status"] in {"REMOVED", "SUCCESS", "CRASHED", "FAILED"},
             "cold predecessor is not terminal")
     require({k: row[k] for k in ("projectId", "environmentId", "serviceId")} == {
         "projectId": target["project_id"], "environmentId": target["environment_id"],
         "serviceId": target["service_id"]}, "cold predecessor scope differs")
     rows = row["instances"]
+    if row["status"] == "FAILED":
+        require(fully_removed_instances(rows), "failed predecessor teardown is incomplete")
     failed = not parent and row["status"] == "CRASHED"
     require(isinstance(rows, list) and len(rows) <= 8 and (bool(rows) or failed),
             "cold predecessor instance inventory is absent or oversized")
@@ -213,7 +223,18 @@ def provider(op, p, deployment):
         "serviceId": op.SERVICE}, "deployment scope differs")
     require(type(row.get("deploymentStopped")) is bool, "provider stopped state is missing")
     image = (row.get("meta") or {}).get("imageDigest")
-    require((image is None and row["status"] == "DEPLOYING") or
+    # Railway has not assigned an image to an upload that is still building,
+    # and may never assign one to a failed upload even after complete removal.
+    # Preserve that absence; it is never a substitute for a live image identity.
+    release = getattr(op, "RELEASE", {})
+    retired = release.get("cold_recovery", {}).get("retired_deployments", [])
+    removed_failure = (deployment in retired
+                       and deployment != release.get("parent_deployment")
+                       and row["status"] in {"REMOVED", "FAILED"}
+                       and row["deploymentStopped"] is True
+                       and fully_removed_instances(row.get("instances")))
+    starting = row["status"] in {"INITIALIZING", "QUEUED", "BUILDING", "DEPLOYING"}
+    require((image is None and (starting or removed_failure)) or
             (isinstance(image, str) and image.startswith("sha256:")
              and op.bindings.sha(image[7:], 64)), "provider image identity differs")
     row["meta"] = {"imageDigest": image} if image else {}
