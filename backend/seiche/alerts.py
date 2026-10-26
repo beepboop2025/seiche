@@ -14,6 +14,7 @@ import logging
 import os
 import sqlite3
 import subprocess
+from contextlib import closing
 
 import httpx
 
@@ -86,13 +87,12 @@ def _notify_telegram(message: str) -> None:
         pass
 
 
-def evaluate(snap: dict) -> list[dict]:
-    """Evaluate all rules against a snapshot; fire + persist new alerts."""
+def _candidates(snap: dict) -> list[tuple[str, str, str]]:
+    """Evaluate rules without recording alerts or sending notifications."""
     eng = snap.get("engines", {})
     deep = snap.get("deep", {})
     hl = snap.get("headline", {})
     comp = eng.get("composite", {})
-    fired: list[dict] = []
 
     candidates: list[tuple[str, str, str]] = []  # (rule, state_key, message)
 
@@ -310,6 +310,13 @@ def evaluate(snap: dict) -> list[dict]:
                 candidates.append(("engine_dead", f"{d['component']}:{(snap.get('generated_at') or '')[:10]}",
                                    f"composite input DEAD: {d['component']}"))
 
+    return candidates
+
+
+def evaluate(snap: dict) -> list[dict]:
+    """Evaluate all rules against a snapshot; fire + persist new alerts."""
+    candidates = _candidates(snap)
+    fired: list[dict] = []
     conn = _conn()
     try:
         for rule, state_key, message in candidates:
@@ -353,3 +360,55 @@ def _notify_subscribers(fired: list[dict], snap: dict) -> None:
             mailer.send(to, subject, body)
     except Exception as exc:  # never break the caller
         logger.warning("subscriber alert fan-out failed: %s", exc)
+
+
+def snapshot_log(snap: dict, *, record: bool = True, limit: int = 50) -> dict:
+    """Public rule history, independent of subscriber notification dedupe.
+
+    The first-recorded clock is the completed snapshot clock, not a claim
+    about when the underlying market event began. Preview builds are read-only.
+    """
+    from datetime import datetime
+    from pathlib import Path
+
+    unavailable = {"status": "unavailable", "evaluated_at": None, "alerts": [],
+                   "reason": "Alert history has not been recorded for this deployment yet."}
+    if not record and not Path(DB_PATH).exists():
+        return unavailable
+    evaluated_at = snap.get("generated_at")
+    if record:
+        if not isinstance(evaluated_at, str):
+            raise ValueError("Public alerts require a dated live snapshot")
+        parsed = datetime.fromisoformat(evaluated_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or snap.get("replay"):
+            raise ValueError("Public alerts require a dated live snapshot")
+    candidates = _candidates(snap) if record else []
+    with closing(sqlite3.connect(DB_PATH, timeout=5)) as conn, conn:
+        if record:
+            conn.execute("""CREATE TABLE IF NOT EXISTS public_alerts (
+                fired_at TEXT NOT NULL, rule TEXT NOT NULL,
+                state_key TEXT NOT NULL, message TEXT NOT NULL,
+                PRIMARY KEY (rule, state_key))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS public_alert_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1), evaluated_at TEXT NOT NULL)""")
+            conn.executemany(
+                "INSERT OR IGNORE INTO public_alerts VALUES (?,?,?,?)",
+                [(evaluated_at, rule, state, message) for rule, state, message in candidates],
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO public_alert_state VALUES (1,?)", (evaluated_at,),
+            )
+        elif conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='public_alert_state'"
+        ).fetchone() is None:
+            return unavailable
+        state = conn.execute("SELECT evaluated_at FROM public_alert_state WHERE id=1").fetchone()
+        rows = conn.execute(
+            "SELECT fired_at, rule, state_key, message FROM public_alerts "
+            "ORDER BY fired_at DESC, rule, state_key LIMIT ?", (min(100, max(1, limit)),),
+        ).fetchall()
+    return {
+        "status": "ready", "evaluated_at": state[0] if state else None,
+        "alerts": [{"fired_at": r[0], "rule": r[1], "state": r[2], "message": r[3]}
+                   for r in rows],
+    }

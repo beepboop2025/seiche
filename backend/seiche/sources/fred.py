@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import random
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -89,17 +90,17 @@ async def fetch_series(
     client: httpx.AsyncClient, spec: SeriesSpec, start: str | None = None,
     *, faults: list[dict] | None = None,
 ) -> Series:
-    if await run_store(store.is_fresh, spec.mnemonic, spec.ttl_minutes):
-        cached = await run_store(store.load_series, spec.mnemonic)
-        if cached is not None:
-            scheduled_weekly = spec.freq == "W" and spec.remote_id in H41_WEEKLY_REMOTE_IDS
-            if not scheduled_weekly or not publication_refresh_due(
-                spec.source, spec.remote_id, spec.freq, cached.asof,
-                cached.fetched_at, now=datetime.now(UTC),
-            ):
-                return cached
     retry_deferred = False
     try:
+        if await run_store(store.is_fresh, spec.mnemonic, spec.ttl_minutes):
+            cached = await run_store(store.load_series, spec.mnemonic)
+            if cached is not None:
+                scheduled_weekly = spec.freq == "W" and spec.remote_id in H41_WEEKLY_REMOTE_IDS
+                if not scheduled_weekly or not publication_refresh_due(
+                    spec.source, spec.remote_id, spec.freq, cached.asof,
+                    cached.fetched_at, now=datetime.now(UTC),
+                ):
+                    return cached
         r = None
         waited = 0.0
         for attempt in range(_MAX_ATTEMPTS):
@@ -138,7 +139,18 @@ async def fetch_series(
         await run_store(store.save_series, s)
         return s
     except Exception as exc:
-        cached = await run_store(store.load_series, spec.mnemonic)
+        logging.getLogger(__name__).warning(
+            "Source refresh failed: series=%s error_type=%s",
+            spec.mnemonic, type(exc).__name__,
+        )
+        try:
+            cached = await run_store(store.load_series, spec.mnemonic)
+        except Exception as cache_error:
+            logging.getLogger(__name__).warning(
+                "Source cache unavailable: series=%s error_type=%s",
+                spec.mnemonic, type(cache_error).__name__,
+            )
+            cached = None
         fault = _refresh_failure(
             spec, exc, cache_used=cached is not None, retry_deferred=retry_deferred,
         )
@@ -164,6 +176,15 @@ async def fetch_many(
             # fetch_series records both cold failures and retained-cache
             # failures once, keeping failed refreshes visible to the assembler.
             pass
+        except Exception as exc:
+            # A cache/adapter bug must not erase successful peer series.
+            logging.getLogger(__name__).warning(
+                "Series collection failed: series=%s error_type=%s", m, type(exc).__name__,
+            )
+            if faults is not None:
+                faults.append(_refresh_failure(
+                    ALL_SERIES[m], exc, cache_used=False, retry_deferred=False,
+                ))
 
     await asyncio.gather(*(one(m) for m in mnemonics))
     return out

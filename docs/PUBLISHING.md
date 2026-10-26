@@ -1,11 +1,11 @@
 # Publishing Seiche release surfaces
 
-## 0.16.8 container and recovery successor
+## 0.16.9 collector and System-panel successor
 
 The 25 October 2026 candidate includes the signed Brotli library backports,
 bounded native CI timing, and consistent recovery source enumeration. Its
-package version is `0.16.8`; its new immutable corpus receipt is
-`market-corpus-receipt-corpus-7cb1695c6affa707-r42`. Corpus bytes, counts, hashes
+package version is `0.16.9`; its new immutable corpus receipt is
+`market-corpus-receipt-corpus-7cb1695c6affa707-r43`. Corpus bytes, counts, hashes
 and version remain unchanged. Scientific metadata records the preparation
 date, not evidence of publication. Preserve the existing `v0.16.7` and r41
 tags. Qualify the exact signed candidate, then follow the application-update

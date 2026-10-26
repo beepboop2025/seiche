@@ -37,9 +37,11 @@ import httpx
 import numpy as np
 import pandas as pd
 
-from seiche import rubric, store
+from seiche import alerts, rubric, store
 from seiche.config import (
     ALL_SERIES,
+    ALERT_RULES,
+    REGIMES,
     BALLAST_CFTC_RELEASE_LAG_DAYS,
     BALLAST_EIA_RELEASE_LAG_DAYS,
     BIS_SERIES,
@@ -380,7 +382,7 @@ _build_generation = 0  # completed build/lock epochs; restores do not advance it
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.16.8"
+VERSION = "0.16.9"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
@@ -3661,6 +3663,28 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
                 store.load_pit_records(), drv["spread_bp"])}
     payload["navigator"] = nav
     _assert_snapshot_rights(payload)
+    payload["system"] = {
+        "editorial_config": {
+            "composite_weights": dict(COMPOSITE_WEIGHTS),
+            "regimes": [{"below": ceiling, "name": name} for ceiling, name in REGIMES],
+            "alert_rules": dict(ALERT_RULES),
+        },
+    }
+    try:
+        payload["system"]["alert_log"] = await asyncio.to_thread(
+            alerts.snapshot_log, payload, record=publish,
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Public alert history unavailable: error_type=%s", type(exc).__name__,
+        )
+        payload["system"]["alert_log"] = {
+            "status": "unavailable", "evaluated_at": None, "alerts": [],
+            "reason": "Alert history could not be updated for this snapshot.",
+        }
+        payload["faults"].append(sanitize_fault_record({
+            "source": "alert_log", "detail": type(exc).__name__,
+        }))
     if publish:
         if hetzner_runtime.enabled():
             hetzner_runtime.require_authority()

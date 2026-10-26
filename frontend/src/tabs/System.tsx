@@ -1,41 +1,41 @@
-import { useEffect, useState } from "react";
 import { Any, fmt } from "../lib";
-import { API_BASE } from "../apiBase";
+
+function clock(value: unknown): string {
+  return typeof value === "string" && value ? value.slice(0, 16).replace("T", " ") + " UTC" : "—";
+}
 
 function Provenance({ prov }: { prov: Any[] }) {
   return (
     <div className="card span12">
       <h2>Provenance</h2>
-      <div className="sub">no naked numbers — every input with its source, as-of and staleness</div>
+      <div className="sub">Observation dates and retrieval times are different clocks. Daily, weekly and monthly sources retain their publication schedules.</div>
       <table className="mini">
-        <thead><tr><th>series</th><th>source</th><th>label</th><th>as-of</th><th>fetched</th><th>staleness</th></tr></thead>
-        <tbody>
-          {prov.map((p: Any) => (
-            <tr key={p.mnemonic}>
-              <td>{p.mnemonic}</td><td>{p.source}</td><td>{p.label}</td>
-              <td className="num">{p.asof ?? "—"}</td>
-              <td className="num">{(p.fetched_at ?? "").slice(0, 16).replace("T", " ")}</td>
-              <td><span className={`chip ${p.staleness ?? "fresh"}`}>{p.staleness ?? "fresh"}</span></td>
-            </tr>
-          ))}
-        </tbody>
+        <thead><tr><th>series</th><th>source</th><th>label</th><th>as-of</th><th>fetched</th><th>availability</th><th>freshness</th></tr></thead>
+        <tbody>{prov.map((p: Any) => {
+          const table = !p.asof && p.availability === "available" && p.fetched_at;
+          const freshness = p.staleness ?? "unknown";
+          return <tr key={p.mnemonic}>
+            <td>{p.mnemonic}</td><td>{p.source}</td><td>{p.label}</td>
+            <td className="num">{p.asof ?? (table ? "Multiple source dates" : "—")}</td>
+            <td className="num">{clock(p.fetched_at)}</td>
+            <td>{p.availability ?? "unknown"}</td>
+            <td title={p.freshness_basis ?? p.unavailable_reason ?? ""}>
+              <span className={`chip ${freshness}`}>{table ? "Fetch clock only" : freshness}</span>
+              {p.unavailable_reason && <div className="sub">{String(p.unavailable_reason).replaceAll("_", " ")}</div>}
+            </td>
+          </tr>;
+        })}</tbody>
       </table>
     </div>
   );
 }
 
 export default function System({ snap, live }: { snap: Any; live: boolean }) {
-  const [alerts, setAlerts] = useState<Any[]>([]);
-  const [config, setConfig] = useState<Any | null>(null);
-
-  // Operator surface: alerts/config are 127.0.0.1-only, so on the public
-  // read-only window these can only ever 404 into the static fallback. Ask
-  // for them where they exist rather than swallowing the failure.
-  useEffect(() => {
-    if (!live || API_BASE) return;
-    fetch(`${API_BASE}/api/alerts`).then((r) => r.json()).then((j) => setAlerts(j.alerts ?? [])).catch(() => {});
-    fetch(`${API_BASE}/api/config`).then((r) => r.json()).then(setConfig).catch(() => {});
-  }, [live]);
+  const system = snap.system ?? {};
+  const log = system.alert_log;
+  const config = system.editorial_config;
+  const alerts: Any[] = log?.alerts ?? [];
+  const editorial = snap.editorial;
 
   return (
     <div className="grid">
@@ -43,55 +43,52 @@ export default function System({ snap, live }: { snap: Any; live: boolean }) {
         <div className="card span12">
           <h2>Faults</h2>
           {snap.faults.map((f: Any, i: number) => (
-            <div className="crunch" key={i}><b>{f.source}</b> — {String(f.detail).slice(0, 160)}</div>
+            <div className="crunch" key={i}>
+              <b>{f.source}{f.series ? ` / ${f.series}` : ""}</b> — {String(f.detail ?? f.reason ?? "Collection failed").slice(0, 160)}
+              {f.cache_used === true && <span> · Cached observations retained with their original dates.</span>}
+              {f.cache_used === false && <span> · No usable cached observations.</span>}
+            </div>
           ))}
         </div>
       )}
 
       <div className="card span6">
         <h2>Alert log</h2>
-        <div className="sub">written by `seiche alert` / `seiche watch` — deduped per state</div>
-        {!live ? (
-          <div className="sub">requires live backend</div>
-        ) : alerts.length === 0 ? (
-          <div className="allclear">▮ no alerts recorded yet — run `seiche alert`</div>
-        ) : (
-          <table className="mini">
-            <thead><tr><th>fired</th><th>rule</th><th>message</th></tr></thead>
-            <tbody>
-              {alerts.map((a: Any, i: number) => (
-                <tr key={i}>
-                  <td className="num">{(a.fired_at ?? "").slice(0, 16).replace("T", " ")}</td>
-                  <td>{a.rule}</td><td>{a.message}</td>
+        <div className="sub">Recorded automatically from completed board snapshots. Each rule and state is recorded once; this log does not send notifications.</div>
+        {log?.status !== "ready" ? (
+          <div className="sub">{log?.reason ?? "Alert history is unavailable in this snapshot."}</div>
+        ) : <>
+          <div className="sub">Rules checked: {clock(log.evaluated_at)}{!live ? " · Saved snapshot" : ""}</div>
+          {alerts.length === 0 ? <div className="allclear">No alert rules triggered in the recorded snapshots.</div> :
+            <table className="mini">
+              <thead><tr><th>first recorded</th><th>rule</th><th>message</th></tr></thead>
+              <tbody>{alerts.map((a: Any) => (
+                <tr key={`${a.rule}:${a.state}`}>
+                  <td className="num">{clock(a.fired_at)}</td><td>{a.rule}</td><td>{a.message}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              ))}</tbody>
+            </table>}
+        </>}
       </div>
 
       <div className="card span6">
         <h2>Editorial voice</h2>
-        <div className="sub">every judgment call lives in backend/seiche/config.py — tune it, own it</div>
-        {config ? (
-          <>
-            <table className="mini">
-              <thead><tr><th>composite weight</th><th>value</th></tr></thead>
-              <tbody>
-                {Object.entries<number>(config.composite_weights ?? {}).map(([k, w]) => (
-                  <tr key={k}><td>{k}</td><td className="num">{fmt(w, 2)}</td></tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="sub" style={{ marginTop: 8 }}>
-              regimes: {(config.regimes ?? []).map((r: Any) => `${r.name}<${r.below}`).join(" · ")}
-            </div>
-          </>
-        ) : (
-          <div className="sub">{live ? "loading…" : "requires live backend"}</div>
-        )}
+        <div className="sub">The published weights and thresholds behind this board. These are editorial choices, not measured probabilities.</div>
+        {config ? <>
+          <table className="mini">
+            <thead><tr><th>composite weight</th><th>value</th></tr></thead>
+            <tbody>{Object.entries<number>(config.composite_weights ?? {}).map(([k, w]) => (
+              <tr key={k}><td>{k}</td><td className="num">{fmt(w, 2)}</td></tr>
+            ))}</tbody>
+          </table>
+          <div className="sub" style={{ marginTop: 8 }}>
+            regimes: {(config.regimes ?? []).map((r: Any) => `${r.name}<${r.below}`).join(" · ")}
+          </div>
+        </> : <>
+          <div className="sub">Weights and thresholds are unavailable in this snapshot.</div>
+          {editorial?.thesis && <p>{editorial.thesis}</p>}
+        </>}
       </div>
-
       <Provenance prov={snap.provenance ?? []} />
     </div>
   );

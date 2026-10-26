@@ -11,6 +11,17 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### 0.16.9 collector isolation and working System panels
+
+- Isolate FRED and OFR cache and adapter failures per series. Keep successful
+  peers and retain cached observation and retrieval dates unchanged.
+- Record failed OFR refreshes even when cached observations remain available.
+- Include editorial weights and regime thresholds in the completed board.
+- Record public alert history automatically without sending notifications or
+  consuming subscriber notification deduplication.
+- Render explicit missing-data states, per-series failures, availability and
+  fetch-only table clocks in the System tab; remove the permanent loading state.
+
 ### 0.16.8 container security and recovery reliability
 
 - Install the signed Brotli library backports in both roots of the distributed
