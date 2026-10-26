@@ -3659,8 +3659,9 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
         except Exception as e:  # noqa: BLE001 — fail loud, never block the board
             nav = safe_failure_envelope(e)
         if nav.get("ok"):
+            records = await asyncio.to_thread(store.load_pit_records)
             nav = {**nav, "record": eng_navigator.score_record(
-                store.load_pit_records(), drv["spread_bp"])}
+                records, drv["spread_bp"])}
     payload["navigator"] = nav
     _assert_snapshot_rights(payload)
     payload["system"] = {
@@ -3688,7 +3689,9 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
     if publish:
         if hetzner_runtime.enabled():
             hetzner_runtime.require_authority()
-        _record_pit(engines, deep, nav)
+        # SQLite lock waits and notary I/O must not hold the serving loop.
+        # The assembly lock still orders PIT recording before evidence sealing.
+        await asyncio.to_thread(_record_pit, engines, deep, nav)
         # v2 never collects at request time. The existing US cycle is the first
         # producer during migration: once its payload is complete, a pack-local
         # adapter seals independent market products for read-only v2 routes.

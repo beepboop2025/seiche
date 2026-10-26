@@ -13,6 +13,8 @@ they change a public contract, methodology, or release artifact.
 
 ### 0.16.9 collector isolation and working System panels
 
+- Keep late snapshot history reads and PIT writes off the API event loop, so
+  storage contention does not block completed-board health responses.
 - Isolate FRED and OFR cache and adapter failures per series. Keep successful
   peers and retain cached observation and retrieval dates unchanged.
 - Record failed OFR refreshes even when cached observations remain available.
