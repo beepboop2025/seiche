@@ -1,6 +1,6 @@
 """Candidate-only cold recovery computation, never production write authority.
 
-The root supervisor executes the pinned backend as UID 65532 with a clean
+The root supervisor executes the pinned backend as dedicated UID 32001 with a clean
 scratch environment and kernel-enforced write confinement. Only root seals the
 result. API readers revalidate the request, candidate, fence, immutable parent
 chain, exact bytes and original clocks on every readiness decision.
@@ -27,7 +27,9 @@ OPERATION = "application_cold_recovery"
 SCHEMA = "seiche.application-cold-snapshot.v1"
 CACHE_SOURCE = "application_cold_candidate"
 ARTIFACT_ROOT = Path("/tmp/seiche-cold-snapshots")
-CHILD_UID = CHILD_GID = 65532
+# RLIMIT_NPROC counts tasks by real UID across containers sharing a user
+# namespace. Keep cold computation off the common distroless UID 65532.
+CHILD_UID = CHILD_GID = 32001
 MAX_BYTES = 64 * 1024 * 1024
 MAX_STDERR = 8 * 1024 * 1024
 MAX_AGE = timedelta(seconds=900)

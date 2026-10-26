@@ -138,7 +138,7 @@ def test_environment_excludes_inherited_credentials(tmp_path, monkeypatch):
 def test_real_linux_kernel_denies_native_and_descendant_production_writes():
     """Run explicitly as root in the qualified image; a skip is no proof."""
     if sys.platform != "linux" or os.geteuid() != 0:
-        pytest.skip("requires separate native Linux root-to-65532 isolation acceptance")
+        pytest.skip("requires separate native Linux root-to-dedicated-UID isolation acceptance")
     root = Path(tempfile.mkdtemp(prefix="cold-isolation-test-", dir="/tmp"))
     scratch = root / "scratch"
     protected = root / "production-canary"
@@ -152,7 +152,7 @@ def test_real_linux_kernel_denies_native_and_descendant_production_writes():
         environment = cold.isolated_environment(scratch)
         backend = str(Path(cold.__file__).resolve().parent.parent)
         program = r"""
-import ctypes,json,os,pathlib,subprocess,sys
+import ctypes,json,os,pathlib,resource,subprocess,sys
 sys.path.insert(0,sys.argv[1])
 from seiche.stateful_cold_snapshot import confine_child
 scratch=pathlib.Path(sys.argv[2]); protected=pathlib.Path(sys.argv[3])
@@ -168,6 +168,7 @@ except PermissionError:symlink_denied=True
 child=subprocess.run([sys.executable,"-I","-B","-c","import pathlib,sys; pathlib.Path(sys.argv[1]).write_text(\"forbidden\")",str(protected)],capture_output=True)
 print(json.dumps({"uid":os.getuid(),"gid":os.getgid(),"groups":os.getgroups(),
  "no_new_privs":libc.prctl(39,0,0,0,0),"native_denied":native_denied,
+ "process_limit":list(resource.getrlimit(resource.RLIMIT_NPROC)),
  "symlink_denied":symlink_denied,"descendant_denied":child.returncode!=0,
  "credentials_absent":not any(k in os.environ for k in ("DATABASE_URL","SEICHE_DATABASE_URL","AWS_SECRET_ACCESS_KEY"))}))
 """
@@ -177,7 +178,8 @@ print(json.dumps({"uid":os.getuid(),"gid":os.getgid(),"groups":os.getgroups(),
             capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
         observed = json.loads(result.stdout)
-        assert observed == {"uid": 65532, "gid": 65532, "groups": [], "no_new_privs": 1,
+        assert observed == {"uid": 32001, "gid": 32001, "groups": [], "no_new_privs": 1,
+                            "process_limit": [64, 64],
                             "native_denied": True, "symlink_denied": True,
                             "descendant_denied": True, "credentials_absent": True}
         assert (scratch / "allowed").read_text() == "private scratch works"
