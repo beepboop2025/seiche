@@ -3868,7 +3868,10 @@ def _railway_stateful_health_response(response: Response):
     parent_ready = (
         mode == "cutover_candidate"
         and bool(os.getenv("SEICHE_RAILWAY_APPLICATION_REQUEST_ID"))
-        and assemble.cached_application_parent_ready()
+        and (
+            assemble.cached_application_parent_ready()
+            or assemble.cached_application_cold_ready()
+        )
     )
     candidate = _health_response(
         response,

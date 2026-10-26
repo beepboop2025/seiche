@@ -166,7 +166,7 @@ def validate_request(
         request["schema"] != REQUEST_SCHEMA
         or request["repository"] != migration.REPOSITORY
         or request["source_ref"] != "refs/heads/main"
-        or request["operation"] != "application_upgrade"
+        or request["operation"] not in {"application_upgrade", "application_cold_recovery"}
     ):
         raise ApplicationContractError("application request policy is invalid")
     for name in ("commit", "tree"):
@@ -789,6 +789,8 @@ def candidate_parent_handoff(
     """
     candidate = validate_runtime(environment, production=False)
     request = validate_request(read_document(REQUEST_PATH), current=False)
+    if request["operation"] == "application_cold_recovery":
+        raise ApplicationContractError("cold recovery requires isolated fresh evidence")
     if (
         process_release_sha != request["commit"]
         or candidate["request"]["sha256"] != digest(request)

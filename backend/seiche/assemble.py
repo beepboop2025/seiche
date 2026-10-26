@@ -380,7 +380,7 @@ _build_generation = 0  # completed build/lock epochs; restores do not advance it
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.16.8"
+VERSION = "0.16.9"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
@@ -2703,6 +2703,8 @@ def _safe_memory_snapshot() -> dict | None:
             producer_sha=None,
         )
         return None
+    if _cache.get("source") == "application_cold_candidate" and not _cold_cache_matches():
+        return None
     return payload
 
 
@@ -2874,6 +2876,24 @@ def restore_cached_snapshot(*, read_only: bool = False) -> str | None:
     # Do not let an indirect cache-hydration caller accidentally reopen the
     # legacy SQLite migration path inside a point-in-time shadow/candidate.
     read_only = read_only or _stateful_preactivation_read_only()
+    if (
+        os.getenv("SEICHE_RAILWAY_STATEFUL_MODE") == "cutover_candidate"
+        and os.getenv("SEICHE_RAILWAY_APPLICATION_REQUEST_ID")
+    ):
+        from seiche.stateful_cold_snapshot import load_candidate_snapshot
+
+        # A cold successor cannot borrow stale parent data on failure. The
+        # dedicated loader validates the root-sealed evidence and its clock.
+        cold = load_candidate_snapshot(os.environ)
+        if cold is not None:
+            _cache.update(
+                at=time.time(), payload=cold["payload"],
+                source="application_cold_candidate",
+                cold_evidence=cold["evidence"],
+                release_receipt=None, release_handoff_id=None,
+                producer_sha=capture_process_release_sha(),
+            )
+            return "application_cold_candidate"
     if _safe_memory_snapshot() is not None:
         return "memory"
 
@@ -3323,6 +3343,38 @@ def cached_application_parent_ready() -> bool:
     except Exception:  # noqa: BLE001 - invalid candidate proof cannot grant readiness
         return False
     return True
+
+
+def _cold_cache_matches() -> bool:
+    """Revalidate the isolated cache before any public read or admission."""
+    if _cache.get("source") != "application_cold_candidate":
+        return False
+    payload = _cache.get("payload")
+    if payload is None:
+        return False
+    try:
+        from seiche.stateful_cold_snapshot import load_candidate_snapshot
+
+        cold = load_candidate_snapshot(os.environ)
+        return (
+            cold is not None
+            and cold["cache_source"] == "application_cold_candidate"
+            and _snapshot_digest(payload) == _snapshot_digest(cold["payload"])
+            and _cache.get("cold_evidence") == cold["evidence"]
+            and _cache.get("producer_sha") == capture_process_release_sha()
+            and _cache.get("release_receipt") is None
+            and _cache.get("release_handoff_id") is None
+        )
+    except Exception:  # noqa: BLE001 - a failed proof never grants readiness
+        return False
+
+
+def cached_application_cold_ready() -> bool:
+    """Fresh isolated evidence is candidate readiness, never a release grant."""
+    return (
+        _cache.get("source") == "application_cold_candidate"
+        and _safe_memory_snapshot() is not None
+    )
 
 
 def cached_snapshot_release_receipt() -> dict | None:

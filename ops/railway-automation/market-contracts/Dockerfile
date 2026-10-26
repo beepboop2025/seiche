@@ -30,7 +30,14 @@ RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     && cat /ci-source-admission
 RUN python -m pip install --no-cache-dir -e './backend[dev,collectors,postgres]' PyYAML==6.0.3 \
     && python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt
-RUN python -m unittest discover -s ops/railway-automation/market-contracts -p test_report.py \
+# Execute cold recovery's real UID/Landlock boundary as root on this native
+# builder. A skipped isolation proof must never produce an accepted image.
+RUN test "$(id -u)" = 0 \
+    && bash -o pipefail -c 'timeout --signal=TERM --kill-after=10 180 python -B -m pytest -q -p no:cacheprovider backend/tests/test_stateful_cold_snapshot.py backend/tests/test_application_cold_readiness.py --junitxml=/ci-cold.xml 2>&1 | tee /ci-cold.log' \
+    && python -c 'import xml.etree.ElementTree as E; root=E.parse("/ci-cold.xml").getroot(); cases=list(root.iter("testcase")); assert cases; assert all(int(s.get(k, "0")) == 0 for s in root.iter("testsuite") for k in ("skipped", "failures", "errors")); assert "test_real_linux_kernel_denies_native_and_descendant_production_writes" in {c.get("name") for c in cases}' \
+    && printf 'RAILWAY_COLD_RECOVERY_ISOLATION_PASS source=%s\n' "$RAILWAY_GIT_COMMIT_SHA" | tee /ci-cold-isolation
+RUN python -m unittest discover -s ops/release -p test_cold_recovery_operator.py \
+    && python -m unittest discover -s ops/railway-automation/market-contracts -p test_report.py \
     && bash -o pipefail -c '/usr/bin/tini -s -- timeout --signal=TERM --kill-after=30 2100 bash ops/railway-automation/market-contracts/run.sh 2>&1 | tee /ci-market.log' \
     && cat /ci-source-admission
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]

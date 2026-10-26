@@ -296,6 +296,18 @@ def _activate(environment, request, candidate, grant, parent, activation_path, s
             "application grant edge token differs"
         )
     audit_current_state(request, parent, environment["SEICHE_DATABASE_URL"])
+    accepted_path = (
+        migration.PLATFORM_ROOT / "authority" / "application-grants"
+        / f"{request['request_id']}.json"
+    )
+    if request["operation"] == "application_cold_recovery" and not accepted_path.exists():
+        from seiche.stateful_cold_snapshot import load_candidate_snapshot
+
+        # Recheck after the final audit, immediately before retiring the parent.
+        # An already accepted grant resumes by its durable authority, not a
+        # temporary cold snapshot that may legitimately have expired.
+        if load_candidate_snapshot(environment) is None:
+            raise application.ApplicationContractError("cold grant evidence is absent")
     accept_grant(request, candidate, grant, parent, platform=migration.PLATFORM_ROOT)
     writers = []
     api = None
@@ -488,6 +500,13 @@ def _run_locked(request, railway):
                 activation_path,
                 started,
             )
+        if request["operation"] == "application_cold_recovery":
+            # Run only after the current-state audit. The isolated child has no
+            # production credentials or write authority; the root supervisor
+            # seals candidate-only evidence without changing the parent state.
+            from seiche.stateful_cold_snapshot import build_candidate_snapshot
+
+            build_candidate_snapshot(request, candidate, cancelled=lambda: stopping)
         api = cutover._spawn(
             cutover.api_command(environment.get("PORT", "")), environment
         )
