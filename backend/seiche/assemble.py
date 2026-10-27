@@ -400,7 +400,11 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             try:
                 out[name] = await coro
             except SourceFault as e:
-                faults.append({"source": e.source, "detail": e.detail})
+                fault = {"source": e.source, "detail": e.detail}
+                # A failed refresh may already be recorded before an adapter
+                # raises because it has no validated cache to return.
+                if fault not in faults:
+                    faults.append(fault)
             except Exception as e:  # unexpected — still fail loud
                 faults.append({"source": name, "detail": f"{type(e).__name__}: {e}"})
 
