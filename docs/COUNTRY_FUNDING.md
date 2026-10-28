@@ -55,7 +55,7 @@ The existing `money_market_context` MCP tool exposes the same chartless payload:
 ```
 
 Omit `country` to list profiles. `country` is accepted only with
-`section="countries"`. The hosted tool count remains sixteen. The Money Markets
+`section="countries"`. The hosted tool count remains eight. The Money Markets
 tab offers a country selector, source-linked tables and dated curve points from
 the same projection embedded in the completed global atlas.
 

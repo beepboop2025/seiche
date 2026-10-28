@@ -2,7 +2,7 @@
 
 The MCP handshake, hosted registry listing, and build metadata describe the
 deployed server and must agree. The optional PyPI transport advertises the same
-0.16.9 distribution release and sixteen-tool public surface so the release and
+0.16.10 distribution release and eight-tool public surface so the release and
 immutable registry entry point at the same artifact.
 """
 
@@ -42,7 +42,7 @@ def test_hosted_version_sources_agree():
 
 
 def test_registry_stdio_package_matches_hosted_surface():
-    """The registry card pins the 0.16.9 / sixteen-tool public surface."""
+    """The registry card pins the 0.16.10 / eight-tool public surface."""
     server = _server_json()
     package = server["packages"][0]
     description = package["environmentVariables"][0]["description"]
@@ -50,15 +50,15 @@ def test_registry_stdio_package_matches_hosted_surface():
 
     assert package["registryType"] == "pypi"
     assert package["identifier"] == "seiche"
-    assert package["version"] == hosted == "0.16.9"
+    assert package["version"] == hosted == "0.16.10"
     assert package["transport"] == {"type": "stdio"}
-    assert "sixteen free public tools" in description
-    assert "latest_article" in description
+    assert "eight public research tools" in description
+    assert "source_rights_status" in description
     assert "money_market_context" in description
     assert "research_network" in description
     assert "world_markets_context" in description
-    assert "trade_safety_risk_context" in description
-    assert "0.16.9" in description
+    assert "Legacy forecasts and backtests are unavailable" in description
+    assert "0.16.10" in description
 
 
 def test_pypi_readme_proves_the_official_mcp_registry_namespace():
@@ -91,11 +91,12 @@ def test_money_market_discovery_separates_catalog_from_dated_evidence():
     assert access["usd_money_markets"].endswith("/api/money-markets")
     assert access["global_money_markets"].endswith("/api/v2/money-markets")
     assert access["public_money_market_mcp_tool"] == "money_market_context"
-    assert "Sixteen public MCP tools" in access["authentication"]
+    assert "Eight public MCP tools" in access["authentication"]
     assert access["trade_safety_risk_context"].endswith(
         "/api/trade-safety/risk-context"
     )
-    assert access["public_trade_safety_mcp_tool"] == "trade_safety_risk_context"
+    assert access["public_trade_safety_mcp_tool"] is None
+    assert access["trade_safety_status"] == "unavailable_pending_source_rights"
     assert access["world_markets_api"].endswith("/api/v2/world-markets")
     assert access["public_world_markets_mcp_tool"] == "world_markets_context"
 

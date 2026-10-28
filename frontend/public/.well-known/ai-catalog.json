@@ -13,9 +13,9 @@
       "data": {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche",
-        "title": "Seiche \u2014 world-markets evidence terminal",
+        "title": "Seiche — world-markets evidence terminal",
         "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits.",
-        "version": "0.16.9",
+        "version": "0.16.10",
         "repository": {
           "url": "https://github.com/beepboop2025/seiche",
           "source": "github"
@@ -31,14 +31,14 @@
           {
             "registryType": "pypi",
             "identifier": "seiche",
-            "version": "0.16.9",
+            "version": "0.16.10",
             "transport": {
               "type": "stdio"
             },
             "environmentVariables": [
               {
                 "name": "SEICHE_MCP_PUBLIC",
-                "description": "Set to 1 to expose the eight public research tools: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts and backtests are unavailable for all callers; do not reconstruct restricted observations.",
+                "description": "Seiche 0.16.10: Set to 1 to expose the eight public research tools: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts and backtests are unavailable for all callers; do not reconstruct restricted observations.",
                 "isRequired": false
               }
             ]
@@ -83,7 +83,7 @@
         "Show a dated money-market view with source clocks and unavailable evidence.",
         "Compare ECB reference FX without executable-price claims."
       ],
-      "version": "0.16.9",
+      "version": "0.16.10",
       "updatedAt": "2026-10-13T00:00:00Z",
       "metadata": {
         "authentication": "none",
@@ -121,7 +121,7 @@
       "data": {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche-market-corpus",
-        "title": "Seiche Market Atlas \u2014 structured evidence corpus",
+        "title": "Seiche Market Atlas — structured evidence corpus",
         "description": "Rights-aware attested evidence objects, structural inspection, bounded full-fidelity BIS records, revisions and canonical Seiche market discovery with explicit evidence clocks.",
         "version": "1.0.0",
         "websiteUrl": "https://seiche.info/#corpus",
@@ -219,7 +219,7 @@
         "Retrieve compact oil-funding, live-vs-reference market structure and FX-material transmission context.",
         "Retrieve a bounded money, FX, capital-markets and metadata-only China macro context with source clocks, status vocabulary and canonical citation URLs."
       ],
-      "version": "0.16.9",
+      "version": "0.16.10",
       "updatedAt": "2026-10-13T00:00:00Z",
       "metadata": {
         "authentication": "none",

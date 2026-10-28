@@ -197,7 +197,7 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
     assert server["url"] == "https://api.seiche.info/mcp"
     assert server["authentication"] == {
         "type": "none",
-        "scope": "sixteen anonymous public evidence tools",
+        "scope": "eight anonymous public research tools",
     }
     assert "tools" not in server
     corpus = document["servers"][1]

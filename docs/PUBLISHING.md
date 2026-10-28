@@ -1,5 +1,15 @@
 # Publishing Seiche release surfaces
 
+## 0.16.10 source-rights successor
+
+The 28 October candidate narrows hosted and stdio discovery to eight research
+tools and makes legacy forecasts and backtests unavailable for all callers.
+Version metadata is preparation only: require the exact signed runtime release,
+normal full-suite and recovery gates, immutable PyPI receipt and registry receipt.
+Do not claim a published 0.16.9 package contains the new tool contract. No corpus
+bytes or historical directory receipts are changed by this release.
+
+
 ## 0.16.9 collector and System-panel successor
 
 The 25 October 2026 candidate includes the signed Brotli library backports,

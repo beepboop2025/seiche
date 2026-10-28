@@ -140,21 +140,13 @@ lists the available hosted MCP endpoints.
 
 ## Access and evidence boundaries
 
-The public `trade_safety_risk_context` tool returns only the last completed
-Seiche regime, index, coverage, source-status counts, and conservative clocks.
-It is metadata-only derived context, never an executable or real-money-eligible
-claim, and does not inspect the attestation ledger. Stream attestations are
-verified separately and never confer per-order execution authority.
-
-Sixteen evidence/context tools are anonymous: the current funding-stress read,
-cache-only Trade Safety context, historical analogs, public backtest, data
-health, crypto record, institutional flows, oil/funding, FX/materials, US money
-markets, world markets, connected research (`research_network`), structured FX
-and China (`market_workbench`), the latest article, India–UAE funding and gold
-(`gift_city_context`), and explicit
-gold financing scenarios (`gold_inventory_carry`). Five higher-cost forecast,
-replay, positioning, prose, and LLM tools
-require an account and are omitted from anonymous `tools/list` responses.
+Eight public research tools are anonymous: `source_rights_status`,
+`money_market_context`, `market_workbench`, `world_markets_context`,
+`gift_city_context`, `gold_inventory_carry`, `research_network`, and
+`data_health`. Start with `source_rights_status` to inspect the release scope.
+Legacy forecasts, backtests, stress conclusions and Trade Safety context are
+explicitly unavailable for every caller while their source rights remain
+unverified. Authentication does not unlock these legacy features.
 
 Authenticated hosted MCP adds five private Agent Room preview tools for
 identity-to-key binding, room creation, signed append, verified listing, and

@@ -10,7 +10,7 @@ MCP URL type: **Universal**
 |---|---|
 | Plugin name | Seiche |
 | Short description | Evidence-bounded intelligence across money, foreign-exchange and capital markets. |
-| Long description | Seiche helps users inspect money-market funding, 22 public FX reference series and capital-market transmission using official and public evidence. It exposes the live dollar-funding conclusion, a granular chartless USD desk, a licence-aware global money-market atlas, a bounded world-markets context, historical analogs, the published diagnostic record and misses, data freshness, institutional positioning, and oil/FX/material pathways. Every response carries timestamps, canonical citation URLs, status or claim boundaries where applicable. Seiche is research data, not investment advice, and does not promise exhaustive coverage, executable quotes, forecasts or causal conclusions. |
+| Long description | Seiche exposes eight read-only research tools for source-rights status, direct-source money markets, ECB FX references, bounded world-market context, GIFT City, gold financing scenarios, connected research and data health. Preserve source clocks, provenance, missingness and restrictions. Legacy stress conclusions, forecasts and backtests are explicitly unavailable pending confirmed source rights. |
 | Website | https://seiche.info |
 | Support | https://seiche.info/support |
 | Privacy | https://seiche.info/privacy |
@@ -18,7 +18,7 @@ MCP URL type: **Universal**
 | Logo candidate | https://seiche.info/icons/pwa-512.png |
 | Source | https://github.com/beepboop2025/seiche |
 | MCP server | https://api.seiche.info/mcp |
-| Authentication | None for the sixteen-tool public surface; 200 calls per IP per UTC day |
+| Authentication | None for the eight-tool public surface; 200 calls per IP per UTC day |
 | Custom UI | None |
 | Category | Owner must select the closest current portal category; do not guess outside the portal |
 | Country availability | Owner must choose only jurisdictions where they are prepared to offer the service |
@@ -29,22 +29,20 @@ requests.
 
 ## Starter prompts
 
-1. What does the current dollar-funding board say, and how fresh is the evidence?
-2. Give me the repo-segment view from the USD money-market desk, with dates and sources.
-3. Which historical funding episodes look most like today, and what are the diagnostic's limits?
-4. Is current oil-market cash pressure reaching US dollar funding, or is it still scenario-only?
-5. Is FX or physical-material working-capital pressure showing up in money markets?
-6. What did Seiche publish today? Preserve the article's exact factual authority and caveats.
-7. Give me a money, FX and capital-markets briefing with source clocks, evidence states and canonical citations.
+1. Which research tools are available, and what source-rights restrictions apply?
+2. Give me direct-source money-market context with dates and missing evidence.
+3. Inspect ECB FX reference evidence in the market workbench.
+4. Explain GIFT City coverage and the assumptions needed for gold carry research.
+5. Inspect data health and connected research without reconstructing unavailable values.
 
 ## MCP configuration draft
 
 - Universal MCP Server URL: `https://api.seiche.info/mcp`
 - Authentication: no authentication for the submitted public surface.
-- Reviewer credentials: none required for the sixteen public tools.
+- Reviewer credentials: none required for the eight public tools.
 - Content security policy: no custom UI is included and no browser component
   fetches external domains. Confirm the portal accepts an empty CSP allowlist.
-- Tool scan expectation: exactly sixteen tools, each with `inputSchema`,
+- Tool scan expectation: exactly eight tools, each with `inputSchema`,
   `outputSchema`, title, description, and accurate annotations.
 - Annotations for every submitted tool:
   - `readOnlyHint: true`
@@ -54,21 +52,19 @@ requests.
 
 `openWorldHint` is false because calls read Seiche's already-operated evidence
 surfaces and do not browse arbitrary user-selected URLs, send messages, or
-change outside systems. `latest_article` reads Seiche's own allowlisted feed.
+change outside systems. Legacy publication and forecast tools remain explicitly unavailable.
 
 ## Test cases
 
-Use `test-cases.json`. It contains seven positive and four negative cases. Run
+Use `test-cases.json`. It contains bounded positive and negative review cases. Run
 them against the anonymous public surface so review does not accidentally
 depend on subscriber-only tools or credentials.
 
 Suggested release notes:
 
-> Initial MCP-only Seiche plugin submission. Sixteen anonymous read-only tools
-> provide live dollar-funding conclusions, granular USD and global money-market
-> context, a money/FX/capital world-markets view, historical analogs, diagnostic
-> evidence, freshness, and bounded cross-market context. This version adds
-> declared structured output schemas and typed, privacy-safe failure contracts.
+> Initial MCP-only Seiche plugin submission. Eight anonymous read-only research
+> tools preserve direct-source provenance, source dates and explicit restrictions.
+> Legacy forecasts, backtests and stress conclusions are unavailable for all callers.
 
 ## Owner and portal steps — not completed by this repository
 
@@ -109,13 +105,13 @@ curl -fsS https://api.seiche.info/mcp \
 
 curl -fsS https://api.seiche.info/mcp \
   -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"funding_stress_now","arguments":{}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"source_rights_status","arguments":{}}}'
 ```
 
 Pass conditions:
 
 - HTTPS succeeds without reviewer credentials;
-- `tools/list` returns exactly sixteen anonymous tools;
+- `tools/list` returns exactly eight anonymous tools;
 - every tool has an object `inputSchema`, object `outputSchema`, title,
   description, and the four annotations above;
 - each successful structured result conforms to its advertised schema;

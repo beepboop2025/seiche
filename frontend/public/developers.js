@@ -36,13 +36,13 @@
     var button = this;
     var output = document.getElementById("toolResult");
     button.disabled = true;
-    output.textContent = "Calling funding_stress_now…";
+    output.textContent = "Calling source_rights_status…";
     fetch(MCP_URL, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         jsonrpc: "2.0", id: 1, method: "tools/call",
-        params: {name: "funding_stress_now", arguments: {}}
+        params: {name: "source_rights_status", arguments: {}}
       })
     })
       .then(function (response) {

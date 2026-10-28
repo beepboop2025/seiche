@@ -299,16 +299,18 @@
     "mcp": "https://api.seiche.info/mcp",
     "public_money_market_mcp_tool": "money_market_context",
     "public_world_markets_mcp_tool": "world_markets_context",
-    "public_trade_safety_mcp_tool": "trade_safety_risk_context",
+    "public_trade_safety_mcp_tool": null,
     "telegram_bot": "https://t.me/seiche_desk_bot",
     "telegram_channel": "https://t.me/LiquidityLabDesk",
-    "authentication": "Sixteen public MCP tools require no token; a bearer token adds five analysis tools and five private Agent Room preview tools. Agent Room is signed discussion only and never execution authority.",
+    "authentication": "Eight public MCP tools require no token; a bearer token adds five private Agent Room preview tools. Legacy analysis tools remain unavailable for all callers. Agent Room is signed discussion only and never execution authority.",
     "gift_city_context": "https://api.seiche.info/api/v2/gift-city",
     "gold_inventory_carry": "https://api.seiche.info/api/v2/gift-city/gold-carry",
     "public_gift_city_mcp_tool": "gift_city_context",
     "public_gold_carry_mcp_tool": "gold_inventory_carry",
     "gift_city_page": "https://seiche.info/gift-city/",
-    "country_funding": "https://api.seiche.info/api/v2/country-funding"
+    "country_funding": "https://api.seiche.info/api/v2/country-funding",
+    "trade_safety_status": "unavailable_pending_source_rights",
+    "public_source_rights_mcp_tool": "source_rights_status"
   },
   "siblings": [
     {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.10 — source-rights release scope (2026-10-28)
+
+- Expose eight verified research tool contracts and explicit source-rights status.
+- Withhold legacy forecasts, backtests and unverified derived values for all callers.
+- Use direct NY Fed / Federal Reserve IORB sources and ECB reference FX where permitted.
+- Preserve source lineage, clocks, restrictions and authority validation.
+
+
 <!-- markdownlint-disable MD024 -- Changelog sections intentionally repeat. -->
 
 All notable changes to Seiche are recorded here. The format follows

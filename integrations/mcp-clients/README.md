@@ -1,3 +1,5 @@
+> Current release scope: eight public research tools, beginning with `source_rights_status`. Legacy forecasts and backtests are unavailable. The dated directory receipts below remain historical and require a fresh directory refresh after deployment.
+
 # Connect Seiche to MCP clients
 
 Seiche has one hosted, anonymous Streamable HTTP endpoint:
