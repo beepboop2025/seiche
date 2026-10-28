@@ -79,6 +79,9 @@ EXTRA_PRODUCTS = {
         "first_prompt": "List the research datasets, their coverage, allowed filters and evidence limits.",
         "kind": "research_wrapper",
         "read_tools": (
+            "financial_evidence_funding_workflow",
+            "financial_evidence_institutions_workflow",
+            "financial_evidence_exit_workflow",
             "financial_evidence_workflow", "financial_evidence_datasets",
             "financial_evidence_funding_review", "financial_evidence_query",
             "financial_evidence_sources", "financial_evidence_route",
