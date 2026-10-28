@@ -33,6 +33,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from seiche import public_rights
 from seiche.config import X402_PRICES_USD
 
 X402_VERSION = 2
@@ -187,7 +188,7 @@ def enabled() -> bool:
 def price_usd(tool: str | None) -> float | None:
     """Price for one analysis tool, never for an Agent Room operation."""
 
-    if not tool or tool.startswith("agent_room_"):
+    if not tool or tool.startswith("agent_room_") or tool in public_rights.LEGACY_TOOLS:
         return None
     return X402_PRICES_USD.get(tool)
 
@@ -402,7 +403,8 @@ def annotate_tools_list(resp: dict) -> dict:
     listed = {tool.get("name") for tool in result["tools"]}
     for name, usd in X402_PRICES_USD.items():
         spec = mcp_server.TOOLS.get(name)
-        if spec is None or name in listed or name.startswith("agent_room_"):
+        if (spec is None or name in listed or name.startswith("agent_room_")
+                or name in public_rights.LEGACY_TOOLS):
             continue
         title, description, schema = spec[0], spec[1], spec[2]
         result["tools"].append(
