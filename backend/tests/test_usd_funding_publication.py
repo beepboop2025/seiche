@@ -7,7 +7,7 @@ import pytest
 
 from seiche.collectors import CollectorSupervisor
 from seiche.domain.observation import (
-    CanonicalUnit, Observation, QualityState, StalenessState,
+    CanonicalUnit, Observation, QualityState, RedistributionStatus, StalenessState,
 )
 from seiche.engines.money_market import refresh_for_evaluation
 from seiche.markets.atlas import _metric, _publication_opportunity_clock
@@ -255,12 +255,26 @@ def test_nyfed_business_date_is_not_shifted_to_previous_new_york_day():
         row, instrument_id=fred_spec.instrument_id, semantic_role=fred_spec.semantic_role,
         source="fred", source_publication_time=datetime(2026, 9, 26, 3, 59, 59, tzinfo=UTC),
     )
-    friday = _metric(PACK, fred_spec, [fred], cutoff=datetime(2026, 9, 28, 19, tzinfo=UTC))
+    public = _metric(PACK, fred_spec, [fred], cutoff=datetime(2026, 9, 28, 19, tzinfo=UTC))
+    assert public["status"] == "RESTRICTED"
+    assert public["value"] is None
+
+    # The clock regression uses an explicit fixture policy. Actual FRED
+    # publication remains restricted above; a source clock does not grant rights.
+    clock_pack = replace(
+        PACK,
+        source_adapters=tuple(
+            replace(adapter, redistribution_status=RedistributionStatus.ALLOWED)
+            if adapter.adapter_id == fred_spec.source_adapter_id else adapter
+            for adapter in PACK.source_adapters
+        ),
+    )
+    friday = _metric(clock_pack, fred_spec, [fred], cutoff=datetime(2026, 9, 28, 19, tzinfo=UTC))
     assert friday["status"] == "FRESH" and friday["missed_publication_opportunities"] == 0
     assert friday["published_at"] == fred.source_publication_time.isoformat()
     thursday = replace(fred, event_time=datetime(2026, 9, 24, tzinfo=UTC))
-    before = _metric(PACK, fred_spec, [thursday], cutoff=datetime(2026, 9, 28, 11, 59, tzinfo=UTC))
-    after = _metric(PACK, fred_spec, [thursday], cutoff=datetime(2026, 9, 28, 12, tzinfo=UTC))
+    before = _metric(clock_pack, fred_spec, [thursday], cutoff=datetime(2026, 9, 28, 11, 59, tzinfo=UTC))
+    after = _metric(clock_pack, fred_spec, [thursday], cutoff=datetime(2026, 9, 28, 12, tzinfo=UTC))
     assert (before["status"], after["status"]) == ("FRESH", "AGING")
 
 
