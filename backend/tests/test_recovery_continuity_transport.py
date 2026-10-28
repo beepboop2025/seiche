@@ -512,6 +512,7 @@ def test_real_curl_pin_preserves_host_sni_and_rejects_wrong_certificate_hostname
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(cert, key)
     tls.set_servername_callback(lambda _socket, name, _context: sni_names.append(name))
     server.socket = tls.wrap_socket(server.socket, server_side=True)
