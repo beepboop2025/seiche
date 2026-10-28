@@ -835,6 +835,9 @@ def _capital_blocks(
     blocks: list[dict[str, Any]] = []
     for engine_id, fields, evidence_status in specs:
         engine = _object(engines.get(engine_id))
+        if "fred" in _CAPITAL_SOURCE_IDS.get(engine_id, []):
+            blocks.append({"id": engine_id, **_capital_withheld(engine, list(_CAPITAL_SOURCE_IDS[engine_id]))})
+            continue
         if engine_id == "warehouse":
             blocks.append(_warehouse_block(engine))
             continue
@@ -910,18 +913,35 @@ def _warehouse_block(engine: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+_FRED_PUBLICATION_REASON = (
+    "Public redistribution permission for FRED-sourced observations and "
+    "dependent readings is not established. Values remain withheld pending "
+    "source-specific permission or qualified original-publisher acquisition."
+)
+
+
+def _capital_withheld(value: Any, source_ids: list[str]) -> dict[str, Any]:
+    raw = _object(value)
+    return {
+        **_pick(raw, "id", "asof", "as_of", "unit"),
+        "status": "restricted",
+        "availability": "metadata_only",
+        "rights_status": "redistribution_review_required",
+        "publication_allowed": False,
+        "value": None,
+        "source_registry_ids": list(source_ids),
+        "rights_urls": ["https://fred.stlouisfed.org/legal/terms/"],
+        "rights_reason": _FRED_PUBLICATION_REASON,
+    }
+
+
 def _capital_price(value: Any, source_ids: list[str]) -> dict[str, Any]:
     raw = _object(value)
-    observed_value = _bounded_value(raw.get("value"))
-    available = observed_value is not None and isinstance(raw.get("asof"), str)
-    if not available:
-        return {"status": "unavailable", "as_of": raw.get("asof")}
-    return {
-        "status": "observed",
-        "value": observed_value,
-        "as_of": raw.get("asof"),
-        "source_registry_ids": list(source_ids),
-    }
+    withheld = _capital_withheld(raw, source_ids)
+    withheld["as_of"] = raw.get("asof")
+    if "ice_bofa" in source_ids:
+        withheld["rights_urls"].append("https://fred.stlouisfed.org/series/BAMLH0A0HYM2")
+    return withheld
 
 
 def _capital_risk_context(
@@ -929,51 +949,19 @@ def _capital_risk_context(
     tell: Mapping[str, Any],
     headline: Mapping[str, Any],
 ) -> dict[str, Any]:
-    vix = _capital_price(headline.get("vix"), ["cboe_vix", "fred"])
-    high_yield = _capital_price(headline.get("hy_oas_pct"), ["fred"])
-    tell_available = tell.get("ok") is True and isinstance(tell.get("asof"), str)
-    clocks = [
-        item.get("as_of")
-        for item in (vix, high_yield)
-        if isinstance(item.get("as_of"), str)
-    ]
-    if tell_available:
-        clocks.append(tell["asof"])
-    if not clocks:
-        return {
-            "status": "unavailable",
-            "as_of": None,
-            "reason": "no dated market-price or market-vs-plumbing evidence is available",
-            "market_prices": {"vix": vix, "high_yield_oas": high_yield},
-        }
-    composite_available = composite.get("ok") is True or (
-        composite.get("ok") is None and composite.get("value") is not None
-    )
-    derived = tell_available or composite_available
+    # A one-point raw price is still publication. TELL and the funding
+    # composite also depend on unqualified FRED inputs; calling them derived
+    # does not establish a separate redistribution permission.
     return {
-        "status": "derived" if derived else "observed",
-        "as_of": max(clocks),
-        "funding_stress": _pick(
-            composite if composite_available else {},
-            "value",
-            "regime",
-            "coverage_pct",
-            "dead_inputs",
-        ),
-        "market_vs_plumbing": _pick(
-            tell if tell_available else {},
-            "asof",
-            "tell",
-            "plumbing_pctl",
-            "market_pctl",
-            "reading",
-            "components",
-        ),
-        "market_prices": {"vix": vix, "high_yield_oas": high_yield},
-        "clock_boundary": (
-            "as_of is the latest dated child observation; the composite has no "
-            "independent evidence clock and does not advance it"
-        ),
+        **_capital_withheld({}, ["fred"]),
+        "as_of": None,
+        "funding_stress": _capital_withheld(composite, ["fred"]),
+        "market_vs_plumbing": _capital_withheld(tell, ["fred"]),
+        "market_prices": {
+            "vix": _capital_price(headline.get("vix"), ["cboe_vix", "fred"]),
+            "high_yield_oas": _capital_price(headline.get("hy_oas_pct"), ["ice_bofa", "fred"]),
+        },
+        "clock_boundary": "Withheld observations retain their own metadata clocks and do not establish an eligible capital-market clock.",
     }
 
 
@@ -1005,7 +993,7 @@ def _capital_evidence_clocks(values: list[dict[str, Any]]) -> list[str]:
     clocks: list[str] = []
     for value in values:
         if (
-            value.get("status") == "unavailable"
+            value.get("status") in {"unavailable", "restricted"}
             or value.get("clock_role") == "scenario_evaluation_not_evidence_clock"
         ):
             continue

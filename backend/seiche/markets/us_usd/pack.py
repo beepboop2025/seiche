@@ -198,10 +198,13 @@ PACK = MarketPack(
     policy_regime=PolicyRegime.FLOOR,
     source_adapters=(
         SourceAdapterSpec(
-            "fred_daily", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW,
+            # Public-domain provenance does not grant rights to the FRED
+            # acquisition/cache. Keep these existing records metadata-only
+            # until permission or original-publisher acquisition is qualified.
+            "fred_daily", _OPEN, "P1D", _FRED_DAILY_CLOCK, RedistributionStatus.METADATA_ONLY,
             collection_cadence="PT1H",
         ),
-        SourceAdapterSpec("fred_weekly", _OPEN, "P1W", _FRED_WEEKLY_CLOCK, _ALLOW),
+        SourceAdapterSpec("fred_weekly", _OPEN, "P1W", _FRED_WEEKLY_CLOCK, RedistributionStatus.METADATA_ONLY),
         SourceAdapterSpec(
             "nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW,
             collection_cadence="PT1H",

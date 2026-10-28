@@ -100,6 +100,41 @@ def _pbc_calendar_test_pack():
     )
 
 
+def _us_clock_test_pack():
+    """Opt synthetic clock/statistic fixtures in without weakening production rights."""
+    pack = default_registry().get("US-USD")
+    return replace(pack, source_adapters=tuple(
+        replace(adapter, redistribution_status=RedistributionStatus.ALLOWED)
+        if adapter.adapter_id in {"fred_daily", "fred_weekly"} else adapter
+        for adapter in pack.source_adapters
+    ))
+
+
+def test_current_us_policy_withholds_legacy_fred_rows_and_retains_direct_nyfed():
+    pack = default_registry().get("US-USD")
+    assert pack.adapter_map["fred_daily"].redistribution_status is RedistributionStatus.METADATA_ONLY
+    assert pack.adapter_map["fred_weekly"].redistribution_status is RedistributionStatus.METADATA_ONLY
+    now = datetime(2026, 8, 21, 15, tzinfo=UTC)
+    rows = [
+        _row("US-USD", "US.NYFED.SOFR", SemanticRole.SECURED_OVERNIGHT,
+             datetime(2026, 8, 20, tzinfo=UTC), 777.123, source="fred_daily",
+             currency="USD", area="US", jurisdictions=("US",)),
+        _row("US-USD", "US.NYFED.SOFR_MEDIAN", SemanticRole.RATE_MEDIAN,
+             datetime(2026, 8, 20, tzinfo=UTC), 0, source="nyfed_rates",
+             currency="USD", area="US", jurisdictions=("US",)),
+    ]
+    out = build_global_money_market_atlas([pack], {"US-USD": rows}, as_of=now)
+    assert "777.123" not in json.dumps(out)
+    market = out["markets"][0]
+    metric = next(item for item in market["metrics"] if item["id"] == "US.NYFED.SOFR_MEDIAN")
+    assert metric["value"] == 0
+    assert metric["source"] == "nyfed_rates"
+    restricted = next(item for item in market["metrics"] if item["id"] == "US.NYFED.SOFR")
+    assert restricted["value"] is None
+    assert restricted["availability"] == "RESTRICTED"
+    assert not restricted["history"]
+
+
 def test_all_declared_and_planned_markets_remain_visible_without_data():
     out = build_global_money_market_atlas(
         default_registry().list(),
@@ -694,7 +729,7 @@ def test_derived_context_uses_strict_allowlist_and_leaks_no_source_clock_or_line
 
 
 def test_public_history_filters_every_row_by_redistribution_rights():
-    pack = default_registry().get("US-USD")
+    pack = _us_clock_test_pack()
     start = datetime(2026, 7, 1, tzinfo=UTC)
     rows = [
         _row(
@@ -733,7 +768,7 @@ def test_public_history_filters_every_row_by_redistribution_rights():
 
 
 def test_fresh_effr_beats_dead_sofr_despite_role_priority():
-    pack = default_registry().get("US-USD")
+    pack = _us_clock_test_pack()
     cutoff = datetime(2026, 8, 21, 12, tzinfo=UTC)
     dead_sofr = _row(
         "US-USD",
@@ -837,7 +872,7 @@ def test_old_exact_overlap_spread_is_aged_and_excluded_from_current_prose():
 
 
 def test_publication_clock_respects_weekends_holidays_and_china_working_weekends():
-    us_pack = default_registry().get("US-USD")
+    us_pack = _us_clock_test_pack()
     friday = datetime(2026, 8, 21, 12, tzinfo=UTC)
     friday_row = _row(
         "US-USD",
@@ -948,7 +983,7 @@ def test_invalid_calendar_fails_loud_unknown_and_stored_staleness_is_lower_bound
     assert invalid_metric["missed_publication_opportunities"] is None
     assert "calendar unavailable" in invalid_metric["freshness_basis"]
 
-    us_pack = default_registry().get("US-USD")
+    us_pack = _us_clock_test_pack()
     cutoff = datetime(2026, 8, 21, 12, tzinfo=UTC)
     stored_stale = replace(
         _row(

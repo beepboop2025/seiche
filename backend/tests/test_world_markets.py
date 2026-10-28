@@ -501,7 +501,7 @@ def test_dedicated_china_macro_stays_available_in_cold_board_helper() -> None:
     assert payload["china_macro"]["available"] is True
 
 
-def test_capital_only_headline_uses_its_direct_observation_clock() -> None:
+def test_restricted_capital_headline_retains_metadata_without_eligible_clock() -> None:
     snapshot = {
         "generated_at": "2026-08-21T11:30:00+00:00",
         "headline": {"vix": {"value": 19.4, "asof": "2026-08-20"}},
@@ -511,11 +511,14 @@ def test_capital_only_headline_uses_its_direct_observation_clock() -> None:
 
     payload = project_world_markets(snapshot, selector="capital_markets")
 
-    assert payload["ok"] is True
-    assert payload["status"] == "observed"
-    assert payload["as_of"] == "2026-08-20"
-    assert payload["capital_markets"]["status"] == "observed"
-    assert payload["capital_markets"]["risk_context"]["as_of"] == "2026-08-20"
+    assert payload["ok"] is False
+    assert payload["status"] == "unavailable"
+    assert payload["as_of"] is None
+    risk = payload["capital_markets"]["risk_context"]
+    assert risk["status"] == "restricted"
+    assert risk["as_of"] is None
+    assert risk["market_prices"]["vix"]["as_of"] == "2026-08-20"
+    assert risk["market_prices"]["vix"]["value"] is None
 
 
 def test_supplydesk_forward_dates_do_not_advance_the_evidence_clock() -> None:
@@ -935,3 +938,27 @@ def test_api_discovery_and_openapi_publish_world_markets() -> None:
     success = route["responses"]["200"]["content"]["application/json"]["schema"]
     assert success["properties"]["schema"]["const"] == WORLD_MARKETS_SCHEMA
     assert "never starts collection or model fitting" in route["description"]
+
+
+def test_capital_rights_filter_applies_to_rest_and_mcp_cached_snapshots(monkeypatch):
+    snapshot = _snapshot()
+    for key in ("vix", "hy_oas_pct"):
+        snapshot["headline"][key]["value"] = 777.123
+    snapshot["engines"]["composite"].update(value=777.123, regime="SECRET-DERIVED")
+    snapshot["deep"]["tell"].update(tell=777.123, reading="SECRET-DERIVED")
+    snapshot["engines"]["officialbid"] = {"ok": True, "asof": "2026-08-20",
+        "value": 777.123, "reading": "SECRET-DERIVED"}
+    monkeypatch.setattr(api.assemble, "cached_snapshot", lambda: snapshot)
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snapshot)
+    rest = TestClient(api.app).get("/api/v2/world-markets?section=capital_markets").json()
+    response = mcp.dispatch({"jsonrpc": "2.0", "id": "rights", "method": "tools/call",
+        "params": {"name": "world_markets_context", "arguments": {"section": "capital_markets"}}}, public=True)
+    for payload in (rest, _mcp_payload(response)):
+        assert "777.123" not in json.dumps(payload)
+        assert "SECRET-DERIVED" not in json.dumps(payload)
+        risk = payload["capital_markets"]["risk_context"]
+        assert risk["publication_allowed"] is False
+        assert risk["market_prices"]["vix"]["source_registry_ids"] == ["cboe_vix", "fred"]
+        assert risk["market_prices"]["high_yield_oas"]["value"] is None
+        assert any(item["id"] == "rvxray" and item["status"] != "restricted"
+                   for item in payload["capital_markets"]["positioning"])
