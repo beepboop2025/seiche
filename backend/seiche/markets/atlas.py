@@ -1771,6 +1771,28 @@ def _first_metric(metrics: list[dict], roles: tuple[SemanticRole, ...]) -> dict 
     return None
 
 
+def _benchmark_metric(pack: MarketPack, metrics: list[dict]) -> dict | None:
+    """Select the existing direct SOFR observation without changing its identity.
+
+    NY Fed percentRate is the published transaction-volume-weighted median SOFR.
+    The separately retained FRED instrument remains governed by its own policy.
+    Other RATE_MEDIAN instruments (TGCR, BGCR, EFFR) are not SOFR substitutes.
+    """
+    if pack.market_id == "US-USD":
+        direct = [metric for metric in metrics
+                  if metric.get("id") == "US.NYFED.SOFR_MEDIAN"]
+        if len(direct) == 1:
+            metric = direct[0]
+            if (metric.get("source") == "nyfed_rates"
+                    and metric.get("semantic_role") == SemanticRole.RATE_MEDIAN.value
+                    and metric.get("unit") == "%"
+                    and metric.get("redistribution_status") == "allowed"
+                    and metric.get("availability") == "AVAILABLE"):
+                return metric
+    priority = _BENCHMARK_BY_MARKET.get(pack.market_id, _BENCHMARK_PRIORITY)
+    return _first_metric(metrics, priority)
+
+
 def _first_derived_metric(
     metrics: list[dict], roles: tuple[SemanticRole, ...]
 ) -> dict | None:
@@ -1957,7 +1979,7 @@ def _market_read(
     spread: dict[str, Any] | None,
 ) -> tuple[str, str, str]:
     priority = _BENCHMARK_BY_MARKET.get(pack.market_id, _BENCHMARK_PRIORITY)
-    benchmark = _first_metric(metrics, priority)
+    benchmark = _benchmark_metric(pack, metrics)
     if benchmark is None:
         derived_benchmark = _first_derived_metric(metrics, priority)
         if derived_benchmark is not None:
@@ -2117,7 +2139,7 @@ def build_global_money_market_atlas(
             for instrument in projected_instruments
         ]
         priority = _BENCHMARK_BY_MARKET.get(pack.market_id, _BENCHMARK_PRIORITY)
-        benchmark = _first_metric(metrics, priority)
+        benchmark = _benchmark_metric(pack, metrics)
         derived_benchmark = _first_derived_metric(metrics, priority)
         policy_anchor = _first_metric(metrics, _POLICY_PRIORITY)
         benchmark_spec = (

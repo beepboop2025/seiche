@@ -135,6 +135,47 @@ def test_current_us_policy_withholds_legacy_fred_rows_and_retains_direct_nyfed()
     assert not restricted["history"]
 
 
+
+def test_direct_sofr_benchmark_retains_identity_lineage_and_clock():
+    pack = default_registry().get("US-USD")
+    day = datetime(2026, 8, 20, tzinfo=UTC)
+    direct = _row("US-USD", "US.NYFED.SOFR_MEDIAN", SemanticRole.RATE_MEDIAN,
+                  day, 393, source="nyfed_rates", currency="USD", area="US",
+                  jurisdictions=("US",))
+    legacy = replace(direct, instrument_id="US.NYFED.SOFR",
+                     semantic_role=SemanticRole.SECURED_OVERNIGHT,
+                     source="fred", value=777.123, revision_id="old-fred")
+    for cutoff in (day + timedelta(hours=15), day + timedelta(days=8, hours=15)):
+        out = build_global_money_market_atlas([pack], {"US-USD": [legacy, direct]}, as_of=cutoff)
+        market = out["markets"][0]
+        selected = market["benchmark"]
+        source_metric = next(m for m in market["metrics"] if m["id"] == direct.instrument_id)
+        assert selected == source_metric
+        assert selected["id"] == "US.NYFED.SOFR_MEDIAN"
+        assert selected["mnemonic"] == "SOFR_MEDIAN"
+        assert selected["value"] == 3.93
+        assert selected["source"] == "nyfed_rates"
+        assert selected["source_url"].startswith("https://markets.newyorkfed.org/")
+        assert selected["evidence_hash"] == direct.evidence_hash
+        assert selected["revision_id"] == direct.revision_id
+        assert selected["published_at"] == direct.source_publication_time.isoformat()
+        assert "777.123" not in json.dumps(out)
+        if cutoff > day + timedelta(days=7):
+            assert selected["status"] not in {"FRESH", "AGING"}
+            assert market["status"] == "STALE_REFERENCE"
+
+
+@pytest.mark.parametrize("instrument", ["US.NYFED.TGCR_MEDIAN", "US.NYFED.BGCR_MEDIAN"])
+def test_other_secured_medians_cannot_become_the_sofr_benchmark(instrument):
+    pack = default_registry().get("US-USD")
+    day = datetime(2026, 8, 20, tzinfo=UTC)
+    row = _row("US-USD", instrument, SemanticRole.RATE_MEDIAN, day, 390,
+               source="nyfed_rates", currency="USD", area="US", jurisdictions=("US",))
+    market = build_global_money_market_atlas([pack], {"US-USD": [row]},
+                                             as_of=day + timedelta(hours=15))["markets"][0]
+    assert market["benchmark"] is None
+
+
 def test_all_declared_and_planned_markets_remain_visible_without_data():
     out = build_global_money_market_atlas(
         default_registry().list(),
