@@ -1937,9 +1937,8 @@ TOOLS: dict[str, tuple] = {
         "licensing audit. Capital coverage is limited to public positioning "
         "proxies, Treasury primary-market absorption, market stress, official "
         "liquidity and global dollar credit—not a security master, issuer-data "
-        "service or consolidated tape. Use "
-        "Undertow instead when the question is specifically about executable "
-        "depth, liquidity-provider concentration, or position-sized exit cost.",
+        "service or consolidated tape. Executable depth, liquidity-provider "
+        "concentration, and position-sized exit costs are outside this tool's scope.",
         {
             "type": "object",
             "properties": {
@@ -2006,11 +2005,11 @@ TOOLS: dict[str, tuple] = {
         False,
     ),
     "proof_backtest": (
-        "PROOF: the honest track record",
-        "The backtest scoreboard, stated honestly: recall and precision with "
+        "Funding event backtest",
+        "Backtest recall and precision with "
         "95% confidence intervals over labelled funding events, an orthogonal "
         "robustness test, every named episode (hits and misses), and the "
-        "caveats. Use to judge how much to trust the readings.",
+        "methodology and coverage caveats.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_proof,
         True,
