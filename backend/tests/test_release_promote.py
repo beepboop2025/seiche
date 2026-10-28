@@ -117,6 +117,9 @@ def test_main_rejects_a_request_without_a_process_release_identity(
 def _point_request_at(monkeypatch, directory, request) -> None:
     monkeypatch.setattr(release_promote, "REQUEST_DIRECTORY", directory)
     monkeypatch.setattr(release_promote, "REQUEST_PATH", request)
+    # Isolate filesystem mocks from pytest, linecache and profiling plugins.
+    # The production module still exercises the real open/read/close calls.
+    monkeypatch.setattr(release_promote, "os", SimpleNamespace(**vars(os)))
 
 
 def _metadata(mode: int, *, uid: int = 0) -> SimpleNamespace:
