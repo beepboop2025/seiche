@@ -89,6 +89,41 @@ report the requested runtime source. Receipt provenance continues to identify
 the main-branch controller separately from the application being backed up;
 this does not authorize a feature-branch workflow or a runtime deployment.
 
+## Continuity transport qualification
+
+Before issuing an export command, the reviewed controller qualifies a direct,
+TLS-verified connection to each of the two fixed health URLs. It rejects proxy
+settings, ambient curl/TLS overrides and existing default curl configuration.
+Curl runs with default configuration disabled and an exact-host no-proxy rule.
+The successful peer must be a numeric global address on port 443, with normal
+certificate verification and the expected release, deployment and production
+authority headers. The existing provider/replica checks, signed activation pin
+and source-health admission remain authoritative.
+
+A second successful request confirms each selected peer using curl `--resolve`.
+The URL, HTTP Host, TLS SNI and certificate hostname are unchanged. This is a
+confirmation after success, never a retry after failure. A failed preflight
+stops before export. `proof/continuity-transport.json` records the fixed peers,
+run/attempt, controller and runtime sources, deployment, submission replica,
+activation pin and hashes of the original request and source-health claim. It
+contains no edge or download credential and is not an acceptance receipt.
+
+The background sampler loads the exact prepared pin digest once. Every
+iteration still probes both routes, appends the original three-column
+`api-continuity.tsv`, and sleeps two seconds. Five-second connection and
+15-second total limits remain unchanged. Non-200, TLS, transport or identity
+failures remain permanently failed even if later samples succeed; diagnostic
+outcomes are retained separately. There is no retry, DNS re-resolution,
+replacement peer, redirect or skipped failing sample. A pinned edge that later
+fails causes rejection rather than an automatic route change. This proves API
+continuity through the qualified peers, not continuous DNS availability.
+
+A transport fix requires a normally reviewed, signed main controller. The
+explicit signed runtime ancestor and all source/deployment/activation bindings
+stay unchanged. A failed prior run remains failed; a new accepted run must
+complete its own continuity, independent restore, locked off-site and OIDC
+gates with the original time budgets.
+
 ## Protected environments and secrets
 
 Require human reviewers on `railway-stateful-recovery-admin`: it changes native

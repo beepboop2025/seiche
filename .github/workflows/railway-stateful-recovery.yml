@@ -1768,27 +1768,11 @@ jobs:
               json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
           )
           PY
-          (
-            while [ ! -e proof/stop-continuity ]; do
-              observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-              origin_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
-                --connect-timeout 5 --max-time 15 \
-                --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
-                --output /dev/null --write-out '%{http_code}' \
-                "$RAILWAY_ORIGIN/api/health" || true)
-              public_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
-                --connect-timeout 5 --max-time 15 \
-                --output /dev/null --write-out '%{http_code}' \
-                'https://api.seiche.info/api/health' || true)
-              printf '%s\t%s\t%s\n' \
-                "$observed_at" "$origin_status" "$public_status" \
-                >>proof/api-continuity.tsv
-              if [ "$origin_status" != 200 ] || [ "$public_status" != 200 ]; then
-                touch proof/api-continuity.failed
-              fi
-              sleep 2
-            done
-          ) &
+          # Qualify both direct TLS peers before any export command. Pins are
+          # immutable, run-scoped transport evidence, never recovery acceptance.
+          continuity_helper="$GITHUB_WORKSPACE/deploy/railway-ci/recovery-controller/continuity_transport.py"
+          continuity_pins_sha256=$(python3 -B "$continuity_helper" prepare)
+          python3 -B "$continuity_helper" monitor --pins-sha256 "$continuity_pins_sha256" &
           continuity_pid=$!
           trap 'touch proof/stop-continuity; wait "$continuity_pid" || true; rm -f -- "$bearer_path"' EXIT
           python3 -B "$GITHUB_WORKSPACE/deploy/railway-ci/recovery-controller/source_health_claim.py" --recheck
@@ -2568,6 +2552,8 @@ jobs:
             ${{ runner.temp }}/railway-recovery-export/proof/submitted-request.json
             ${{ runner.temp }}/railway-recovery-export/proof/recovery-receipt-from-log.json
             ${{ runner.temp }}/railway-recovery-export/proof/api-continuity.tsv
+            ${{ runner.temp }}/railway-recovery-export/proof/continuity-transport.json
+            ${{ runner.temp }}/railway-recovery-export/proof/continuity-transport-samples.jsonl
             ${{ runner.temp }}/railway-recovery-export/proof/runtime.json
             ${{ runner.temp }}/railway-recovery-export/proof/recovery-runtime-current.json
             ${{ runner.temp }}/railway-recovery-export/proof/reverse-restore.json
