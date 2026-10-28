@@ -2980,6 +2980,8 @@ async def money_market_context(response: Response):
         )
         payload["snapshot_generated_at"] = snapshot.get("generated_at")
         payload["served_at"] = served_at.isoformat()
+        from seiche.public_rights import money_desk
+        payload = money_desk(payload)
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return _json_safe(sanitize_public_fault_payload(payload))
 

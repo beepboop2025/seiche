@@ -539,6 +539,18 @@ def test_missing_required_role_never_fabricates_a_calm_or_numeric_reading(
     result = _missing_source_failure_injection(
         pack, calibration, rows, [], cutoff, repository
     )
+    assert result.status is ValidationStatus.PENDING
+    assert result.reasons == ("COMPUTABLE_BASELINE_UNAVAILABLE",)
+    # The production FRED policy is restricted. This algorithmic injection
+    # fixture explicitly supplies allowed synthetic inputs to exercise loss
+    # of a required role from a computable baseline, without changing policy.
+    pack = replace(pack, source_adapters=tuple(
+        replace(adapter, redistribution_status=RedistributionStatus.ALLOWED)
+        if adapter.adapter_id in {"fred_daily", "fred_weekly"} else adapter
+        for adapter in pack.source_adapters))
+    rows = [replace(row, redistribution_status=RedistributionStatus.ALLOWED) for row in rows]
+    result = _missing_source_failure_injection(
+        pack, calibration, rows, [], cutoff, repository)
     _, injected = build_local_products(
         pack,
         calibration,

@@ -200,6 +200,13 @@ def _normalized(
             attribution="Source: European Central Bank. ECB reference data is freely available from the ECB; calculated crosses and statistics are Seiche transformations.",
             terms_url="https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html",
         )
+    if provider == "h10":
+        from seiche.public_rights import REASON, TERMS
+        provenance.update(redistribution_status="metadata_only", publication_allowed=False,
+                          rights_reason=REASON, rights_urls=[TERMS],
+                          first_observation_date=min(values) if values else None,
+                          last_observation_date=max(values) if values else None)
+        return {}, provenance
     return dict(sorted(values.items())), provenance
 
 
@@ -268,6 +275,8 @@ def _pair(
                 math.sqrt(sum((r - mean) ** 2 for r in returns) / len(returns) * 252)
                 * 100
             )
+    restricted = provider == "h10" and any(sources.get(c) for c in legs)
+    from seiche.public_rights import REASON
     return {
         "pair": f"{base}/{quote}",
         "base_currency": base,
@@ -275,19 +284,19 @@ def _pair(
         "provider": provider,
         "value": latest["value"] if latest else None,
         "as_of": latest["date"] if latest else None,
-        "status": status,
-        "evidence_status": ("observed" if observed else "derived")
+        "status": "restricted" if restricted else status,
+        "evidence_status": "restricted" if restricted else (("observed" if observed else "derived")
         if latest
-        else "unavailable",
+        else "unavailable"),
         "unit": f"{quote} per {base}",
         "observation_count": len(history),
         "age_days": age,
         **{f"change_{n}obs_pct": change(n) for n in (1, 5, 20, 60)},
         "realized_vol_20obs_pct": vol,
         "sources": [sources[c] for c in legs if sources.get(c)],
-        "reason": None
+        "reason": REASON if restricted else (None
         if latest
-        else "No eligible matching-date observations for the selected window.",
+        else "No eligible matching-date observations for the selected window."),
     }, history
 
 

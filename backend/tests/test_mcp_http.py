@@ -765,9 +765,9 @@ def test_anonymous_money_market_tool_is_bounded_granular_and_chartless(
     assert summary["schema"] == mcp_server.MONEY_MARKET_SCHEMA
     assert summary["selection"] == "summary"
     assert summary["plain_language"].startswith(
-        "The most stretched current observed channel"
+        "Public redistribution permission"
     )
-    assert summary["regime"]["state"] == "NORMAL"
+    assert summary["regime"]["state"] == "CANNOT_ASSESS"
     assert summary["chart_history_included"] is False
     assert all(item["title"] for item in summary["section_catalog"])
     assert "charts" not in summary
@@ -1016,7 +1016,8 @@ def test_rest_and_mcp_age_last_known_good_money_market_snapshot(
     rest_payload = rest.json()
     assert rest_payload["regime"]["state"] == "CANNOT_ASSESS"
     assert rest_payload["freshness"]["evaluation_asof"] == "2026-08-21"
-    assert rest_payload["sections"][0]["metrics"][0]["value"] == 1.5
+    assert rest_payload["sections"][0]["metrics"][0]["value"] is None
+    assert rest_payload["sections"][0]["metrics"][0]["status"] == "restricted"
     assert rest_payload["sections"][0]["metrics"][0]["freshness"] == "stale"
 
     mcp_response = client.post(

@@ -812,7 +812,9 @@ def test_money_market_diagnostics_serves_and_ages_completed_facts(
     monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snap)
     payload = _payload(_public_call("money_market_context", {"section": "diagnostics"}))
     assert payload["diagnostics"]["freshness"] == "stale"
-    assert payload["diagnostics"]["persistence"]["windows"] == [{"observed_n": 5}]
+    assert payload["diagnostics"]["status"] == "restricted"
+    assert "persistence" not in payload["diagnostics"]
+    assert payload["diagnostics"]["asof"] == "2020-01-02"
     assert "freshness" not in desk["diagnostics"]
     assert payload["source_metadata"][0]["id"] == "fred_sofr"
 

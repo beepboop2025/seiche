@@ -1125,6 +1125,7 @@ def _money_market_base(
         "context_only": True,
         "selection": selector,
         "chart_history_included": False,
+        "publication_projection": engine.get("publication_projection"),
         "plain_language": engine.get("plain_language"),
         "quant_read": engine.get("quant_read"),
         "strongest_signal": engine.get("strongest_signal"),
@@ -1314,6 +1315,8 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         evaluation_asof=datetime.now(UTC).replace(microsecond=0),
     )
 
+    from seiche.public_rights import money_desk
+    engine = money_desk(engine)
     out = _money_market_base(snap, engine, selector, ok=True)
     raw_sections = engine.get("sections")
     raw_sections = raw_sections if isinstance(raw_sections, list) else []

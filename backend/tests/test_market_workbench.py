@@ -29,17 +29,16 @@ def series(mnemonic, values, dates=None):
     )
 
 
-def test_usd_cny_and_eur_cross_preserve_units_and_dated_inputs():
+def test_fred_h10_values_and_derived_crosses_are_withheld_with_source_metadata():
     data = {"CNY": series("CNY", [7.0, 7.2]), "EURUSD": series("EURUSD", [1.1, 1.2])}
     result = wb.project(data, {"base": "EUR", "quote": "CNY"}, evaluated_at=NOW)
     row = next(r for r in result["forex"]["rows"] if r["quote_currency"] == "CNY")
-    assert row["value"] == pytest.approx(8.64)
-    assert row["unit"] == "CNY per EUR" and row["evidence_status"] == "derived"
+    assert row["value"] is None and result["forex"]["history"] == []
+    assert row["unit"] == "CNY per EUR"
     assert len(row["sources"]) == 2
-    assert result["china"]["fx"]["value"] == 7.2
-    assert result["china"]["fx"]["evidence_status"] == "observed"
-    assert result["forex"]["history"][0]["value"] == pytest.approx(7.7)
-    assert result["forex"]["history"][-1]["date"] == "2026-09-08"
+    assert all(source["publication_allowed"] is False for source in row["sources"])
+    assert all(source["redistribution_status"] == "metadata_only" for source in row["sources"])
+    assert result["china"]["fx"]["value"] is None
     assert result["selection"]["base"] == "EUR"
 
 
@@ -139,10 +138,10 @@ def test_ecb_read_requires_capture_generation_and_labels_partial_document(monkey
 
 def test_cross_never_forward_fills_missing_dates_or_uses_future_observations():
     data = {
-        "CNY": series("CNY", [7.0, 7.2], ["2026-09-07", "2026-09-08"]),
-        "EURUSD": series("EURUSD", [1.1, 1.2], ["2026-09-07", "2026-09-10"]),
+        "ECBFX_CNY": series("ECBFX_CNY", [7.0, 7.2], ["2026-09-07", "2026-09-08"]),
+        "ECBFX_USD": series("ECBFX_USD", [1.1, 1.2], ["2026-09-07", "2026-09-10"]),
     }
-    result = wb.project(data, {"base": "EUR", "quote": "CNY"}, evaluated_at=NOW)
+    result = wb.project(data, {"provider": "ecb", "base": "USD", "quote": "CNY"}, evaluated_at=NOW)
     assert [r["date"] for r in result["forex"]["history"]] == ["2026-09-07"]
     row = next(r for r in result["forex"]["rows"] if r["quote_currency"] == "CNY")
     assert row["change_1obs_pct"] is None
@@ -207,18 +206,18 @@ def test_policy_revocation_hides_existing_cache(monkeypatch):
 
 
 def test_stale_clock_does_not_advance_on_response_generation():
-    row = series("CNY", [7, 7.2], ["2026-07-01", "2026-07-02"])
-    result = wb.project({"CNY": row}, evaluated_at=NOW)
-    assert result["china"]["fx"]["as_of"] == "2026-07-02"
-    assert result["china"]["fx"]["status"] == "dead"
+    row = series("ECBFX_USD", [7, 7.2], ["2026-07-01", "2026-07-02"])
+    result = wb.project({"ECBFX_USD": row}, {"provider": "ecb", "base": "EUR", "quote": "USD"}, evaluated_at=NOW)
+    assert next(r for r in result["forex"]["rows"] if r["quote_currency"] == "USD")["as_of"] == "2026-07-02"
+    assert next(r for r in result["forex"]["rows"] if r["quote_currency"] == "USD")["status"] == "dead"
     assert result["forex"]["coverage"]["fresh_pairs"] == 0
 
 
 def test_observation_cannot_postdate_its_capture():
-    row = series("CNY", [7, 7.2])
+    row = series("ECBFX_USD", [7, 7.2])
     row.fetched_at = "2026-09-07T23:00:00Z"
-    result = wb.project({"CNY": row}, evaluated_at=NOW)
-    assert result["china"]["fx"]["as_of"] == "2026-09-07"
+    result = wb.project({"ECBFX_USD": row}, {"provider": "ecb", "base": "EUR", "quote": "USD"}, evaluated_at=NOW)
+    assert next(r for r in result["forex"]["rows"] if r["quote_currency"] == "USD")["as_of"] == "2026-09-07"
 
 
 def test_extreme_finite_prices_cannot_produce_nonfinite_json():
@@ -229,8 +228,8 @@ def test_extreme_finite_prices_cannot_produce_nonfinite_json():
 
 def test_native_usd_per_euro_remains_observed():
     result = wb.project(
-        {"EURUSD": series("EURUSD", [1.1, 1.2])},
-        {"base": "EUR", "quote": "USD"},
+        {"ECBFX_USD": series("ECBFX_USD", [1.1, 1.2])},
+        {"provider": "ecb", "base": "EUR", "quote": "USD"},
         evaluated_at=NOW,
     )
     row = next(r for r in result["forex"]["rows"] if r["quote_currency"] == "USD")

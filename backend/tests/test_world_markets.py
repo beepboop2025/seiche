@@ -249,23 +249,11 @@ def test_projection_is_versioned_citable_bounded_and_honest() -> None:
     assert payload["citation"]["generated_at"] == payload["generated_at"]
     assert payload["citation"]["evidence_as_of"] == payload["as_of"]
     assert "evidence_clock" not in payload["citation"]
-    assert payload["money_markets"]["status"] == "observed"
-    assert payload["forex"]["status"] == "derived"
-    currency = payload["forex"]["currencies"][0]
-    assert currency["spot"] == {
-        "status": "observed",
-        "value": 87.1,
-        "unit": "INR per USD",
-        "as_of": "2026-08-20",
-        "source_id": "DEXINUS",
-        "source_registry_ids": ["federal_reserve_h10", "fred"],
-    }
-    assert currency["analytics"]["status"] == "derived"
-    assert currency["analytics"]["pressure"] == 82.0
-    dollar_system = payload["forex"]["dollar_system"]
-    assert dollar_system["foreign_official_rrp"]["outstanding_usd_b"] == 310.0
-    assert dollar_system["fima_repo"]["outstanding_usd_m"] == 5.0
-    assert dollar_system["offshore_dollar_credit"]["outstanding_usd_t"] == 13.2
+    assert payload["money_markets"]["status"] == "restricted"
+    assert payload["forex"]["status"] == "restricted"
+    assert payload["forex"]["currencies"] == []
+    assert payload["forex"]["publication_allowed"] is False
+    assert payload["forex"]["as_of"] == "2026-08-20"
     warehouse = next(
         item
         for item in payload["capital_markets"]["positioning"]
@@ -334,7 +322,7 @@ def test_official_registry_contains_verified_primary_urls() -> None:
     ]
 
 
-def test_forex_projection_includes_the_full_registered_panel_but_no_more() -> None:
+def test_forex_projection_withholds_saved_fred_panel_even_when_it_expands() -> None:
     snapshot = _snapshot()
     snapshot["engines"]["estuary"]["fx"]["currencies"] = [
         {
@@ -352,10 +340,8 @@ def test_forex_projection_includes_the_full_registered_panel_but_no_more() -> No
         "currencies"
     ]
 
-    assert len(currencies) == 22
-    assert currencies[-1]["key"] == "FX21"
-    assert all(item["spot"]["status"] == "observed" for item in currencies)
-    assert all(item["analytics"]["status"] == "derived" for item in currencies)
+    assert currencies == []
+    assert project_world_markets(snapshot, selector="forex")["forex"]["publication_allowed"] is False
 
 
 def test_every_selector_is_bounded_to_its_named_projection() -> None:

@@ -387,6 +387,10 @@ def _metric(metric: Any) -> dict[str, Any]:
     """Whitelist one current metric; never copy a history or chart field."""
 
     raw = _object(metric)
+    if raw.get("publication_allowed") is False:
+        from seiche.public_rights import metadata
+        return {**metadata(raw), "source_status": raw.get("status"),
+                "source_registry_ids": _source_registry_ids(raw.get("source"))}
     out = _pick(
         raw,
         "id",
@@ -456,6 +460,8 @@ def _money_sections(engine: Mapping[str, Any]) -> list[dict[str, Any]]:
                     if any(item["status"] == "observed" for item in metrics)
                     else "derived"
                     if any(item["status"] == "derived" for item in metrics)
+                    else "restricted"
+                    if any(item["status"] == "restricted" for item in metrics)
                     else "unavailable"
                 ),
                 "metrics": metrics,
@@ -503,9 +509,12 @@ def _money_markets(
             "reason": "money-market freshness evaluation failed",
             "sections": [],
         }
+    from seiche.public_rights import money_desk
+    engine = money_desk(engine)
     return {
-        "status": "observed",
+        "status": "restricted",
         "as_of": engine.get("asof"),
+        "publication_projection": engine.get("publication_projection"),
         "coverage_boundary": (
             "This block is the assembled institutional USD desk; the separate "
             "/api/v2/money-markets atlas preserves other monetary areas at "
@@ -804,28 +813,11 @@ def _forex(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             "currencies": [],
         }
 
-    fx = _object(estuary.get("fx"))
-    return {
-        "status": "derived",
-        "as_of": estuary.get("asof"),
-        "headline": _forex_headline(estuary),
-        "breadth": _forex_breadth(fx),
-        "currencies": _forex_currencies(fx),
-        "passage": _forex_passage(_object(estuary.get("passage"))),
-        "harbors": _forex_harbors(_object(engines.get("harbors"))),
-        "basins": _forex_basins(_object(engines.get("basins"))),
-        "network": _forex_network(_object(engines.get("spillover"))),
-        "dollar_system": _forex_dollar_system(estuary),
-        "settlement_structure": _pick(
-            estuary.get("settlement_structure"),
-            "survey_asof",
-            "fx_turnover",
-            "settlement_risk",
-            "principles",
-        ),
-        "coverage_matrix": _forex_coverage(estuary),
-        "caveats": list(estuary.get("caveats") or [])[:12],
-    }
+    from seiche.public_rights import metadata
+    return {**metadata({"as_of": estuary.get("asof")}),
+            "source_registry_ids": ["fred"], "currencies": [],
+            "reason": "Saved FX/materials engines contain unqualified FRED inputs."}
+
 
 
 def _capital_blocks(
@@ -849,6 +841,11 @@ def _capital_blocks(
             "status": evidence_status if available else "unavailable",
             **_pick(engine, *fields),
         }
+        if engine_id == "reportcard":
+            item.pop("letter_line", None)
+            item["letter_line"] = None
+            item["funding_reading"] = _capital_withheld(
+                {"asof": engine.get("funding_asof")}, ["fred"])
         if engine_id == "rvxray":
             quality = _pick(
                 engine,
