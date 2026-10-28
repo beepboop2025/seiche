@@ -49,6 +49,6 @@ def test_metadata_and_sandbox_admission_cannot_expand_into_private_or_execution_
     assert EXTRA_PRODUCTS["financial-evidence"]["kind"] == "research_wrapper"
     assert len(EXTRA_TOOL_REGISTRY["riptide"]) == 7
     assert len(EXTRA_TOOL_REGISTRY["myquant-editorial"]) == 5
-    assert len(EXTRA_TOOL_REGISTRY["financial-evidence"]) == 9
+    assert len(EXTRA_TOOL_REGISTRY["financial-evidence"]) == 12
     for tools in EXTRA_TOOL_REGISTRY.values():
         assert not {"place_order", "execute_trade", "get_saved_stories", "set_preferences", "collect", "rebalance"}.intersection(tools)

@@ -383,3 +383,23 @@ async def test_disconnected_response_releases_slot_and_closes_upstream(tmp_path)
     assert gateway.active==0 and stream.closed
     assert gateway.report(None)['totals']['http_errors']==1
     await gateway.aclose();store.close()
+
+
+@pytest.mark.parametrize("tool,arguments", [
+    ("financial_evidence_funding_workflow", {"currency": "USD"}),
+    ("financial_evidence_institutions_workflow", {"institution_ids": ["au-sfb"]}),
+    ("financial_evidence_exit_workflow", {"sizes_usd": [10000, 100000]}),
+])
+def test_explicit_financial_workflows_reach_fixed_read_only_upstream(platform, tool, arguments):
+    client, _, _, requests, _ = platform
+    payload = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+               "params": {"name": tool, "arguments": arguments}}
+    response = client.post("/products/financial-evidence/mcp", json=payload)
+    assert response.status_code == 200
+    assert str(requests[-1].url) == "https://api.seiche.info/openbb/mcp"
+    assert json.loads(requests[-1].content)["params"] == payload["params"]
+    assert "authorization" not in requests[-1].headers
+    count = len(requests)
+    payload["params"]["name"] = "execute_trade"
+    assert client.post("/products/financial-evidence/mcp", json=payload).status_code == 403
+    assert len(requests) == count
