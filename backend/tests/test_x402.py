@@ -13,9 +13,9 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from seiche import accounts, api, mcp_server, usage, x402
+from seiche import accounts, api, mcp_server, public_rights, usage, x402
 
-PAID_TOOL = "funding_stress_forecast"
+PAID_TOOL = "synthetic_payment_probe"
 RESOURCE = "https://api.seiche.info/mcp"
 PAY_TO = "0x000000000000000000000000000000000000dEaD"
 BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -37,6 +37,13 @@ X402_ENV = (
 @pytest.fixture()
 def client(tmp_path, monkeypatch, fake_snap):
     monkeypatch.setattr(mcp_server, "_get_snapshot", lambda force=False: fake_snap)
+    # Exercise the dormant wire protocol without reviving a retired product tool.
+    monkeypatch.setitem(x402.X402_PRICES_USD, PAID_TOOL, 0.02)
+    monkeypatch.setitem(mcp_server.TOOLS, PAID_TOOL, (
+        "Synthetic payment probe", "Test-only bounded payment transport fixture.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        lambda _args, public: mcp_server._get_snapshot(), False,
+    ))
     monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
     monkeypatch.setattr(accounts, "DB_PATH", tmp_path / "accounts.sqlite")
     monkeypatch.setattr(
@@ -105,7 +112,7 @@ def test_non_activation_hints_leave_deployment_dormant(client, monkeypatch):
     monkeypatch.setenv("SEICHE_X402_FACILITATOR", "https://x402.org/facilitator")
     assert x402.activation_attempted() is False
     assert x402.enabled() is False
-    assert client.post("/mcp", json=_call("funding_stress_now")).status_code == 200
+    assert client.post("/mcp", json=_call("source_rights_status")).status_code == 200
 
 
 def test_pay_to_only_is_explicitly_rejected_before_facilitator(client, monkeypatch):
@@ -128,7 +135,7 @@ def test_pay_to_only_is_explicitly_rejected_before_facilitator(client, monkeypat
     assert response.headers["Cache-Control"] == "no-store"
     assert calls == []
     # A broken dormant rail cannot take down the permanent free surface.
-    assert client.post("/mcp", json=_call("funding_stress_now")).status_code == 200
+    assert client.post("/mcp", json=_call("source_rights_status")).status_code == 200
 
 
 def test_invalid_bearer_precedes_invalid_activation(client, monkeypatch):
@@ -295,14 +302,14 @@ def test_anon_priced_tool_gets_v2_body_and_matching_required_header(
 
 def test_unpaid_priced_tool_keeps_402_before_argument_disclosure(client, monkeypatch):
     _enable_testnet(monkeypatch)
-    response = client.post("/mcp", json=_call("replay_asof"))
+    response = client.post("/mcp", json=_call(PAID_TOOL, arguments={"unexpected": True}))
     assert response.status_code == 402
-    assert response.json()["resource"]["description"].endswith("replay_asof")
+    assert response.json()["resource"]["description"].endswith(PAID_TOOL)
 
 
 def test_public_tools_stay_free(client, monkeypatch):
     _enable_testnet(monkeypatch)
-    response = client.post("/mcp", json=_call("funding_stress_now"))
+    response = client.post("/mcp", json=_call("source_rights_status"))
     assert response.status_code == 200
     assert "result" in response.json()
 
@@ -707,7 +714,7 @@ def test_payment_on_batch_or_free_tool_is_rejected(client, monkeypatch):
     assert response.status_code == 400
     response = client.post(
         "/mcp",
-        json=_call("funding_stress_now"),
+        json=_call("source_rights_status"),
         headers={"PAYMENT-SIGNATURE": signature},
     )
     assert response.status_code == 400
@@ -777,3 +784,34 @@ def test_post_settlement_tool_failure_keeps_receipt_for_reconciliation(
     assert calls == ["/verify", "/settle"]
     receipt = _decode_header(response.headers["PAYMENT-RESPONSE"])
     assert receipt["transaction"] == TRANSACTION
+
+
+@pytest.mark.parametrize("tool", sorted(public_rights.LEGACY_TOOLS))
+def test_retired_tools_are_never_priced_or_charged(client, monkeypatch, tool):
+    _enable_testnet(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        x402, "_facilitator_post",
+        lambda *args: calls.append(args) or {"isValid": True},
+    )
+    assert x402.price_usd(tool) is None
+    response = client.post("/mcp", json=_call(tool))
+    assert response.status_code == 200
+    assert response.json()["result"]["structuredContent"]["category"] == "source_rights_restricted"
+    response = client.post(
+        "/mcp", json=_call(tool),
+        headers={"PAYMENT-SIGNATURE": "must-not-be-verified"},
+    )
+    assert response.status_code == 400
+    assert calls == []
+
+
+def test_wallet_catalog_never_readvertises_retired_tools(client, monkeypatch):
+    _enable_testnet(monkeypatch)
+    response = client.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+    })
+    assert response.status_code == 200
+    names = {tool["name"] for tool in response.json()["result"]["tools"]}
+    assert names.isdisjoint(public_rights.LEGACY_TOOLS)
+    assert PAID_TOOL in names

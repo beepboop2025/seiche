@@ -4328,6 +4328,13 @@ def mcp_http(
             )
             else None
         )
+        # Retired tools remain unavailable even if a caller offers payment.
+        # Preserve the rights explanation before payment configuration/header
+        # checks, without reviving the tool in pricing or discovery.
+        if pay_header is not None and tool in mcp_server.public_rights.LEGACY_TOOLS:
+            return JSONResponse(
+                mcp_server.preflight_tool_call(single, public=public), status_code=400
+            )
         priced = x402.price_usd(tool)
         # A presented bearer token is an attempt to use subscriber auth, not
         # permission to fall back to a wallet charge. Preserve that boundary

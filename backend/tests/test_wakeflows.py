@@ -121,16 +121,19 @@ def test_degraded_sections_stay_absent(pack_file):
 
 # ---- MCP tool -------------------------------------------------------------
 
-def test_tool_listed_and_public():
+def test_retired_tool_definition_is_hidden_from_discovery():
     title, _desc, _schema, handler, public = mcp.TOOLS["institutional_flows"]
     assert handler is mcp.tool_flows
-    assert public is True          # Seiche is a free public good
+    assert public is True  # Internal handler metadata does not authorize discovery.
     assert "positioned" in title.lower() or "flows" in title.lower()
+    for scope in (True, False):
+        listed = mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, public=scope)
+        assert "institutional_flows" not in {item["name"] for item in listed["result"]["tools"]}
 
 
-def test_tool_serves_pack(pack_file):
+def test_internal_handler_preserves_pack_projection(pack_file):
     pack_file(_pack())
-    out = _payload(_call("institutional_flows"))
+    out = mcp.tool_flows({}, public=True)
     assert out["basis_trade"]["size_usd_bn"] == 904.5
     assert "reading" in out and "public prints" in out["reading"]
 
@@ -142,7 +145,7 @@ def test_tool_degrades_to_tool_error(monkeypatch, tmp_path):
     assert "unavailable" in resp["result"]["content"][0]["text"]
 
 
-def test_railway_tool_uses_public_projection_with_source_clocks(monkeypatch):
+def test_internal_railway_projection_preserves_source_clocks(monkeypatch):
     from seiche import wake_public
     from test_wake_public import pack, NOW
     monkeypatch.delenv("WAKE_PACK_PATH", raising=False)
@@ -150,9 +153,24 @@ def test_railway_tool_uses_public_projection_with_source_clocks(monkeypatch):
         raise wakeflows.WakePackError("no local pack")
     monkeypatch.setattr(wakeflows, "load", missing)
     monkeypatch.setattr(wake_public, "load", lambda: wake_public.validate(wake_public.project(pack(), now=NOW), now=NOW))
-    result = _call("institutional_flows")
-    assert result["result"].get("isError", False) is False
-    out = _payload(result)
+    out = mcp.tool_flows({}, public=True)
     assert out["sections"]["basis_trade"]["status"] == "fresh"
     assert out["sources"]["cftc"]["reference_date"] == "2026-09-22"
     assert "method_versions" not in out
+
+
+@pytest.mark.parametrize("public", [True, False])
+def test_retired_flow_tool_never_loads_local_or_remote_packs(monkeypatch, public):
+    from seiche import wake_public
+
+    def forbidden():
+        pytest.fail("retired MCP features must reject before reading a pack")
+
+    monkeypatch.setattr(wakeflows, "load", forbidden)
+    monkeypatch.setattr(wake_public, "load", forbidden)
+    result = mcp.dispatch({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "institutional_flows", "arguments": {}},
+    }, public=public)["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["category"] == "source_rights_restricted"
