@@ -66,6 +66,7 @@ _REGIONS = {
     "NZ-NZD": "Oceania",
 }
 _SOURCE_URLS = {
+    "fed_prates": "https://www.federalreserve.gov/releases/prates/data/FRB_PRATES_xml.zip",
     "fred_daily": "https://fred.stlouisfed.org/",
     "fred_weekly": "https://fred.stlouisfed.org/",
     "fiscaldata": "https://fiscaldata.treasury.gov/",
@@ -2432,6 +2433,18 @@ def build_global_money_market_atlas(
                     "spreads, statistics, and explanations are Seiche modifications, "
                     "not official central-bank analysis or endorsement."
                 )
+            },
+            {
+                "source": "Board of Governors of the Federal Reserve System, PRATES RESBM_N.D",
+                "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+                "notice": (
+                    "Source: Board of Governors of the Federal Reserve System. "
+                    "Board information is public domain unless otherwise indicated; "
+                    "non-Board material may have separate rights. Seiche calculations "
+                    "are not official Board analysis or endorsement. The current "
+                    "PRATES file supplies effective observation dates, not historical "
+                    "publication receipts; its acquisition establishes knowledge time."
+                ),
             },
             {
                 "source": "Federal Reserve Bank of New York reference rates",

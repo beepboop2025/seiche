@@ -97,6 +97,13 @@ _FRED_DAILY_CLOCK = PublicationClock(
     precision=PublicationClockPrecision.UPSTREAM_NATIVE,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
+_FED_PRATES_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=None,
+    business_day_lag=0,
+    precision=PublicationClockPrecision.UNKNOWN,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
 _FRED_WEEKLY_CLOCK = PublicationClock(
     timezone_name="America/New_York",
     local_time=None,
@@ -198,6 +205,10 @@ PACK = MarketPack(
     policy_regime=PolicyRegime.FLOOR,
     source_adapters=(
         SourceAdapterSpec(
+            "fed_prates", _OPEN, "P1D", _FED_PRATES_CLOCK, _ALLOW,
+            collection_cadence="PT1H",
+        ),
+        SourceAdapterSpec(
             # Public-domain provenance does not grant rights to the FRED
             # acquisition/cache. Keep these existing records metadata-only
             # until permission or original-publisher acquisition is qualified.
@@ -227,6 +238,10 @@ PACK = MarketPack(
         ),
     ),
     instruments=(
+        InstrumentSpec(
+            "US.FED.IORB_DIRECT", "IORB_DIRECT", SemanticRole.POLICY_TARGET,
+            "fed_prates", "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
         InstrumentSpec(
             "US.FED.IORB",
             "IORB",

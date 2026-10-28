@@ -2184,6 +2184,16 @@ def build_official_adapters(
             )
         )
 
+    from seiche.sources import fed_prates
+
+    def parse_fed_prates_window(document):
+        start, end = request_window()
+        return tuple(point for point in fed_prates.parse_document(document)
+                     if start <= point.event_time <= end)
+
+    add("US-USD", "fed_prates", "fed_prates",
+        fed_prates.fetch_document, parse_fed_prates_window, timeout=30.0)
+
     fred_base = "https://fred.stlouisfed.org/graph/fredgraph.csv"
     fred_daily = {
         "US.FED.IORB": "IORB",
@@ -2731,6 +2741,7 @@ from seiche.sources.country_funding import PRODUCTION_KEYS as _COUNTRY_PRODUCTIO
 
 PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
+        ("US-USD", "fed_prates"),
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),
         ("US-USD", "nyfed_rates"),
