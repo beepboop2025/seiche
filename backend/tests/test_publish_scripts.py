@@ -75,6 +75,27 @@ def test_export_public_reuses_the_exact_snapshot(tmp_path, monkeypatch):
     public = json.loads(public_path.read_text())
     assert public["generated_at"] == snapshot["generated_at"]
     assert public["conclusion"]["regime"] == "WATCH"
+    assert not overview_path.with_name("funding-series.json").exists()
+
+
+def test_fresh_export_bakes_histories_with_the_same_assembly_clock(tmp_path, monkeypatch):
+    from seiche import funding_history
+
+    module = _script("export_public.py")
+    snapshot = _snapshot()
+
+    async def assemble(**kwargs):
+        assert kwargs == {"force": True}
+        return snapshot
+
+    monkeypatch.setattr(module.assemble, "snapshot", assemble)
+    monkeypatch.setattr(funding_history, "public_histories", lambda generated_at: {
+        "schema": "seiche.funding-history.v1", "generated_at": generated_at, "series": [],
+    })
+    overview = tmp_path / "overview.json"
+    assert module.main([str(tmp_path / "public.json"), str(overview)]) == 0
+    histories = json.loads(overview.with_name("funding-series.json").read_text())
+    assert histories["generated_at"] == snapshot["generated_at"]
 
 
 def test_append_book_record_reuses_the_exact_snapshot(tmp_path, monkeypatch):
