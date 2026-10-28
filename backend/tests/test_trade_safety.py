@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from seiche import public_rights
+
 import copy
 import hashlib
 import json
@@ -530,7 +532,9 @@ def test_h10_cache_invalid_and_future_dates_do_not_become_fresh(asof) -> None:
     assert counts["fresh"] == 0
 
 
-def test_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
+def test_internal_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
+    # Retained calculation contract, below the separately tested public rights gate.
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda _path: False)
     snapshot = _snapshot()
     reads = []
 
@@ -569,7 +573,8 @@ def test_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
     assert reads == ["completed", "completed"]
 
 
-def test_rest_fails_closed_without_a_completed_snapshot(monkeypatch) -> None:
+def test_internal_rest_fails_closed_without_a_completed_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda _path: False)
     monkeypatch.setattr(mcp_server, "_get_in_memory_completed_snapshot", lambda: None)
 
     with TestClient(api.app) as client:
@@ -582,7 +587,7 @@ def test_rest_fails_closed_without_a_completed_snapshot(monkeypatch) -> None:
     assert response.json()["reason"] == "no_completed_snapshot"
 
 
-def test_risk_context_is_in_public_rest_and_mcp_discovery() -> None:
+def test_legacy_risk_context_is_unavailable_in_public_discovery() -> None:
     discovery = api.api_index()
     openapi = api._public_openapi_document()
     tools = mcp_server.dispatch(
@@ -593,15 +598,9 @@ def test_risk_context_is_in_public_rest_and_mcp_discovery() -> None:
         "/api/trade-safety/risk-context"
     )
     route = openapi["paths"]["/api/trade-safety/risk-context"]["get"]
-    assert set(route["responses"]) == {"200", "503"}
-    schema = route["responses"]["200"]["content"]["application/json"]["schema"]
-    assert schema is mcp_server.OUTPUT_SCHEMAS["trade_safety_risk_context"]
-    descriptor = next(
-        tool for tool in tools if tool["name"] == "trade_safety_risk_context"
-    )
-    assert descriptor["inputSchema"]["additionalProperties"] is False
-    assert descriptor["annotations"]["readOnlyHint"] is True
-    assert "not evaluate stream attestations" in descriptor["description"]
+    assert route["deprecated"] is True
+    assert set(route["responses"]) == {"403"}
+    assert "trade_safety_risk_context" not in {tool["name"] for tool in tools}
 
 
 def test_risk_context_is_in_the_edge_exact_path_allowlist() -> None:

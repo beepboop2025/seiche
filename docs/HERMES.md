@@ -1,5 +1,19 @@
 # Running Seiche under a Hermes agent
 
+## Release scope: 28 October 2026
+
+Eight public research tools are available: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
+Start with `source_rights_status`. Retired forecasts, backtests, editorial,
+composite and derived legacy tools are unavailable for every caller while their
+source reuse rights and replacements remain unqualified. A bearer token or
+payment does not unlock them. Do not reconstruct withheld observations from
+metadata, cached history or prior responses. Direct publisher observations keep
+their own dates; restricted inputs remain explicitly metadata-only.
+Authenticated callers can additionally discover five private, non-executable
+Agent Room tools. Earlier feature descriptions below are historical context
+where they conflict with this release scope; they do not advertise availability.
+
+
 Seiche's [MCP server](MCP.md) hands any agent the board's conclusions as
 tools. [hermes-agent](https://github.com/NousResearch/hermes-agent) (Nous
 Research, MIT) is the best open home for those tools today: it is
@@ -67,12 +81,7 @@ Then make the toolset available to your platform (`platform_toolsets:` in
 the same file) and confirm with `hermes tools` that the seiche tools
 appear.
 
-The hosted anonymous surface is exactly sixteen tools: `latest_article`,
-`funding_stress_now`, `historical_analogs`, `proof_backtest`, `data_health`,
-`crypto_stress_record`, `institutional_flows`, `money_market_context`,
-`world_markets_context`, `trade_safety_risk_context`, `oil_funding_context`, and
-`fx_materials_passage`, plus `research_network`, `market_workbench`,
-`gift_city_context` and `gold_inventory_carry`. The GIFT desk preserves separate
+The hosted anonymous surface is the eight tools listed in the release scope above. The GIFT desk preserves separate
 funding, reference FX and weekly gold clocks; the carry tool uses explicit
 caller assumptions and does not store them.
 The bootstrap checks this list before it schedules

@@ -731,18 +731,7 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Sixteen tools answer with no auth at all:
-latest_article, funding_stress_now, trade_safety_risk_context, historical_analogs, proof_backtest, data_health,
-crypto_stress_record, institutional_flows, oil_funding_context,
-fx_materials_passage, the section-selectable money_market_context and the
-money/forex/capital section-selectable world_markets_context, and the paginated
-Palimpsest-to-Seiche research_network, structured FX and China market_workbench,
-dated India-UAE funding and gold gift_city_context, and caller-assumption
-gold_inventory_carry financing scenarios, metered
-per IP per day. Five more
-read the derived engines and want a bearer token: funding_stress_forecast,
-replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
-holds can be downloaded as CSV with provenance headers; the catalog is at
+over MCP at https://api.seiche.info/mcp. Eight public research tools answer without authentication: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts, backtests, composites and dependent tools are unavailable for every caller. Restricted observations must not be reconstructed. Five private Agent Room tools require bearer identity and grant no execution authority. Only reuse-qualified series can be downloaded as CSV with provenance headers; the catalog is at
 https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
 a final/current-vintage construction-PIT diagnostic, hits and misses both, and
 the eligibility flags beside it. It is not validated-backtest evidence. Its

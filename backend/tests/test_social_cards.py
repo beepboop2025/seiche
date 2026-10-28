@@ -357,8 +357,9 @@ def test_build_emits_real_views_unique_editorial_cards_and_fail_closed_states(
         in (site / "sitemap.xml").read_text()
     )
     forex_view = (site / "views" / "world-markets" / "forex" / "index.html").read_text()
-    assert "pricing.. Status" not in forex_view
-    assert "pricing. Status" in forex_view
+    # The source-rights notice replaces the former live-pricing claim.
+    assert ".. Status" not in forex_view
+    assert "Status, source-native clocks" in forex_view
     assert (site / "share" / "cards" / "manifest.json").exists()
 
 

@@ -12,9 +12,7 @@ from seiche import mcp_server as mcp
 
 ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_STRUCTURED_CALLS = {
-    "latest_article": {},
-    "funding_stress_now": {},
-    "trade_safety_risk_context": {},
+    "source_rights_status": {},
     "money_market_context": {},
     "world_markets_context": {},
     "research_network": {},
@@ -25,19 +23,9 @@ PUBLIC_STRUCTURED_CALLS = {
         "annual_rate_pct": "6", "fx_inr_per_usd": "85", "fees_usd": "100",
         "days": 30, "day_count": 360,
     },
-    "historical_analogs": {},
-    "proof_backtest": {},
     "data_health": {},
-    "crypto_stress_record": {},
-    "institutional_flows": {},
-    "oil_funding_context": {},
-    "fx_materials_passage": {},
 }
 PAID_STRUCTURED_CALLS = {
-    "funding_stress_forecast": {},
-    "replay_asof": {"date": "2019-09-17"},
-    "positioning_book": {},
-    "ask_desk": {"question": "Is dollar funding tight?"},
 }
 
 
@@ -180,18 +168,18 @@ def test_tool_descriptors_publish_complete_openai_contracts():
     authenticated_by_name = {tool["name"]: tool for tool in authenticated}
     public_by_name = {tool["name"]: tool for tool in public}
 
-    assert len(analysis) == 21
-    assert len(authenticated) == 26
-    assert len(public) == 16
+    assert len(analysis) == 8
+    assert len(authenticated) == 13
+    assert len(public) == 8
     assert set(public_by_name) == set(PUBLIC_STRUCTURED_CALLS)
     assert set(mcp.STRUCTURED_OUTPUT_TOOLS) == set(mcp.TOOLS) - {"desk_brief"}
     assert {
         name for name, tool in analysis_by_name.items() if "outputSchema" in tool
-    } == set(mcp.STRUCTURED_OUTPUT_TOOLS) - set(mcp.AGENT_ROOM_TOOLS)
+    } == set(PUBLIC_STRUCTURED_CALLS)
     assert {
         name for name, tool in authenticated_by_name.items() if "outputSchema" in tool
-    } == set(mcp.STRUCTURED_OUTPUT_TOOLS)
-    assert "outputSchema" not in authenticated_by_name["desk_brief"]
+    } == set(PUBLIC_STRUCTURED_CALLS) | set(mcp.AGENT_ROOM_TOOLS)
+    assert "desk_brief" not in authenticated_by_name
 
     for tool in authenticated:
         assert tool["title"] and tool["description"]
@@ -243,20 +231,6 @@ def test_every_successful_structured_result_matches_its_descriptor(plugin_runtim
         schema = full_descriptors[name]["outputSchema"]
         _assert_schema(payload, schema, f"$.{name}")
         witnesses.append((payload, schema))
-
-    # Exercise the alternate, richer funding_stress_now success envelope too.
-    full_stress = _tool_call("funding_stress_now", {}, public=False)["result"]
-    _assert_schema(
-        full_stress["structuredContent"],
-        full_descriptors["funding_stress_now"]["outputSchema"],
-        "$.funding_stress_now.full",
-    )
-    witnesses.append(
-        (
-            full_stress["structuredContent"],
-            full_descriptors["funding_stress_now"]["outputSchema"],
-        )
-    )
 
     # When the optional standards package is present, validate the same real
     # witnesses with the complete Draft 2020-12 implementation as well.
@@ -365,7 +339,7 @@ def test_submission_pack_has_review_cases_without_fake_portal_evidence():
 
     assert len(positive) >= 5
     assert len(negative) >= 3
-    assert cases["surface"] == "anonymous_public_sixteen_tools"
+    assert cases["surface"] == "anonymous_public_eight_tools"
     assert any(
         any(
             call.startswith("world_markets_context")

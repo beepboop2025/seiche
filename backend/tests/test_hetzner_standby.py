@@ -391,8 +391,9 @@ def test_http_allowlist_and_identity(accepted):
     assert strict.status_code == 503
     assert strict.json()["status"] == "standby_not_production_ready"
     overview = client.get("/api/overview?force=true", headers=headers)
-    assert overview.status_code == 200
-    assert overview.json() == envelope["payload"]
+    assert overview.status_code == 403
+    assert overview.json()["availability"] == "unavailable"
+    assert overview.headers["cache-control"] == "no-store"
     for method, path in (
         ("POST", "/mcp"), ("POST", "/api/overview"), ("GET", "/api/ask"),
         ("POST", "/api/internal/v1/railway-control/commands"),

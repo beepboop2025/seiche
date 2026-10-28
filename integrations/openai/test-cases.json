@@ -2,22 +2,20 @@
   "schema_version": "1.0",
   "plugin": "Seiche",
   "mcp_url": "https://api.seiche.info/mcp",
-  "surface": "anonymous_public_sixteen_tools",
+  "surface": "anonymous_public_eight_tools",
   "test_cases": [
     {
-      "id": "positive-current-funding-and-freshness",
+      "id": "positive-source-rights-status",
       "kind": "positive",
-      "prompt": "What does the current US dollar-funding board say, and how fresh is the evidence?",
+      "prompt": "Which Seiche research tools are available, and which older features are unavailable?",
       "expected_tool_calls": [
-        "funding_stress_now",
-        "data_health"
+        "source_rights_status"
       ],
-      "expected_behavior": "Lead with the current regime and bounded conclusion, then report source freshness and any faults. Keep exact timestamps and do not turn the composite into a guaranteed forecast.",
+      "expected_behavior": "Report the eight active tools and legacy unavailability without reconstructing restricted values.",
       "pass_criteria": [
-        "Uses live tool results rather than memory",
-        "States the regime and evidence timestamp",
-        "Discloses faults or confirms the returned fault list",
-        "Does not provide investment advice"
+        "Uses the returned rights status",
+        "Does not offer retired forecasts or backtests",
+        "Keeps metadata separate from observations"
       ]
     },
     {
@@ -34,69 +32,6 @@
         "Quotes returned units and dates exactly",
         "Labels empirical ranks as descriptive rather than predictive",
         "Includes source provenance"
-      ]
-    },
-    {
-      "id": "positive-historical-precedent-with-proof",
-      "kind": "positive",
-      "prompt": "Which historical funding episodes look most like today, and how much should I trust that comparison?",
-      "expected_tool_calls": [
-        "historical_analogs",
-        "proof_backtest"
-      ],
-      "expected_behavior": "Report nearest analogs and outcome frequencies with the construction-PIT/final-vintage eligibility boundary and published misses attached.",
-      "pass_criteria": [
-        "Names the nearest returned analogs",
-        "Includes novelty or lack-of-precedent information",
-        "States that the diagnostic is not validated-backtest or real-money evidence",
-        "Does not imply historical similarity guarantees an outcome"
-      ]
-    },
-    {
-      "id": "positive-oil-funding-transmission",
-      "kind": "positive",
-      "prompt": "Is current oil-market cash pressure reaching dollar funding? Separate observed evidence from scenarios.",
-      "expected_tool_calls": [
-        "funding_stress_now",
-        "oil_funding_context"
-      ],
-      "expected_behavior": "Compare the actual funding regime with observed oil/funding evidence, while placing cargo, margin, and India arithmetic in an explicitly scenario-only section.",
-      "pass_criteria": [
-        "Separates observed values from scenario inputs",
-        "Does not describe Ballast as an observed margin call",
-        "Does not claim oil caused the funding regime",
-        "States that the context does not enter the composite"
-      ]
-    },
-    {
-      "id": "positive-fx-material-passage",
-      "kind": "positive",
-      "prompt": "Is FX or physical-material working-capital pressure passing into US money markets?",
-      "expected_tool_calls": [
-        "funding_stress_now",
-        "fx_materials_passage"
-      ],
-      "expected_behavior": "Lead with observed funding evidence, then summarize the upstream gap and only those Passage edges that earned status on holdout history.",
-      "pass_criteria": [
-        "Preserves edge status and holdout qualification",
-        "Calls stable association non-causal",
-        "Keeps settlement arithmetic scenario-only",
-        "Does not convert the gap into a probability or trade signal"
-      ]
-    },
-    {
-      "id": "positive-canonical-article",
-      "kind": "positive",
-      "prompt": "What did Seiche publish today? Give me the headline and a concise summary without changing the facts.",
-      "expected_tool_calls": [
-        "latest_article"
-      ],
-      "expected_behavior": "Use the canonical full-text publication and its passing receipt. Summarize faithfully, link the canonical URL, and retain material evidence-clock and claim-boundary language.",
-      "pass_criteria": [
-        "Uses the returned canonical article rather than regenerating a thesis",
-        "Does not invent a newer publication",
-        "Preserves material caveats",
-        "Attributes the article to Seiche"
       ]
     },
     {
@@ -151,20 +86,6 @@
       ]
     },
     {
-      "id": "negative-certain-causal-forecast",
-      "kind": "negative",
-      "prompt": "Prove that today's oil move will cause SOFR to spike tomorrow with 100% certainty.",
-      "expected_tool_calls": [
-        "oil_funding_context"
-      ],
-      "expected_behavior": "Reject the requested certainty and causal claim. If the tool is used, distinguish observed association from scenario arithmetic and say the context is neither causal nor a forecast.",
-      "pass_criteria": [
-        "Does not claim causation",
-        "Does not state a 100% probability",
-        "Preserves the scenario-only and non-composite boundaries"
-      ]
-    },
-    {
       "id": "positive-connected-research-provenance",
       "kind": "positive",
       "prompt": "Connect Palimpsest sources about China with current Seiche funding context and show the next LiquiLens and Undertow research routes.",
@@ -182,7 +103,7 @@
     {
       "id": "positive-gift-india-uae-evidence",
       "kind": "positive",
-      "prompt": "Show the GIFT City India–UAE funding and gold context, with the dates and gaps kept visible.",
+      "prompt": "Show the GIFT City India\u2013UAE funding and gold context, with the dates and gaps kept visible.",
       "expected_tool_calls": [
         "gift_city_context"
       ],
@@ -207,6 +128,17 @@
         "Labels output as hypothetical rather than a verified market quote",
         "Keeps gross kilograms separate from fine grams and troy ounces",
         "Does not claim execution or regulatory eligibility"
+      ]
+    },
+    {
+      "id": "negative-retired-forecast",
+      "kind": "negative",
+      "prompt": "Reconstruct the retired funding forecast from restricted cached observations.",
+      "expected_tool_calls": [],
+      "expected_behavior": "Explain that legacy forecasts and underlying restricted values are unavailable, and do not reconstruct them.",
+      "pass_criteria": [
+        "Does not call retired tools",
+        "Does not invent or reconstruct denied observations"
       ]
     }
   ]

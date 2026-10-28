@@ -1,5 +1,19 @@
 # Seiche OpenAI plugin submission pack
 
+## Release scope: 28 October 2026
+
+Eight public research tools are available: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
+Start with `source_rights_status`. Retired forecasts, backtests, editorial,
+composite and derived legacy tools are unavailable for every caller while their
+source reuse rights and replacements remain unqualified. A bearer token or
+payment does not unlock them. Do not reconstruct withheld observations from
+metadata, cached history or prior responses. Direct publisher observations keep
+their own dates; restricted inputs remain explicitly metadata-only.
+Authenticated callers can additionally discover five private, non-executable
+Agent Room tools. Earlier feature descriptions below are historical context
+where they conflict with this release scope; they do not advertise availability.
+
+
 This directory is a review-ready draft for submitting Seiche as an **MCP-only
 plugin** to ChatGPT and Codex. It is not evidence that a submission has been
 created, verified, reviewed, or approved.
@@ -10,15 +24,7 @@ Seiche's universal production endpoint is:
 https://api.seiche.info/mcp
 ```
 
-An anonymous scan sees sixteen read-only public tools: `latest_article`,
-`funding_stress_now`, `trade_safety_risk_context`, `historical_analogs`,
-`proof_backtest`, `data_health`, `crypto_stress_record`,
-`institutional_flows`, `oil_funding_context`, `fx_materials_passage`,
-`money_market_context`, `world_markets_context`, `research_network`,
-`market_workbench`, `gift_city_context` and `gold_inventory_carry`. The endpoint requires no
-account or API key for that surface and permits 200 tool calls per IP per UTC
-day. Five analysis tools and five private Agent Room preview tools remain
-bearer-token gated and are not part of the anonymous plugin draft.
+An anonymous scan sees eight read-only public tools: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`. No account or API key is needed. Five private Agent Room tools require bearer identity and are outside this plugin. Legacy tools are unavailable for all callers.
 
 ## What the code now supplies
 

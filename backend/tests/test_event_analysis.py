@@ -4,6 +4,8 @@ import asyncio
 import json
 
 import httpx
+from seiche import public_rights
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -622,8 +624,11 @@ def test_no_llm_returns_readings_without_inventing_connection(monkeypatch):
     assert "no semantic connection is being invented" in result["answer"]
 
 
-def test_event_analysis_api_is_post_only_and_rate_limited_like_ask(monkeypatch):
+def test_internal_event_analysis_is_post_only_and_rate_limited_like_ask(monkeypatch):
     from seiche import api as api_mod
+
+    # Public unavailability is covered by test_legacy_release_scope.
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda _path: False)
 
     seen = {}
 

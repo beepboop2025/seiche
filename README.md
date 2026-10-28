@@ -1,5 +1,19 @@
 # SEICHE
 
+## Release scope: 28 October 2026
+
+Eight public research tools are available: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
+Start with `source_rights_status`. Retired forecasts, backtests, editorial,
+composite and derived legacy tools are unavailable for every caller while their
+source reuse rights and replacements remain unqualified. A bearer token or
+payment does not unlock them. Do not reconstruct withheld observations from
+metadata, cached history or prior responses. Direct publisher observations keep
+their own dates; restricted inputs remain explicitly metadata-only.
+Authenticated callers can additionally discover five private, non-executable
+Agent Room tools. Earlier feature descriptions below are historical context
+where they conflict with this release scope; they do not advertise availability.
+
+
 ## Connect and ask one question
 
 Hosted Streamable HTTP MCP; no local server or API key for public read-only tools.
@@ -24,8 +38,8 @@ Client/model costs and fair-use limits may apply. Research calls do not execute 
 
 ### Choose the tool by the answer you need
 
-For the current US funding regime, start with `funding_stress_now`; use
-`data_health` to check the inputs. The broader tools have different jobs:
+Start with `source_rights_status` for feature availability and
+`data_health` for source clocks and faults. The broader tools have different jobs:
 
 | Needed output | Tool | First arguments |
 | --- | --- | --- |
@@ -122,7 +136,7 @@ ledger status. The auditable source of truth is
 
 Version **0.16.3 estuary** checks the four monthly OFR money-market-fund series and six quarterly BIS series daily while preserving their observation dates and native release cadence. Signed deployment and publication acceptance are required before this source change is live.
 
-Version **0.16.2 estuary** prepares the [reviewed Google-Extended policy](docs/GOOGLE-EXTENDED-POLICY.md), three dated dollar-funding answers and Riptide's public paper allocation beside the Market desk. The policy permits grounding/training only on three reviewed original explanations; source data, archives and other pages remain excluded. New signed application and publication receipts are required before these changes are live. The inherited **0.16.1** release connects the [UAE DONIA reference](docs/UAE_DONIA.md) to GIFT City's AED card and retains [country funding and sovereign references](docs/COUNTRY_FUNDING.md) for China, Japan, South Korea, Taiwan, Australia, the United Kingdom, all 21 euro-area countries and seven other European countries. Official observations retain their source dates, native frequency and gaps. The sixteen public MCP tools expose the country catalog through `money_market_context(section="countries")`; add `country="JP"` for a country desk or use `section="india"` for the India desk.
+Version **0.16.2 estuary** prepares the [reviewed Google-Extended policy](docs/GOOGLE-EXTENDED-POLICY.md), three dated dollar-funding answers and Riptide's public paper allocation beside the Market desk. The policy permits grounding/training only on three reviewed original explanations; source data, archives and other pages remain excluded. New signed application and publication receipts are required before these changes are live. The inherited **0.16.1** release connects the [UAE DONIA reference](docs/UAE_DONIA.md) to GIFT City's AED card and retains [country funding and sovereign references](docs/COUNTRY_FUNDING.md) for China, Japan, South Korea, Taiwan, Australia, the United Kingdom, all 21 euro-area countries and seven other European countries. Official observations retain their source dates, native frequency and gaps. The eight public MCP tools expose the country catalog through `money_market_context(section="countries")`; add `country="JP"` for a country desk or use `section="india"` for the India desk.
 New official SOFR, EFFR, IORB, overnight reverse-repo and New York Fed funding
 observations can reach the daily review without waiting through the previous
 four-to-twelve-hour cache windows. Failed refreshes retain the original source
@@ -138,8 +152,7 @@ capture evidence and missing states. Numerical China context requires its
 independent signed acceptance. Verify deployment and package availability from
 the release receipts and linked registries.
 
-Sixteen evidence tools remain anonymous and free. Five compute-heavy tools are
-account-gated; client and catalog copy must preserve that boundary. See the
+Eight research tools remain anonymous and free. Legacy derived tools are unavailable; client and catalog copy must preserve that boundary. See the
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.
 
@@ -404,8 +417,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Sixteen tools
-answer anonymously, no token, no sign-up, no email:
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Eight tools answer anonymously; see the release scope above. Retired tools in the historical catalog below are unavailable:
 
 ```bash
 claude mcp add --transport http seiche https://api.seiche.info/mcp
@@ -417,21 +429,21 @@ The copy-paste quickstart and live tool runner are at
 
 | tool | what it answers |
 |---|---|
-| `latest_article` | today's exact full-text editorial with its evidence clock and publication receipt |
-| `funding_stress_now` | the live composite, the regime, the decomposition, the Tell |
-| `trade_safety_risk_context` | deterministic cache-only regime/index/coverage/clocks for order guards; context-only and never execution authority |
-| `historical_analogs` | the closest days in the record, and what followed them |
-| `proof_backtest` | the track record with its misses and its confidence intervals |
+| `latest_article` | unavailable in this release |
+| `funding_stress_now` | unavailable in this release |
+| `trade_safety_risk_context` | unavailable in this release |
+| `historical_analogs` | unavailable in this release |
+| `proof_backtest` | unavailable in this release |
 | `data_health` | freshness and provenance for every input, before you trust a reading |
-| `crypto_stress_record` | labelled crypto episodes replayed against the funding board |
-| `institutional_flows` | who is positioned where, from public prints |
+| `crypto_stress_record` | unavailable in this release |
+| `institutional_flows` | unavailable in this release |
 | `money_market_context` | compact, chartless USD desk summary or one requested section, plus sources/methodology selectors |
 | `gift_city_context` | bounded INR/USD funding, CBUAE and ECB reference FX, and weekly gold positioning with source clocks |
 | `gold_inventory_carry` | caller-assumption fine-gold carrying costs, simple interest and INR breakeven; no quote retrieval |
 | `market_workbench` | selectable official FX providers, matching-date crosses, dated histories and accepted Palimpsest China structural evidence |
 | `world_markets_context` | bounded summary or money, forex, capital, source and methodology sections with canonical citation URLs |
-| `oil_funding_context` | observed oil/funding and Ballast evidence, live-vs-reference market structure, plus clearly separated scenarios |
-| `fx_materials_passage` | upstream FX/material pressure and the Passage's holdout-tested links |
+| `oil_funding_context` | unavailable in this release |
+| `fx_materials_passage` | unavailable in this release |
 
 That is the conclusion, the precedent, the honest record, the freshness, granular
 USD money-market context, unified world-market context and cross-market transmission context, and it stays
@@ -542,10 +554,9 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-The sixteen-tool public evidence surface needs no account and does not depend on
+The eight-tool public evidence surface needs no account and does not depend on
 paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
-Five compute-heavy forecast, replay, positioning, prose and LLM tools are
-account-gated. Seiche does not claim intraday-tick coverage: daily cadence plus
+Legacy forecast, replay, positioning, prose and LLM tools are unavailable. Seiche does not claim intraday-tick coverage: daily cadence plus
 operation results is the honest granularity of the public stack. Historical
 reconstruction uses final/current-vintage inputs and is therefore
 **construction-PIT, not validated-backtest evidence**. The engine blocks the

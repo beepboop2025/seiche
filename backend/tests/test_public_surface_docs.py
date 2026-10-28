@@ -23,9 +23,9 @@ from seiche import mcp_server
 
 REPO = Path(__file__).resolve().parents[2]
 
-PUBLIC = {n for n, t in mcp_server.TOOLS.items() if t[4]}
+PUBLIC = set(mcp_server._visible_tools(True))
 AGENT_ROOM = set(mcp_server.AGENT_ROOM_TOOLS)
-GATED = {n for n, t in mcp_server.TOOLS.items() if not t[4]} - AGENT_ROOM
+GATED = set(mcp_server._visible_tools(False)) - PUBLIC - AGENT_ROOM
 
 # Prose that names the anonymous surface. Each must list every public tool and
 # no gated one anywhere near that claim, so the file is checked whole.
@@ -41,21 +41,14 @@ DOCS = [
 ]
 
 
-def test_the_surface_is_sixteen_tools():
+def test_the_surface_is_eight_tools():
     """A guard on the guard: if this number moves, every sentence below moves
     with it, and someone has to decide that deliberately."""
-    assert len(PUBLIC) == 16, sorted(PUBLIC)
-    assert len(GATED) == 5, sorted(GATED)
+    assert len(PUBLIC) == 8, sorted(PUBLIC)
+    assert len(GATED) == 0, sorted(GATED)
     assert len(AGENT_ROOM) == 5, sorted(AGENT_ROOM)
-    assert PUBLIC == {
-        "latest_article",
-        "funding_stress_now", "trade_safety_risk_context",
-        "historical_analogs", "proof_backtest",
-        "data_health", "crypto_stress_record", "institutional_flows",
-        "oil_funding_context", "fx_materials_passage", "money_market_context",
-        "world_markets_context", "research_network", "market_workbench",
-        "gift_city_context", "gold_inventory_carry",
-    }
+    assert PUBLIC == {'source_rights_status', 'market_workbench', 'money_market_context', 'gift_city_context', 'gold_inventory_carry', 'world_markets_context', 'data_health', 'research_network'}
+
 
 
 @pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)
@@ -69,7 +62,7 @@ def test_hermes_persona_tool_map_is_exactly_the_runtime_surface():
     """The persona is operational input, so an obsolete map is a runtime bug."""
     text = (REPO / "integrations" / "hermes" / "AGENTS.md").read_text()
     match = re.search(
-        r"Public \(sixteen anonymous tools\):(.*?)\nSubscriber \(five",
+        r"Public \(eight anonymous tools\):(.*?)\nUnavailable legacy tools:",
         text,
         re.DOTALL,
     )
@@ -135,8 +128,8 @@ def test_account_copy_matches_the_authenticated_mcp_surface():
     account = (REPO / "frontend" / "src" / "tabs" / "Account.tsx").read_text()
     support = (REPO / "frontend" / "public" / "support.html").read_text()
     assert "exists for exactly one thing" not in account
-    assert len(GATED) == 5
-    assert "five analysis tools plus five private" in account
+    assert len(GATED) == 0
+    assert "five private, non-executable Agent Room tools" in account
     assert "Five private Agent Room preview tools" in support
     agent_doc = (REPO / "docs" / "AGENT-ROOM.md").read_text()
     for name in AGENT_ROOM:

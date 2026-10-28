@@ -1,4 +1,6 @@
-"""/api/gauge: the free, versioned, machine-shaped regime reading."""
+"""Internal gauge calculation contract; public release access is tested separately."""
+
+from seiche import public_rights
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,11 +13,13 @@ def client(monkeypatch, fake_snap):
     async def fake_snapshot(force=False):
         return fake_snap
 
+    # Exercise the retained calculation below the separately tested public rights gate.
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda _path: False)
     monkeypatch.setattr(assemble, "snapshot", fake_snapshot)
     return TestClient(api.app)
 
 
-def test_gauge_is_public_versioned_and_thin(client, fake_snap):
+def test_internal_gauge_is_versioned_and_thin(client, fake_snap):
     r = client.get("/api/gauge")
     assert r.status_code == 200
     g = r.json()

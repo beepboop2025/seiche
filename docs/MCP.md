@@ -1,5 +1,19 @@
 # Seiche as an agent tool (MCP)
 
+## Release scope: 28 October 2026
+
+Eight public research tools are available: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
+Start with `source_rights_status`. Retired forecasts, backtests, editorial,
+composite and derived legacy tools are unavailable for every caller while their
+source reuse rights and replacements remain unqualified. A bearer token or
+payment does not unlock them. Do not reconstruct withheld observations from
+metadata, cached history or prior responses. Direct publisher observations keep
+their own dates; restricted inputs remain explicitly metadata-only.
+Authenticated callers can additionally discover five private, non-executable
+Agent Room tools. Earlier feature descriptions below are historical context
+where they conflict with this release scope; they do not advertise availability.
+
+
 Seiche speaks the [Model Context Protocol](https://modelcontextprotocol.io), so
 any MCP-capable agent — Claude Code, Codex, or your own — can read the live
 funding-stress board the same way a human reads the terminal.
@@ -90,27 +104,12 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → sixteen tools, named so you can check this against the
-  code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
-  `proof_backtest`, `data_health`, `crypto_stress_record` and
-  `institutional_flows`, plus `money_market_context`, `oil_funding_context` and
-  `fx_materials_passage`, `world_markets_context`, `trade_safety_risk_context`,
-  plus `latest_article`, `research_network`, `market_workbench`,
-  `gift_city_context` and `gold_inventory_carry`. The editorial, conclusion, precedent, track record with its
-  misses, freshness, crypto transmission record, positioning read, granular USD
-  money-market evidence, unified money/FX/capital context, and cross-market oil/FX/material context. Capped per IP
-  per day. Zero setup, and it stays free.
-- **Subscriber** (bearer token) → the same sixteen plus five analysis tools that
-  read derived engines: `funding_stress_forecast`, `replay_asof`,
-  `positioning_book`, `desk_brief`, `ask_desk`; and five private Agent Room
-  preview tools: `agent_room_register_key`, `agent_room_create`,
-  `agent_room_append_event`, `agent_room_list_events`, `agent_room_verify`.
-  The authenticated hosted catalog is 26 tools. Agent Room identity always
-  comes from the bearer and every room/event is non-executable.
+- **Anonymous**: the eight public tools `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
+- **Authenticated**: the same eight plus five private Agent Room preview tools.
+  Legacy analysis tools are unavailable, including to paid or authenticated callers.
 
 `tools/list` returns exactly what the caller can run, so an anonymous agent
-never sees a tool it would be refused on. The list is generated from the
-`is_public` flag on each entry in `TOOLS` (`backend/seiche/mcp_server.py`).
+never sees a tool it would be refused on. The list applies both the public flag and the active source-rights release filter to `TOOLS` (`backend/seiche/mcp_server.py`).
 Agent Room adds a second boundary: a non-public tool is still hidden unless the
 transport supplies a verified bearer identity. This page is downstream of both.
 
@@ -289,27 +288,27 @@ recorded in the `provisions` table for audit.
 
 | Tool | What it answers | Surface |
 |------|-----------------|---------|
-| `latest_article` | Exact full-text daily editorial, evidence clock and passing publication receipt | public |
-| `funding_stress_now` | Current 0–100 stress index, regime, per-component decomposition, the Tell | public |
-| `trade_safety_risk_context` | Deterministic cache-only regime, index, coverage, source staleness counts, and conservative clocks; metadata-only derived context that does not evaluate attestations or grant execution authority | public |
-| `historical_analogs` | The most similar past days + how often they led to a stress event, with a novelty flag | public |
-| `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | public |
+| `latest_article` | Exact full-text daily editorial, evidence clock and passing publication receipt | unavailable in this release |
+| `funding_stress_now` | Current 0–100 stress index, regime, per-component decomposition, the Tell | unavailable in this release |
+| `trade_safety_risk_context` | Deterministic cache-only regime, index, coverage, source staleness counts, and conservative clocks; metadata-only derived context that does not evaluate attestations or grant execution authority | unavailable in this release |
+| `historical_analogs` | The most similar past days + how often they led to a stress event, with a novelty flag | unavailable in this release |
+| `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | unavailable in this release |
 | `data_health` | Freshness, provenance, and fault status for every input series | public |
-| `crypto_stress_record` | Wrecks: labelled crypto stress episodes (Terra, FTX, SVB/USDC, the Oct-2025 cascade…) replayed point-in-time against the funding board — transmission vs specificity, stated honestly | public |
-| `institutional_flows` | Hedge-fund, pension and sovereign positioning from public prints; implementation version tags withheld anonymously | public |
+| `crypto_stress_record` | Wrecks: labelled crypto stress episodes (Terra, FTX, SVB/USDC, the Oct-2025 cascade…) replayed point-in-time against the funding board — transmission vs specificity, stated honestly | unavailable in this release |
+| `institutional_flows` | Hedge-fund, pension and sovereign positioning from public prints; implementation version tags withheld anonymously | unavailable in this release |
 | `money_market_context` | Chartless projection of the assembled USD desk: compact summary, one of seven granular sections, sources, methodology, or all; exact-date/native-cadence context and explicit unavailability stay attached | public |
 | `world_markets_context` | Chartless money, FX, capital and metadata-only China macro context with selector-specific citation URLs; China is an unsigned structural catalog unless a restricted response carries verified Seiche owner-attested provenance | public |
-| `oil_funding_context` | WTI/Brent and funding evidence; Ballast's CFTC WTI/Henry Hub gross cash-displacement, concentration and EIA inventory ledger; live Cushing/Brent−WTI observations separated from dated capacity, benchmark and chokepoint references; change-on-change coupling; explicitly scenario-only cargo/margin/India arithmetic | public |
-| `fx_materials_passage` | Upstream FX/material pressure versus funding priced, with the Passage's discovery/holdout ledger and settlement scenarios | public |
+| `oil_funding_context` | WTI/Brent and funding evidence; Ballast's CFTC WTI/Henry Hub gross cash-displacement, concentration and EIA inventory ledger; live Cushing/Brent−WTI observations separated from dated capacity, benchmark and chokepoint references; change-on-change coupling; explicitly scenario-only cargo/margin/India arithmetic | unavailable in this release |
+| `fx_materials_passage` | Upstream FX/material pressure versus funding priced, with the Passage's discovery/holdout ledger and settlement scenarios | unavailable in this release |
 | `research_network` | Connected source discovery with original rights, clocks and next research routes | public |
 | `market_workbench` | Cached reference FX crosses and rights-aware China context | public |
 | `gift_city_context` | Dated USD/INR funding, separate ECB and UAE VAT FX references, and COMEX gold positioning | public |
 | `gold_inventory_carry` | Fine-gold financing arithmetic from explicit caller assumptions; no stored inputs or verified quotes | public |
-| `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | subscriber |
-| `replay_asof` | The Time Machine: the whole board reconstructed point-in-time on a past date (`date: YYYY-MM-DD`) | subscriber |
-| `desk_brief` | Today's full desk note as markdown | subscriber |
-| `positioning_book` | Implied stance + positions, walk-forward Sharpe, live record | subscriber |
-| `ask_desk` | Natural-language Q&A grounded strictly in the live board (needs an LLM endpoint) | subscriber |
+| `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | unavailable in this release |
+| `replay_asof` | The Time Machine: the whole board reconstructed point-in-time on a past date (`date: YYYY-MM-DD`) | unavailable in this release |
+| `desk_brief` | Today's full desk note as markdown | unavailable in this release |
+| `positioning_book` | Implied stance + positions, walk-forward Sharpe, live record | unavailable in this release |
+| `ask_desk` | Natural-language Q&A grounded strictly in the live board (needs an LLM endpoint) | unavailable in this release |
 
 The free tier gives the **conclusion, credibility, and contextual transmission
 read** (regime, analogs, PROOF, data health, positioning, the USD desk, oil, FX
@@ -325,8 +324,8 @@ caveats in every successful projection.
 
 ## Machine-native support (x402) — dormant by design
 
-Seiche's sixteen evidence tools are a permanent free public good. Five
-compute-heavy tools are separately account-gated to cover operator cost. The
+Seiche's eight active public research tools require no payment. The legacy
+compute-heavy tools remain unavailable even when a payment or bearer is supplied. The
 codebase also carries a dormant
 [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
 if it is ever enabled, an AI agent with a wallet can voluntarily chip in a
@@ -394,7 +393,7 @@ contract and mandatory activation checklist are documented in
 ## Public vs. authenticated surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same sixteen the hosted endpoint gives an anonymous caller, so a local run and a
+the same eight the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -403,27 +402,27 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 
 | tool | public | why |
 |---|---|---|
-| `latest_article` | yes | the exact published editorial; no downstream regeneration |
-| `funding_stress_now` | yes | the conclusion, which is the free good |
-| `trade_safety_risk_context` | yes | a cache-only, rights-rechecked context envelope for external order guards; never execution authority |
-| `historical_analogs` | yes | precedent from the public record |
-| `proof_backtest` | yes | the track record, misses included |
+| `latest_article` | yes | unavailable in this release |
+| `funding_stress_now` | yes | unavailable in this release |
+| `trade_safety_risk_context` | yes | unavailable in this release |
+| `historical_analogs` | yes | unavailable in this release |
+| `proof_backtest` | yes | unavailable in this release |
 | `data_health` | yes | you should be able to check freshness before trusting a number |
-| `crypto_stress_record` | yes | labelled episodes replayed against the board |
-| `institutional_flows` | yes | public prints in, a reading out (`method_versions` withheld) |
+| `crypto_stress_record` | yes | unavailable in this release |
+| `institutional_flows` | yes | unavailable in this release |
 | `money_market_context` | yes | compact chartless USD desk context; selector limits payload while formulas, provenance and caveats remain requestable |
 | `world_markets_context` | yes | bounded chartless money, FX, capital and metadata-only China macro context with selector-specific citations and explicit partial/unavailable states |
-| `oil_funding_context` | yes | compact observed transmission, Ballast futures-cash context and live-vs-reference oil-market structure; bounded derivations and scenarios stay labelled and separate |
-| `fx_materials_passage` | yes | compact upstream gap plus the untouched-holdout ledger |
+| `oil_funding_context` | yes | unavailable in this release |
+| `fx_materials_passage` | yes | unavailable in this release |
 | `research_network` | yes | connected evidence retains source rights and availability |
 | `market_workbench` | yes | dated reference FX and accepted China evidence |
 | `gift_city_context` | yes | India–UAE funding, FX and gold context with source clocks |
 | `gold_inventory_carry` | yes | explicit financing assumptions, no saved inputs or execution |
-| `funding_stress_forecast` | no | six modelled views of forward event odds |
-| `replay_asof` | no | full point-in-time board reconstruction |
-| `positioning_book` | no | sleeves, weights, `p_ensemble`, tcost |
-| `desk_brief` | no | the whole board as prose, with driver weights |
-| `ask_desk` | no | runs the operator's LLM budget |
+| `funding_stress_forecast` | no | unavailable in this release |
+| `replay_asof` | no | unavailable in this release |
+| `positioning_book` | no | unavailable in this release |
+| `desk_brief` | no | unavailable in this release |
+| `ask_desk` | no | unavailable in this release |
 | `agent_room_register_key` | bearer identity | binds only the bearer username to a client Ed25519 public key |
 | `agent_room_create` | bearer identity | creates immutable private membership with the bearer as owner |
 | `agent_room_append_event` | bearer identity | verifies and chains a client-signed non-executable discussion event |
