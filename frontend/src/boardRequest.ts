@@ -19,6 +19,7 @@ export async function requestBoard(url: string, {
   try {
     const response = await fetcher(url, { signal: controller.signal, headers, credentials: "same-origin" });
     if (response.status === 401) throw new Error("Your session expired. Sign in again to refresh.");
+    if (response.status === 403) throw new Error("The legacy funding board is unavailable while source reuse rights are reviewed. Open Money markets or Market workbench for available research.");
     if (!response.ok) throw new Error("The funding source is temporarily unavailable. Please retry.");
     if (!/json|octet-stream/.test(response.headers.get("content-type") || "")) throw new Error("The funding source returned an unexpected response.");
     const reader = response.body?.getReader();

@@ -100,6 +100,7 @@ jobs:
           backend/tests/test_official_adapters.py
           backend/tests/test_fed_prates.py
           backend/tests/test_public_source_rights.py
+          backend/tests/test_legacy_release_scope.py
           backend/tests/test_nyfed_distribution_depth.py
           backend/tests/test_observation_v2.py
           backend/tests/test_nyfed_history.py

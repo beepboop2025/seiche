@@ -31,7 +31,7 @@ def series(mnemonic, values, dates=None):
 
 def test_fred_h10_values_and_derived_crosses_are_withheld_with_source_metadata():
     data = {"CNY": series("CNY", [7.0, 7.2]), "EURUSD": series("EURUSD", [1.1, 1.2])}
-    result = wb.project(data, {"base": "EUR", "quote": "CNY"}, evaluated_at=NOW)
+    result = wb.project(data, {"provider": "h10", "base": "EUR", "quote": "CNY"}, evaluated_at=NOW)
     row = next(r for r in result["forex"]["rows"] if r["quote_currency"] == "CNY")
     assert row["value"] is None and result["forex"]["history"] == []
     assert row["unit"] == "CNY per EUR"
@@ -172,7 +172,7 @@ def test_ecb_reader_rejects_retained_rows_outside_capture_generation(
 
 @pytest.mark.parametrize("values", [[0, -1], [float("nan"), float("inf")]])
 def test_invalid_reference_values_remain_unavailable(values):
-    result = wb.project({"CNY": series("CNY", values)}, evaluated_at=NOW)
+    result = wb.project({"ECBFX_CNY": series("ECBFX_CNY", values)}, {"provider": "ecb", "base": "EUR", "quote": "CNY"}, evaluated_at=NOW)
     assert result["forex"]["history"] == []
     assert result["china"]["fx"]["value"] is None
     json.dumps(result, allow_nan=False)
@@ -189,16 +189,16 @@ def test_invalid_reference_values_remain_unavailable(values):
     ],
 )
 def test_cache_metadata_cannot_replace_reviewed_fx_source(attribute, value):
-    row = series("CNY", [7.0, 7.2])
+    row = series("ECBFX_CNY", [7.0, 7.2])
     setattr(row, attribute, value)
-    result = wb.project({"CNY": row}, evaluated_at=NOW)
-    assert result["china"]["fx"]["value"] is None
+    result = wb.project({"ECBFX_CNY": row}, {"provider": "ecb", "base": "EUR", "quote": "CNY"}, evaluated_at=NOW)
+    assert next(r for r in result["forex"]["rows"] if r["quote_currency"] == "CNY")["value"] is None
 
 
 def test_policy_revocation_hides_existing_cache(monkeypatch):
     monkeypatch.setattr(wb.methodology, "csv_restriction", lambda _: "rights revoked")
     assert (
-        wb.project({"CNY": series("CNY", [7.0, 7.2])}, evaluated_at=NOW)["forex"][
+        wb.project({"ECBFX_CNY": series("ECBFX_CNY", [7.0, 7.2])}, {"provider": "ecb", "base": "EUR", "quote": "CNY"}, evaluated_at=NOW)["forex"][
             "history"
         ]
         == []
@@ -330,3 +330,23 @@ def test_rest_mcp_and_openapi_share_one_contract(monkeypatch):
     assert rest["selection"] == direct["selection"] and rest["forex"] == direct["forex"]
     assert "market_workbench" in mcp.STRUCTURED_OUTPUT_TOOLS
     assert "/api/v2/market-workbench" in api._public_openapi_document()["paths"]
+
+
+
+def test_default_is_one_direct_ecb_provider_and_h10_is_explicit_metadata_only():
+    data = {
+        "ECBFX_CNY": series("ECBFX_CNY", [7.7, 8.64]),
+        "ECBFX_USD": series("ECBFX_USD", [1.1, 1.2]),
+        "CNY": series("CNY", [777.123, 777.123]),
+    }
+    result = wb.project(data, evaluated_at=NOW)
+    assert result["selection"]["provider"] == "ecb"
+    assert result["forex"]["history"][-1] == {"date": "2026-09-08", "value": pytest.approx(7.2)}
+    assert "777.123" not in json.dumps(result)
+    assert wb.INPUT_SCHEMA["properties"]["provider"]["default"] == "ecb"
+    assert all(source["transport"] == "ECB euro foreign exchange reference XML"
+               for row in result["forex"]["rows"] for source in row["sources"])
+    restricted = wb.project(data, {"provider": "h10"}, evaluated_at=NOW)
+    assert restricted["selection"]["provider"] == "h10"
+    assert restricted["forex"]["history"] == []
+    assert restricted["china"]["fx"]["status"] == "restricted"

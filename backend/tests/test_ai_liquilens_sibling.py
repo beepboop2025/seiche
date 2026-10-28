@@ -199,11 +199,11 @@ def test_ask_renders_schema_drift_as_unavailable_not_calm(
 
 
 def test_ask_desk_does_not_proxy_liquilens_into_public_tools() -> None:
-    public = {name for name, tool in mcp_server.TOOLS.items() if tool[4]}
+    public = set(mcp_server._visible_tools(True))
     assert "ask_desk" not in public
     assert not any("liquilens" in name for name in mcp_server.TOOLS)
-    assert len(public) == 16
+    assert len(public) == 8
     assert "research_network" in public
     assert "money_market_context" in public
     assert "world_markets_context" in public
-    assert "trade_safety_risk_context" in public
+    assert "trade_safety_risk_context" not in public

@@ -28,15 +28,20 @@ _SNAP = {
 }
 
 
-def _sofr_series() -> Series:
+def _public_series() -> Series:
     idx = pd.bdate_range("2026-07-13", periods=10)
     pts = pd.Series([3.6 + 0.01 * i for i in range(10)], index=idx)
-    return Series("SOFR", "fred", "SOFR", "Secured overnight financing rate",
-                  "%", "D", "2026-07-28T00:00:00+00:00", pts)
+    spec = ALL_SERIES["DVP_VOL"]
+    return Series(spec.mnemonic, spec.source, spec.remote_id, spec.label,
+                  spec.unit, spec.freq, "2026-07-28T00:00:00+00:00", pts)
 
 
 @pytest.fixture()
 def client(monkeypatch):
+    # Gauge serialization is an internal retained contract. Public retirement
+    # is independently covered; raw export source restrictions remain active.
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
     async def fake_snapshot(force=False):
         return _SNAP
 
@@ -48,14 +53,14 @@ def client(monkeypatch):
 
 def test_series_csv_provenance_header_and_rows(client, monkeypatch):
     monkeypatch.setattr(store, "load_series",
-                        lambda m: _sofr_series() if m == "SOFR" else None)
-    r = client.get("/api/series/SOFR.csv")
+                        lambda m: _public_series() if m == "DVP_VOL" else None)
+    r = client.get("/api/series/DVP_VOL.csv")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/csv")
-    assert 'filename="SOFR.csv"' in r.headers["content-disposition"]
+    assert 'filename="DVP_VOL.csv"' in r.headers["content-disposition"]
     lines = r.text.strip().splitlines()
     header = [ln for ln in lines if ln.startswith("#")]
-    assert any("source: fred" in ln and "unit: %" in ln and "native lag" in ln
+    assert any("source: ofr" in ln and f"unit: {ALL_SERIES["DVP_VOL"].unit}" in ln and "native lag" in ln
                for ln in header)
     assert any("retrieved_at: 2026-07-28T00:00:00+00:00" in ln for ln in header)
     body = [ln for ln in lines if not ln.startswith("#")]
@@ -71,7 +76,7 @@ def test_series_csv_unknown_mnemonic_404(client):
 
 def test_series_csv_not_yet_available_503(client, monkeypatch):
     monkeypatch.setattr(store, "load_series", lambda m: None)
-    assert client.get("/api/series/SOFR.csv").status_code == 503
+    assert client.get("/api/series/DVP_VOL.csv").status_code == 503
 
 
 def test_series_csv_refuses_licensed_series(client, monkeypatch):
@@ -80,7 +85,7 @@ def test_series_csv_refuses_licensed_series(client, monkeypatch):
                         lambda m: pytest.fail("must refuse before loading"))
     r = client.get("/api/series/SP500.csv")
     assert r.status_code == 403
-    assert "licensed" in r.json()["detail"]
+    assert "redistribution" in r.json()["detail"]
 
 
 def test_series_json_refuses_licensed_series(client, monkeypatch):
@@ -99,11 +104,11 @@ def test_series_json_refuses_licensed_series(client, monkeypatch):
 def test_series_json_free_series_stays_open(client, monkeypatch):
     # citability is the point: free public-data series keep full history
     monkeypatch.setattr(store, "load_series",
-                        lambda m: _sofr_series() if m == "SOFR" else None)
-    r = client.get("/api/series/SOFR")
+                        lambda m: _public_series() if m == "DVP_VOL" else None)
+    r = client.get("/api/series/DVP_VOL")
     assert r.status_code == 200
     body = r.json()
-    assert body["provenance"]["mnemonic"] == "SOFR"
+    assert body["provenance"]["mnemonic"] == "DVP_VOL"
     assert len(body["points"]) == 10
 
 
@@ -118,9 +123,9 @@ def test_series_index_catalogs_every_registry_series(client):
     assert idx["schema"] == "seiche.series-index.v1"
     assert idx["n_series"] == len(ALL_SERIES)
     rows = {row["mnemonic"]: row for row in idx["series"]}
-    sofr = rows["SOFR"]
-    assert sofr["csv"] == "/api/series/SOFR.csv"
-    assert sofr["source"] == "fred" and sofr["unit"] == "%"
+    sofr = rows["DVP_VOL"]
+    assert sofr["csv"] == "/api/series/DVP_VOL.csv"
+    assert sofr["source"] == "ofr" and sofr["unit"] == ALL_SERIES["DVP_VOL"].unit
     assert sofr["cadence"] == "daily" and sofr["native_lag"]
     spx = rows["SP500"]
     assert spx["csv"] is None and spx["csv_restricted"] is True
@@ -128,7 +133,7 @@ def test_series_index_catalogs_every_registry_series(client):
     # twin is restricted alongside the CSV, and source-restricted upstreams
     # (BIS, CFETS, exchanges) are marked too, not just the FRED-hosted four
     assert spx["json"] is None
-    assert rows["SOFR"]["json"] == "/api/series/SOFR"
+    assert rows["DVP_VOL"]["json"] == "/api/series/DVP_VOL"
     assert rows["DONIA"]["json"] == "/api/series/DONIA"
     assert rows["DONIA"]["csv"] == "/api/series/DONIA.csv"
     for licensed in ("BTC_USD", "CREDIT_GAP_US"):
@@ -140,11 +145,11 @@ def test_series_index_catalogs_every_registry_series(client):
 
 def test_csv_route_not_shadowed_by_generic_series_route(client, monkeypatch):
     # if the .csv route were registered after /api/series/{mnemonic}, this
-    # request would 404 as unknown series "SOFR.csv"
+    # request would 404 as unknown series "DVP_VOL.csv"
     monkeypatch.setattr(store, "load_series",
-                        lambda m: _sofr_series() if m == "SOFR" else None)
-    r = client.get("/api/series/SOFR.csv")
-    assert r.status_code == 200 and r.text.startswith("# Seiche series SOFR")
+                        lambda m: _public_series() if m == "DVP_VOL" else None)
+    r = client.get("/api/series/DVP_VOL.csv")
+    assert r.status_code == 200 and r.text.startswith("# Seiche series DVP_VOL")
 
 
 # ---- methodology page -------------------------------------------------------
@@ -215,11 +220,11 @@ def test_csv_export_is_allowlisted_by_upstream():
     """Bulk export fails closed: a licensed upstream added tomorrow is
     refused by default rather than silently redistributed."""
     from seiche import methodology as m
-    # US government upstreams export freely
-    assert m.csv_restriction("WRESBAL") is None
+    # FRED transport is withheld even for a government-origin series.
+    assert m.csv_restriction("WRESBAL") is not None
     assert m.csv_restriction("DVP_VOL") is None
     # FRED-hosted third-party index data stays refused, by name
-    assert "mirrored on FRED" in (m.csv_restriction("VIX") or "")
+    assert "redistribution" in (m.csv_restriction("VIX") or "")
     # licensed non-US upstreams are refused with their owner named
     for mnemonic, owner in (("CREDIT_GAP_US", "Bank for International Settlements"),
                             ("BTC_USD", "exchanges")):

@@ -43,6 +43,10 @@ class _NoActiveRepository:
 
 @pytest.fixture()
 def client(monkeypatch, fake_snap):
+    # Exercise the retained wire/cache implementation independently of the
+    # release boundary, covered through real HTTP in test_legacy_release_scope.
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
     async def fake_snapshot(force=False):
         return fake_snap
 
@@ -656,6 +660,8 @@ def test_optional_null_engine_blocks_are_safe_for_durable_consumers(
 
 
 def test_packaged_static_snapshot_satisfies_the_boot_contract(monkeypatch):
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
     assert assemble.STATIC_SNAPSHOT_PATH.parent == Path(
         assemble.__file__
     ).resolve().parent

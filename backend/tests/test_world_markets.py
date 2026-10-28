@@ -884,7 +884,7 @@ def test_mcp_tool_selectors_are_public_chartless_and_cache_only(monkeypatch) -> 
     ):
         assert china_schema["properties"][field] == {"const": False}
     assert "world_markets_context" in mcp.SERVER_INSTRUCTIONS
-    assert "Undertow" in mcp.SERVER_INSTRUCTIONS
+    assert "source_rights_status" in mcp.SERVER_INSTRUCTIONS
 
 
 def test_mcp_cold_cache_is_data_unavailable_not_a_tool_failure(monkeypatch) -> None:
@@ -915,7 +915,7 @@ def test_api_discovery_and_openapi_publish_world_markets() -> None:
     spec = api._public_openapi_document()
 
     assert discovery["rest"]["world_markets_v2"] == "/api/v2/world-markets"
-    assert discovery["mcp"]["authentication"] == "none for the sixteen public tools"
+    assert discovery["mcp"]["authentication"] == "none for the available public research tools"
     assert discovery["rest"]["market_workbench"] == "/api/v2/market-workbench"
     route = spec["paths"]["/api/v2/world-markets"]["get"]
     assert set(route["responses"]) == {"200", "503"}

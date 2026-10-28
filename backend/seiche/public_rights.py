@@ -164,3 +164,53 @@ def money_desk(value: object) -> dict:
     out["legal_notices"] = copy.deepcopy(node.get("legal_notices", []))
     out["caveats"] = [REASON, "Retained direct-source observations keep their original clocks; missing values are not treated as calm."]
     return out
+
+
+# Explicit release scope approved on 2026-10-28. These paths mix legacy FRED
+# inputs into measurements, forecasts, diagnostics or prose. Authentication,
+# payment, an old snapshot, or a successful request cannot grant reuse rights.
+LEGACY_TOOLS = frozenset({
+    "latest_article", "funding_stress_now", "funding_stress_forecast",
+    "historical_analogs", "replay_asof", "proof_backtest", "crypto_stress_record",
+    "institutional_flows", "oil_funding_context", "fx_materials_passage",
+    "positioning_book", "desk_brief", "ask_desk", "trade_safety_risk_context",
+})
+LEGACY_PATHS = frozenset({
+    "/api/overview", "/api/public", "/api/gauge", "/api/oil-funding",
+    "/api/estuary", "/api/wrecks", "/api/deep", "/api/book", "/api/brief",
+    "/api/ask", "/api/event-analysis", "/api/pit", "/api/alerts",
+    "/api/badge/record", "/api/trade-safety/risk-context",
+})
+LEGACY_PREFIXES = ("/api/engines/", "/api/asof/", "/api/dispatch/")
+
+
+def legacy_http_restricted(path: str) -> bool:
+    normalized = path.rstrip("/")
+    return normalized in LEGACY_PATHS or any(
+        normalized.startswith(prefix) for prefix in LEGACY_PREFIXES
+    )
+
+
+def legacy_unavailable(surface: str) -> dict:
+    return {
+        "schema": "seiche.source-rights-restriction.v1", "ok": False,
+        "status": "FAILED", "category": "source_rights_restricted",
+        "availability": "unavailable", "rights_status": "redistribution_review_required",
+        "publication_allowed": False, "surface": surface, "policy": POLICY,
+        "reason": "This legacy feature is unavailable while its source reuse rights and replacement acquisitions are qualified. " + REASON,
+        "rights_urls": [TERMS], "context_only": True,
+        "values_reconstructed": False, "execution_authority": "none",
+        "available_research": ["money_market_context", "market_workbench", "world_markets_context", "data_health"],
+    }
+
+
+def rights_status() -> dict:
+    return {
+        "schema": "seiche.source-rights-status.v1", "status": "partial_release",
+        "policy": POLICY, "context_only": True,
+        "available_tools": ["source_rights_status", "money_market_context", "market_workbench",
+                            "world_markets_context", "gift_city_context", "gold_inventory_carry",
+                            "research_network", "data_health"],
+        "unavailable_tools": sorted(LEGACY_TOOLS), "rights_urls": [TERMS],
+        "boundary": "Available tools still report field-specific restrictions, missing values and source clocks. Availability is not a blanket reuse license, freshness certification or investment advice. ECB FX is the default; legacy H.10/FRED values stay withheld. Gold carry is arithmetic over caller-supplied assumptions.",
+    }

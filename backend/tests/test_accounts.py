@@ -215,6 +215,10 @@ def test_file_auth_secret_rejects_writable_parent(accounts, tmp_path, monkeypatc
 
 
 def test_login_endpoint_and_gate(accounts, monkeypatch):
+    # Isolate retained account/file-loader behavior; production restrictions
+    # are independently exercised in test_legacy_release_scope.
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
     from seiche.api import app
 
     client = TestClient(app)
@@ -244,6 +248,10 @@ def test_login_endpoint_and_gate(accounts, monkeypatch):
 
 
 def test_dispatch_continuation_is_open(accounts, tmp_path, monkeypatch):
+    # Isolate retained account/file-loader behavior; production restrictions
+    # are independently exercised in test_legacy_release_scope.
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
     """Seiche is a free public good: the desk's read needs no token."""
     from seiche import api as api_mod
     from seiche.api import app
@@ -284,6 +292,10 @@ def test_dispatch_continuation_is_open(accounts, tmp_path, monkeypatch):
 
 
 def test_board_gated_public_free(accounts, monkeypatch, fake_snap):
+    # Isolate retained account/file-loader behavior; production restrictions
+    # are independently exercised in test_legacy_release_scope.
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
     from seiche import api as api_mod
     from seiche.api import app
 

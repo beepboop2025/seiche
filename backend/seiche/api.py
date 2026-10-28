@@ -575,6 +575,16 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
 
 
 @app.middleware("http")
+async def _legacy_source_rights_boundary(request: Request, call_next):
+    """Deny unqualified legacy reads before collection, caching or model execution."""
+    from seiche import public_rights
+    if public_rights.legacy_http_restricted(request.url.path):
+        return JSONResponse(public_rights.legacy_unavailable(request.url.path),
+                            status_code=403, headers={"Cache-Control": "no-store"})
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def _railway_cutover_edge_guard(request: Request, call_next):
     """Keep the Railway candidate private and read-only until authority moves."""
     if hetzner_runtime.enabled():
@@ -1208,13 +1218,14 @@ def api_index() -> dict[str, Any]:
     """
     return {
         "product": "Seiche",
-        "job": "system-level US dollar funding-stress early warning",
+        "job": "source-dated money-market and reference FX research",
+        "release_scope": mcp_server.public_rights.rights_status(),
         "developer_guide": "https://seiche.info/developers",
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the sixteen public tools",
-            "first_tool": "latest_article",
+            "authentication": "none for the available public research tools",
+            "first_tool": "source_rights_status",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
         "corpus": {
@@ -1781,6 +1792,14 @@ def _public_openapi_document() -> dict[str, Any]:
             },
         },
     }
+    from seiche import public_rights
+    for path, operations in paths.items():
+        if public_rights.legacy_http_restricted(path):
+            for operation in operations.values():
+                operation["deprecated"] = True
+                operation["summary"] = "Unavailable: source reuse rights under review"
+                operation["description"] = public_rights.legacy_unavailable(path)["reason"]
+                operation["responses"] = {"403": {"description": "Feature unavailable; no legacy values returned"}}
     return {
         "openapi": "3.1.0",
         "info": {
@@ -2501,7 +2520,7 @@ def research_network_v2(request: Request, response: Response, topic: str = "all"
 
 
 @app.get("/api/v2/market-workbench")
-def market_workbench_v2(request: Request, response: Response, provider: str = "h10", base: str = "USD", quote: str = "CNY", days: int = 365, china_series: str = ""):
+def market_workbench_v2(request: Request, response: Response, provider: str = "ecb", base: str = "USD", quote: str = "CNY", days: int = 365, china_series: str = ""):
     """Bounded reads only; collection remains owned by scheduled workers."""
     if not _market_series_limiter.allow(_client_ip(request)):
         raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})

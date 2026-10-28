@@ -73,7 +73,7 @@ const Account = lazy(() => import("./tabs/Account"));
 // Digit shortcuts index TABS positionally; hash routes remain name-based.
 // The public product entry owns the bare URL. Named desk routes retain their
 // existing tab and sub-route identities, including positional shortcuts.
-const DEFAULT_TAB: Tab = "TODAY";
+const DEFAULT_TAB: Tab = "MONEY MARKETS";
 
 const hashToTab = (): Tab => terminalTabFromHash(window.location.hash) ?? DEFAULT_TAB;
 
@@ -203,14 +203,8 @@ function AppInner() {
     for (const controller of requests.current) controller.abort();
     requests.current.clear(); apiPending.current = null;
     if (!snapshot.current) gotLive.current = false;
-    void load("/data/overview.json", false, epoch).then(() => {
-      if (epoch !== generation.current) return;
-      liveUpgradeTimer.current = window.setTimeout(() => {
-        void loadApi(epoch).catch(reason => failure(reason, epoch));
-      }, LIVE_UPGRADE_DELAY_MS);
-    }, () => {
-      if (epoch === generation.current) void loadApi(epoch).catch(reason => failure(reason, epoch));
-    });
+    // This release does not load the unqualified legacy static board.
+    void loadApi(epoch).catch(reason => failure(reason, epoch));
   };
   const retry = () => {
     if (liveUpgradeTimer.current !== null) clearTimeout(liveUpgradeTimer.current);
@@ -299,6 +293,10 @@ function AppInner() {
     return <main className="app research-app" id="main" data-tab={tab} data-share-disabled="true">
       <Suspense fallback={<TabSkeleton />}><GiftCity /></Suspense></main>;
   }
+  if (tab === "MONEY MARKETS" && (!snap || err)) {
+    return <main className="app research-app" id="main" data-tab={tab}>
+      <Suspense fallback={<TabSkeleton />}><MoneyMarkets snap={{}} /></Suspense></main>;
+  }
   if (tab === "WORKBENCH" && (!snap || err)) {
     return <main className="app research-app" id="main" data-tab={tab}>
       <Suspense fallback={<TabSkeleton />}><MarketWorkbench /></Suspense></main>;
@@ -311,7 +309,7 @@ function AppInner() {
     return (
       <main className="app research-app" id="main" data-tab={tab}>
         <div className="errbox">
-          <div className="errtitle">The board is temporarily unreachable</div>
+          <div className="errtitle">The legacy board is unavailable</div>
           <div className="errmsg">{err}</div>
           <div className="erractions">
             <button className="btn-accent" onClick={retry}>Retry</button>

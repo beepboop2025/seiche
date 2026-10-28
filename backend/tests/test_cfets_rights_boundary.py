@@ -97,7 +97,11 @@ def _reset_cache() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _preserve_process_caches():
+def _preserve_process_caches(monkeypatch):
+    # Exercise the separate CFETS quarantine inside retained legacy handlers.
+    # Public release denial is verified by test_legacy_release_scope.
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
     assemble_cache = dict(assemble._cache)
     overview_wire = dict(api._OVERVIEW_WIRE)
     yield

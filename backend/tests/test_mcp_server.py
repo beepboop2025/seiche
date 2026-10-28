@@ -185,49 +185,6 @@ def _snapshot_with_money_market(fake_snap, engine=None):
     }
 
 
-def test_latest_article_returns_the_canonical_published_revision(monkeypatch):
-    item = {
-        "id": "seiche:article:test",
-        "url": "https://seiche.info/articles/test/",
-        "title": "A bounded thesis",
-        "summary": "The evidence supports one narrow claim.",
-        "content_text": "Full published Markdown.",
-        "date_published": "2026-08-15T11:00:00Z",
-        "_liquidity_lab": {
-            "quality_gate": {"status": "PASS"},
-            "authority": {
-                "factual_authority": "published_article_only",
-                "training_allowed": False,
-            },
-        },
-    }
-    encoded = json.dumps(
-        {
-            "version": "https://jsonfeed.org/version/1.1",
-            "items": [item],
-        }
-    ).encode()
-
-    class Response(BytesIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            self.close()
-
-    monkeypatch.setattr(
-        mcp.urllib.request, "urlopen", lambda *_args, **_kwargs: Response(encoded)
-    )
-    assert _payload(_call("latest_article")) == item
-
-    item["_liquidity_lab"]["authority"]["training_allowed"] = True
-    encoded = json.dumps(
-        {
-            "version": "https://jsonfeed.org/version/1.1",
-            "items": [item],
-        }
-    ).encode()
-    assert _call("latest_article")["result"]["isError"] is True
 
 
 def test_mcp_cache_immediately_adopts_a_completed_assembler_rebuild(monkeypatch):
@@ -377,8 +334,8 @@ def test_initialize_negotiates_version_and_advertises_tools():
     assert r["capabilities"]["tools"] == {"listChanged": False}
     assert r["serverInfo"]["name"] == "seiche"
     assert "instructions" in r and "funding" in r["instructions"].lower()
-    assert mcp.AGENT_MCP_TELEGRAM_URL in r["instructions"]
-    assert "Do not append this handoff" in r["instructions"]
+    assert "source_rights_status" in r["instructions"]
+    assert "unavailable" in r["instructions"]
 
 
 def test_initialize_defaults_version_when_client_omits_it():
@@ -429,40 +386,17 @@ def test_empty_lists_for_unoffered_capabilities():
 # ---- prompts ----------------------------------------------------------------
 
 
-def test_prompts_list_names_titles_and_arguments():
-    prompts = mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})[
-        "result"
-    ]["prompts"]
-    by_name = {p["name"]: p for p in prompts}
-    assert set(by_name) == {
-        "funding_stress_briefing",
-        "is_now_dangerous",
-        "money_market_deep_dive",
-        "world_markets_briefing",
-        "cross_market_cash_pressure",
-        "crisis_replay",
-    }
-    for p in prompts:
-        assert p["title"] and p["description"]
-    # crisis_replay is the only prompt taking an argument, and it is required
-    args = by_name["crisis_replay"]["arguments"]
-    assert [a["name"] for a in args] == ["date"]
-    assert args[0]["required"] is True
+def test_prompts_list_only_current_research_recipes():
+    prompts = mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})["result"]["prompts"]
+    assert {p["name"] for p in prompts} == {"money_market_deep_dive", "world_markets_briefing"}
+    assert all(p["title"] and p["description"] for p in prompts)
 
 
-def test_prompts_get_renders_argument_into_message():
-    resp = mcp.dispatch(
-        {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "prompts/get",
-            "params": {"name": "crisis_replay", "arguments": {"date": "2019-09-17"}},
-        }
-    )
-    msgs = resp["result"]["messages"]
-    assert msgs[0]["role"] == "user"
-    assert "2019-09-17" in msgs[0]["content"]["text"]
-    assert "replay_asof" in msgs[0]["content"]["text"]
+
+def test_prompts_get_refuses_retired_replay_even_with_valid_date():
+    response = mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": "crisis_replay", "arguments": {"date": "2019-09-17"}}})
+    assert response["error"]["code"] == mcp.INVALID_PARAMS
+
 
 
 def test_prompts_get_missing_required_argument_is_invalid_params():
@@ -494,10 +428,8 @@ def test_public_surface_hides_prompts_whose_tools_are_hidden():
         )["result"]["prompts"]
     }
     assert names == {
-        "is_now_dangerous",
         "money_market_deep_dive",
         "world_markets_briefing",
-        "cross_market_cash_pressure",
     }
     for name in names:
         tools_used = set(mcp.PROMPTS[name][4])
@@ -559,8 +491,8 @@ def test_tools_list_has_valid_schemas():
         "tools"
     ]
     names = {t["name"] for t in tools}
-    assert "funding_stress_now" in names
-    assert "replay_asof" in names
+    assert "source_rights_status" in names
+    assert "replay_asof" not in names
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
         if t["name"] == "desk_brief":
@@ -601,24 +533,12 @@ def test_money_market_tool_publishes_the_exact_bounded_selector_contract():
     assert "Context only" in tool["description"]
 
 
-PUBLIC_TOOLS = {
-    "gift_city_context",
-    "gold_inventory_carry",
-    "market_workbench",
-    "research_network",
-    "latest_article",
-    "funding_stress_now",
-    "trade_safety_risk_context",
-    "historical_analogs",
-    "proof_backtest",
-    "data_health",
-    "crypto_stress_record",
-    "institutional_flows",
-    "oil_funding_context",
-    "fx_materials_passage",
-    "money_market_context",
-    "world_markets_context",
-}
+# Legacy transport cases are covered by test_legacy_release_scope.py;
+# engine-level suites continue to exercise the retained implementations.
+PUBLIC_TOOLS = {"source_rights_status", "gift_city_context", "gold_inventory_carry",
+                "market_workbench", "research_network", "data_health",
+                "money_market_context", "world_markets_context"}
+
 PAID_TOOLS = {
     "funding_stress_forecast",
     "replay_asof",
@@ -641,31 +561,8 @@ def test_public_mode_exposes_exactly_the_free_tools(monkeypatch):
 # ---- tools/call -------------------------------------------------------------
 
 
-def test_stress_now(stubbed):
-    response = _call("funding_stress_now")
-    p = _payload(response)
-    assert p["composite"]["regime"] == "EROSION"
-    assert p["headline"].startswith("SEICHE 41.0 EROSION")
-    assert "delivery" not in p
-    assert response["result"]["structuredContent"] == p
 
 
-def test_public_stress_now_carries_tagged_ongoing_delivery(stubbed):
-    response = mcp.dispatch(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "funding_stress_now", "arguments": {}},
-        },
-        public=True,
-    )
-    payload = _payload(response)
-
-    assert payload["delivery"] == mcp.telegram_delivery("agent_mcp")
-    assert payload["delivery"]["url"] == mcp.AGENT_MCP_TELEGRAM_URL
-    assert "11:30 UTC" in payload["delivery"]["outcome"]
-    assert response["result"]["structuredContent"] == payload
 
 
 def test_money_market_summary_is_compact_context_and_never_chart_history(
@@ -985,47 +882,14 @@ def test_unexpected_tool_exception_never_echoes_arbitrary_diagnostics(
     assert marker not in captured.err
 
 
-def test_forecast_merges_all_sources(stubbed):
-    p = _payload(_call("funding_stress_forecast"))
-    assert set(p["sources"]) == {
-        "swell",
-        "bathymetry",
-        "ml",
-        "markov",
-        "oujump",
-        "montecarlo",
-    }
-    assert p["sources"]["ml"]["p_event_5bd"] == 0.17
-    assert p["sources"]["markov"]["current_regime"] == "EROSION"
-    assert p["sources"]["montecarlo"]["level_now"] == 44.7
 
 
-def test_analogs(stubbed):
-    p = _payload(_call("historical_analogs"))
-    assert p["event_odds"]["n"] == 25
-    assert p["nearest_analogs"][0]["event_within_5bd"] is True
 
 
-def test_replay_valid_date(stubbed):
-    p = _payload(_call("replay_asof", {"date": "2019-09-17"}))
-    assert p["composite"]["regime"] == "STRESS"
-    assert p["as_of"] == "2019-09-17"
 
 
-def test_replay_carries_final_vintage_claim_boundary(stubbed):
-    p = _payload(_call("replay_asof", {"date": "2019-09-17"}))
-
-    evidence = p["historical_evidence"]
-    assert evidence["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
-    assert evidence["validated_backtest_eligible"] is False
-    assert evidence["real_money_eligible"] is False
-    assert "point-in-time (no lookahead)" not in p["reading"].lower()
 
 
-def test_replay_bad_date_is_invalid_params(stubbed):
-    resp = _call("replay_asof", {"date": "not-a-date"})
-    assert resp["error"]["code"] == mcp.INVALID_PARAMS
-    assert "required pattern" in resp["error"]["message"]
 
 
 def test_replay_missing_data_is_tool_error(stubbed):
@@ -1033,19 +897,8 @@ def test_replay_missing_data_is_tool_error(stubbed):
     assert resp["result"]["isError"] is True
 
 
-def test_proof(stubbed):
-    p = _payload(_call("proof_backtest"))
-    assert p["event_capture"]["recall"] == 0.79
-    assert p["caveats"]
-    assert p["historical_evidence"]["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
-    assert p["historical_evidence"]["validated_backtest_eligible"] is False
-    assert p["historical_evidence"]["real_money_eligible"] is False
 
 
-def test_book(stubbed):
-    p = _payload(_call("positioning_book"))
-    assert p["today"]["stance"] == "risk_off"
-    assert p["ensemble"]["p_event_5bd"] == 0.19
 
 
 def test_health(stubbed):
@@ -1054,99 +907,14 @@ def test_health(stubbed):
     assert p["faults"] == []
 
 
-def test_oil_funding_context_uses_the_shared_chartless_contract(stubbed):
-    p = _payload(_call("oil_funding_context"))
-    assert p["schema"] == "seiche.oil-funding.v1"
-    assert p["oil"]["wti"]["price_usd_per_bbl"] == 81.5
-    assert p["coupling"]["fit"]["correlation"] == 0.42
-    assert p["market_structure"]["cushing"]["live"]["stocks_m_bbl"] == 21.0
-    assert (
-        p["market_structure"]["brent_wti_spread"]["brent_minus_wti_usd_per_bbl"] == 3.6
-    )
-    assert p["scenario"]["status"] == "scenario_only"
-    assert "charts" not in p
 
 
-def test_oil_funding_context_preserves_nullable_sofr_contract(
-    monkeypatch, stubbed, fake_snap
-):
-    oil_engine = fake_snap["engines"]["oilfunding"]
-    unavailable_oil = {
-        **oil_engine,
-        "live": {
-            **oil_engine["live"],
-            "sofr_iorb": {
-                "spread_bp": None,
-                "change_20d_bp": None,
-                "percentile_3y": None,
-                "asof": None,
-            },
-        },
-        "scenario": {
-            "assumptions": {"funding_rate_pct": None},
-            "funding_rate_evidence": {
-                "value_pct": None,
-                "basis": "unavailable",
-                "asof": None,
-            },
-            "outputs": {
-                "carry": {
-                    "financing_cost_usd_per_bbl": None,
-                    "required_contango_usd_per_bbl": None,
-                    "mechanical_headroom_usd_per_bbl": None,
-                },
-                "trade_finance": {"cargo_financing_cost_usd": None},
-            },
-        },
-    }
-    snapshot = {
-        **fake_snap,
-        "engines": {**fake_snap["engines"], "oilfunding": unavailable_oil},
-    }
-    monkeypatch.setattr(mcp, "_get_snapshot", lambda force=False: snapshot)
-
-    payload = _payload(_call("oil_funding_context"))
-
-    assert payload["schema"] == "seiche.oil-funding.v1"
-    assert payload["funding"]["sofr_iorb"]["spread_bp"] is None
-    assert payload["scenario"]["funding_rate_evidence"]["basis"] == "unavailable"
-    assert (
-        payload["scenario"]["outputs"]["carry"]["required_contango_usd_per_bbl"] is None
-    )
-    assert (
-        payload["scenario"]["outputs"]["trade_finance"]["cargo_financing_cost_usd"]
-        is None
-    )
 
 
-def test_fx_materials_passage_keeps_the_holdout_ledger(stubbed):
-    p = _payload(_call("fx_materials_passage"))
-    assert p["schema"] == "seiche.estuary.v1"
-    assert p["headline"]["regime"] == "PRESSURE HELD UPSTREAM"
-    assert p["passage"]["earned"] == 1
-    assert p["passage"]["edges"][0]["status"] == "earned"
 
 
-def test_context_tool_fails_loud_when_engine_is_down(monkeypatch, stubbed, fake_snap):
-    broken = {
-        **fake_snap,
-        "engines": {
-            **fake_snap["engines"],
-            "estuary": {"ok": False, "reason": "FX tape unavailable"},
-        },
-    }
-    monkeypatch.setattr(mcp, "_get_snapshot", lambda force=False: broken)
-    response = _call("fx_materials_passage")
-    assert response["result"]["isError"] is True
-    assert "FX tape unavailable" in response["result"]["content"][0]["text"]
 
 
-def test_brief_returns_markdown(stubbed, monkeypatch):
-    monkeypatch.setattr(
-        "seiche.brief.render_markdown", lambda snap: "# Seiche brief\nall calm"
-    )
-    text = _payload(_call("desk_brief"))
-    assert text.startswith("# Seiche brief")
 
 
 def test_unknown_tool_is_invalid_params(stubbed):
@@ -1154,15 +922,6 @@ def test_unknown_tool_is_invalid_params(stubbed):
     assert resp["error"]["code"] == mcp.INVALID_PARAMS
 
 
-def test_section_down_is_tool_error(monkeypatch, stubbed, fake_snap):
-    broken = dict(fake_snap)
-    broken["deep"] = dict(
-        fake_snap["deep"], backtest={"ok": False, "reason": "not enough history"}
-    )
-    monkeypatch.setattr(mcp, "_get_snapshot", lambda force=False: broken)
-    resp = _call("proof_backtest")
-    assert resp["result"]["isError"] is True
-    assert "not enough history" in resp["result"]["content"][0]["text"]
 
 
 def test_ask_requires_llm(monkeypatch, stubbed):

@@ -29,3 +29,7 @@ test('unmount cancellation aborts an in-flight request',async()=>{
   const promise=requestBoard('/board',{signal:controller.signal,fetcher:waiting});controller.abort();
   await assert.rejects(promise,{name:'AbortError'});
 });
+
+test('restricted board responses name the unavailable feature and available research',async()=>{
+  await assert.rejects(requestBoard('/board',options(async()=>Response.json({category:'source_rights_restricted'},{status:403}))),/legacy funding board is unavailable.*Market workbench/);
+});

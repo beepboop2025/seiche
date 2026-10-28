@@ -157,7 +157,7 @@ export default function MarketWorkbench() {
     return part === "funding" || part === "china" ? part : "forex";
   });
   const [base, setBase] = useState("USD");
-  const [provider, setProvider] = useState<"h10" | "ecb">("h10");
+  const [provider, setProvider] = useState<"h10" | "ecb">("ecb");
   const [quote, setQuote] = useState("CNY");
   const [days, setDays] = useState(365);
   const [chinaSeries, setChinaSeries] = useState<string | null>(null);
@@ -167,7 +167,7 @@ export default function MarketWorkbench() {
   const [query, setQuery] = useState("");
   const [chinaQuery, setChinaQuery] = useState("");
   const [chinaChannel, setChinaChannel] = useState("");
-  const [currencyOptions, setCurrencyOptions] = useState<{ provider: "h10" | "ecb"; codes: string[] }>({ provider: "h10", codes: CURRENCIES });
+  const [currencyOptions, setCurrencyOptions] = useState<{ provider: "h10" | "ecb"; codes: string[] }>({ provider: "ecb", codes: ["USD", "CNY"] });
   const active = view !== "funding";
 
   useEffect(() => {
@@ -212,7 +212,7 @@ export default function MarketWorkbench() {
     <nav className="wb-view-nav" aria-label="Workbench views">{([ ["funding", "Funding", "Rates, volumes and distributions"], ["forex", "Forex", "Reference rates and currency crosses"], ["china", "China", "Economic structure and funding channels"] ] as const).map(([id, title, description]) => <button type="button" key={id} aria-pressed={view === id} className={view === id ? "is-active" : ""} onClick={() => changeView(id)}><strong>{title}</strong><span>{description}</span></button>)}</nav>
     {view === "funding" ? <MarketSeriesExplorer /> : <>
       <div className="wb-toolbar">
-        {view === "forex" ? <><label>Reference source<select value={provider} onChange={(event) => { setProvider(event.target.value as "h10" | "ecb"); setBase("USD"); setQuote("CNY"); }}><option value="h10">Federal Reserve H.10</option><option value="ecb">ECB references</option></select></label><label>Base currency<select value={base} onChange={(event) => { const next = event.target.value; setBase(next); if (next === quote) setQuote(base); }}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label><span className="wb-pair-slash" aria-hidden="true">/</span><label>Quote currency<select value={quote} onChange={(event) => setQuote(event.target.value)}>{currencies.filter((code) => code !== base).map((code) => <option key={code}>{code}</option>)}</select></label><label>History window<select value={days} onChange={(event) => setDays(Number(event.target.value))}>{WINDOWS.map((window) => <option value={window.days} key={window.days}>{window.label}</option>)}</select></label></>
+        {view === "forex" ? <><label>Reference source<select value={provider} onChange={(event) => { setProvider(event.target.value as "h10" | "ecb"); setBase("USD"); setQuote("CNY"); }}><option value="ecb">ECB references</option><option value="h10">Federal Reserve H.10 (metadata only)</option></select></label><label>Base currency<select value={base} onChange={(event) => { const next = event.target.value; setBase(next); if (next === quote) setQuote(base); }}>{currencies.map((code) => <option key={code}>{code}</option>)}</select></label><span className="wb-pair-slash" aria-hidden="true">/</span><label>Quote currency<select value={quote} onChange={(event) => setQuote(event.target.value)}>{currencies.filter((code) => code !== base).map((code) => <option key={code}>{code}</option>)}</select></label><label>History window<select value={days} onChange={(event) => setDays(Number(event.target.value))}>{WINDOWS.map((window) => <option value={window.days} key={window.days}>{window.label}</option>)}</select></label></>
           : <label className="wb-series-select">Economic indicator<select value={chinaSeries ?? data?.china.selected_series ?? ""} onChange={(event) => setChinaSeries(event.target.value || null)}><option value="">Featured indicator</option>{seriesOptions.map((series) => <option key={series.id} value={series.id}>{series.label}</option>)}</select></label>}
         <button type="button" className="wb-refresh" disabled={resource.status === "loading"} onClick={() => setReload((value) => value + 1)}>Refresh observations</button>
       </div>

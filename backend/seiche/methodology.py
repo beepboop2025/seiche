@@ -83,7 +83,7 @@ def _source_cadence(source: str, remote_id: str, freq: str) -> tuple[str, str]:
 # A deny-list would silently start exporting the next licensed source somebody
 # adds; an allow-list fails closed instead, which is the right direction for a
 # question nobody wants to answer to a lawyer after the fact.
-CSV_ALLOWED_SOURCES = {"fred", "ofr", "fiscaldata"}
+CSV_ALLOWED_SOURCES = {"ofr", "fiscaldata"}
 
 # Licensed series that ride in on an otherwise-exportable upstream: FRED hosts
 # these but does not own them.
@@ -123,6 +123,9 @@ def csv_restriction(mnemonic: str) -> str | None:
     spec = ALL_SERIES.get(mnemonic)
     label = spec.label if spec else mnemonic
     source = getattr(spec, "source", None)
+    if source == "fred":
+        from seiche.public_rights import REASON
+        return REASON
     if mnemonic in CSV_RESTRICTED:
         origin = "third-party licensed data mirrored on FRED" if source == "fred" else "restricted upstream data"
         return (f"{label} is {origin}; "
@@ -218,8 +221,8 @@ def series_index() -> dict:
         "cite_as": f'Seiche funding-stress terminal, {SITE} (methodology '
                    f'{METHODOLOGY_VERSION})',
         "note": "CSV headers carry source, unit, native lag and retrieved-at; "
-                "restricted rows are third-party licensed series we display "
-                "but do not redistribute in bulk.",
+                "restricted rows retain metadata while their values and dependent "
+                "readings remain unavailable pending source-specific qualification.",
         "n_series": len(rows),
         "series": rows,
     }

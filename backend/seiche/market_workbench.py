@@ -63,7 +63,7 @@ INPUT_SCHEMA = {
     "additionalProperties": False,
     "properties": {
         "provider": {
-            "type": "string", "enum": ["h10", "ecb"], "default": "h10",
+            "type": "string", "enum": ["ecb", "h10"], "default": "ecb",
             "description": "Official FX reference source. Both currencies must be supported by this provider; the response lists its currencies.",
         },
         "base": {
@@ -92,7 +92,7 @@ def selection(args: object) -> dict[str, Any]:
             "expected provider, base, quote, days and optional china_series"
         )
     out = {
-        "provider": "h10",
+        "provider": "ecb",
         "base": "USD",
         "quote": "CNY",
         "days": 365,
@@ -146,7 +146,7 @@ def _normalized(
         or series.remote_id != spec.remote_id
         or series.unit != spec.unit
         or series.freq != spec.freq
-        or methodology.csv_restriction(mnemonic)
+        or (provider != "h10" and methodology.csv_restriction(mnemonic))
         or fetched_at is None
         or fetched_at > now
     ):

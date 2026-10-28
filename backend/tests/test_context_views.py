@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import json
 from copy import deepcopy
 
@@ -89,6 +91,13 @@ def _missing_sofr_snapshot() -> dict:
         },
     }
     return snapshot
+
+
+@pytest.fixture(autouse=True)
+def legacy_handler_contract(monkeypatch):
+    # Context-view serialization is independent of public release availability.
+    from seiche import public_rights
+    monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
 
 
 def test_context_views_are_compact_versioned_and_context_only():
