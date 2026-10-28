@@ -33,6 +33,21 @@ from seiche.repository import (
 )
 
 
+def _allow_synthetic_us_policy_for_contract_test(monkeypatch):
+    """Isolate pagination/freshness fixtures from real FRED publication rights."""
+    from seiche.markets.registry import MarketRegistry
+    registry = api.default_registry()
+    us = registry.get("US-USD")
+    qualified = replace(us, source_adapters=tuple(
+        replace(adapter, redistribution_status=RedistributionStatus.ALLOWED)
+        if adapter.adapter_id in {"fred_daily", "fred_weekly"} else adapter
+        for adapter in us.source_adapters
+    ))
+    fixture = MarketRegistry(tuple(qualified if pack.market_id == "US-USD" else pack
+                                   for pack in registry.list()))
+    monkeypatch.setattr(api, "default_registry", lambda: fixture)
+
+
 def _request(ip: str = "127.0.0.1") -> Request:
     return Request(
         {
@@ -403,6 +418,7 @@ def test_public_openapi_advertises_all_v2_contracts() -> None:
 def test_global_money_market_atlas_reads_canonical_rows_without_collecting(
     tmp_path, monkeypatch
 ) -> None:
+    _allow_synthetic_us_policy_for_contract_test(monkeypatch)
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "money-market-atlas.sqlite")
 
     async def forbidden_collection(*args, **kwargs):
@@ -661,6 +677,7 @@ def test_market_series_applies_adapter_policy_when_row_policy_is_stale(
 def test_market_series_uses_sql_page_cursor_and_fails_closed_on_evidence(
     tmp_path, monkeypatch
 ) -> None:
+    _allow_synthetic_us_policy_for_contract_test(monkeypatch)
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "paged-v2.sqlite")
     start = datetime(2026, 8, 1, tzinfo=UTC)
     store.save_observations(
@@ -825,6 +842,7 @@ def test_market_series_quality_reason_is_explicit(tmp_path, monkeypatch) -> None
 def test_market_series_readiness_is_page_independent_and_ages_at_read_time(
     tmp_path, monkeypatch
 ) -> None:
+    _allow_synthetic_us_policy_for_contract_test(monkeypatch)
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "current-series-state.sqlite")
     cutoff = datetime(2026, 8, 21, 12, tzinfo=UTC)
 
@@ -1149,6 +1167,7 @@ def test_atlas_batch_is_exactly_equal_to_legacy_projection_with_rights_gates(
     postgres_reader,
     monkeypatch,
 ):
+    _allow_synthetic_us_policy_for_contract_test(monkeypatch)
     repository, database, opened = postgres_reader
     base = _observation()
     protected = _observation(
@@ -1224,6 +1243,7 @@ def test_atlas_batch_is_exactly_equal_to_legacy_projection_with_rights_gates(
 def test_batch_failure_preserves_individual_faults_cutoff_and_sanitization(
     monkeypatch, caplog
 ):
+    _allow_synthetic_us_policy_for_contract_test(monkeypatch)
     secret = "postgresql://private.invalid/credential-do-not-log"
     calls = []
     bounds = []
@@ -1265,6 +1285,7 @@ def test_batch_failure_preserves_individual_faults_cutoff_and_sanitization(
 def test_bad_row_in_one_market_does_not_erase_other_batch_markets(
     postgres_reader, monkeypatch
 ):
+    _allow_synthetic_us_policy_for_contract_test(monkeypatch)
     repository, database, opened = postgres_reader
     _seed(
         database,
@@ -1289,3 +1310,21 @@ def test_bad_row_in_one_market_does_not_erase_other_batch_markets(
     assert [fault["market_id"] for fault in result["read_faults"]] == ["EA-EUR"]
     us = next(market for market in result["markets"] if market["market_id"] == "US-USD")
     assert us["benchmark"]["value"] == 5.31
+
+
+def test_current_us_policy_redacts_previously_allowed_rows_at_api_read_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "current-rights.sqlite")
+    store.save_observations([_rate_observation(
+        event_time=datetime.now(UTC) - timedelta(days=1),
+        source="fred_daily", value="777.123",
+        redistribution=RedistributionStatus.ALLOWED,
+    )])
+    series = api.market_series_v2("US-USD", _request(), Response(), n=10)
+    assert series["observations"]
+    assert series["observations"][0]["value"] is None
+    assert series["observations"][0]["value_status"] == "REDACTED_BY_LICENCE"
+    atlas = api.global_money_markets_v2(Response())
+    us = next(item for item in atlas["markets"] if item["market_id"] == "US-USD")
+    assert us["benchmark"] is None
+    assert "777.123" not in json.dumps(series)
+    assert "777.123" not in json.dumps(atlas)
