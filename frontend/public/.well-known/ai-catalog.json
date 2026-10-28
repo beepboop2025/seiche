@@ -38,14 +38,14 @@
             "environmentVariables": [
               {
                 "name": "SEICHE_MCP_PUBLIC",
-                "description": "Set to 1 to expose the sixteen free public tools shipped by seiche 0.16.9 over stdio: latest_article, funding_stress_now, trade_safety_risk_context, historical_analogs, proof_backtest, data_health, crypto_stress_record, institutional_flows, oil_funding_context, fx_materials_passage, money_market_context, world_markets_context, research_network, market_workbench, gift_city_context, gold_inventory_carry.",
+                "description": "Set to 1 to expose the eight public research tools: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts and backtests are unavailable for all callers; do not reconstruct restricted observations.",
                 "isRequired": false
               }
             ]
           }
         ]
       },
-      "description": "Sixteen anonymous, read-only tools for connected Palimpsest research, editorial, US dollar funding, Trade Safety risk context, analogs, data health, positioning, crypto and cross-market context, granular money markets, bounded world markets, GIFT City funding/FX/gold context, caller-assumption gold inventory carry, and a historical diagnostic with misses.",
+      "description": "Eight source-dated research tools. Start with source_rights_status. Legacy forecasts, backtests and dependent tools are unavailable pending source-rights qualification.",
       "tags": [
         "US dollar funding",
         "repo",
@@ -64,36 +64,24 @@
         "gold inventory carry"
       ],
       "capabilities": [
-        "latest_article",
-        "funding_stress_now",
-        "trade_safety_risk_context",
-        "historical_analogs",
-        "proof_backtest",
-        "data_health",
-        "crypto_stress_record",
-        "institutional_flows",
-        "oil_funding_context",
-        "fx_materials_passage",
+        "source_rights_status",
         "money_market_context",
-        "world_markets_context",
-        "research_network",
         "market_workbench",
+        "world_markets_context",
         "gift_city_context",
-        "gold_inventory_carry"
+        "gold_inventory_carry",
+        "research_network",
+        "data_health"
       ],
       "prompts": [
-        "is_now_dangerous",
         "money_market_deep_dive",
-        "world_markets_briefing",
-        "cross_market_cash_pressure"
+        "world_markets_briefing"
       ],
       "resourceTemplates": [],
       "representativeQueries": [
-        "What is the current US dollar funding stress regime?",
-        "What historical episodes most resemble today?",
-        "How are hedge funds positioned in the Treasury basis trade?",
-        "Are oil, FX or material cash demands\u2014including current Cushing stocks and Brent\u2212WTI basis\u2014reaching dollar funding markets, and which structure figures are dated references?",
-        "Give me a bounded money, FX and capital-markets briefing with source clocks, evidence statuses and canonical citations."
+        "Which Seiche research tools and source rights are available?",
+        "Show a dated money-market view with source clocks and unavailable evidence.",
+        "Compare ECB reference FX without executable-price claims."
       ],
       "version": "0.16.9",
       "updatedAt": "2026-10-13T00:00:00Z",
@@ -102,8 +90,8 @@
         "access": "public-read-only",
         "schemaProfile": "MCP Registry 2025-12-11 server metadata",
         "experimentalServerCardConformance": false,
-        "publicToolCount": 16,
-        "publicPromptCount": 4,
+        "publicToolCount": 8,
+        "publicPromptCount": 2,
         "publicResourceCount": 0,
         "mcpDiscovery": "https://api.seiche.info/.well-known/mcp.json",
         "worldMarketsApi": "https://api.seiche.info/api/v2/world-markets",

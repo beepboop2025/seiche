@@ -239,13 +239,11 @@ def test_local_catalog_release_identity_is_internally_exact():
     version, entry = gate.verify_local_identity(ROOT)
 
     assert version == RELEASE_VERSION
-    assert len(entry["capabilities"]) == 16
-    assert "trade_safety_risk_context" in entry["capabilities"]
+    assert len(entry["capabilities"]) == 8
+    assert "source_rights_status" in entry["capabilities"]
     assert entry["prompts"] == [
-        "is_now_dangerous",
         "money_market_deep_dive",
         "world_markets_briefing",
-        "cross_market_cash_pressure",
     ]
     assert entry["resourceTemplates"] == []
 

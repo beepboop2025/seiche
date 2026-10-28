@@ -72,12 +72,10 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
-    assert len(mcp["capabilities"]) == 16
+    assert len(mcp["capabilities"]) == 8
     assert mcp["prompts"] == [
-        "is_now_dangerous",
         "money_market_deep_dive",
         "world_markets_briefing",
-        "cross_market_cash_pressure",
     ]
     assert mcp["resourceTemplates"] == []
     assert mcp["metadata"]["schemaProfile"] == (
@@ -90,10 +88,10 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert mcp["metadata"]["mcpDiscovery"] == (
         "https://api.seiche.info/.well-known/mcp.json"
     )
-    assert "latest_article" in mcp["capabilities"]
+    assert "source_rights_status" in mcp["capabilities"]
     assert "money_market_context" in mcp["capabilities"]
     assert "world_markets_context" in mcp["capabilities"]
-    assert "trade_safety_risk_context" in mcp["capabilities"]
+    assert "trade_safety_risk_context" not in mcp["capabilities"]
     corpus_mcp = next(
         entry
         for entry in catalog["entries"]
