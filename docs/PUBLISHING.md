@@ -9,6 +9,12 @@ normal full-suite and recovery gates, immutable PyPI receipt and registry receip
 Do not claim a published 0.16.9 package contains the new tool contract. No corpus
 bytes or historical directory receipts are changed by this release.
 
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r44`, for this successor. Preserve
+r43 on the accepted 0.16.9 source. The r44 change leaves all corpus observations,
+counts, hashes and rights unchanged. Sign r44 only after the exact new runtime
+and corpus evidence pass their ordinary checks; declaration is not publication.
+
 
 ## 0.16.9 collector and System-panel successor
 
