@@ -294,3 +294,54 @@ def test_fast_failed_worker_keeps_error_before_cleanup(tmp_path, monkeypatch):
     assert "cannot start worker" in str(result.value)
     assert "payload-must-not-be-a-diagnostic" not in str(result.value)
     assert not scratch.exists()
+
+
+def test_native_numerical_workers_fit_cold_address_space_limit():
+    """Exercise native allocations near the allowed task bound, not a mock."""
+    if sys.platform != "linux" or os.geteuid() != 0:
+        pytest.skip("requires native Linux root-to-dedicated-UID allocation proof")
+    root = Path(tempfile.mkdtemp(prefix="cold-numerics-test-", dir="/tmp"))
+    os.chown(root, cold.CHILD_UID, cold.CHILD_GID)
+    try:
+        environment = cold.isolated_environment(root)
+        backend = str(Path(cold.__file__).resolve().parent.parent)
+        program = r"""
+import json,pathlib,resource,sys
+sys.path.insert(0,sys.argv[1])
+from seiche.stateful_cold_snapshot import confine_child
+assert pathlib.Path(sys.modules["seiche.stateful_cold_snapshot"].__file__).resolve().parent.parent == pathlib.Path(sys.argv[1]).resolve()
+confine_child(pathlib.Path(sys.argv[2]))
+from seiche import assemble
+import numpy as np
+from scipy.linalg.blas import dgemm
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+barrier=Barrier(56)
+def work(_index):
+    matrix=np.ones((128,128))
+    barrier.wait(timeout=30)
+    numpy_result=matrix@matrix
+    scipy_result=dgemm(1.0,matrix,matrix)
+    barrier.wait(timeout=30)
+    return float(numpy_result[0,0]+scipy_result[0,0])
+with ThreadPoolExecutor(max_workers=56) as pool:
+    results=list(pool.map(work,range(56)))
+print(json.dumps({"results":results,
+    "address_limit":list(resource.getrlimit(resource.RLIMIT_AS)),
+    "task_limit":list(resource.getrlimit(resource.RLIMIT_NPROC))}))
+"""
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", program, backend, str(root)],
+            cwd=root, env=environment, user=cold.CHILD_UID, group=cold.CHILD_GID,
+            extra_groups=[], start_new_session=True,
+            capture_output=True, text=True, timeout=90,
+        )
+        assert result.returncode == 0, result.stderr
+        observed = json.loads(result.stdout)
+        assert observed == {
+            "results": [256.0] * 56,
+            "address_limit": [4 * 1024**3, 4 * 1024**3],
+            "task_limit": [64, 64],
+        }
+    finally:
+        shutil.rmtree(root)

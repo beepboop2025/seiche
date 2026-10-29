@@ -224,7 +224,10 @@ def isolated_environment(scratch):
             "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
             "TZ": "UTC", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONHASHSEED": "0",
             "PYTHONUNBUFFERED": "1", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
-            "MKL_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1"}
+            "MKL_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1",
+            # glibc otherwise reserves an arena per concurrent worker. Those
+            # mostly unused mappings can exhaust RLIMIT_AS before BLAS runs.
+            "MALLOC_ARENA_MAX": "2"}
 
 
 def confine_child(scratch):
