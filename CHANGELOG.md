@@ -6,6 +6,7 @@
 - Withhold legacy forecasts, backtests and unverified derived values for all callers.
 - Use direct NY Fed / Federal Reserve IORB sources and ECB reference FX where permitted.
 - Preserve source lineage, clocks, restrictions and authority validation.
+- Bound cold-recovery allocator arenas so concurrent numerical work retains address-space headroom inside the existing sandbox limits.
 
 
 <!-- markdownlint-disable MD024 -- Changelog sections intentionally repeat. -->
