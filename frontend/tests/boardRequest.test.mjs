@@ -4,9 +4,9 @@ import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
 const source=await readFile(new URL('../src/boardRequest.ts',import.meta.url),'utf8');
-const context={exports:{},fetch,AbortController,setTimeout,clearTimeout,TextDecoder,Uint8Array};
+const context={exports:{},fetch,AbortController,DOMException,setTimeout,clearTimeout,TextDecoder,Uint8Array};
 vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context);
-const {requestBoard,validateBoard}=context.exports;
+const {requestBoard,validateBoard,refreshBoardSources}=context.exports;
 const board={generated_at:'2026-09-24T20:00:00Z',engines:{composite:{value:44}}};
 const options=fetcher=>({signal:new AbortController().signal,fetcher});
 test('returns a source-dated snapshot, including explicit unavailable engines',async()=>{
@@ -30,6 +30,86 @@ test('unmount cancellation aborts an in-flight request',async()=>{
   await assert.rejects(promise,{name:'AbortError'});
 });
 
-test('restricted board responses name the unavailable feature and available research',async()=>{
-  await assert.rejects(requestBoard('/board',options(async()=>Response.json({category:'source_rights_restricted'},{status:403}))),/legacy funding board is unavailable.*Market workbench/);
+test('restricted live responses preserve their status for published refreshes',async()=>{
+  await assert.rejects(requestBoard('/board',options(async()=>Response.json({category:'source_rights_restricted'},{status:403}))),error => error.status === 403 && /Live board refresh is restricted/.test(error.message));
+});
+
+const refreshOptions = (fetcher, updates, extra = {}) => ({
+  signal: new AbortController().signal, fetcher,
+  onSnapshot: update => updates.push(update), ...extra,
+});
+test('a restricted live API cannot hide any published engine', async () => {
+  const published = {...board, engines: {composite:{value:44}, tails:{ok:true}, kink:{ok:false,reason:'source missing'}}};
+  const updates = [], calls = [];
+  const result = await refreshBoardSources('/published','/live',refreshOptions(async url => {
+    calls.push(url);
+    return url === '/published' ? Response.json(published) : Response.json({category:'source_rights_restricted'},{status:403});
+  }, updates));
+  assert.deepEqual(calls, ['/published','/live']);
+  assert.equal(updates.length,1);
+  assert.equal(updates[0].live,false);
+  assert.deepEqual(JSON.parse(JSON.stringify(updates[0].data)),published);
+  assert.equal(result.apiRestricted,true);
+});
+test('a published board renders before a slow live upgrade and keeps its clock', async () => {
+  let completeLive;
+  const api = new Promise(resolve => {completeLive = resolve;});
+  const updates = [];
+  const task = refreshBoardSources('/published','/live',refreshOptions(async url =>
+    url === '/published' ? Response.json(board) : api, updates));
+  await new Promise(resolve => setTimeout(resolve,0));
+  assert.equal(updates.length,1);
+  assert.equal(updates[0].data.generated_at,board.generated_at);
+  completeLive(Response.json({...board,generated_at:'2026-09-24T21:00:00Z'}));
+  const result = await task;
+  assert.equal(updates.length,2);
+  assert.equal(updates[1].live,true);
+  assert.equal(result.apiChecked,true);
+});
+test('an older API generation does not replace a newer published generation', async () => {
+  const updates=[];
+  await refreshBoardSources('/published','/live',refreshOptions(async url =>
+    Response.json({...board,generated_at:url === '/published' ? '2026-09-24T21:00:00Z':'2026-09-24T20:00:00Z'}),updates));
+  assert.equal(updates.length,1);
+  assert.equal(updates[0].live,false);
+});
+test('later refreshes read publication updates without retrying a known restricted API', async () => {
+  const calls=[],updates=[];
+  const result=await refreshBoardSources('/published','/live',refreshOptions(async url=>{
+    calls.push(url);return Response.json(board);
+  },updates,{apiEnabled:false}));
+  assert.deepEqual(calls,['/published']);
+  assert.equal(updates.length,1);
+  assert.equal(result.apiRestricted,true);
+  assert.equal(result.refreshError,null);
+});
+test('live evidence still loads when the published file is absent',async()=>{
+  const updates=[];
+  const result=await refreshBoardSources('/published','/live',refreshOptions(async url=>
+    url==='/published'?new Response('not found',{status:404}):Response.json(board),updates));
+  assert.equal(updates.length,1);
+  assert.equal(updates[0].live,true);
+  assert.equal(result.apiChecked,true);
+});
+test('temporary API failure preserves published data and remains retryable',async()=>{
+  const updates=[];
+  const result=await refreshBoardSources('/published','/live',refreshOptions(async url=>
+    url==='/published'?Response.json(board):new Response('unavailable',{status:503}),updates));
+  assert.equal(updates.length,1);
+  assert.equal(result.apiRestricted,false);
+  assert.match(result.refreshError,/temporarily unavailable/);
+});
+test('both failed sources produce an explicit error rather than an empty board',async()=>{
+  const updates=[];
+  await assert.rejects(refreshBoardSources('/published','/live',refreshOptions(async ()=>
+    new Response('unavailable',{status:503}),updates)),/temporarily unavailable/);
+  assert.equal(updates.length,0);
+});
+test('cancellation prevents the second source and any late visible updates',async()=>{
+  const controller=new AbortController(),updates=[],calls=[];
+  await assert.rejects(refreshBoardSources('/published','/live',refreshOptions(async url=>{
+    calls.push(url);controller.abort();return Response.json(board);
+  },updates,{signal:controller.signal})),{name:'AbortError'});
+  assert.deepEqual(calls,['/published']);
+  assert.equal(updates.length,0);
 });
