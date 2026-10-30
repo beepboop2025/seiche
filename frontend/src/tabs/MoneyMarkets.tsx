@@ -1,3 +1,4 @@
+import UsdFundingSummary from "../UsdFundingSummary";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "../apiBase";
 import { authHeaders } from "../auth";
@@ -12,7 +13,7 @@ import { moneyMarketDisplay } from "../snapshotStatus";
 import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
-type DeskView = "briefing" | "world" | "lab" | "china" | "india" | "countries" | "notes";
+type DeskView = "usd" | "briefing" | "world" | "lab" | "china" | "india" | "countries" | "notes";
 
 interface MoneyMarketMetric {
   id: string;
@@ -1434,7 +1435,7 @@ export default function MoneyMarkets({ snap }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
-  const [view, setView] = useState<DeskView>(() => watch.ids.length ? "world" : "briefing");
+  const [view, setView] = useState<DeskView>(() => watch.ids.length ? "world" : "usd");
   const [region, setRegion] = useState("ALL");
   const [marketId, setMarketId] = useState("");
   const [expansionQuery, setExpansionQuery] = useState("");
@@ -1577,6 +1578,7 @@ export default function MoneyMarkets({ snap }: Props) {
     setView("lab");
   };
   const viewItems: Array<{ id: DeskView; label: string; note: string }> = [
+    { id: "usd", label: "USD funding", note: "SOFR · reserves · cash balances" },
     { id: "briefing", label: "Briefing", note: "what matters now" },
     { id: "world", label: "World map", note: "compare clearing systems" },
     { id: "india", label: "India funding", note: "RBI liquidity · sovereign curve" },
@@ -1687,6 +1689,11 @@ export default function MoneyMarkets({ snap }: Props) {
           <button type="button" disabled={loading} onClick={() => setRetryKey((value) => value + 1)}>{loading ? "Refreshing" : "Retry global atlas"}</button>
         </div>
       )}
+
+      {view === "usd" && <>
+        <UsdFundingSummary snap={snap} atlas={liveAtlas} />
+        {usdEngine && <UsdDesk engine={usdEngine} />}
+      </>}
 
       {!atlas && (
         <section className="mm-empty" aria-live="polite">

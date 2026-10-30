@@ -1,6 +1,8 @@
 import { createElement, useEffect, useMemo, useState } from "react";
 import Chart from "../Chart";
 import LiveMarket from "../LiveMarket";
+import UsdFundingSummary from "../UsdFundingSummary";
+import { clarifyFundingEditorial } from "../usdFunding";
 import { API_BASE } from "../apiBase";
 import { Any, fmt } from "../lib";
 import { P } from "../palette";
@@ -25,6 +27,7 @@ function fallbackEditorial(snap: Any): Any {
     engines.ledger?.ok && { label: "Balance-sheet identity", claim: engines.ledger.letter_line, asof: engines.ledger.asof, source: "Federal Reserve H.4.1" },
     engines.officialbid?.ok && { label: "Official-sector footprint", claim: engines.officialbid.letter_line, asof: engines.officialbid.asof, source: "Federal Reserve custody and foreign RRP" },
     engines.kink?.ok && {
+      engine: "kink",
       label: "Reserve-demand curve",
       claim: `The fitted kink is $${fmt(engines.kink.kink_reserves_b, 0)}B; observed SOFR minus IORB is ${engines.kink.observed_spread_now_bp > 0 ? "+" : ""}${fmt(engines.kink.observed_spread_now_bp)}bp.`,
       asof: engines.kink.asof,
@@ -38,7 +41,7 @@ function fallbackEditorial(snap: Any): Any {
     confidence_note: "The structural read is useful, but current-market confirmation is not yet broad.",
     dominant_driver: { engine: top.component, label: display(top.component), ...top },
     evidence,
-    countercase: spread < 0 ? [{ claim: `SOFR remains ${fmt(Math.abs(spread))}bp below IORB, a present-tense abundance signal.`, asof: engines.kink?.asof }] : [],
+    countercase: spread < 0 ? [{ claim: `SOFR remains ${fmt(Math.abs(spread))}bp below IORB, a present-tense abundance signal.`, asof: engines.kink?.asof, source: "NY Fed secured rates and Federal Reserve IORB" }] : [],
     watch: (snap.calendar?.crunch_windows ?? []).slice(0, 4).map((row: Any) => ({ date: row.date, label: row.reason, ...row })),
   };
 }
@@ -61,7 +64,7 @@ function Evidence({ rows }: { rows: Any[] }) {
 }
 
 export default function Today({ snap, live }: { snap: Any; live: boolean }) {
-  const editorial = snap.editorial?.thesis ? snap.editorial : fallbackEditorial(snap);
+  const editorial: Any = clarifyFundingEditorial(snap, snap.editorial?.thesis ? snap.editorial : fallbackEditorial(snap));
   const [latest, setLatest] = useState<Dispatch | null>(null);
   useEffect(() => {
     let mounted = true;
@@ -111,30 +114,23 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
         </div>
         <div className="today-conviction"><b>Why that conviction:</b> {editorial.confidence_note}</div>
       </header>
-      {createElement("economic-context", { "aria-label": "Economic context" })}
+      <UsdFundingSummary snap={snap} />
+      {createElement("economic-context", { "aria-label": "Economic context", ref: (node: HTMLElement | null) => {
+        if (node) (node as HTMLElement & {snapshot: unknown}).snapshot = snap;
+      } })}
 
       <section className="today-scope" aria-labelledby="today-scope-title">
         <div className="today-scope__copy">
-          <span>MARKET PACKS V2 · CURRENT STATUS</span>
-          <h2 id="today-scope-title">Current v2 scope</h2>
-          <p>
-            The primary live Seiche signal remains US dollar funding. The v2 catalog
-            registers 11 monetary-area packs: US-USD is VALIDATING and 10 non-US packs
-            are REFERENCE context. Registration declares a market contract, conventions,
-            and evidence rights; it does not promise a live traded benchmark. Global Tide
-            is currently UNAVAILABLE.
-          </p>
+          <span>EXPLORE THE DATA</span>
+          <h2 id="today-scope-title">Funding markets and their source clocks</h2>
+          <p>Open the USD funding desk for policy rates, repo, bills, reserve balances and facility use.
+            Money Markets also shows each registered clearing system's actual coverage, observation dates and gaps.</p>
           <div className="today-scope__links">
-            <a href={`${API_BASE}/api/v2/markets`}>Open the market catalog →</a>
-            <a href={`${API_BASE}/api/v2/global/tide`}>Inspect Global Tide status →</a>
+            <a href="#money%20markets">Open Money Markets →</a>
+            <a href="#corpus">Explore the data catalog →</a>
+            <a href={`${API_BASE}/api/v2/markets`}>Inspect market coverage →</a>
           </div>
         </div>
-        <dl className="today-scope__status">
-          <div><dt>CATALOG</dt><dd><b>11</b><span>registered monetary-area packs</span></dd></div>
-          <div><dt>US-USD</dt><dd><b>VALIDATING</b><span>primary USD signal</span></dd></div>
-          <div><dt>NON-US</dt><dd><b>10 REFERENCE</b><span>registered context, not live coverage</span></dd></div>
-          <div><dt>GLOBAL TIDE</dt><dd><b>UNAVAILABLE</b><span>no reading published</span></dd></div>
-        </dl>
       </section>
 
       <LiveMarket />

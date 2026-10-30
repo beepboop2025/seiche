@@ -12,6 +12,7 @@ export interface EconomicSeries {
   lag: string;
   source: string;
   remote: string;
+  sourceUrl?: string;
 }
 
 /** Validate the catalog and history together before displaying any number. */

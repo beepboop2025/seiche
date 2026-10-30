@@ -1,3 +1,4 @@
+import {publishedFundingModels, atlasFundingModels, mergeFundingModels} from "./fundingSources";
 import {readJSON, record, visibleRefresh} from './core';
 import {seriesModel, type EconomicSeries} from './seriesModel';
 import {chartCard, dashboard, stats, selectControl, el, number, difference, changes, windowPoints, type Point, type Series, type ChartSpec} from './analyticsCharts';
@@ -11,6 +12,9 @@ export function fundingPoints(model: EconomicSeries | undefined, unit: string, d
   return model.points.map(p => ({x: Date.parse(p.date + 'T00:00:00Z'), y: p.value / divisor, label: p.date, note: `${model.key} · source state: ${model.state}`})).filter(p => p.x <= cutoff);
 }
 export function moneyFundBillions(model: EconomicSeries | undefined, cutoff = Date.now()): Point[] {
+  const publishedColumn: Record<string, string> = {MMF_REPO_TOT:"total_repo_b", MMF_REPO_FED:"fed_repo_b", MMF_REPO_FICC:"ficc_repo_b"};
+  if (model?.source === "published_board" && publishedColumn[model.key]
+      && model.remote === "engines.money_market.charts.mmf." + publishedColumn[model.key] && model.unit === "$B") return fundingPoints(model, "$B", 1, cutoff);
   if (!model || model.source !== 'ofr' || !MMF_REMOTE_IDS[model.key] || model.remote !== MMF_REMOTE_IDS[model.key] || model.unit !== '$B') return [];
   // Match assemble._vol_b: the raw OFR endpoint can retain whole dollars while
   // declaring the configured $B unit. Inspect the full history, not its latest
@@ -33,10 +37,11 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
   const points = (key: string, unit = '%', divisor = 1) => windowPoints(raw(key, unit, divisor), days, end);
   const named = (key: string, name = key, unit = '%', divisor = 1): Series => ({name, points: points(key, unit, divisor)});
   const moneyFund = (key: string, name: string): Series => ({name, points: windowPoints(moneyFundBillions(models.get(key), cutoff), days, end)});
-  const spread = (left: string, right: string): Series => ({name: `${left} − ${right}`, points: windowPoints(difference(raw(left), raw(right), 100), days, end)});
-  const sources = (keys: string[]) => keys.map(key => ({label: `${key} · ${models.get(key)?.label || 'Source unavailable'} · ${models.get(key)?.asOf || 'No observation date'} · ${models.get(key)?.state || 'unavailable'}`, url: `${API}/api/series/${key}`}));
+  const spread = (left: string, right: string): Series => ({name: `${left} − ${right}`, points: windowPoints(models.has(left + '_MINUS_' + right) ? raw(left + '_MINUS_' + right, 'bp') : difference(raw(left), raw(right), 100), days, end)});
+  const sourceModel = (key: string) => models.get(key) || models.get(key + '_MINUS_DGS3M');
+  const sources = (keys: string[]) => keys.map(key => ({label: `${key} · ${sourceModel(key)?.label || 'Source unavailable'} · ${sourceModel(key)?.asOf || 'No observation date'} · ${sourceModel(key)?.state || 'unavailable'}`, url: sourceModel(key)?.sourceUrl || `${API}/api/series/${key}`}));
   const base = (id: string, index: number, title: string, description: string, unit: string, keys: string[], note: string): ChartSpec => {
-    const dates = keys.flatMap(key => {const m = models.get(key), p = m?.points.filter(p => Date.parse(p.date + 'T00:00:00Z') <= cutoff).at(-1); return p ? [p.date] : [];}).sort();
+    const dates = keys.flatMap(key => {const m = sourceModel(key), p = m?.points.filter(p => Date.parse(p.date + 'T00:00:00Z') <= cutoff).at(-1); return p ? [p.date] : [];}).sort();
     const clock = dates.length ? `Latest input dates: ${dates[0]}${dates.at(-1) !== dates[0] ? ' to ' + dates.at(-1) : ''}. ` : '';
     const future = keys.some(key => models.get(key)?.points.some(p => Date.parse(p.date + 'T00:00:00Z') > cutoff));
     return {id, number: String(index).padStart(2, '0'), title, description, unit, xType: 'date', sources: sources(keys), note: clock + note + (future ? ' Future-dated entries in the source are excluded from observed history.' : '')};
@@ -46,7 +51,7 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
   return [
     {...base('funding-corridor', 1, 'Inside the overnight funding corridor', 'Secured funding, general collateral and the policy anchor on the same rate axis.', '%', ['SOFR', 'TGCR', 'BGCR', 'EFFR', 'IORB'], 'Observed rates. IORB is administered; SOFR, TGCR, BGCR and EFFR measure different transaction populations. Dashed and solid lines distinguish series. Gaps longer than ten days are left open.'), series: ['SOFR', 'TGCR', 'BGCR', 'EFFR', 'IORB'].map(k => named(k))},
     {...base('funding-spreads', 2, 'Where funding departs from the anchors', 'Exact-date spreads isolate rate differences in basis points.', 'bp', ['SOFR', 'IORB', 'EFFR', 'TGCR'], 'Derived: (left rate − right rate) × 100. Only identical observation dates are joined. A positive spread means the left rate is higher; it is not a distress probability.'), series: [spread('SOFR', 'IORB'), spread('EFFR', 'IORB'), spread('SOFR', 'TGCR')], zero: true},
-    {...base('reserve-balances', 3, 'The banking system’s reserve buffer', 'Reserve balances held at Federal Reserve Banks.', 'USD bn', ['WRESBAL'], 'Source dollars in millions divided by 1,000. A system-wide stock, not a measure of how evenly reserves are distributed.'), series: [named('WRESBAL', 'Reserve balances', '$M', 1000)], maxGapDays: 15},
+    {...base('reserve-balances', 3, 'The banking system’s reserve buffer', 'Reserve balances held at Federal Reserve Banks.', 'USD bn', ['WRESBAL'], 'Weekly average reserve balances, expressed in billions. A system-wide stock, not a measure of how evenly reserves are distributed.'), series: [named('WRESBAL', 'Reserve balances', '$M', 1000)], maxGapDays: 15},
     {...base('treasury-cash', 4, 'Treasury cash parked at the Fed', 'The Treasury General Account’s own reporting history.', 'USD bn', ['TGA_LONG'], 'Source dollars in millions divided by 1,000. This is a cash stock; a chart movement is not attributed to an individual auction, tax payment or spending event.'), series: [named('TGA_LONG', 'Treasury General Account', '$M', 1000)], maxGapDays: 15},
     {...base('reverse-repo', 5, 'Cash absorbed by overnight reverse repo', 'ON RRP take-up makes the size of this liquidity buffer visible.', 'USD bn', ['RRPONTSYD'], 'Federal Reserve overnight reverse-repurchase take-up. Zero is a valid observation; absent dates remain absent.'), series: [named('RRPONTSYD', 'ON RRP', '$B')], zero: true},
     {...base('commercial-paper-premium', 6, 'Short-term corporate funding premiums', 'Three-month AA commercial paper against the three-month Treasury yield.', 'bp', ['CP_FIN_3M', 'CP_NONFIN_3M', 'DGS3M'], 'Derived from exact-date rate differences × 100. Commercial paper and Treasury yields have different market conventions; this is a reference spread, not a quoted arbitrage return.'), series: [spread('CP_FIN_3M', 'DGS3M'), spread('CP_NONFIN_3M', 'DGS3M')], zero: true},
@@ -57,9 +62,9 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
   ];
 }
 
-export function mountFundingAnalytics(target: HTMLElement): () => void {
+export function mountFundingAnalytics(target: HTMLElement, snapshot: () => unknown = () => undefined): () => void {
   const view = dashboard(target, {eyebrow: 'SEICHE / FUNDING OBSERVATORY', title: 'Follow the pressure through the system.', description: 'From the overnight corridor to reserves, Treasury cash and money-fund repo. Ten analytical views preserve the clocks and definitions behind the funding picture.'});
-  let models = new Map<string, EconomicSeries>(), days: number | null = 365, request: AbortController | null = null, disposed = false;
+  let models = publishedFundingModels(snapshot()), days: number | null = 365, request: AbortController | null = null, disposed = false;
   const render = () => {
     view.grid.replaceChildren(...fundingSpecs(models, days).map(chartCard));
     const latest = (key: string) => models.get(key)?.points.filter(p => Date.parse(p.date + 'T00:00:00Z') <= Date.now()).at(-1);
@@ -75,25 +80,38 @@ export function mountFundingAnalytics(target: HTMLElement): () => void {
   const link = el('a', 'Explore the funding workbench →'); link.href = '#workbench'; view.controls.append(link);
   async function refresh() {
     if (request) return; const controller = new AbortController(); request = controller; refreshButton.disabled = true;
-    const timer = setTimeout(() => controller.abort(), 45000), next = new Map<string, EconomicSeries>();
-    view.status.textContent = 'Checking source dates and histories…';
+    const timer = setTimeout(() => controller.abort(), 45000);
+    let next = publishedFundingModels(snapshot());
+    view.status.textContent = 'Checking source dates and histories; dated observations stay visible…';
     try {
-      const catalog = await readJSON(`${API}/api/series/index.json`, controller.signal);
-      if (!record(catalog) || catalog.schema !== 'seiche.series-index.v1' || !Array.isArray(catalog.series)) throw new Error('Series catalog unavailable');
-      const entries: unknown[] = catalog.series;
-      for (let i = 0; i < FUNDING_KEYS.length; i += 3) {
-        await Promise.all(FUNDING_KEYS.slice(i, i + 3).map(async key => {
-          const entry = entries.find(row => record(row) && row.mnemonic === key);
-          if (!record(entry) || entry.available !== true || entry.csv_restricted || entry.json !== `/api/series/${key}`) return;
-          try {next.set(key, seriesModel(await readJSON(`${API}${entry.json}?n=520`, controller.signal), entry));} catch { /* This source stays explicitly unavailable. */ }
-        }));
+      const [atlas, catalog] = await Promise.allSettled([
+        readJSON(`${API}/api/v2/money-markets`, controller.signal),
+        readJSON(`${API}/api/series/index.json`, controller.signal),
+      ]);
+      if (atlas.status === "fulfilled") next = mergeFundingModels(next, atlasFundingModels(atlas.value));
+      if (catalog.status === "fulfilled" && record(catalog.value) && catalog.value.schema === 'seiche.series-index.v1' && Array.isArray(catalog.value.series)) {
+        const entries: unknown[] = catalog.value.series;
+        for (let i = 0; i < FUNDING_KEYS.length; i += 3) {
+          await Promise.all(FUNDING_KEYS.slice(i, i + 3).map(async key => {
+            const entry = entries.find(row => record(row) && row.mnemonic === key);
+            if (!record(entry) || entry.available !== true || entry.csv_restricted || entry.json !== `/api/series/${key}`) return;
+            try {
+              const item = seriesModel(await readJSON(`${API}${entry.json}?n=520`, controller.signal), entry);
+              next = mergeFundingModels(next, new Map([[key, item]]));
+            } catch { /* Retain the dated published or previously collected history. */ }
+          }));
+        }
       }
-      if (disposed) return; models = next; render();
-      view.status.textContent = `${models.size} / ${FUNDING_KEYS.length} source histories loaded. Each chart carries its own observation dates.`;
+      if (disposed) return;
+      models = mergeFundingModels(models, next); render();
+      view.status.textContent = `${models.size} dated histories loaded. Each chart keeps its own source dates; unavailable histories remain explicit.`;
+      if (atlas.status === "rejected" && catalog.status === "rejected") view.status.textContent += ' Live refresh failed; dated histories retained.';
     } catch {
-      if (!disposed) {models.clear(); render(); view.status.textContent = 'Sources could not be verified. Retry to load dated funding observations.';}
+      if (!disposed) {render(); view.status.textContent = 'Live refresh failed; dated histories remain visible. Retry to check for newer observations.';}
     } finally {clearTimeout(timer); request = null; if (!disposed) refreshButton.disabled = false;}
   }
+  const updateSnapshot = () => {models = mergeFundingModels(models, publishedFundingModels(snapshot())); render();};
+  target.addEventListener("funding-snapshot", updateSnapshot);
   refreshButton.addEventListener('click', () => void refresh()); render();
-  const stop = visibleRefresh(refresh); return () => {disposed = true; stop(); request?.abort();};
+  const stop = visibleRefresh(refresh); return () => {disposed = true; target.removeEventListener("funding-snapshot", updateSnapshot); stop(); request?.abort();};
 }
