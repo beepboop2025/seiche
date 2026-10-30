@@ -10,7 +10,7 @@ const fundingSources = uri((await read('fundingSources.ts')).replace('from "./co
 const funding = uri((await read('fundingAnalytics.ts')).replace("from './core'", `from '${core}'`).replace("from './seriesModel'", `from '${series}'`).replace("from './analyticsCharts'", `from '${charts}'`).replace("import './analytics.css';", '').replace('from "./fundingSources"', `from '${fundingSources}'`));
 const {difference, changes, dateValue, windowPoints, csv, number} = await import(charts);
 const {fundingPoints, moneyFundBillions, treasuryCurve, fundingSpecs} = await import(funding);
-const {publishedFundingModels, atlasFundingModels, mergeFundingModels} = await import(fundingSources);
+const {publishedFundingModels, atlasFundingModels, mergeFundingModels, readFundingAtlas} = await import(fundingSources);
 const point = (date, y) => ({x: dateValue(date), y, label: date});
 const model = (key, points, unit = '%') => ({key, label: key, unit, points: points.map(([date, value]) => ({date, value})), asOf: points.at(-1)[0], state: 'fresh', source: 'fred', remote: key, cadence: 'daily', lag: 'one business day'});
 
@@ -122,4 +122,31 @@ test("newer published headline points extend histories without filling absent da
   const models=publishedFundingModels(snapshot);
   assert.deepEqual(models.get("IORB").points.map(p=>p.date),["2026-10-28","2026-10-30"]);
   assert.equal(models.get("RRPONTSYD").points.at(-1).value,.353);
+});
+
+
+test("an atlas larger than one series updates funding charts to the latest observation", async t => {
+  const metric = {id:"US.NYFED.SOFR_MEDIAN",unit:"%",availability:"AVAILABLE",redistribution_status:"allowed",
+    source:"nyfed_rates",status:"FRESH",cadence:"P1D",asof:"2026-10-29",history:[["2026-10-28",3.94],["2026-10-29",3.94]]};
+  const body = JSON.stringify({schema:"seiche.global-money-markets.v1",markets:[{market_id:"US-USD",metrics:[metric]}],
+    otherMarketMetadata:" ".repeat(2 * 1024 * 1024)});
+  t.mock.method(globalThis, "fetch", async () => new Response(body, {headers:{"Content-Type":"application/json"}}));
+  const prior = new Map([["SOFR",model("SOFR",[["2026-10-28",3.94]])]]);
+  const loaded = atlasFundingModels(await readFundingAtlas(new AbortController().signal));
+  const updated = mergeFundingModels(prior,loaded);
+  const corridor = fundingSpecs(updated,null).find(s=>s.id==="funding-corridor");
+  assert.equal(updated.get("SOFR").asOf,"2026-10-29");
+  assert.equal(corridor.series[0].points.at(-1).label,"2026-10-29");
+  assert.equal(corridor.series[0].points.at(-1).y,3.94);
+});
+
+test("the whole-atlas allowance remains bounded and cancels an oversized response", async t => {
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(controller) {controller.enqueue(new Uint8Array(8 * 1024 * 1024 + 1));},
+    cancel() {cancelled = true;},
+  });
+  t.mock.method(globalThis,"fetch",async()=>new Response(stream));
+  await assert.rejects(readFundingAtlas(new AbortController().signal),/exceeds the display limit/);
+  assert.equal(cancelled,true);
 });
