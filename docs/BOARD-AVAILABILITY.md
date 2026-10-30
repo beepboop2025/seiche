@@ -23,3 +23,27 @@ This frontend change does not change source collection, legacy API or MCP
 availability, series redistribution policy, source contracts or model eligibility.
 It must use the existing frontend publication receipt and preserve the current
 published data and backend release identities.
+
+
+## Core USD funding visibility
+
+The opening page shows SOFR, IORB, the exact-date SOFR-IORB spread, reserve
+balances, EFFR, Treasury opening cash, ON RRP and SRF. Every card retains its
+observation date, native cadence and acquisition source. The opening page
+checks the public global atlas every minute while visible, retaining dated
+observations when a request fails. The Money Markets page reuses its existing
+atlas request and opens a dedicated USD funding view when no watchlist exists.
+
+Qualified public atlas values replace only matching cards with an equal or
+newer observation date and compatible units. The published USD board remains
+a separately labelled evidence source. Null, restricted, malformed or older
+atlas rows do not erase its observations. The client never derives a spread
+from differently dated rate legs or turns a missing value into zero. Published
+board values continue to advance through the existing FULL publication lane.
+
+The opening page's Funding Observatory also receives the completed board
+snapshot. Named history columns populate rates, spreads, weekly reserves,
+cash, money-fund repo, commercial-paper premiums and the Fed balance sheet
+before network requests complete. Qualified direct-publisher atlas histories
+can advance the rate charts. Refresh failures retain dated history. Unpublished
+Treasury curve tenors remain explicit gaps; they are never reconstructed.

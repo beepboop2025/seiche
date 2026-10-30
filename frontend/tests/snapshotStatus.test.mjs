@@ -14,11 +14,28 @@ vm.runInNewContext(ts.transpileModule(source, {
 }).outputText, context);
 const { moneyMarketDisplay, apiCheckStatus } = context.exports;
 
+const fundingContext = { exports: {} };
+vm.runInNewContext(ts.transpileModule(await readFile(new URL("../src/usdFunding.ts", import.meta.url), "utf8"), {
+  compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
+}).outputText, fundingContext);
+const summaryContext = {exports: {}, require(name) {
+  if (name === "react") return React;
+  if (name === "react/jsx-runtime") return jsxRuntime;
+  if (name === "./apiBase") return {API_BASE: "https://example.invalid"};
+  if (name === "./usdFunding") return fundingContext.exports;
+  if (name.endsWith(".css")) return {};
+  throw new Error("Unexpected funding summary dependency: " + name);
+}};
+vm.runInNewContext(ts.transpileModule(await readFile(new URL("../src/UsdFundingSummary.tsx", import.meta.url), "utf8"), {
+  compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX},
+}).outputText, summaryContext);
+
 const moneyMarketsSource = await readFile(new URL("../src/tabs/MoneyMarkets.tsx", import.meta.url), "utf8");
 const moneyMarketsContext = { exports: {}, URL, console, require(name) {
   if (name === "react") return React;
   if (name === "react/jsx-runtime") return jsxRuntime;
   if (name === "../snapshotStatus") return context.exports;
+  if (name === "../UsdFundingSummary") return summaryContext.exports;
   if (name === "../apiBase") return { API_BASE: "https://example.invalid" };
   if (name === "../auth") return { authHeaders: () => ({}) };
   if (name === "../palette") return { P: {} };
@@ -42,7 +59,10 @@ test("MoneyMarkets renders the USD evidence on its first paint while the global 
   } }));
   assert.match(html, /Refreshing the global atlas/);
   assert.match(html, /Dated USD funding evidence/);
-  assert.match(html, /United States dollar/);
+  assert.match(html, /USD funding/);
+  assert.match(html, /3.50%/);
+  assert.match(html, /As of 2026-10-20/);
+  assert.match(html, /Reserve balances/);
   assert.doesNotMatch(html, /Official observations remain blank/);
   assert.doesNotMatch(html, /Global atlas unavailable/);
 });
