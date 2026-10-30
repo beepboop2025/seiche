@@ -1,4 +1,4 @@
-import {publishedFundingModels, atlasFundingModels, mergeFundingModels} from "./fundingSources";
+import {publishedFundingModels, atlasFundingModels, mergeFundingModels, readFundingAtlas} from "./fundingSources";
 import {readJSON, record, visibleRefresh} from './core';
 import {seriesModel, type EconomicSeries} from './seriesModel';
 import {chartCard, dashboard, stats, selectControl, el, number, difference, changes, windowPoints, type Point, type Series, type ChartSpec} from './analyticsCharts';
@@ -85,7 +85,7 @@ export function mountFundingAnalytics(target: HTMLElement, snapshot: () => unkno
     view.status.textContent = 'Checking source dates and histories; dated observations stay visible…';
     try {
       const [atlas, catalog] = await Promise.allSettled([
-        readJSON(`${API}/api/v2/money-markets`, controller.signal),
+        readFundingAtlas(controller.signal),
         readJSON(`${API}/api/series/index.json`, controller.signal),
       ]);
       if (atlas.status === "fulfilled") next = mergeFundingModels(next, atlasFundingModels(atlas.value));
@@ -113,5 +113,5 @@ export function mountFundingAnalytics(target: HTMLElement, snapshot: () => unkno
   const updateSnapshot = () => {models = mergeFundingModels(models, publishedFundingModels(snapshot())); render();};
   target.addEventListener("funding-snapshot", updateSnapshot);
   refreshButton.addEventListener('click', () => void refresh()); render();
-  const stop = visibleRefresh(refresh); return () => {disposed = true; target.removeEventListener("funding-snapshot", updateSnapshot); stop(); request?.abort();};
+  const stop = visibleRefresh(refresh, 60000); return () => {disposed = true; target.removeEventListener("funding-snapshot", updateSnapshot); stop(); request?.abort();};
 }
