@@ -2,7 +2,7 @@ import { createElement, useEffect, useRef, useState, lazy, Suspense, type CSSPro
 import { flushSync } from "react-dom";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
-import { requestBoard } from "./boardRequest";
+import { refreshBoardSources } from "./boardRequest";
 import { apiCheckStatus } from "./snapshotStatus";
 import { Any } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
@@ -16,7 +16,6 @@ import { TERMINAL_TABS as TABS, terminalTabFromHash, type TerminalTab as Tab } f
 const CommandPalette = lazy(() => import("./CommandPalette"));
 
 const COMPACT_DEVICE_QUERY = "(max-width: 800px), (pointer: coarse)";
-const LIVE_UPGRADE_DELAY_MS = 1500;
 const BOARD_REFRESH_MS = 60_000;
 
 const runWhenIdle = (task: () => void, timeout: number): (() => void) => {
@@ -167,68 +166,54 @@ function AppInner() {
     else if (cmd.type === "depth") setDepth(cmd.level);
   };
 
-  // Published bytes provide a dated first paint; refreshes never erase them.
-  const gotLive = useRef(false);
+  // The public publisher and live API are independent evidence sources.
   const snapshot = useRef<Any | null>(null);
   const generation = useRef(0);
-  const requests = useRef(new Set<AbortController>());
-  const apiPending = useRef<AbortController | null>(null);
-  const liveUpgradeTimer = useRef<number | null>(null);
-  const failure = (reason: unknown, epoch: number) => {
-    if (epoch !== generation.current) return;
-    const message = reason instanceof Error ? reason.message : "The source could not be refreshed.";
-    if (snapshot.current) setRefreshError(message); else setErr(message);
-  };
-  const load = async (url: string, liveSource: boolean, epoch: number) => {
-    if (liveSource && apiPending.current) return;
+  const pending = useRef<AbortController | null>(null);
+  const apiRestricted = useRef(false);
+  const refresh = async (forceApi = false) => {
+    if (pending.current) return;
+    const epoch = generation.current;
     const controller = new AbortController();
-    requests.current.add(controller);
-    if (liveSource) apiPending.current = controller;
+    pending.current = controller;
     try {
-      const data = await requestBoard(url, { signal: controller.signal,
-        headers: liveSource ? authHeaders() : {}, timeoutMs: liveSource ? 15000 : 4000 });
-      if (epoch !== generation.current || controller.signal.aborted || (!liveSource && gotLive.current)) return;
-      if (liveSource) gotLive.current = true;
-      snapshot.current = data;
-      setSnap(data); setLive(liveSource); setErr(null);
-      if (liveSource) { setRefreshError(null); setCheckedAt(new Date().toISOString()); }
+      const result = await refreshBoardSources("/data/overview.json", `${API_BASE}/api/overview`, {
+        signal: controller.signal, headers: authHeaders(),
+        apiEnabled: forceApi || !apiRestricted.current,
+        onSnapshot: ({ data, live: liveSource }) => {
+          if (epoch !== generation.current || controller.signal.aborted) return;
+          // An older CDN generation cannot replace a newer visible snapshot.
+          if (snapshot.current && Date.parse(data.generated_at) < Date.parse(snapshot.current.generated_at)) return;
+          snapshot.current = data;
+          setSnap(data); setLive(liveSource); setErr(null);
+        },
+      });
+      if (epoch !== generation.current || controller.signal.aborted) return;
+      apiRestricted.current = result.apiRestricted;
+      setRefreshError(result.refreshError);
+      if (result.apiChecked) setCheckedAt(new Date().toISOString());
+    } catch (reason) {
+      if (epoch !== generation.current || controller.signal.aborted) return;
+      const message = reason instanceof Error ? reason.message : "The source could not be refreshed.";
+      if (snapshot.current) setRefreshError(message); else setErr(message);
     } finally {
-      requests.current.delete(controller);
-      if (apiPending.current === controller) apiPending.current = null;
+      if (pending.current === controller) pending.current = null;
     }
   };
-  const loadApi = (epoch = generation.current) => load(`${API_BASE}/api/overview`, true, epoch);
-  const boot = () => {
-    const epoch = ++generation.current;
-    for (const controller of requests.current) controller.abort();
-    requests.current.clear(); apiPending.current = null;
-    if (!snapshot.current) gotLive.current = false;
-    // This release does not load the unqualified legacy static board.
-    void loadApi(epoch).catch(reason => failure(reason, epoch));
-  };
-  const retry = () => {
-    if (liveUpgradeTimer.current !== null) clearTimeout(liveUpgradeTimer.current);
-    setErr(null); setRefreshError(null); boot();
-  };
+  const retry = () => { setErr(null); setRefreshError(null); void refresh(true); };
   useEffect(() => {
-    boot();
-    const refresh = () => {
-      if (document.visibilityState !== "visible") return;
-      const epoch = generation.current;
-      void loadApi(epoch).catch(reason => failure(reason, epoch));
-    };
-    const timer = setInterval(refresh, BOARD_REFRESH_MS);
+    void refresh();
+    const whenVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    const timer = setInterval(whenVisible, BOARD_REFRESH_MS);
     const onHash = () => { const next = terminalTabFromHash(window.location.hash); if (next || !window.location.hash) switchTab(next ?? DEFAULT_TAB); };
     window.addEventListener("hashchange", onHash);
-    document.addEventListener("visibilitychange", refresh);
+    document.addEventListener("visibilitychange", whenVisible);
     return () => {
       ++generation.current;
       clearInterval(timer);
-      if (liveUpgradeTimer.current !== null) clearTimeout(liveUpgradeTimer.current);
-      for (const controller of requests.current) controller.abort();
-      requests.current.clear(); apiPending.current = null;
+      pending.current?.abort(); pending.current = null;
       window.removeEventListener("hashchange", onHash);
-      document.removeEventListener("visibilitychange", refresh);
+      document.removeEventListener("visibilitychange", whenVisible);
     };
   }, []);
 
@@ -305,11 +290,18 @@ function AppInner() {
     return <main className="app research-app" id="main" data-tab={tab}>
       <Suspense fallback={<TabSkeleton />}><Research /></Suspense></main>;
   }
+  // These tools load their own evidence and do not depend on the funding board.
+  if (tab === "CORPUS" || tab === "DISPATCHES" || tab === "ACCOUNT") {
+    return <main className="app research-app" id="main" data-tab={tab}>
+      <Suspense fallback={<TabSkeleton />}>
+        {tab === "CORPUS" ? <Corpus /> : tab === "DISPATCHES" ? <Dispatches /> : <Account />}
+      </Suspense></main>;
+  }
   if (err && !snap) {
     return (
       <main className="app research-app" id="main" data-tab={tab}>
         <div className="errbox">
-          <div className="errtitle">The legacy board is unavailable</div>
+          <div className="errtitle">The funding board could not be loaded</div>
           <div className="errmsg">{err}</div>
           <div className="erractions">
             <button className="btn-accent" onClick={retry}>Retry</button>
@@ -342,7 +334,7 @@ function AppInner() {
       <section className="research-observation-bar" aria-label="Snapshot status">
         <div><span>Funding research</span><strong>{live ? "API snapshot" : "Published snapshot"}</strong></div>
         <div><span>Snapshot assembled</span><strong>{snap.generated_at?.slice(0, 16).replace("T", " ") ?? "Unavailable"} UTC</strong></div>
-        <div><span>API refresh status</span><strong>{apiCheckStatus(checkedAt, refreshError)}</strong></div>
+        <div><span>Refresh status</span><strong>{apiRestricted.current ? "Checking published data every minute" : apiCheckStatus(checkedAt, refreshError)}</strong></div>
         <a href="#system">Inspect source coverage</a>
       </section>
 
@@ -383,11 +375,9 @@ function AppInner() {
           data-share-disabled={tabCardPath ? undefined : "true"}
         >
           {tab === "TODAY" && <Today snap={snap} live={live} />}
-          {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}
           {tab === "MONEY MARKETS" && <MoneyMarkets snap={snap} />}
           {tab === "WORKBENCH" && <MarketWorkbench />}
-          {tab === "CORPUS" && <Corpus />}
           {tab === "RESEARCH" && <Research />}
           {tab === "SCARCITY" && <Scarcity snap={snap} />}
           {tab === "SUPPLY" && <Supply snap={snap} />}
@@ -405,7 +395,6 @@ function AppInner() {
           {tab === "PROOF" && <Proof snap={snap} />}
           {tab === "REFEREE" && <Referee snap={snap} />}
           {tab === "SYSTEM" && <System snap={snap} live={live} />}
-          {tab === "ACCOUNT" && <Account />}
         </div>
       </Suspense>
 
