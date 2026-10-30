@@ -45,6 +45,21 @@ export function publishedFundingModels(snapshot: unknown): Map<string, EconomicS
       "published observation", cadence, "/data/overview.json");
     if (item) result.set(key, item);
   }
+
+  if (record(snapshot.headline)) {
+    const headlineKeys = {SOFR:"sofr_pct", EFFR:"effr_pct", IORB:"iorb_pct", WRESBAL:"reserves_b", TGA_LONG:"tga_b", RRPONTSYD:"rrp_b"};
+    for (const [key, field] of Object.entries(headlineKeys)) {
+      const prior = result.get(key), latest = snapshot.headline[field];
+      if (!prior || !record(latest) || typeof latest.value !== "number" || !Number.isFinite(latest.value)
+          || typeof latest.asof !== "string" || latest.asof <= prior.asOf) continue;
+      const points = [...prior.points.map(point => [point.date, point.value]),
+        [latest.asof, latest.value * (prior.unit === "$M" ? 1000 : 1)]];
+      const updated = model(key, prior.unit, points, "published_board",
+        prior.remote + " + headline." + field, "published observation", prior.cadence, "/data/overview.json");
+      if (updated) result.set(key, updated);
+    }
+  }
+
   const ledger = snapshot.engines.ledger;
   if (record(ledger) && ledger.ok === true && Array.isArray(ledger.series) && ledger.series.length <= 2000) {
     // ledger.py's emitted series: date, assets_b, currency_b, reserves_b, ...

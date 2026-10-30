@@ -81,3 +81,12 @@ test("the editorial distinguishes a four-week model mean from the current daily 
   assert.doesNotMatch(result.countercase[0].claim,/current abundance signal/);
   assert.equal(editorial.evidence[0].claim,"Old claim");
 });
+
+test("newer published headline observations retain their native dates without recomputing the spread", () => {
+  const snapshot=snap(saved("policy.iorb",3.9),saved("policy.sofr_minus_iorb",4,"bp"),saved("liquidity.on_rrp",.18,"$B"));
+  snapshot.headline={iorb_pct:{value:3.9,asof:"2026-10-30"},rrp_b:{value:.353,asof:"2026-10-29"}};
+  assert.equal(card(snapshot,null,"policy.iorb").asof,"2026-10-30");
+  assert.equal(card(snapshot,null,"liquidity.on_rrp").value,.353);
+  assert.equal(card(snapshot,null,"policy.sofr_minus_iorb").asof,"2026-10-28");
+  assert.equal(card(snapshot,null,"policy.sofr_minus_iorb").value,4);
+});

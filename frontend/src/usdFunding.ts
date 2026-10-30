@@ -39,6 +39,14 @@ export function usdFundingCards(snapshot: unknown, market: unknown): FundingCard
   const engines = record(record(snapshot)?.engines);
   const desk = record(engines?.money_market);
   const published = rows(desk?.sections).flatMap(section => rows(section.metrics));
+
+  const headlineKeys: Record<string, string> = {
+    "policy.sofr":"sofr_pct", "policy.iorb":"iorb_pct", "policy.effr":"effr_pct",
+    "liquidity.reserves":"reserves_b", "liquidity.tga":"tga_b",
+    "liquidity.on_rrp":"rrp_b", "liquidity.srf":"srf_accepted_b",
+  };
+  const headline = record(record(snapshot)?.headline);
+
   const current = record(market);
   const live = rows(current?.metrics);
   const spread = record(current?.policy_relative_spread);
@@ -52,7 +60,13 @@ export function usdFundingCards(snapshot: unknown, market: unknown): FundingCard
       && lineage.some(row => row.instrument_id === id && text(row.event_time).slice(0, 10) === spread.asof));
   if (spread && qualifiedSpread) live.push(spread);
   return definitions.map(([id, label, unit, cadence, liveId]) => {
-    const prior = published.find(row => row.id === id && row.unit === unit && eligible(row, false));
+
+    let prior = published.find(row => row.id === id && row.unit === unit && eligible(row, false));
+    const latest = record(headline?.[headlineKeys[id]]);
+    if (latest && eligible({...latest, status:"available"}, false)
+        && (!prior || String(latest.asof) > String(prior.asof))) {
+      prior = {...latest, id, unit, status:"available", source:prior?.source || "Published board headline"};
+    }
     const next = live.find(row => row.id === liveId && eligible(row, true, row === spread && qualifiedSpread)
       && (row.unit === unit || (unit === "$B" && row.unit === "local_currency_millions")));
     const useLive = Boolean(next && (!prior || String(next.asof) >= String(prior.asof)));

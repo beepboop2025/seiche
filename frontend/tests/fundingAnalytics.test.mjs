@@ -114,3 +114,12 @@ test("the live atlas uses qualified original-publisher histories, never metadata
   assert.equal(atlasFundingModels(atlas([{...metric,redistribution_status:"metadata_only"}])).size,0);
   assert.equal(atlasFundingModels(atlas([{...metric,asof:"2026-10-29"}])).size,0);
 });
+
+test("newer published headline points extend histories without filling absent dates", () => {
+  const snapshot=published({policy:{columns:["date","iorb_pct"],rows:[["2026-10-28",3.9]]},
+    liquidity:{columns:["date","on_rrp_b"],rows:[["2026-10-28",.18]]}});
+  snapshot.headline={iorb_pct:{value:3.9,asof:"2026-10-30"},rrp_b:{value:.353,asof:"2026-10-29"}};
+  const models=publishedFundingModels(snapshot);
+  assert.deepEqual(models.get("IORB").points.map(p=>p.date),["2026-10-28","2026-10-30"]);
+  assert.equal(models.get("RRPONTSYD").points.at(-1).value,.353);
+});
