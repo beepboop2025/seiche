@@ -1,5 +1,10 @@
-import {record} from "./core";
+import {record, readJSON} from "./core";
 import {seriesModel, type EconomicSeries} from "./seriesModel";
+
+// The complete atlas contains many markets and exceeds the per-series 2 MiB limit.
+export function readFundingAtlas(signal: AbortSignal): Promise<unknown> {
+  return readJSON("https://api.seiche.info/api/v2/money-markets", signal, 8 * 1024 * 1024);
+}
 
 const chartColumns = [
   ["SOFR", "policy", "sofr_pct", "%", 1, "daily"],
