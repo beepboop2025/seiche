@@ -107,8 +107,9 @@ need_exact   "site" "seiche.info" "Referrer-Policy" "strict-origin-when-cross-or
 need_present "site" "seiche.info" "Permissions-Policy"
 sleep 1
 
-# (b) the API's public window
-status=$($CURL -D "$TMP/h.api" -o /dev/null -w '%{http_code}' "$API/api/overview") || status=000
+# (b) the API's public window. /api/overview is deliberately withheld (403,
+# source-rights release of 2026-10-28); /api/health is a released public read.
+status=$($CURL -D "$TMP/h.api" -o /dev/null -w '%{http_code}' "$API/api/health") || status=000
 [ "$status" = 200 ] || record "api.seiche.info" "status" FAIL "WRONG status $status (want 200)"
 api_headers "api" "api.seiche.info"
 need_server_clean "api" "api.seiche.info"
