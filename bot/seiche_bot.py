@@ -527,10 +527,60 @@ def load_state(name: str, default):
 
 
 def save_state(name: str, value) -> None:
-    tmp = _state_path(name) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(value, fh)
-    os.replace(tmp, _state_path(name))
+    """Replace one state file atomically and durably.
+
+    The JSON goes to a unique temporary file beside the target, is flushed
+    and fsynced, then renamed over it, so a reader sees the old file or the
+    new one and never a truncated one. A failed write (ENOSPC, for example)
+    removes its temporary file and re-raises with the previous file intact.
+    The file is created as open(path, "w") would create it, so the unit's
+    UMask and any default ACL apply unchanged.
+    """
+    target = _state_path(name)
+    directory, base = os.path.split(target)
+    tmp = os.path.join(
+        directory, f".{base}.{os.getpid()}.{os.urandom(4).hex()}.tmp")
+    descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+            json.dump(value, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+_OFFSET_SAVE_FAILURES = 0
+
+
+def save_offset(offset: int) -> bool:
+    """Persist the poll offset; a failed write is logged and retried next cycle.
+
+    The in-memory offset still confirms every handled update on the next
+    getUpdates call, so a missed save loses nothing while the process lives.
+    Raising here instead took the whole bot down for as long as the disk
+    stayed full (the 2026-10-31 ENOSPC crash loop).
+    """
+    global _OFFSET_SAVE_FAILURES
+    try:
+        save_state("offset.json", offset)
+    except OSError as exc:
+        _OFFSET_SAVE_FAILURES += 1
+        if _OFFSET_SAVE_FAILURES == 1 or _OFFSET_SAVE_FAILURES % 60 == 0:
+            print(f"offset save failed ({_OFFSET_SAVE_FAILURES} in a row): "
+                  f"{exc}; keeping offset {offset} in memory and retrying "
+                  "next cycle", file=sys.stderr)
+        return False
+    if _OFFSET_SAVE_FAILURES:
+        print(f"offset save recovered after {_OFFSET_SAVE_FAILURES} failed "
+              "attempt(s)", file=sys.stderr)
+        _OFFSET_SAVE_FAILURES = 0
+    return True
 
 
 def append_event(name: str, value: dict) -> None:
@@ -2860,7 +2910,7 @@ def poll_loop() -> None:
                     handle(chat, text, text_type)
                 except Exception as exc:   # one bad update must not kill the loop
                     print(f"handle failed: {exc}", file=sys.stderr)
-        save_state("offset.json", offset)
+        save_offset(offset)
 
 
 def run_letter() -> None:
