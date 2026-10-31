@@ -1,0 +1,28 @@
+{
+  "name": "@seiche/algorand-evidence-dossier",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Source-dated research evidence dossiers purchased through Algorand x402",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "node build.mjs",
+    "preflight": "tsx scripts/preflight.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.7.2",
+    "esbuild": "0.25.10",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@algorandfoundation/algokit-utils": "10.0.0-alpha.46",
+    "@x402-avm/extensions": "2.6.1",
+    "@x402/avm": "2.28.0",
+    "@x402/core": "2.28.0",
+    "@x402/hono": "2.28.0",
+    "hono": "4.13.12"
+  }
+}
