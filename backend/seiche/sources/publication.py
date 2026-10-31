@@ -308,6 +308,47 @@ def cbuae_fx_freshness(asof: object, *, now: datetime) -> dict:
     }
 
 
+# The Federal Reserve CP release prints n.a. when trade data is insufficient
+# to calculate a tenor, and FRED then has no row. Age stays visible and never
+# certifies currency, but a suppressed tenor is not a discontinued series.
+FED_CP_SOURCE_URL = "https://www.federalreserve.gov/releases/cp/"
+FED_CP_INTERMITTENT_REMOTE_IDS = frozenset({"DCPN3M", "DCPF3M"})
+
+
+def fed_cp_freshness(asof: object, *, now: datetime) -> dict:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("publication evaluation time must be timezone-aware")
+    age = None
+    status = "dead" if asof is None else "unknown"
+    try:
+        observed = date.fromisoformat(asof) if isinstance(asof, str) else None
+    except ValueError:
+        observed = None
+    if observed is not None and observed <= now.date():
+        age = (now.date() - observed).days
+        status = "fresh" if age <= 4 else "aging" if age <= 8 else "stale" if age <= 90 else "dead"
+    return {
+        "staleness": status,
+        "age_days": age,
+        "freshness_policy": "fed-cp-intermittent-v1",
+        "freshness_grace_days": 4,
+        "freshness_basis": (
+            "age of the last qualifying print; the Federal Reserve CP release reports n.a. "
+            "when trade data is insufficient, so this age is upstream suppression, not a "
+            "collector fault; dead only after 90 days without a print"
+        ),
+        "publication_schedule": {
+            "source_url": FED_CP_SOURCE_URL,
+            "timezone": "America/New_York",
+            "rule": "daily release; a tenor is n.a. when trade data is insufficient",
+            "clock_precision": "unknown",
+            "latest_due_at": None,
+            "actual_published_at": None,
+            "missed_publication_opportunities": None,
+        },
+    }
+
+
 _DUBAI = ZoneInfo("Asia/Dubai")
 _DONIA_PUBLICATION_AIM = time(9, 30)
 _DONIA_COLLECTOR_GRACE = timedelta(minutes=90)
@@ -418,6 +459,8 @@ def publication_freshness(
         return cbuae_donia_freshness(asof, now=now)
     if source == "fred" and freq == "W" and isinstance(remote_id, str) and remote_id in H41_WEEKLY_REMOTE_IDS:
         return _h41_freshness(asof, now=now)
+    if source == "fred" and freq == "D" and isinstance(remote_id, str) and remote_id in FED_CP_INTERMITTENT_REMOTE_IDS:
+        return fed_cp_freshness(asof, now=now)
     if (
         source != "fred"
         or freq != "D"
