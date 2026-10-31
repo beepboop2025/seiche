@@ -38,6 +38,8 @@ from typing import Any, Iterable, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
 
+from seiche import public_rights
+
 SITE = "https://seiche.info"
 WIDTH = 1200
 HEIGHT = 630
@@ -79,6 +81,14 @@ _HEADLINE_LABELS = {
     "vix": ("VIX", "index"),
     "hy_oas_pct": ("High-yield OAS", "%"),
 }
+
+# While the published board is a source-rights restriction, these series keep
+# their established /views/series/ paths with an explicit withheld card.
+_WITHHELD_SERIES = (
+    "dw_b", "effr_pct", "hy_oas_pct", "iorb_pct", "reserves_b",
+    "rrp_b", "sofr_pct", "srf_accepted_b", "tga_b", "vix",
+)
+_WITHHELD_STATUS = "WITHHELD · RIGHTS RESTRICTED"
 
 _STATUS_COLORS = {
     "observed": (111, 226, 185),
@@ -937,9 +947,57 @@ a{{color:#bbb0fe}}footer{{border-top:1px solid #25283a;padding:24px 0 42px;color
 """
 
 
+def _withheld_spec(
+    restriction: Mapping[str, Any],
+    *,
+    kind: str,
+    identifier: str,
+    canonical_url: str,
+    eyebrow: str,
+    title: str,
+    description: str | None = None,
+    status: str = _WITHHELD_STATUS,
+) -> CardSpec:
+    """A card that states the source-rights restriction and carries no board value."""
+
+    policy = _clean(restriction.get("policy"), public_rights.POLICY)
+    return CardSpec(
+        kind=kind,
+        identifier=identifier,
+        canonical_url=canonical_url,
+        eyebrow=eyebrow,
+        title=title,
+        description=_clean(
+            description,
+            f"{public_rights.WITHHELD_STATE}. {public_rights.WITHHELD_NOTE}",
+        ),
+        status=status,
+        value="WITHHELD",
+        unit="pending source-rights qualification",
+        metrics=(
+            CardMetric("policy", policy),
+            CardMetric("availability", "unavailable"),
+            CardMetric("values reconstructed", "no"),
+        ),
+        as_of=None,
+        generated_at=None,
+        source="Seiche source-rights policy",
+        rights=_clean(restriction.get("reason"), public_rights.REASON),
+    )
+
+
 def _board_spec(
     snapshot: Mapping[str, Any], *, canonical_url: str, identifier: str
 ) -> CardSpec:
+    if public_rights.is_restriction(snapshot):
+        return _withheld_spec(
+            snapshot,
+            kind="board",
+            identifier=identifier,
+            canonical_url=canonical_url,
+            eyebrow="funding board",
+            title="Dollar funding board withheld",
+        )
     engines = (
         snapshot.get("engines") if isinstance(snapshot.get("engines"), Mapping) else {}
     )
@@ -1185,6 +1243,20 @@ def _money_market_specs(site_dir: Path, snapshot: Mapping[str, Any]) -> list[Car
 
 
 def _series_specs(snapshot: Mapping[str, Any]) -> list[CardSpec]:
+    if public_rights.is_restriction(snapshot):
+        return [
+            _withheld_spec(
+                snapshot,
+                kind="series",
+                identifier=_slug(identifier),
+                canonical_url=f"{SITE}/views/series/{_slug(identifier)}/",
+                eyebrow=f"published series / {identifier}",
+                title=_HEADLINE_LABELS.get(
+                    identifier, (identifier.replace("_", " ").title(), "")
+                )[0],
+            )
+            for identifier in _WITHHELD_SERIES
+        ]
     headline = (
         snapshot.get("headline")
         if isinstance(snapshot.get("headline"), Mapping)
@@ -1248,6 +1320,21 @@ def _series_specs(snapshot: Mapping[str, Any]) -> list[CardSpec]:
 def _tab_specs(snapshot: Mapping[str, Any]) -> list[CardSpec]:
     """Project every finite generic UI share surface from the sealed snapshot."""
 
+    if public_rights.is_restriction(snapshot):
+        return [
+            _withheld_spec(
+                snapshot,
+                kind="tab",
+                identifier=identifier,
+                canonical_url=f"{SITE}/views/tabs/{identifier}/",
+                eyebrow=f"terminal view / {identifier.replace('-', ' ')}",
+                title=_clean(definition["title"]),
+                description=_clean(definition["description"]),
+                # The archive itself stays published; only its board facts are withheld.
+                status="PUBLISHED ARCHIVE" if identifier == "dispatches" else _WITHHELD_STATUS,
+            )
+            for identifier, definition in _TAB_DEFINITIONS.items()
+        ]
     generated_at = _clean(snapshot.get("generated_at")) or None
     faults = snapshot.get("faults") if isinstance(snapshot.get("faults"), list) else []
     output: list[CardSpec] = []

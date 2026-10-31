@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.11: static source-rights projection and source clocks (2026-11-01)
+
+- Publish `/data/overview.json`, `/data/public.json` and `/data/book_history.json` with the same source-rights restriction as their API routes; the full board is written only to an explicit private build path outside the public web roots.
+- Render the withheld state explicitly on the prerendered home page, the board, series and tab link cards and the Book; the website shows the funding board as withheld and keeps no earlier values on screen.
+- Read RBI's renumbered outstanding repo and reverse repo rows, and carry the press RSS clock on full auction results.
+- Age suppressed Federal Reserve commercial paper tenors under `fed-cp-intermittent-v1` instead of reporting them dead.
+- Probe a released route, `/api/health`, in the daily security header check.
+- Move the native recovery schedule to 18:31 UTC with its attestation tail at 20:46 UTC; a delayed tail before 12:00 UTC attests the previous UTC day's fresh, unattested execution index.
+
 ## 0.16.10 — source-rights release scope (2026-10-28)
 
 - Expose eight verified research tool contracts and explicit source-rights status.

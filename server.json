@@ -3,7 +3,7 @@
   "name": "io.github.beepboop2025/seiche",
   "title": "Seiche \u2014 world-markets evidence terminal",
   "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits.",
-  "version": "0.16.10",
+  "version": "0.16.11",
   "repository": {
     "url": "https://github.com/beepboop2025/seiche",
     "source": "github"
@@ -19,14 +19,14 @@
     {
       "registryType": "pypi",
       "identifier": "seiche",
-      "version": "0.16.10",
+      "version": "0.16.11",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "SEICHE_MCP_PUBLIC",
-          "description": "Seiche 0.16.10: Set to 1 to expose the eight public research tools: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts and backtests are unavailable for all callers; do not reconstruct restricted observations.",
+          "description": "Seiche 0.16.11: Set to 1 to expose the eight public research tools: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts and backtests are unavailable for all callers; do not reconstruct restricted observations.",
           "isRequired": false
         }
       ]

@@ -6,7 +6,7 @@ Its two output receipt files are inputs to the original GitHub attestation actio
 
 import argparse
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
 import json
@@ -36,6 +36,10 @@ INSTALLATION_DOMAIN = "seiche-railway-recovery-installation-v1"
 INSTALLATION_BINDINGS = ("controller_source", "controller_manifest_sha256", "controller_image_digest",
                          "controller_deployment_id", "controller_project_id", "controller_environment_id",
                          "controller_service_id", "execution_public_key")
+# GitHub starts the scheduled tail hours late, often after 00:00 UTC. Before this
+# UTC hour an explicitly missing current-day index admits the previous day's.
+PREVIOUS_DAY_CUTOFF_HOUR = 12
+ATTESTATIONS = "https://api.github.com/repos/" + REPOSITORY + "/attestations/sha256:"
 
 
 def require(condition, message):
@@ -63,6 +67,47 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class MissingObject(ValueError):
     """Only an explicit provider HeadObject missing response has this meaning."""
+
+
+class AlreadyAttested(ValueError):
+    """A subject already has a GitHub attestation; the tail never attests it twice."""
+
+
+class GitHubAttestations:
+    """Read-only lookup of this repository's attestation store by subject digest.
+
+    Completion of a native attestation is recorded only there. A 404 or an empty
+    list means unattested; any other response or transport error fails closed.
+    """
+
+    def __init__(self, token, opener=None):
+        require(isinstance(token, str) and bool(token), "attestation lookup token is missing")
+        self.token = token
+        self.opener = opener or urllib.request.build_opener(NoRedirect())
+
+    def attested(self, digests):
+        found = set()
+        for value in digests:
+            require(re.fullmatch(r"[0-9a-f]{64}", value or "") is not None, "attestation subject digest is malformed")
+            request = urllib.request.Request(ATTESTATIONS + value + "?per_page=1", headers={
+                "Accept": "application/vnd.github+json", "Authorization": "Bearer " + self.token,
+                "User-Agent": "Seiche-Recovery-Attestation-Tail/1.0", "X-GitHub-Api-Version": "2022-11-28"})
+            try:
+                with self.opener.open(request, timeout=30) as response:
+                    require(response.status == 200, "attestation lookup returned an unexpected status")
+                    body = document(response.read(MAX_BYTES + 1))
+            except urllib.error.HTTPError as error:
+                status = error.code
+                error.close()
+                require(status == 404, "attestation lookup failed")
+                continue
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                raise ValueError("attestation lookup is unavailable") from None
+            rows = body.get("attestations")
+            require(isinstance(rows, list), "attestation lookup returned an unexpected shape")
+            if rows:
+                found.add(value)
+        return found
 
 
 class Live:
@@ -207,9 +252,10 @@ class Storage:
         return body
 
 
-def fetch_index(storage, policy, now, *, allow_missing=False):
+def fetch_index(storage, policy, now, *, allow_missing=False, day=None):
     """Caller must prove bucket configuration before using absence to start an export."""
-    key = policy["storage_prefix"] + "/native-executions/" + now.astimezone(timezone.utc).date().isoformat() + "/index.json"
+    day = day or now.astimezone(timezone.utc).date().isoformat()
+    key = policy["storage_prefix"] + "/native-executions/" + day + "/index.json"
     try:
         reference, head = storage.head(key)
     except MissingObject:
@@ -217,6 +263,25 @@ def fetch_index(storage, policy, now, *, allow_missing=False):
             return None
         raise
     return document(storage.fetch("proof/native-index.json", reference)), reference, head
+
+
+def index_day_admitted(day, at, *, previous):
+    """The selection rule, re-checked at the end of preparation."""
+    utc = at.astimezone(timezone.utc)
+    if not previous:
+        return day == utc.date().isoformat()
+    return utc.hour < PREVIOUS_DAY_CUTOFF_HOUR and day == (utc.date() - timedelta(days=1)).isoformat()
+
+
+def select_index(storage, policy, now):
+    """Today's index; before the cutoff, yesterday's only if today's is explicitly missing."""
+    utc = now.astimezone(timezone.utc)
+    early = utc.hour < PREVIOUS_DAY_CUTOFF_HOUR
+    found = fetch_index(storage, policy, now, allow_missing=early)
+    if found is not None:
+        return utc.date().isoformat(), False, found
+    day = (utc.date() - timedelta(days=1)).isoformat()
+    return day, True, fetch_index(storage, policy, now, day=day)
 
 
 def download_receipts(storage, payload, recovery, policy, now):
@@ -229,29 +294,38 @@ def download_receipts(storage, payload, recovery, policy, now):
     return bodies, heads, documents
 
 
-def prepare_subjects(policy, storage, live, recovery, *, installation, now, clock=lambda: datetime.now(timezone.utc), verify_signature=owner_signature):
-    """No output is released until all independent before/after checks pass."""
+def prepare_subjects(policy, storage, live, recovery, *, installation, now, attested,
+                     clock=lambda: datetime.now(timezone.utc), verify_signature=owner_signature):
+    """No output is released until all independent before/after checks pass.
+
+    ``attested`` maps subject digests to the subset that GitHub already holds an
+    attestation for; any already-attested subject stops the tail.
+    """
     before = runtime_identity(live, policy, now)
-    envelope, index_ref, _ = fetch_index(storage, policy, now)
+    index_day, previous, (envelope, index_ref, _) = select_index(storage, policy, now)
     key = index_ref["key"]
-    payload = verify.validate_execution_index(envelope, policy=policy, current_runtime=before, now=now)
+    payload = verify.validate_execution_index(envelope, policy=policy, current_runtime=before, now=now, index_date=index_day)
     installation_identity(*installation, payload, policy, now, verify_signature=verify_signature)
     bodies, _heads, _documents = download_receipts(storage, payload, recovery, policy, now)
+    subjects = {verify.INDEX_OBJECTS[name]: bodies[name] for name in ("recovery_receipt", "offsite_receipt")}
+    if attested(sorted(verify.digest(body) for body in subjects.values())):
+        raise AlreadyAttested("this native execution's receipts are already attested")
     finished = clock()
     after = runtime_identity(live, policy, finished)
     require({k: v for k, v in before.items() if k != "observed_at"} == {k: v for k, v in after.items() if k != "observed_at"}, "production runtime changed during attestation preparation")
-    verify.validate_execution_index(envelope, policy=policy, current_runtime=after, now=finished)
+    require(index_day_admitted(index_day, finished, previous=previous), "attestation preparation crossed its index day boundary")
+    verify.validate_execution_index(envelope, policy=policy, current_runtime=after, now=finished, index_date=index_day)
     installation_identity(*installation, payload, policy, finished, verify_signature=verify_signature)
     require(storage.head(key)[0] == index_ref, "daily index changed during attestation preparation")
     proof = {"schema": "seiche.native-recovery-attestation-preparation.v1", "status": "pass",
              "execution_platform": "railway", "attestation_platform": "github", "restore_executed_here": False,
              "controller_identity_proof": "owner-signed installation-time Railway API receipt; no live CI-project query",
              "installation_sha256": policy["installation_sha256"],
-             "observed_at": finished.isoformat(), "index": index_ref, "runtime": after,
+             "observed_at": finished.isoformat(), "index": index_ref, "index_date": index_day,
+             "previous_day_index": previous, "runtime": after,
              "controller_source": payload["controller_source"], "controller_image_digest": payload["controller_image_digest"],
-             "subjects": {verify.INDEX_OBJECTS[name]: {"sha256": verify.digest(bodies[name]), "size": len(bodies[name])}
-                          for name in ("recovery_receipt", "offsite_receipt")}}
-    return {verify.INDEX_OBJECTS[name]: bodies[name] for name in ("recovery_receipt", "offsite_receipt")}, proof
+             "subjects": {name: {"sha256": verify.digest(body), "size": len(body)} for name, body in subjects.items()}}
+    return subjects, proof
 
 
 def admit_github(environment, policy, checkout):
@@ -312,16 +386,18 @@ def main():
                             ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "S3_SSE_C_KEY_B64")})
         environment.update({name: policy[key] for name, key in (("S3_ENDPOINT", "storage_endpoint"), ("S3_BUCKET", "storage_bucket"), ("S3_PREFIX", "storage_prefix"))})
         live = Live(os.environ.pop("ATTEST_RAILWAY_TOKEN"), os.environ.pop("ATTEST_RAILWAY_EDGE_TOKEN"), private)
+        lookup = GitHubAttestations(os.environ.pop("ATTEST_GITHUB_TOKEN"))
         storage = Storage(private, environment, original)
         subjects, proof = prepare_subjects(policy, storage, live, stateful_recovery,
                                           installation=(args.installation.read_bytes(), args.installation_signature.read_bytes()),
-                                          now=datetime.now(timezone.utc))
+                                          now=datetime.now(timezone.utc), attested=lookup.attested)
         args.output.mkdir(mode=0o700)
         for name, body in subjects.items():
             (args.output / name).write_bytes(body)
         (args.output / "native-attestation-proof.json").write_bytes(verify.canonical(proof))
     public_proof = {name: proof[name] for name in ("status", "execution_platform", "attestation_platform", "restore_executed_here",
-                    "observed_at", "controller_identity_proof", "installation_sha256", "controller_source", "controller_image_digest", "subjects")}
+                    "observed_at", "index_date", "previous_day_index", "controller_identity_proof", "installation_sha256",
+                    "controller_source", "controller_image_digest", "subjects")}
     print("RAILWAY_RECOVERY_ATTESTATION_SUBJECTS_PASS " + json.dumps(public_proof, sort_keys=True), flush=True)
 
 

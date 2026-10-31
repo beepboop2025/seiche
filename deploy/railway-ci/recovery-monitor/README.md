@@ -63,8 +63,10 @@ live proof on September 8, 2026, using deployment
 `ba098059-3b2e-4838-bd14-36bf04e95348` with bootstrap disabled. The governed
 recovery export, isolated reverse restore, external Object Lock and both
 GitHub attestations passed in run `34241275921` before this cutover.
-The existing `31 2 * * *` GitHub monitor prerequisite remains while
-the protected export job consumes its GitHub artifact and identity. Preserve
+At that cutover the then-existing `31 2 * * *` GitHub monitor prerequisite
+remained while the protected export job consumed its GitHub artifact and
+identity. GitHub no longer schedules that monitor; the native recovery
+controller now runs at `31 18 * * *` (see its README). Preserve
 manual monitor/export/resume operations and the complete attestation chain.
 Rollback is to remove the new Railway schedule and restore the previous GitHub
 monitor scheduling condition; the original protected secrets remain available.

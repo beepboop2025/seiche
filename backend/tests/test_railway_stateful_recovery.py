@@ -1195,7 +1195,8 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     # OIDC tail and explicit protected manual recovery fallback.
     assert 'cron: "17 */6 * * *"' not in text
     assert 'cron: "31 2 * * *"' not in text
-    assert 'cron: "46 4 * * *"' in text
+    assert 'cron: "46 4 * * *"' not in text
+    assert 'cron: "46 20 * * *"' in text
     assert "workflow_dispatch:" in text
     assert "NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}" in text
     for environment in (
@@ -1879,7 +1880,8 @@ def test_native_attestation_cannot_start_a_production_export() -> None:
         "inputs.operation == 'attest-native-recovery'",
         "inputs.confirmation == 'ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY'",
         "github.event_name == 'schedule'",
-        "github.event.schedule == '46 4 * * *'",
+        "github.event.schedule == '46 20 * * *'",
+        "ATTEST_GITHUB_TOKEN: ${{ github.token }}",
         "environment: railway-stateful-recovery-export",
         "NATIVE_TAIL_ENABLED: ${{ vars.RECOVERY_NATIVE_TAIL_ENABLED }}",
         "secrets.RECOVERY_NATIVE_ATTEST_POLICY_ZLIB_BASE64",
@@ -1914,7 +1916,8 @@ def test_daily_native_attestation_keeps_original_recovery_manual_and_removes_han
 ):
     workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     assert "migration-native-handoff" not in workflow
-    assert workflow.count('cron: "46 4 * * *"') == 1
+    assert workflow.count('cron: "46 20 * * *"') == 1
+    assert "46 4 * * *" not in workflow
     for name, following in (
         ("monitor", "export-recovery"),
         ("export-recovery", "resume-offsite"),

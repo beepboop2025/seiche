@@ -10,6 +10,13 @@ static deploy — the site repo's git history is the append-only backbone.
 Idempotent per date: re-running on a day that already has a record leaves the
 chain untouched (exit 0, "no-op") — a record, once published, is never
 replaced.
+
+The published ledger mirrors /api/book and inherits its source-rights policy.
+While that route is withheld, the output is the route's restriction payload:
+neither today's record nor the earlier chain is republished, and the chain is
+not extended. The earlier records stay in the site mirror's history. Reopening
+the route requires restoring that chain first; a withheld file is never
+appended to.
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from seiche import assemble, publisher  # noqa: E402
+from seiche import assemble, public_rights, publisher  # noqa: E402
 from seiche.publish_snapshot import PublishSnapshotError, load_publish_snapshot  # noqa: E402
 
 
@@ -34,6 +41,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     prev_path, out_path = args.prev_history, Path(args.out_path)
 
+    withheld = public_rights.static_restriction("/data/book_history.json")
+    if withheld is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(withheld, separators=(",", ":")))
+        print(f"book withheld under {withheld['policy']}; no record or earlier chain published")
+        return 0
+
     history: list[dict] = []
     if prev_path != "-" and Path(prev_path).exists():
         try:
@@ -41,6 +55,10 @@ def main(argv: list[str] | None = None) -> int:
         except json.JSONDecodeError:
             print("FATAL: previous history is not valid JSON — refusing to overwrite a ledger", file=sys.stderr)
             return 1
+    if public_rights.is_restriction(history) or not isinstance(history, list):
+        print("FATAL: previous history is withheld or not a ledger; restore the published "
+              "chain before appending", file=sys.stderr)
+        return 1
     ok, msg = publisher.verify_chain(history)
     if not ok:
         print(f"FATAL: {msg} — refusing to append to a tampered chain", file=sys.stderr)

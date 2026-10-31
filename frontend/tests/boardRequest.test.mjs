@@ -6,7 +6,10 @@ import ts from 'typescript';
 const source=await readFile(new URL('../src/boardRequest.ts',import.meta.url),'utf8');
 const context={exports:{},fetch,AbortController,DOMException,setTimeout,clearTimeout,TextDecoder,Uint8Array};
 vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context);
-const {requestBoard,validateBoard,refreshBoardSources}=context.exports;
+const {requestBoard,validateBoard,refreshBoardSources,BoardWithheldError,sourceRightsRestriction}=context.exports;
+// The exact payload the publisher writes for /data/overview.json (public_rights.legacy_unavailable).
+const restriction={schema:'seiche.source-rights-restriction.v1',ok:false,status:'FAILED',category:'source_rights_restricted',
+  availability:'unavailable',publication_allowed:false,surface:'/data/overview.json',policy:'seiche.public-source-rights.2026-10-28'};
 const board={generated_at:'2026-09-24T20:00:00Z',engines:{composite:{value:44}}};
 const options=fetcher=>({signal:new AbortController().signal,fetcher});
 test('returns a source-dated snapshot, including explicit unavailable engines',async()=>{
@@ -112,4 +115,37 @@ test('cancellation prevents the second source and any late visible updates',asyn
   },updates,{signal:controller.signal})),{name:'AbortError'});
   assert.deepEqual(calls,['/published']);
   assert.equal(updates.length,0);
+});
+
+test('a published source-rights restriction is a withheld board, never a parse failure',async()=>{
+  assert.deepEqual(JSON.parse(JSON.stringify(sourceRightsRestriction(restriction))),{policy:'seiche.public-source-rights.2026-10-28'});
+  for(const value of [null,[],board,{...restriction,category:'other'},{...restriction,schema:'other'}])assert.equal(sourceRightsRestriction(value),null);
+  await assert.rejects(requestBoard('/published',options(async()=>Response.json(restriction))),
+    error=>error instanceof BoardWithheldError && error.status===403 && error.policy===restriction.policy
+      && /withheld pending source-rights qualification/.test(error.message) && /not a calm, zero or last-known/.test(error.message));
+});
+test('a withheld publication outranks a denied or failed live refresh and shows no board',async()=>{
+  for(const live of [Response.json({category:'source_rights_restricted'},{status:403}),new Response('unavailable',{status:503})]){
+    const updates=[];
+    await assert.rejects(refreshBoardSources('/published','/live',refreshOptions(async url=>
+      url==='/published'?Response.json(restriction):live.clone(),updates)),
+      error=>error instanceof BoardWithheldError && !/Live board refresh is restricted/.test(error.message));
+    assert.equal(updates.length,0);
+  }
+});
+test('periodic checks of a withheld publication do not call the live API',async()=>{
+  const calls=[],updates=[];
+  await assert.rejects(refreshBoardSources('/published','/live',refreshOptions(async url=>{
+    calls.push(url);return Response.json(restriction);
+  },updates,{apiEnabled:false})),error=>error instanceof BoardWithheldError);
+  assert.deepEqual(calls,['/published']);
+  assert.equal(updates.length,0);
+});
+test('a qualified live board still renders when the publication is withheld',async()=>{
+  const updates=[];
+  const result=await refreshBoardSources('/published','/live',refreshOptions(async url=>
+    url==='/published'?Response.json(restriction):Response.json(board),updates));
+  assert.equal(updates.length,1);
+  assert.equal(updates[0].live,true);
+  assert.equal(result.apiChecked,true);
 });

@@ -2,6 +2,23 @@ export class BoardRequestError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
+export const WITHHELD_BOARD_MESSAGE = "The legacy funding board, its composite reading, deep layer and derived "
+  + "narratives are withheld pending source-rights qualification. Values are not reconstructed, and a withheld "
+  + "reading is not a calm, zero or last-known reading. Money markets, Market workbench and Research remain available.";
+
+/** The publisher served the source-rights restriction instead of a board. */
+export class BoardWithheldError extends BoardRequestError {
+  constructor(readonly policy: string | null) { super(WITHHELD_BOARD_MESSAGE, 403); }
+}
+
+export function sourceRightsRestriction(value: unknown): { policy: string | null } | null {
+  const body = value as Record<string, unknown> | null;
+  if (!body || typeof body !== "object" || Array.isArray(body)
+      || body.schema !== "seiche.source-rights-restriction.v1"
+      || body.category !== "source_rights_restricted") return null;
+  return { policy: typeof body.policy === "string" ? body.policy : null };
+}
+
 export function validateBoard(value: unknown): asserts value is Record<string, any> {
   const board = value as Record<string, any> | null;
   if (!board || Array.isArray(board) || typeof board.generated_at !== "string"
@@ -44,6 +61,8 @@ export async function requestBoard(url: string, {
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
     const data: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const restriction = sourceRightsRestriction(data);
+    if (restriction) throw new BoardWithheldError(restriction.policy);
     validateBoard(data);
     return data;
   } catch (error) {
@@ -91,7 +110,8 @@ export async function refreshBoardSources(
     return { apiRestricted: false, refreshError: null, apiChecked: true };
   } catch (error) {
     if (signal.aborted) throw error;
-    if (!published) throw error;
+    // A withheld publication outranks any live failure message.
+    if (!published) throw publishedError instanceof BoardWithheldError ? publishedError : error;
     return {
       apiRestricted: error instanceof BoardRequestError && error.status === 403,
       refreshError: error instanceof Error ? error.message : "Live refresh is unavailable.",

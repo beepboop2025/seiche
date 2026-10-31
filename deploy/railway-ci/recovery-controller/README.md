@@ -168,8 +168,17 @@ and export, restore and sealing together retain the original 5,400-second job
 budget. Per-stage limits and admission waits cannot extend the outer deadline;
 they cannot all consume their nominal maxima in one execution. One volume-backed lock and
 one replica prevent overlapping native jobs. The daily native schedule is
-`31 2 * * *`; its thin GitHub tail starts at `46 4 * * *`, after the two-hour
-monitor/export window plus 15 minutes. GitHub no longer schedules the original
+`31 18 * * *`; its thin GitHub tail starts at `46 20 * * *`, after the two-hour
+monitor/export window plus 15 minutes. GitHub starts that scheduled tail hours
+late, usually after 00:00 UTC. Before 12:00 UTC, a tail that receives an explicit
+provider missing-key response for the current UTC day's index may instead admit
+the previous UTC day's index. That index keeps every other check: signature,
+exact targets, the 26-hour execution and receipt freshness, receipt versions and
+restore floors, the installation receipt and the before/after runtime identity.
+The tail also reads this repository's GitHub attestation store, where attestation
+completion is recorded, and stops if either receipt digest is already attested,
+so a delayed, repeated or manual run never attests one execution twice. A lookup
+error fails closed. GitHub no longer schedules the original
 monitor/export jobs. Explicit `monitor`, `export-recovery`, `resume-offsite`,
 `preflight-offsite` and `configure-native-backups` remain unchanged manual fallbacks
 with their original protected credentials, confirmations and production gates.

@@ -1,5 +1,26 @@
 # Publishing Seiche release surfaces
 
+## 0.16.11 static source-rights successor
+
+The 1 November candidate makes every static board file carry exactly what its
+API route may serve. While the legacy routes are withheld, the published
+overview, public summary and Book files carry the source-rights restriction,
+and the prerendered home page, link cards and the Book render the withheld
+state. It also carries the RBI outstanding-row and auction-clock reads, the
+Fed CP intermittent-publication freshness policy and the moved recovery
+schedule. The package version is `0.16.11`. Version metadata is preparation
+only: require the exact signed runtime release, the normal full-suite and
+recovery gates, the immutable PyPI receipt and the registry receipt.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r45`, for this successor.
+Preserve r44 on the accepted 0.16.10 source. Corpus observations, counts,
+hashes and rights are unchanged. Sign r45 only after the exact new runtime and
+corpus evidence pass their ordinary checks; declaration is not publication.
+Run a FULL publication from this source before any static-only publication,
+because a static run reuses the mirror's existing board files.
+
+
 ## 0.16.10 source-rights successor
 
 The 28 October candidate narrows hosted and stdio discovery to eight research

@@ -262,11 +262,15 @@ result. This prevents scheduled recovery from depending on an old activation
 line remaining inside the provider's log-retention window.
 
 The Railway monitor runs at minute 17 every six hours. Its recurring recovery
-controller performs the daily 02:31 UTC monitor/export/isolated-restore/Object-Lock
+controller performs the daily 18:31 UTC monitor/export/isolated-restore/Object-Lock
 sequence with the same gates and original governed acknowledgment. The sole
-GitHub cron is 04:46 UTC: it verifies today's signed native index, the exact locked
+GitHub cron is 20:46 UTC: it verifies the signed native index, the exact locked
 receipt versions, reviewed installation and fresh production runtime before the
-two original OIDC attestation actions run. The 15-minute margin follows the native limits of
+two original OIDC attestation actions run. GitHub usually starts it after
+midnight UTC, so before 12:00 UTC a current-day index that is explicitly missing
+admits the previous UTC day's index under the same 26-hour freshness bound, and
+a receipt already present in the repository's attestation store is never
+attested again. The 15-minute margin follows the native limits of
 30 minutes for the monitor and 90 minutes for export. No GitHub export or monitor job runs on this
 cron. Both platforms fail closed on stale or invalid evidence.
 
@@ -275,7 +279,9 @@ Explicit GitHub `monitor`, `export-recovery`, `resume-offsite`,
 manual fallback and administrative paths. Their original confirmations, strict
 gates and authority limitations are unchanged. A failed native run never starts
 a GitHub export automatically. Dispatch `attest-native-recovery` with confirmation
-`ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY` to repeat only the thin receipt attestation.
+`ATTEST_TODAYS_REVIEWED_NATIVE_RECOVERY` to rerun only the thin receipt attestation
+after a tail that did not attest; a run for an execution whose receipts are already
+attested stops without attesting.
 The completed one-time encrypted input handoff is removed.
 
 The portable receipts have independent, strict current contracts:

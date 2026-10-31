@@ -432,6 +432,28 @@ class ExecutionIndexTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.validate(self.signed({**self.payload, "observed_at": observed.isoformat()}))
 
+    def test_previous_day_index_needs_the_explicit_tail_date_and_stays_fresh(self):
+        after_midnight = self.now.replace(hour=2, minute=30) + timedelta(days=1)
+        runtime = {**self.runtime, "observed_at": after_midnight.isoformat()}
+        # Default callers, including the native controller, keep the same-day rule.
+        with self.assertRaisesRegex(ValueError, "no stale fallback"):
+            self.validate(self.signed(), now=after_midnight, runtime=runtime)
+        payload = verify.validate_execution_index(self.signed(), policy=self.policy, current_runtime=runtime,
+                                                  now=after_midnight, index_date="2026-09-08")
+        self.assertEqual(payload["date"], "2026-09-08")
+        for index_date in ("2026-09-07", "2026-09-10", "2026-9-8"):
+            with self.subTest(index_date=index_date), self.assertRaisesRegex(ValueError, "attestation window"):
+                verify.validate_execution_index(self.signed(), policy=self.policy, current_runtime=runtime,
+                                                now=after_midnight, index_date=index_date)
+        late = self.now + timedelta(hours=26, minutes=1)
+        late_runtime = {**self.runtime, "observed_at": late.isoformat()}
+        with self.assertRaisesRegex(ValueError, "freshness differs"):
+            verify.validate_execution_index(self.signed(), policy=self.policy, current_runtime=late_runtime,
+                                            now=late, index_date="2026-09-08")
+        with self.assertRaisesRegex(ValueError, "freshness differs"):
+            verify.validate_execution_index(self.signed({**self.payload, "date": "2026-09-09"}), policy=self.policy,
+                                            current_runtime=runtime, now=after_midnight, index_date="2026-09-08")
+
     def test_sender_offset_cannot_relabel_a_prior_utc_day(self):
         with self.assertRaises(ValueError):
             self.validate(self.signed({**self.payload, "observed_at": "2026-09-08T04:01:00+14:00"}))

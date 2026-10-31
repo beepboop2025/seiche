@@ -2,6 +2,7 @@
 
 import copy
 from datetime import timedelta
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -54,7 +55,7 @@ class TailTests(unittest.TestCase):
         self.original_validator = mock.Mock()
         self.recovery = types.SimpleNamespace(validate_offsite_receipt=self.original_validator)
 
-    def transport(self, payload=None, *, tampered=False):
+    def transport(self, payload=None, *, tampered=False, missing=()):
         payload = payload or self.payload
         envelope = self.fixture.signed(payload)
         if tampered:
@@ -67,6 +68,8 @@ class TailTests(unittest.TestCase):
         calls = []
         def head(key, version=None):
             calls.append((key, version))
+            if key in missing:
+                raise attest.MissingObject("explicit provider missing-key response")
             if key not in references:
                 raise ValueError("required object absent")
             item = references[key]
@@ -85,7 +88,111 @@ class TailTests(unittest.TestCase):
 
     def prepare(self, storage, live, **changes):
         return attest.prepare_subjects(self.policy, storage, live, self.recovery, installation=changes.get("installation", self.installation),
-                                       now=self.now, clock=changes.get("clock", lambda: self.now), verify_signature=lambda body, signature: None)
+                                       now=self.now, attested=changes.get("attested", lambda digests: set()),
+                                       clock=changes.get("clock", lambda: self.now), verify_signature=lambda body, signature: None)
+
+    def today_key(self):
+        return self.policy["storage_prefix"] + "/native-executions/" + self.now.date().isoformat() + "/index.json"
+
+    def delayed(self, **offset):
+        """GitHub fired the 20:46 tail after midnight; today's controller has not run yet."""
+        self.now = self.fixture.now.replace(hour=0, minute=0) + timedelta(days=1, **offset)
+        return self.transport(missing={self.today_key()})
+
+    def test_delayed_run_after_midnight_attests_the_previous_days_fresh_index(self):
+        storage, live = self.delayed(hours=2, minutes=30)
+        lookups = []
+        subjects, proof = self.prepare(storage, live, attested=lambda digests: lookups.append(digests) or set())
+        self.assertEqual(subjects, {verify.INDEX_OBJECTS[name]: self.bodies[name] for name in ("recovery_receipt", "offsite_receipt")})
+        self.assertEqual((proof["index_date"], proof["previous_day_index"], proof["index"]["key"]), ("2026-09-08", True, self.index_key))
+        self.assertEqual([key for key, version in storage.calls if version is None], [self.today_key(), self.index_key, self.index_key])
+        self.assertEqual(lookups, [sorted(verify.digest(body) for body in subjects.values())])
+
+    def test_already_attested_previous_day_index_releases_no_subjects(self):
+        for attested in (lambda digests: {digests[0]}, lambda digests: set(digests)):
+            storage, live = self.delayed(hours=3)
+            with self.subTest(attested=attested), self.assertRaises(attest.AlreadyAttested):
+                self.prepare(storage, live, attested=attested)
+        storage, live = self.delayed(hours=3)
+        def unavailable(digests):
+            raise ValueError("attestation lookup is unavailable")
+        with self.assertRaisesRegex(ValueError, "lookup is unavailable"):
+            self.prepare(storage, live, attested=unavailable)
+
+    def test_stale_previous_day_index_is_refused(self):
+        self.now = self.fixture.now.replace(hour=11, minute=0) + timedelta(days=1)
+        observed = self.fixture.now.replace(hour=8, minute=30)
+        payload = {**self.payload, "observed_at": observed.isoformat(), "snapshot_id": "20260908T080000Z"}
+        storage, live = self.transport(payload, missing={self.today_key()})
+        with self.assertRaisesRegex(ValueError, "freshness differs"):
+            self.prepare(storage, live)
+        self.assertEqual(storage.fetch.call_count, 1)
+
+    def test_after_the_cutoff_a_missing_index_never_falls_back(self):
+        storage, live = self.delayed(hours=attest.PREVIOUS_DAY_CUTOFF_HOUR)
+        with self.assertRaises(attest.MissingObject):
+            self.prepare(storage, live)
+        self.assertNotIn(self.index_key, [key for key, _version in storage.calls])
+
+    def test_only_an_explicit_missing_index_admits_the_previous_day(self):
+        storage, live = self.delayed(hours=1)
+        original = storage.head.side_effect
+        def denied(key, version=None):
+            if key == self.today_key():
+                storage.calls.append((key, version))
+                raise ValueError("access denied")
+            return original(key, version)
+        storage.head.side_effect = denied
+        with self.assertRaisesRegex(ValueError, "access denied"):
+            self.prepare(storage, live)
+        self.assertNotIn(self.index_key, [key for key, _version in storage.calls])
+
+    def test_previous_day_preparation_cannot_cross_the_cutoff(self):
+        storage, live = self.delayed(hours=11, minutes=59)
+        with self.assertRaisesRegex(ValueError, "crossed its index day boundary"):
+            self.prepare(storage, live, clock=lambda: self.now + timedelta(minutes=2))
+
+    def test_same_day_run_is_unchanged_and_checks_its_subjects_once(self):
+        storage, live = self.transport()
+        lookups = []
+        subjects, proof = self.prepare(storage, live, attested=lambda digests: lookups.append(digests) or set())
+        self.assertEqual((proof["index_date"], proof["previous_day_index"]), ("2026-09-08", False))
+        self.assertEqual([key for key, version in storage.calls if version is None], [self.index_key, self.index_key])
+        self.assertEqual(lookups, [sorted(verify.digest(body) for body in subjects.values())])
+        storage, live = self.transport()
+        with self.assertRaises(attest.AlreadyAttested):
+            self.prepare(storage, live, attested=lambda digests: set(digests))
+
+    def test_attestation_store_lookup_reads_404_and_empty_as_unattested_and_fails_closed(self):
+        digest = "a" * 64
+        def opener(*outcomes):
+            requests = []
+            def respond(request, timeout):
+                requests.append(request)
+                outcome = outcomes[len(requests) - 1]
+                if isinstance(outcome, Exception):
+                    raise outcome
+                status, body = outcome
+                response = mock.MagicMock(status=status)
+                response.read.return_value = body
+                response.__enter__.return_value = response
+                return response
+            return types.SimpleNamespace(open=respond, requests=requests)
+        def http(code):
+            return attest.urllib.error.HTTPError(attest.ATTESTATIONS + digest, code, "fixture", {}, io.BytesIO(b""))
+        lookup = attest.GitHubAttestations("fixture-token", opener(http(404), (200, b'{"attestations": []}'), (200, b'{"attestations": [{}]}')))
+        self.assertEqual(lookup.attested([digest, "b" * 64, "c" * 64]), {"c" * 64})
+        request = lookup.opener.requests[0]
+        self.assertEqual(request.full_url, attest.ATTESTATIONS + digest + "?per_page=1")
+        self.assertEqual(request.get_header("Authorization"), "Bearer fixture-token")
+        for outcome in (http(403), http(500), attest.urllib.error.URLError(TimeoutError("network")),
+                        (200, b'{"items": []}'), (200, b"not json")):
+            with self.subTest(outcome=outcome), self.assertRaises(ValueError):
+                attest.GitHubAttestations("fixture-token", opener(outcome)).attested([digest])
+        with self.assertRaises(ValueError):
+            attest.GitHubAttestations("fixture-token", opener()).attested(["not-a-digest"])
+        with self.assertRaises(ValueError):
+            attest.GitHubAttestations("", opener())
 
     def test_only_two_original_subject_bytes_are_released_after_full_validation(self):
         storage, live = self.transport()

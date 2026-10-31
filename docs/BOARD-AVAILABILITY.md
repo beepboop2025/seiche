@@ -1,5 +1,30 @@
 # Funding board availability
 
+## Static files follow the API source-rights policy (0.16.11)
+
+From release 0.16.11 each static board file carries exactly what its API route
+may serve. While `/api/overview`, `/api/public` and `/api/book` are withheld
+under `seiche.public-source-rights.2026-10-28`, the published
+`/data/overview.json`, `/data/public.json` and `/data/book_history.json` carry
+that same source-rights restriction payload instead of board values. The
+publisher keeps the full board only at an explicit private path outside the
+public web roots.
+
+The website reads that restriction and shows the funding board as withheld
+pending source-rights qualification. It does not keep earlier values on screen
+and does not present a withheld reading as calm, zero or last known. The
+prerendered home page, the board, series and tab link cards and the Book state
+the same withheld condition. Money Markets, Market Workbench, Research, Market
+Atlas, Dispatches and Account load their own evidence and remain available. The
+Book's earlier hash-chained records remain in the site mirror's history; it is
+not extended while withheld, and reopening it requires restoring that chain.
+
+This supersedes the 30 October restoration below for every legacy board value.
+The rest of this document describes how the website behaves when a route's
+policy is open.
+
+## 30 October restoration
+
 The owner requested restoration of the interactive legacy board and visibility
 of all available Seiche data on 30 October 2026.
 

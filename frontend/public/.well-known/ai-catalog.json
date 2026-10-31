@@ -15,7 +15,7 @@
         "name": "io.github.beepboop2025/seiche",
         "title": "Seiche — world-markets evidence terminal",
         "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits.",
-        "version": "0.16.10",
+        "version": "0.16.11",
         "repository": {
           "url": "https://github.com/beepboop2025/seiche",
           "source": "github"
@@ -31,14 +31,14 @@
           {
             "registryType": "pypi",
             "identifier": "seiche",
-            "version": "0.16.10",
+            "version": "0.16.11",
             "transport": {
               "type": "stdio"
             },
             "environmentVariables": [
               {
                 "name": "SEICHE_MCP_PUBLIC",
-                "description": "Seiche 0.16.10: Set to 1 to expose the eight public research tools: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts and backtests are unavailable for all callers; do not reconstruct restricted observations.",
+                "description": "Seiche 0.16.11: Set to 1 to expose the eight public research tools: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts and backtests are unavailable for all callers; do not reconstruct restricted observations.",
                 "isRequired": false
               }
             ]
@@ -83,7 +83,7 @@
         "Show a dated money-market view with source clocks and unavailable evidence.",
         "Compare ECB reference FX without executable-price claims."
       ],
-      "version": "0.16.10",
+      "version": "0.16.11",
       "updatedAt": "2026-10-13T00:00:00Z",
       "metadata": {
         "authentication": "none",
@@ -179,7 +179,7 @@
         "availabilityClaim": "declared_endpoint_verify_with_corpus_health",
         "humanPage": "https://seiche.info/#corpus",
         "requestTimeMonolithScan": false,
-        "publicationReceipt": "{\"bisAggregateRows\":76346103,\"bisApiOnly\":1,\"bisBulkFlat\":27,\"bisFlows\":29,\"bisRegistryOnly\":1,\"engineAttempts\":1118,\"engineDatasets\":1122,\"engineRecoveredObjects\":8,\"engineVerifiedObjects\":1110,\"indexArtifactId\":\"liquilens-engine-public-index-v1:corpus-7cb1695c6affa707:29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36\",\"indexSha256\":\"29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36\",\"inventorySha256\":\"05c5b08074c65299e59e09285a85e8aaffe895e64a8d840a3a81bbdca4a83f64\",\"releaseId\":\"corpus-7cb1695c6affa707\",\"schemaVersion\":\"1.0.0\",\"tag\":\"market-corpus-receipt-corpus-7cb1695c6affa707-r44\"}"
+        "publicationReceipt": "{\"bisAggregateRows\":76346103,\"bisApiOnly\":1,\"bisBulkFlat\":27,\"bisFlows\":29,\"bisRegistryOnly\":1,\"engineAttempts\":1118,\"engineDatasets\":1122,\"engineRecoveredObjects\":8,\"engineVerifiedObjects\":1110,\"indexArtifactId\":\"liquilens-engine-public-index-v1:corpus-7cb1695c6affa707:29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36\",\"indexSha256\":\"29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36\",\"inventorySha256\":\"05c5b08074c65299e59e09285a85e8aaffe895e64a8d840a3a81bbdca4a83f64\",\"releaseId\":\"corpus-7cb1695c6affa707\",\"schemaVersion\":\"1.0.0\",\"tag\":\"market-corpus-receipt-corpus-7cb1695c6affa707-r45\"}"
       }
     },
     {
@@ -219,7 +219,7 @@
         "Retrieve compact oil-funding, live-vs-reference market structure and FX-material transmission context.",
         "Retrieve a bounded money, FX, capital-markets and metadata-only China macro context with source clocks, status vocabulary and canonical citation URLs."
       ],
-      "version": "0.16.10",
+      "version": "0.16.11",
       "updatedAt": "2026-10-13T00:00:00Z",
       "metadata": {
         "authentication": "none",

@@ -11,6 +11,10 @@ REASON = (
     "source-specific permission or qualified original-publisher acquisition."
 )
 TERMS = "https://fred.stlouisfed.org/legal/terms/"
+# Rendered static surfaces state a withheld board in these words.
+WITHHELD_STATE = "Withheld pending source-rights qualification"
+WITHHELD_NOTE = ("Values are not reconstructed. A withheld reading is not a calm, "
+                 "zero or last-known reading.")
 METADATA = frozenset({
     "id", "schema", "label", "name", "unit", "cadence", "source", "source_url",
     "source_id", "publisher", "series", "asof", "as_of", "generated_at",
@@ -182,6 +186,14 @@ LEGACY_PATHS = frozenset({
     "/api/badge/record", "/api/trade-safety/risk-context",
 })
 LEGACY_PREFIXES = ("/api/engines/", "/api/asof/", "/api/dispatch/")
+RESTRICTION_SCHEMA = "seiche.source-rights-restriction.v1"
+# Static publication files are copies of these API surfaces and inherit their
+# policy. A public file carries exactly what its API route may serve.
+STATIC_SURFACES = {
+    "/data/overview.json": "/api/overview",
+    "/data/public.json": "/api/public",
+    "/data/book_history.json": "/api/book",
+}
 
 
 def legacy_http_restricted(path: str) -> bool:
@@ -191,9 +203,22 @@ def legacy_http_restricted(path: str) -> bool:
     )
 
 
+def static_restriction(path: str) -> dict | None:
+    """The payload a static publication file must carry instead of board values.
+
+    None means its API surface is open, so the caller may publish the board.
+    """
+    return legacy_unavailable(path) if legacy_http_restricted(STATIC_SURFACES[path]) else None
+
+
+def is_restriction(value: object) -> bool:
+    return (isinstance(value, Mapping) and value.get("schema") == RESTRICTION_SCHEMA
+            and value.get("category") == "source_rights_restricted")
+
+
 def legacy_unavailable(surface: str) -> dict:
     return {
-        "schema": "seiche.source-rights-restriction.v1", "ok": False,
+        "schema": RESTRICTION_SCHEMA, "ok": False,
         "status": "FAILED", "category": "source_rights_restricted",
         "availability": "unavailable", "rights_status": "redistribution_review_required",
         "publication_allowed": False, "surface": surface, "policy": POLICY,

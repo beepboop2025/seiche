@@ -3,7 +3,7 @@
 import ctypes
 import base64
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
 import json
@@ -233,8 +233,12 @@ def sign_execution_index(payload, pem, public_hex):
     return {"payload": payload, "key_id": digest(public), "signature": base64.b64encode(signature).decode()}
 
 
-def validate_execution_index(envelope, *, policy, current_runtime, now):
-    """Verify a fresh exact-target native claim before any GitHub attestation."""
+def validate_execution_index(envelope, *, policy, current_runtime, now, index_date=None):
+    """Verify a fresh exact-target native claim before any GitHub attestation.
+
+    The claim must be for ``now``'s UTC day. Only the attestation tail may pass
+    ``index_date`` for the previous UTC day; every freshness bound still applies.
+    """
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     if not isinstance(envelope, dict) or set(envelope) != {"payload", "key_id", "signature"}:
         raise ValueError("native execution envelope differs")
@@ -258,7 +262,12 @@ def validate_execution_index(envelope, *, policy, current_runtime, now):
         raise ValueError("native evidence observation has no timezone")
     observed = observed.astimezone(timezone.utc)
     age = (now - observed).total_seconds()
-    if (payload["date"] != now.date().isoformat() or observed.date().isoformat() != payload["date"] or
+    expected_date = now.date().isoformat()
+    if index_date is not None:
+        if index_date not in {expected_date, (now.date() - timedelta(days=1)).isoformat()}:
+            raise ValueError("native execution index date is outside the attestation window")
+        expected_date = index_date
+    if (payload["date"] != expected_date or observed.date().isoformat() != payload["date"] or
             age < -120 or age > 26 * 3600):
         raise ValueError("native execution day or freshness differs; no stale fallback is allowed")
     fixed = {"schema": INDEX_SCHEMA, "execution_platform": "railway", "repository": "beepboop2025/seiche",

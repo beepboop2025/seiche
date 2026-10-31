@@ -54,7 +54,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from seiche import public_view
+from seiche import public_rights, public_view
 # The house copy rules and the plain-language names live in the letter; the
 # reading list and the site description live in the llms.txt preamble. Both
 # are imported rather than restated so this page cannot contradict them, and
@@ -400,7 +400,70 @@ def calls_md(week_md: str) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 # assembly
 # ---------------------------------------------------------------------------
+_MASTHEAD = (
+    '<div class="top"><a class="wordmark" href="/">SEI<span>CHE</span></a>'
+    '<span class="crumb"><a href="/dispatches/">dispatches</a> &middot; '
+    '<a href="/guide">guide</a> &middot; '
+    '<a href="/methodology">methodology</a> &middot; '
+    '<a href="/skeptic">skeptic pack</a></span></div>'
+)
+
+
+def withheld_block(restriction: dict) -> tuple[str, dict]:
+    """The home page while the published board is a source-rights restriction.
+
+    Nothing from the board is rendered or reconstructed: no composite, Tell,
+    thesis, headline number, PROOF record or letter body. The page names the
+    withheld state, its reason and policy, and the research that stays open.
+    """
+    policy = str(restriction.get("policy") or public_rights.POLICY)
+    reason = str(restriction.get("reason") or public_rights.REASON)
+    headline = f"The funding board is {public_rights.WITHHELD_STATE.lower()}"
+    head = (
+        _MASTHEAD
+        + f'<div class="date">funding research &middot; free public data only &middot; '
+        f'policy {_esc(policy)}</div>'
+        f'<h1>{_esc(headline)}</h1>'
+        f'<p class="lede">{_esc(public_rights.WITHHELD_NOTE)} This page is written for readers '
+        'and machines that do not run JavaScript; the interactive terminal is the same URL '
+        'with scripting on.</p>'
+    )
+    body = [
+        '<div class="body">', md_to_html(llms_intro_md()),
+        f"<h2>{_esc(public_rights.WITHHELD_STATE)}</h2>",
+        f"<p>{_esc(reason)}</p>",
+        "<p>The composite reading, the Tell, the editorial argument, the headline numbers, "
+        "the PROOF record and the Book are withheld together. "
+        f"{_esc(public_rights.WITHHELD_NOTE)}</p>",
+        '<p>Research that remains available carries its own source clocks and field-level '
+        'restrictions: <a href="/money-markets/">money markets</a>, '
+        '<a href="/markets/">world markets</a>, <a href="/#workbench">the market workbench</a> '
+        'and <a href="/developers">the API and MCP tools</a>. The '
+        '<a href="/dispatches/">dispatch archive</a> is a dated record, not a current reading.</p>',
+    ]
+    docs = llms_docs_md()
+    if docs:
+        body += ["<h2>Read next</h2>", md_to_html(docs)]
+    body.append("</div>")
+    foot = (
+        '<div class="foot">Seiche is free open source software '
+        '(<a href="https://github.com/beepboop2025/seiche">AGPL-3.0-or-later, source</a>) and a free '
+        'public good: no sign-in or paywall for the public desk. '
+        '<a href="/llms.txt">llms.txt</a> &middot; '
+        '<a href="/sitemap.xml">sitemap</a> &middot; Not investment advice.</div>'
+    )
+    facts = {
+        "regime": "WITHHELD", "value": None, "headline": headline,
+        "reading": public_rights.WITHHELD_STATE, "gloss": public_rights.WITHHELD_NOTE,
+        "generated_at": "", "proof": {}, "editorial": {}, "withheld": True, "policy": policy,
+    }
+    inner = f"<style>{_CSS}</style>{head}{''.join(body)}{foot}"
+    return f"<noscript>{inner}</noscript>", facts
+
+
 def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tuple[str, dict]:
+    if public_rights.is_restriction(snap):
+        return withheld_block(snap)
     reading_html, facts = reading_block(snap)
     dailies = [e for e in entries if not str(e.get("slug", "")).endswith("-week-ahead")]
     weeklies = [e for e in entries if str(e.get("slug", "")).endswith("-week-ahead")]
@@ -408,12 +471,8 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
     week = weeklies[0] if weeklies else None
 
     head = (
-        '<div class="top"><a class="wordmark" href="/">SEI<span>CHE</span></a>'
-        '<span class="crumb"><a href="/dispatches/">dispatches</a> &middot; '
-        '<a href="/guide">guide</a> &middot; '
-        '<a href="/methodology">methodology</a> &middot; '
-        '<a href="/skeptic">skeptic pack</a></span></div>'
-        f'<div class="date">funding-stress &amp; leveraged-positioning early warning '
+        _MASTHEAD
+        + f'<div class="date">funding-stress &amp; leveraged-positioning early warning '
         f'&middot; free public data only &middot; board built {_esc(_stamp(facts["generated_at"]))}</div>'
         f'<h1>{_esc(facts["headline"])}</h1>'
         f'<p class="lede">{_esc(facts["gloss"])} This page is the board written out for readers '
@@ -493,12 +552,16 @@ def build_meta(facts: dict, _snap: dict) -> dict[str, str]:
     description. The daily funding argument remains fully rendered in the page
     body, where its evidence, countercase and dates travel with it.
     """
-    return {
+    meta = {
         "og:updated_time": str(facts.get("generated_at") or ""),
         "og:image:alt": "Seiche, the public money, forex and capital-market evidence terminal",
         "twitter:image:alt": "Seiche, the public money, forex and capital-market evidence terminal",
         "og:locale": "en_US",
     }
+    if facts.get("withheld"):
+        # A withheld board has no publication clock to advertise.
+        del meta["og:updated_time"]
+    return meta
 
 
 # ---------------------------------------------------------------------------

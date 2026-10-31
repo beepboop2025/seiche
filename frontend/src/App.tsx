@@ -2,7 +2,7 @@ import { createElement, useEffect, useRef, useState, lazy, Suspense, type CSSPro
 import { flushSync } from "react-dom";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
-import { refreshBoardSources } from "./boardRequest";
+import { BoardWithheldError, refreshBoardSources } from "./boardRequest";
 import { apiCheckStatus } from "./snapshotStatus";
 import { Any } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
@@ -87,6 +87,7 @@ export default function App() {
 function AppInner() {
   const [snap, setSnap] = useState<Any | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [withheld, setWithheld] = useState(false);
   const [live, setLive] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
@@ -185,7 +186,7 @@ function AppInner() {
           // An older CDN generation cannot replace a newer visible snapshot.
           if (snapshot.current && Date.parse(data.generated_at) < Date.parse(snapshot.current.generated_at)) return;
           snapshot.current = data;
-          setSnap(data); setLive(liveSource); setErr(null);
+          setSnap(data); setLive(liveSource); setErr(null); setWithheld(false);
         },
       });
       if (epoch !== generation.current || controller.signal.aborted) return;
@@ -194,6 +195,14 @@ function AppInner() {
       if (result.apiChecked) setCheckedAt(new Date().toISOString());
     } catch (reason) {
       if (epoch !== generation.current || controller.signal.aborted) return;
+      if (reason instanceof BoardWithheldError) {
+        // The publication withdrew the board: never keep showing earlier values.
+        apiRestricted.current = true;
+        snapshot.current = null;
+        setSnap(null); setLive(false); setRefreshError(null);
+        setWithheld(true); setErr(reason.message);
+        return;
+      }
       const message = reason instanceof Error ? reason.message : "The source could not be refreshed.";
       if (snapshot.current) setRefreshError(message); else setErr(message);
     } finally {
@@ -300,11 +309,14 @@ function AppInner() {
   if (err && !snap) {
     return (
       <main className="app research-app" id="main" data-tab={tab}>
-        <div className="errbox">
-          <div className="errtitle">The funding board could not be loaded</div>
+        <div className="errbox" data-board-state={withheld ? "withheld" : "error"}>
+          <div className="errtitle">{withheld
+            ? "The funding board is withheld pending source-rights qualification"
+            : "The funding board could not be loaded"}</div>
           <div className="errmsg">{err}</div>
           <div className="erractions">
-            <button className="btn-accent" onClick={retry}>Retry</button>
+            <button className="btn-accent" onClick={retry}>{withheld ? "Check again" : "Retry"}</button>
+            {withheld && <a href="#money%20markets">Open Money markets</a>}
             <a href="#workbench">Open the research workbench</a>
           </div>
         </div>
