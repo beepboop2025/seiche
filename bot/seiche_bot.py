@@ -225,7 +225,7 @@ def fmt_research_network(payload: dict | None) -> str:
         return 'Connected research is unavailable. <a href="https://seiche.info/#RESEARCH">Open the research desk</a> or inspect <a href="https://palimpsest.info/data.html">Palimpsest sources</a>.'
     lines = ["<b>Connected research</b>", "Palimpsest evidence → Seiche funding → institution and liquidity research", ""]
     for row in payload.get("datasets", [])[:5]:
-        lines.append("• " + esc(str(row.get("title") or row.get("id") or "Dataset")[:180]) + " — " + esc(str(row.get("evidence_state") or "unknown")))
+        lines.append("• " + esc(str(row.get("title") or row.get("id") or "Dataset")[:180]) + ": " + esc(str(row.get("evidence_state") or "unknown")))
         lines.append("  Source observation: " + esc(str(row.get("observed_at") or "Unavailable")[:64]))
     topic = payload.get("selection", {}).get("topic", "all")
     if topic not in RESEARCH_TOPICS:
@@ -929,7 +929,7 @@ def _regime_icon(regime) -> str:
 
 def fmt_now(gauge: dict | None, pub: dict | None) -> str:
     if not gauge:
-        return ("The board did not answer — absence is not calm; the gauge "
+        return ("The board did not answer, absence is not calm; the gauge "
                 f"is at {SITE}.")
     idx = gauge.get("index")
     head = (f"Regime: <b>{esc(gauge.get('regime'))}</b> · composite "
@@ -947,14 +947,14 @@ def fmt_now(gauge: dict | None, pub: dict | None) -> str:
         if isinstance(tell, (int, float)):
             reading = ((pub or {}).get("conclusion") or {}).get("tell_reading") or (
                 "plumbing leads price" if tell > 0 else "price leads plumbing")
-            lines.append(f"The Tell: {tell:+.0f} — {esc(reading)}.")
+            lines.append(f"The Tell: {tell:+.0f}, {esc(reading)}.")
     trend = gauge_spark()
     if trend:
         lines.append(f"30d composite: <code>{trend}</code>")
     nt = gauge.get("next_turn") or {}
     if nt.get("date"):
         lines.append(f"\nNext turn: <b>{esc(nt['date'])}</b> "
-                     f"({esc(nt.get('mode', '').replace('_', ' '))}) — forecast "
+                     f"({esc(nt.get('mode', '').replace('_', ' '))}): forecast "
                      f"{nt.get('forecast_bp')}bp, severity {nt.get('severity')}/5")
     for w in (gauge.get("crunch_windows") or [])[:2]:
         lines.append(f"⚠ {esc(w.get('date'))}: {esc(w.get('reason'))}")
@@ -966,7 +966,7 @@ def fmt_snap(gauge: dict | None, pub: dict | None) -> str:
     survives any chat theme. Pure over the served gauge (+ the bot's own
     accrued daily history for the trend row)."""
     if not gauge:
-        return ("The board did not answer — absence is not calm; the gauge "
+        return ("The board did not answer, absence is not calm; the gauge "
                 f"is at {SITE}.")
     idx = gauge.get("index")
     regime = str(gauge.get("regime") or "?")
@@ -999,15 +999,15 @@ def fmt_snap(gauge: dict | None, pub: dict | None) -> str:
                     f"validated eligible {_eligibility(evidence.get('validated_backtest_eligible'))}")
     body = "<pre>" + "\n".join(rows) + "</pre>"
     return (f"{_regime_icon(regime)} {body}\n"
-            f"Free public good — {SITE} · forward this card to a desk that "
+            f"Free public good: {SITE} · forward this card to a desk that "
             "watches money markets.")
 
 
 def fmt_odds(overview: dict | None) -> str:
     nav = (overview or {}).get("navigator") or {}
     if not nav.get("ok"):
-        return "The Navigator did not answer — try again shortly."
-    lines = [f"🎲 <b>Forward event odds</b> — as of {esc(nav.get('asof'))}",
+        return "The Navigator did not answer, try again shortly."
+    lines = [f"🎲 <b>Forward event odds</b>: as of {esc(nav.get('asof'))}",
              "",
              f"P(funding event, next 5 business days): "
              f"<b>{pct(nav.get('p_event_5bd'))}</b>"]
@@ -1021,7 +1021,7 @@ def fmt_odds(overview: dict | None) -> str:
 
 def fmt_turns(gauge: dict | None, overview: dict | None) -> str:
     if not gauge and not overview:
-        return "The board did not answer — absence is not calm."
+        return "The board did not answer, absence is not calm."
     lines = ["📅 <b>The calendar desk</b>", ""]
     nt = (gauge or {}).get("next_turn") or {}
     if nt.get("date"):
@@ -1053,7 +1053,7 @@ def fmt_turns(gauge: dict | None, overview: dict | None) -> str:
 def fmt_oil(payload: dict | None) -> str:
     """Oil × Funding, with observations and scenario claims kept separate."""
     if not payload:
-        return "The Oil × Funding desk did not answer — absence is not calm."
+        return "The Oil × Funding desk did not answer, absence is not calm."
     if payload.get("ok") is False:
         return ("The Oil × Funding desk has no current reading: "
                 f"{esc(payload.get('reason', 'unknown reason'))}.")
@@ -1065,7 +1065,7 @@ def fmt_oil(payload: dict | None) -> str:
     cp_nf = funding.get("cp_nonfinancial") or {}
     cp_fin = funding.get("cp_financial") or {}
     sofr = funding.get("sofr_iorb") or {}
-    lines = [f"🛢 <b>Oil × Funding</b> — as of {esc(payload.get('as_of', '?'))}", ""]
+    lines = [f"🛢 <b>Oil × Funding</b>: as of {esc(payload.get('as_of', '?'))}", ""]
 
     if wti.get("price_usd_per_bbl") is not None:
         lines.append(
@@ -1199,13 +1199,13 @@ def fmt_oil(payload: dict | None) -> str:
 def fmt_estuary(payload: dict | None) -> str:
     """The Estuary headline plus the Passage's untouched-holdout verdict."""
     if not payload:
-        return "The Estuary did not answer — absence is not calm."
+        return "The Estuary did not answer, absence is not calm."
     if payload.get("ok") is False:
         return ("The Estuary has no current reading: "
                 f"{esc(payload.get('reason', 'unknown reason'))}.")
 
     head = payload.get("headline") or {}
-    lines = [f"🌐 <b>The Estuary · FX × materials</b> — "
+    lines = [f"🌐 <b>The Estuary · FX × materials</b>: "
              f"as of {esc(payload.get('as_of', '?'))}", "",
              f"Regime: <b>{esc(head.get('regime', '?'))}</b>",
              f"Upstream pressure <b>{num(head.get('upstream_pressure'), 1)}</b>/100 "
@@ -1600,12 +1600,12 @@ def fmt_china_macro(payload: dict | None) -> str:
 def fmt_analogs(wrecks: dict | None) -> str:
     eps = (wrecks or {}).get("episodes") or []
     if not eps:
-        return "The wreck ledger did not answer — try again shortly."
-    lines = ["🕰 <b>The wreck ledger</b> — what the board read before past storms", ""]
+        return "The wreck ledger did not answer, try again shortly."
+    lines = ["🕰 <b>The wreck ledger</b>: what the board read before past storms", ""]
     for e in eps[:6]:
         then = next((b for b in (e.get("board") or []) if b.get("offset_bd") == 0),
                     None) or next(iter(e.get("board") or []), {})
-        lines.append(f"• <b>{esc(e.get('date'))}</b> — {esc(e.get('episode'))}\n"
+        lines.append(f"• <b>{esc(e.get('date'))}</b>: {esc(e.get('episode'))}\n"
                      f"  board then: {esc(then.get('regime', '?'))} "
                      f"{then.get('value', '?')}/100")
     lines.append(f"\nReplay any date yourself: {SITE} (Time Machine).")
@@ -1634,25 +1634,25 @@ def _eligibility(value) -> str:
 def fmt_proof(pub: dict | None) -> str:
     proof = (pub or {}).get("proof") or {}
     if not proof.get("n_events"):
-        return "The proof scoreboard did not answer — try again shortly."
+        return "The proof scoreboard did not answer, try again shortly."
     evidence = _proof_evidence(pub)
     ci = proof.get("recall_ci95") or [None, None]
     ml = proof.get("median_lead_d")
-    lines = ["📜 <b>The PROOF historical diagnostic</b> — misses included", "",
+    lines = ["📜 <b>The PROOF historical diagnostic</b>: misses included", "",
              f"Status: <code>{esc(evidence.get('status'))}</code>",
              "Validated-backtest eligible: "
              f"<b>{_eligibility(evidence.get('validated_backtest_eligible'))}</b> · "
              "real-money eligible: "
              f"<b>{_eligibility(evidence.get('real_money_eligible'))}</b>", "",
              f"Recall: <b>{pct(proof.get('recall'))}</b> "
-             f"(95% CI {pct(ci[0])}–{pct(ci[1])}) over {proof.get('n_events')} events",
+             f"(95% CI {pct(ci[0])}-{pct(ci[1])}) over {proof.get('n_events')} events",
              f"Precision (runs): {pct(proof.get('precision_runs'))} · "
              f"base rate {pct(proof.get('base_rate'), 1)}",
              (f"Median lead: {ml:.0f} days" if isinstance(ml, (int, float))
               else "Median lead: n/a (no hit leads on record)")]
     if evidence.get("reason"):
         lines.append(f"\n<i>Boundary: {esc(evidence.get('reason'))}</i>")
-    lines.append("\nEvery episode with its verdict — hits AND misses — is on "
+    lines.append("\nEvery episode with its verdict (hits AND misses) is on "
                  f"the board: {SITE}/#proof. The served status and flags are "
                  "authoritative for what this record can support.")
     return "\n".join(lines) + FOOT
@@ -1660,7 +1660,7 @@ def fmt_proof(pub: dict | None) -> str:
 
 def fmt_letter(index: list | None) -> str:
     if not index:
-        return "The dispatch index did not answer — the letters live at seiche.info."
+        return "The dispatch index did not answer, the letters live at seiche.info."
     d = index[0]
     lines = [f"✉️ <b>{esc(d.get('title'))}</b>",
              f"{esc(d.get('date'))} · tag {esc(d.get('tag'))}", "",
@@ -1782,12 +1782,12 @@ def _plumb_level(regime) -> int | None:
 
 def fmt_institutions(board: dict | None) -> str:
     if not board or not board.get("rows"):
-        return ("LiquiLens's desk did not answer — the institutions board is at "
+        return ("LiquiLens's desk did not answer, the institutions board is at "
                 "demo.liquilens.in. Absence is not calm.")
     rows = board["rows"]
     t = board.get("tiers", {})
     tier_line = " · ".join(f"{TIER_ICON[k]} {v}" for k, v in t.items() if v)
-    lines = [f"🏦 <b>The institutions desk</b> (LiquiLens, read verbatim) — "
+    lines = [f"🏦 <b>The institutions desk</b> (LiquiLens, read verbatim): "
              f"{esc(board.get('as_of'))}",
              f"{len(rows)} institutions scored · {tier_line}", ""]
     for r in rows[:5]:
@@ -1795,7 +1795,7 @@ def fmt_institutions(board: dict | None) -> str:
         pd12 = (r.get("hazard") or {}).get("pd_12m")
         pd_s = f"{pd12 * 100:.2f}%" if isinstance(pd12, (int, float)) else "n/a"
         lines.append(f"{TIER_ICON.get(r.get('tier'), '·')} "
-                     f"{esc(r.get('name') or r.get('slug') or '?')} — "
+                     f"{esc(r.get('name') or r.get('slug') or '?')}: "
                      f"12m failure PD {pd_s}")
     lines.append("\n<i>Institutions are LiquiLens's desk: liquilens.in · "
                  "@LiquiLens_bot. Plumbing is this desk's.</i>")
@@ -1826,13 +1826,13 @@ def fmt_tandem(gauge: dict | None, board: dict | None) -> str:
     tier = _worst_tier(board)
     lines = ["🔀 <b>Labeled reads: Seiche and LiquiLens</b>", ""]
     if p is None and tier is None:
-        return "\n".join(lines + ["Neither desk answered. Absence is not calm — "
+        return "\n".join(lines + ["Neither desk answered. Absence is not calm: "
                                   "check seiche.info and demo.liquilens.in directly."])
     if p is not None:
         lines.append(f"Seiche (funding): <b>{esc(gauge.get('regime'))}</b> "
                      f"{gauge.get('index')}/100 · Tell {gauge.get('tell')}")
     else:
-        lines.append("Seiche (funding): did not answer — absence is not calm.")
+        lines.append("Seiche (funding): did not answer, absence is not calm.")
     if tier is not None:
         n_watch = sum(1 for r in board["rows"] if r.get("tier") != "green")
         lines.append(f"LiquiLens (institutions): worst tier "
@@ -1881,22 +1881,22 @@ ATLAS_CARD = (
 
 
 HELP = (
-    "/research [topic] — connected source, funding and market research\n"
-    "🌊 <b>Seiche</b> — public US dollar-funding desk, from free public data.\n\n"
-    "/now — the gauge: regime, composite, the Tell\n"
-    "/snap — the forwardable card\n"
-    "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
-    "/letter — today's dispatch\n"
-    "/tandem — labeled Seiche and LiquiLens reads (not a joint score)\n"
-    "/atlas — Global Money Market Atlas pages and bounded API\n"
-    "/china — China macro evidence identities (metadata only; no values)\n"
-    "/where — the three public desks\n"
-    "/privacy — what this bot stores and where questions travel\n"
-    "/delete_me — delete this private chat's bot-owned records\n"
-    "/help — this list\n"
-    "/start — follow the 11:30 UTC letter + state-change alerts\n"
-    "/stop — unsubscribe in DM\n\n"
-    "In a private chat, just type a question — no slash needed. Type "
+    "/research [topic]: connected source, funding and market research\n"
+    "🌊 <b>Seiche</b>: public US dollar-funding desk, from free public data.\n\n"
+    "/now: the gauge: regime, composite, the Tell\n"
+    "/snap: the forwardable card\n"
+    "/ask &lt;question&gt;: desk assistant, grounded in the live board\n"
+    "/letter: today's dispatch\n"
+    "/tandem: labeled Seiche and LiquiLens reads (not a joint score)\n"
+    "/atlas: Global Money Market Atlas pages and bounded API\n"
+    "/china: China macro evidence identities (metadata only; no values)\n"
+    "/where: the three public desks\n"
+    "/privacy: what this bot stores and where questions travel\n"
+    "/delete_me: delete this private chat's bot-owned records\n"
+    "/help: this list\n"
+    "/start: follow the 11:30 UTC letter + state-change alerts\n"
+    "/stop: unsubscribe in DM\n\n"
+    "In a private chat, just type a question, no slash needed. Type "
     "@seiche_desk_bot in any other chat to drop the live gauge card there.\n\n"
     "Free public good: no paywall, no sign-in. Institutions are "
     "@LiquiLens_bot's desk."
@@ -1925,7 +1925,7 @@ def fmt_daily_letter() -> str:
     gauge_history_append(gauge)   # the letter is the sparkline's daily heartbeat
     pub = api_get("/api/public")
     overview = api_get("/api/overview")
-    lines = [f"🌊 <b>Seiche morning letter</b> — {today}", ""]
+    lines = [f"🌊 <b>Seiche morning letter</b>: {today}", ""]
     if not gauge:
         lines.append("The board did not answer this morning. No number is shown "
                      f"rather than a stale one; the gauge is at {SITE}.")
@@ -2351,7 +2351,7 @@ def fmt_welcome(index: list | None) -> str:
         "Try /funding or /trend SOFR. /menu opens the tools; /community opens discussions.",
         "/help lists commands; /stop unsubscribes.",
         "",
-        "<i>Public data. Research context only — not investment advice.</i>",
+        "<i>Public data. Research context only, not investment advice.</i>",
     ])
     text = "\n".join(lines)
     if len(text) > 1200:
@@ -2552,7 +2552,7 @@ def _safe_record_activation(chat_id: int, command: str) -> bool:
         return False
 
 
-HELP += '\n\n/menu — research workflows · /funding — dated funding changes · /trend SOFR — source history · /community — discussion · /settings — delivery controls'
+HELP += '\n\n/menu: research workflows · /funding: dated funding changes · /trend SOFR: source history · /community: discussion · /settings: delivery controls'
 
 
 
@@ -2573,8 +2573,8 @@ Public research tools need no account. Optional private workspaces support agent
 
 Use this as evidence infrastructure for research, monitoring and human review. These tools do not authorize credit, execute trades, move funds or promise returns.
 
-/updates — recent upgrades
-/data — participation and source rights""",
+/updates: recent upgrades
+/data: participation and source rights""",
     '/updates': """Product update | 18 October 2026
 
 AVAILABLE: hosted MCP/API connections for AI agents; bank-filing monitoring; dated funding context and exact source metrics; size-specific exit-liquidity research; persistent clients and source-status streams.
@@ -2588,7 +2588,7 @@ PAPER RESEARCH: controlled rehearsals and Riptide paper records support review. 
 Connect: https://agents.seiche.info/connect
 Workflow guide: https://github.com/beepboop2025/financial-evidence-skills/blob/main/docs/start/agent-workflows.md
 
-/data — current participation and source-rights rules.""",
+/data: current participation and source-rights rules.""",
     '/data': """Agent data | choice, provenance and permissions
 
 Public tools work without contributing data. Joining a Telegram group or opening these guides does not enroll you in data sharing.
@@ -2790,7 +2790,7 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
              keyboard_for("/tandem"))
     elif cmd == "/ask":
         if not arg.strip():
-            send(chat_id, "Usage: /ask <question> — e.g. /ask why is the regime "
+            send(chat_id, "Usage: /ask <question>, e.g. /ask why is the regime "
                           "STRAIN? (Or just type your question, no slash.)")
         else:
             allowed, retry_after = ask_quota(chat_id)
@@ -2834,9 +2834,9 @@ def answer_inline(iq: dict) -> None:
     regime = esc((gauge or {}).get("regime", "?"))
     idx = (gauge or {}).get("index", "?")
     cards = [
-        ("snap", f"Gauge card — {regime} {idx}/100",
+        ("snap", f"Gauge card: {regime} {idx}/100",
          "The forwardable monospace card", fmt_snap(gauge, pub)),
-        ("now", f"Gauge now — {regime} {idx}/100",
+        ("now", f"Gauge now: {regime} {idx}/100",
          "Regime, composite, the Tell", fmt_now(gauge, pub)),
         ("odds", "Forward event odds",
          "Navigator: P(event, 5bd) with caveats", fmt_odds(overview)),
@@ -2873,7 +2873,7 @@ def poll_loop() -> None:
             if code == 401:
                 # a revoked token never comes back — die loudly so systemd's
                 # restart limit surfaces a FAILED unit instead of a zombie
-                sys.exit("Telegram rejected the token (401) — "
+                sys.exit("Telegram rejected the token (401): "
                          "check SEICHE_BOT_TOKEN")
             if code == 409:
                 print("another getUpdates consumer is live (409); "
