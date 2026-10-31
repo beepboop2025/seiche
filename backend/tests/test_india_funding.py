@@ -157,6 +157,19 @@ def test_mmo_multiple_maturities_signs_and_independent_dates():
     assert all(p.publication_time_policy is PublicationTimePolicy.UNKNOWN for p in points)
 
 
+
+def test_mmo_renumbered_outstanding_rows_keep_their_facility_identity():
+    # RBI renumbers outstanding variable-rate rows (seen live on 2026-10-29:
+    # OORevRepo3 and MORepo4). Unsuffixed MORepo/MORevRepo stay today's operations.
+    points = rbi.parse_mmo(doc('''Date: 30 Oct 2026 Money Market Operations as on October 29, 2026
+      <table><tr id="MORevRepo"><td>Reverse Repo</td><td></td><td></td><td></td><td>-</td><td>-</td></tr>
+      <tr id="OORevRepo3"><td>Reverse Repo</td><td>Oct 8</td><td>29</td><td>Nov 6</td><td>25555</td><td>5.49</td></tr>
+      <tr id="MORepo4"><td>Repo</td><td>Oct 24</td><td>14</td><td>Nov 7</td><td>150007</td><td>5.51</td></tr></table>'''))
+    rows = {p.instrument_id: p for p in points}
+    assert rows["IN.RBI.VRRR_OUTSTANDING"].raw_value == 25555
+    assert rows["IN.RBI.VRR_OUTSTANDING"].raw_value == 150007
+    assert "IN.RBI.VRRR_TODAY" not in rows and "IN.RBI.VRR_TODAY" not in rows
+
 def test_homepage_never_borrows_fx_date_or_invents_bond_conventions():
     bonds = ''.join(f'<tr><td>6.20% GS {year}</td><td>: 6.5% #</td></tr>' for year in (2029, 2031, 2036, 2041, 2056))
     text = f'FX As at 1pm October 05, 2026<h2>Government Securities Market</h2><table>{bonds}</table># as on October 01, 2026<h2>Others</h2>'
@@ -238,6 +251,21 @@ def test_auction_yield_is_separate_and_never_uses_price_or_weighted_average():
     assert all(s['value_bp'] is None for s in result['spreads'])
     assert all(n['value'] is None for n in result['monthly_curve']['nodes'])
 
+
+
+def test_auction_rss_rows_carry_the_native_rss_publication_clock():
+    body = ('<table><tr><td>Auction Results</td><td>New GS 2031</td></tr>'
+            '<tr><td>III.</td><td>Cut-off price / Yield</td><td>100.00</td></tr>'
+            '<tr><td>(YTM: 6.5300%)</td></tr></table>')
+    feed = ('<rss><channel><item><title>Government Stock - Full Auction Results</title>'
+            '<link>https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid=63800</link>'
+            '<pubDate>Fri, 30 Oct 2026 15:40:00</pubDate><description><![CDATA[' + body + ']]></description>'
+            '</item></channel></rss>')
+    point, = rbi.parse_auctions(doc(feed, 'rbi_auction_rss'))
+    assert point.instrument_id == 'IN.RBI.GSEC_AUCTION_5Y'
+    assert point.source_publication_time == datetime(2026, 10, 30, 10, 10, tzinfo=UTC)
+    assert point.publication_time_policy is PublicationTimePolicy.INFER
+    assert point.quality is QualityState.ESTIMATED
 
 def test_rest_and_mcp_share_india_payload_and_reject_queries(monkeypatch):
     from fastapi import Request, Response, HTTPException

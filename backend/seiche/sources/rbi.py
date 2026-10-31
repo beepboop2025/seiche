@@ -145,6 +145,9 @@ def parse_mmo(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
              "Netdurableliquidity": "IN.RBI.DURABLE_LIQUIDITY"}
     facilities = {"MSF3": "MSF_TODAY", "SDF2": "SDF_TODAY", "MORepo": "VRR_TODAY", "MORevRepo": "VRRR_TODAY",
                   "OOMSF2": "MSF_OUTSTANDING", "OOSDF2": "SDF_OUTSTANDING", "MORepo2": "VRR_OUTSTANDING", "OORevRepo": "VRRR_OUTSTANDING"}
+    # RBI renumbers outstanding variable-rate rows (MORepo2/MORepo4, OORevRepo3).
+    # Unsuffixed MORepo/MORevRepo remain today's operations.
+    renumbered = ((re.compile(r"MORepo\d+"), "VRR_OUTSTANDING"), (re.compile(r"OORevRepo\d+"), "VRRR_OUTSTANDING"))
     for index, (ids, cells, _) in enumerate(rows):
         for row_id in ids:
             for column, instrument in singles.get(row_id, ()):
@@ -160,7 +163,9 @@ def parse_mmo(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
                 value = _number(cells[2])
                 if value is not None:
                     out.append(_point("IN.RBI.RESERVE_REQUIREMENT", day, value, cells))
-            if row_id not in facilities:
+            facility = facilities.get(row_id) or next(
+                (name for pattern, name in renumbered if pattern.fullmatch(row_id)), None)
+            if facility is None:
                 continue
             group = [cells]
             for next_ids, next_cells, _ in rows[index + 1:]:
@@ -170,7 +175,7 @@ def parse_mmo(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
             amounts = [_number(row[-2]) for row in group]
             # Blank operation rows are unknown/not-applicable, never numeric zero.
             if amounts and all(value is not None for value in amounts):
-                out.append(_point("IN.RBI." + facilities[row_id], day, sum(amounts, Decimal(0)), group))
+                out.append(_point("IN.RBI." + facility, day, sum(amounts, Decimal(0)), group))
             rates = {_number(row[-1]) for row in group}
             if row_id in {"MSF3", "SDF2"} and len(rates) == 1 and None not in rates:
                 out.append(_point("IN.RBI." + ("MSF" if row_id == "MSF3" else "SDF"), day, rates.pop(), group))
@@ -467,7 +472,13 @@ def parse_auctions(document):
             continue
         published = parsedate_to_datetime(stamp)
         prefix = f"Date : {published:%b %d, %Y} {title}"
-        out.extend(_auction_points(prefix + body, url))
+        # Same RSS clock as MMO: zone omitted, native Asia/Kolkata, estimated.
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+        out.extend(replace(point, source_publication_time=published.astimezone(UTC),
+                           publication_time_policy=PublicationTimePolicy.INFER,
+                           quality=QualityState.ESTIMATED)
+                   for point in _auction_points(prefix + body, url))
     return tuple(out)
 
 
