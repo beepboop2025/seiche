@@ -98,6 +98,6 @@ export default function ProductHome() {
         <p>Three products from one registered company, connected through browser, API and MCP workflows. Source clocks and market coverage stay separate. <a href="https://liquilens.in/start/">Build a connected review ↗</a></p>
       </section>
     </main>
-    <footer className="product-footer"><p>Seiche provides research context. It does not determine an institution’s regulatory compliance or promise a market outcome.</p><nav aria-label="Supporting information"><a href="/developers">API and MCP</a><a href="/support">Support</a><a href="/methodology">Methodology</a><a href="https://github.com/beepboop2025/seiche">Open source</a><a href="/privacy">Privacy</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav><span>Seiche · LIQUILENS PRIVATE LIMITED · registered company in India</span></footer>
+    <footer className="product-footer"><p>Seiche provides research context. It does not determine an institution’s regulatory compliance or promise a market outcome.</p><nav aria-label="Supporting information"><a href="/developers">API and MCP</a><a href="/support">Support</a><a href="/methodology">Methodology</a><a href="https://github.com/beepboop2025/seiche">Open source</a><a href="/privacy">Privacy</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav><span>Seiche · LIQUILENS PRIVATE LIMITED · registered company in India · DPIIT recognised startup, certificate DIPP290644</span></footer>
   </div>;
 }
