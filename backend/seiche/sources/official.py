@@ -366,6 +366,85 @@ def parse_ecb_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     return tuple(points)
 
 
+ECB_EUROSYSTEM_TOTAL_ASSETS_KEY = "ILM.W.U2.C.T000000.Z5.Z01"
+ECB_EUROSYSTEM_TOTAL_ASSETS_ID = "EA.ECB.EUROSYSTEM_TOTAL_ASSETS"
+_ECB_ISO_WEEK = re.compile(r"^(\d{4})-W(\d{2})$")
+_ECB_PLAIN_NUMBER = re.compile(r"^\d+(?:\.\d+)?$")
+_MAX_EUROSYSTEM_ASSETS = Decimal("100000000")
+
+
+def parse_ecb_eurosystem_total_assets(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    """Eurosystem total assets from the ECB's weekly ILM series, in EUR millions.
+
+    Each row must be the pinned series key, weekly, in euro with unit
+    multiplier 6 (millions). One 2026 row omits the multiplier while its
+    neighbours declare it, so a blank multiplier is accepted only beside a
+    declared 6 and never with any other value. An ISO week is dated by its
+    Friday, the reference date of the Eurosystem's weekly financial statement.
+    Any other change fails closed.
+    """
+
+    text = document.payload.decode("utf-8-sig")
+    lines = text.splitlines()
+    if len(lines) < 2:
+        raise ValueError("ECB total assets CSV contains no data rows")
+    header = next(csv.reader([lines[0]]))
+    required = {"KEY", "FREQ", "TIME_PERIOD", "OBS_VALUE", "UNIT", "UNIT_MULT"}
+    if not required <= set(header):
+        raise ValueError("ECB total assets CSV header changed")
+    points: list[ParsedPoint] = []
+    multipliers: set[str] = set()
+    seen: set[date] = set()
+    for raw_line in lines[1:]:
+        values = next(csv.reader([raw_line]))
+        if len(values) != len(header):
+            raise ValueError("ECB total assets CSV row reshaped")
+        row = dict(zip(header, values, strict=True))
+        if (row["KEY"], row["FREQ"], row["UNIT"]) != (ECB_EUROSYSTEM_TOTAL_ASSETS_KEY, "W", "EUR"):
+            raise ValueError("ECB total assets series, frequency or currency changed")
+        multipliers.add(row["UNIT_MULT"])
+        week = _ECB_ISO_WEEK.match(row["TIME_PERIOD"])
+        if week is None:
+            raise ValueError("ECB total assets period is not an ISO week")
+        try:
+            day = date.fromisocalendar(int(week[1]), int(week[2]), 5)
+        except ValueError as exc:
+            raise ValueError("ECB total assets ISO week invalid") from exc
+        if day in seen:
+            raise ValueError("ECB total assets repeats a week")
+        seen.add(day)
+        raw_value = row["OBS_VALUE"]
+        if raw_value == "":
+            continue  # an unavailable week stays absent, never zero
+        if not _ECB_PLAIN_NUMBER.match(raw_value):
+            raise ValueError("ECB total assets value invalid")
+        value = Decimal(raw_value)
+        if not Decimal(0) < value < _MAX_EUROSYSTEM_ASSETS:
+            raise ValueError("ECB total assets value out of bounds")
+        evidence = json.dumps({
+            "key": row["KEY"], "time_period": row["TIME_PERIOD"], "obs_value": raw_value,
+            "obs_status": row.get("OBS_STATUS"), "unit": row["UNIT"], "unit_mult": "6",
+        }, sort_keys=True, separators=(",", ":")).encode()
+        points.append(ParsedPoint(
+            ECB_EUROSYSTEM_TOTAL_ASSETS_ID, day, value, evidence,
+            revision_id=(f"ecb:ILM-W-total-assets:{row['TIME_PERIOD']}:"
+                         f"{hashlib.sha256(evidence).hexdigest()[:16]}"),
+        ))
+    if not multipliers <= {"6", ""} or "6" not in multipliers:
+        raise ValueError("ECB total assets unit multiplier changed")
+    if not points:
+        raise ValueError("ECB total assets CSV contains no numeric observations")
+    return tuple(sorted(points, key=lambda point: point.event_time))
+
+
+def parse_ecb_liquidity(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    """Excess liquidity (daily, generic ECB CSV) and total assets (weekly, pinned)."""
+
+    if document.label == ECB_EUROSYSTEM_TOTAL_ASSETS_ID:
+        return parse_ecb_eurosystem_total_assets(document)
+    return parse_ecb_csv(document)
+
+
 def parse_boe_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     text = document.payload.decode("utf-8-sig")
     lines = [line for line in text.splitlines() if line.strip()]
@@ -2719,8 +2798,13 @@ def build_official_adapters(
         "EA-EUR",
         "ecb_liquidity",
         "ecb_liquidity",
-        ecb_fetcher({"EA.ECB.EXCESS_LIQUIDITY": "ILM/D.U2.C.EXLIQ.U2.EUR"}),
-        parse_ecb_csv,
+        ecb_fetcher({
+            "EA.ECB.EXCESS_LIQUIDITY": "ILM/D.U2.C.EXLIQ.U2.EUR",
+            # Eurosystem total assets, weekly, the series FRED copies as
+            # ECBASSETSW; that copy stays metadata-only.
+            ECB_EUROSYSTEM_TOTAL_ASSETS_ID: "ILM/W.U2.C.T000000.Z5.Z01",
+        }),
+        parse_ecb_liquidity,
     )
 
     boe_base = (

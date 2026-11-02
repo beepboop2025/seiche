@@ -485,6 +485,19 @@ and its terms are not used. Publication time is unknown; routine runs read 400
 days back so revisions enter as vintages. Registry record
 `bea_nipa_flat_files`; the FRED `GDP` copy stays metadata-only.
 
+### Euro area: deposit facility rate and Eurosystem total assets (0.17.0 candidate, Stage 2b)
+
+The ECB deposit facility rate was already acquired direct (`EA.ECB.DFR`,
+`FM/D.U2.EUR.4F.KR.DFR.LEV` on `ecb_policy`). The `ecb_liquidity` adapter now
+also reads Eurosystem total assets (`ILM/W.U2.C.T000000.Z5.Z01`, the series FRED
+copies as ECBASSETSW) as `EA.ECB.EUROSYSTEM_TOTAL_ASSETS`, EUR millions, under
+`CENTRAL_BANK_TOTAL_ASSETS`, which no EA capability or calibration component
+reads, so the EA gauge is unchanged. A dedicated parser pins the series key,
+weekly frequency, euro and unit multiplier 6 (a blank multiplier is accepted
+only beside declared 6s, as the published 2026-W40 row has) and dates each ISO
+week by its Friday, the reference date of the Eurosystem's weekly financial
+statement. ECB reuse requires accurate reproduction and citing the ECB.
+
 ## Deliberate trade-offs and validation boundary
 
 - v1 stays US-centred until parity migration completes. That preserves users but

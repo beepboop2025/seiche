@@ -326,11 +326,11 @@
       "rights_status": "explicit_with_attribution",
       "rights_evidence_url": "https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html",
       "target_markets": ["EA-EUR"],
-      "semantic_roles": ["POLICY_FLOOR", "POLICY_TARGET", "POLICY_CEILING", "UNSECURED_OVERNIGHT", "SYSTEM_LIQUIDITY", "REPO_VOLUME"],
+      "semantic_roles": ["POLICY_FLOOR", "POLICY_TARGET", "POLICY_CEILING", "UNSECURED_OVERNIGHT", "SYSTEM_LIQUIDITY", "REPO_VOLUME", "CENTRAL_BANK_TOTAL_ASSETS"],
       "proposed_roles": [],
       "target_engines": ["EA-EUR:local_gauge", "basins", "harbors", "spillover"],
       "implementation_status": "implemented",
-      "blocker": "No acquisition blocker for mapped rows; reuse requires accurate ECB attribution and disclosure of modifications, while durable production history and validation still need verification.",
+      "blocker": "No acquisition blocker for mapped rows; reuse requires accurate ECB attribution and disclosure of modifications, while durable production history and validation still need verification. The ECB's terms read: \"users of this website may make free use of the information obtained directly from it subject to the following conditions: 1. When such information is distributed or reproduced, it must appear accurately and the ECB must be cited as the source.\" The deposit facility rate is already acquired direct as EA.ECB.DFR (FM/D.U2.EUR.4F.KR.DFR.LEV, FRED ECBDFR). Since 2026-11-02 for 0.17.0, ecb_liquidity also reads Eurosystem total assets, ILM/W.U2.C.T000000.Z5.Z01 (FRED ECBASSETSW), as EA.ECB.EUROSYSTEM_TOTAL_ASSETS in EUR millions under role CENTRAL_BANK_TOTAL_ASSETS, which no EA capability or calibration component reads. Its parser pins the series key, weekly frequency, euro and unit multiplier 6 (accepting a blank multiplier only beside declared 6s, as one 2026 row has) and dates each ISO week by its Friday, the reference date of the weekly financial statement. The FRED copies stay metadata-only.",
       "next_action": "Verify scheduled canonical backfill, latest event clocks, and sealed EA-EUR materialization on production."
     },
     {

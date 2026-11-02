@@ -91,6 +91,14 @@ PACK = MarketPack(
             SemanticRole.SYSTEM_LIQUIDITY, "ecb_liquidity", "EUR millions",
             CanonicalUnit.LOCAL_CURRENCY_MILLIONS,
         ),
+        # Eurosystem total assets (ECB ILM/W.U2.C.T000000.Z5.Z01), weekly, dated
+        # by the Friday of the Eurosystem's weekly financial statement. No
+        # capability or calibration component reads this role.
+        InstrumentSpec(
+            "EA.ECB.EUROSYSTEM_TOTAL_ASSETS", "EUROSYSTEM_TOTAL_ASSETS",
+            SemanticRole.CENTRAL_BANK_TOTAL_ASSETS, "ecb_liquidity", "EUR millions",
+            CanonicalUnit.LOCAL_CURRENCY_MILLIONS,
+        ),
     ),
     capabilities=pre_support_capabilities(
         "reference mappings exist, but canonical adapters and validation are not complete"
