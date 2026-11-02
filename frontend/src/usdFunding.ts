@@ -10,9 +10,9 @@ const definitions = [
   ["policy.sofr_minus_iorb", "SOFR − IORB", "bp", "Same-date daily spread", "US.NYFED.SOFR_MEDIAN_MINUS_US.FED.IORB_DIRECT"],
   ["liquidity.reserves", "Reserve balances", "$B", "Weekly average", "US.FED.RESERVE_BALANCES"],
   ["policy.effr", "Effective federal funds rate", "%", "Daily", "US.NYFED.EFFR_MEDIAN"],
-  ["liquidity.tga", "Treasury General Account", "$B", "Daily opening balance", ""],
+  ["liquidity.tga", "Treasury General Account", "$B", "Daily opening balance", "US.TREASURY.GOVERNMENT_CASH"],
   ["liquidity.on_rrp", "ON RRP take-up", "$B", "Daily", ""],
-  ["liquidity.srf", "Standing Repo Facility", "$B", "Daily", ""],
+  ["liquidity.srf", "Standing Repo Facility", "$B", "Daily", "US.NYFED.SRF_TAKEUP"],
 ] as const;
 const record = (value: unknown): Row | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
