@@ -1427,6 +1427,34 @@ def test_recovery_request_v2_binds_download_capability_lifetime() -> None:
         recovery.validate_request(expired, activation_receipt=activation, now=now)
 
 
+def test_recovery_download_capability_covers_long_readiness_and_stays_bounded() -> None:
+    now = datetime(2026, 9, 3, 1, 0, tzinfo=UTC)
+    activation = {"commit": COMMIT, "railway": {"deployment_id": DEPLOYMENT_ID}}
+    request = _recovery_payload(now)["request"]
+    assert isinstance(request, dict)
+    request["activation_receipt_sha256"] = hashlib.sha256(
+        migration.canonical_document(activation)
+    ).hexdigest()
+    value = {
+        "operation": control.RECOVERY_EXPORT_OPERATION,
+        "payload": {"request": request},
+        "request_id": REQUEST_ID,
+        "commit": COMMIT,
+        "railway": {"deployment_id": DEPLOYMENT_ID},
+    }
+    assert recovery.DOWNLOAD_MAX_AGE == control.DOWNLOAD_MAX_LIFETIME == timedelta(hours=4)
+    # The governed workflow issues 200 minutes; four hours is the exact ceiling.
+    for minutes in (200, 240):
+        request["download_expires_at"] = _iso(now + timedelta(minutes=minutes))
+        assert recovery.validate_request(request, activation_receipt=activation, now=now)
+        control._validate_payload(value)
+    request["download_expires_at"] = _iso(now + timedelta(minutes=240, seconds=1))
+    with pytest.raises(recovery.RecoveryContractError, match="download lifetime"):
+        recovery.validate_request(request, activation_receipt=activation, now=now)
+    with pytest.raises(control.ControlContractError, match="download lifetime"):
+        control._validate_payload(value)
+
+
 def test_root_promotion_uses_existing_immutable_publishers(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

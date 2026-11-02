@@ -47,13 +47,15 @@ export, and independent receipt readers still restore the archives themselves.
 Capturing a sealed archive is not recovery acceptance.
 
 An export failure restarts the writers but cannot publish a success receipt.
-The hosted manual export waits up to 75 minutes for the exact receipt, within
-its 120-minute job limit. This also supports a preceding application version
-that still restores the snapshot twice: a measured 2.54 GB snapshot exceeded
-the former 45-minute receipt window. The download credential still expires
-110 minutes after the request, and both API routes must remain continuously
-available throughout capture and download. Native exports retain their
-separate 45-minute stage budget.
+The hosted manual export waits up to 150 minutes for the exact receipt, within
+its 300-minute job limit. On 2 November 2026 a 3.9 GB capture logged its
+receipt 85 minutes after the request (40 minutes of capture and 45 of
+post-export inspection, up from 31 to 34 the day before), and the former
+75-minute window failed closed. The download credential expires 200 minutes
+after the request (the application admits at most four hours), so at least 50
+minutes remain for the download after the longest readiness wait. Both API routes must remain continuously available
+throughout capture and download. Native exports take the same readiness and
+credential values from this workflow inside one decreasing job budget.
 
 A hosted timeout does not cancel the root operation. Reconcile its original
 request and completed receipt before starting another export. Retain the
@@ -360,8 +362,8 @@ Each successful export produces:
   version ID plus the same Palimpsest China state identity; and
 - separate OIDC attestations for the Railway and off-site receipts.
 
-After the runtime emits `recovery_created`, the job uses the unlogged bearer for
-at most two hours to download a fixed 14-member allow-list from the exact
+After the runtime emits `recovery_created`, the job uses the unlogged bearer,
+valid for at most four hours after the request, to download a fixed 14-member allow-list from the exact
 origin: five chain documents plus the nine-member backup-v4 generation. The
 runtime stores only the bearer digest and streams only verified regular files.
 The bearer is deleted before artifact creation. After Object Lock succeeds, the

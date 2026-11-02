@@ -1463,7 +1463,7 @@ jobs:
       always() && needs.monitor.result == 'success' &&
       github.event_name == 'workflow_dispatch' && inputs.operation == 'export-recovery'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     environment: railway-stateful-recovery-export
     permissions:
       attestations: write
@@ -1716,7 +1716,7 @@ jobs:
           python3 -B "$GITHUB_WORKSPACE/deploy/railway-ci/recovery-controller/source_health_claim.py"
           snapshot_id=$(date -u +%Y%m%dT%H%M%SZ)
           requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          download_expires_at=$(date -u -d '+110 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          download_expires_at=$(date -u -d '+200 minutes' +%Y-%m-%dT%H:%M:%SZ)
           activation_sha256=$(cat proof/activation.sha256)
           request_id=$(printf '%s\n' \
             "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$DEPLOYMENT_ID:$snapshot_id" |
@@ -1865,12 +1865,13 @@ jobs:
           submission_replica_id=$(cat proof/submission-replica-id.txt)
           replica_id="$submission_replica_id"
           ready=0
-          # Manual recovery must also protect a preceding deployment that still
-          # performs two restore inspections. A 2.54 GB capture exceeded the
-          # former 45-minute window. Keep receipt readiness bounded at 75 minutes,
-          # leaving 35 minutes before the unchanged download credential expires.
-          # Independent restore/off-site checks remain inside the 120-minute job.
-          recovery_ready_deadline=$((SECONDS + 4500))
+          # A 3.9 GB capture logged its receipt 85 minutes after the request on
+          # 2026-11-02 (40 minutes of capture, 45 of post-export inspection, up
+          # from 31 to 34 minutes the day before). Keep receipt readiness bounded
+          # at 150 minutes, leaving 50 minutes before the 200-minute download
+          # credential expires (the application admits at most four hours).
+          # Independent restore/off-site checks remain inside the 300-minute job.
+          recovery_ready_deadline=$((SECONDS + 9000))
           while (( SECONDS < recovery_ready_deadline )); do
             railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \

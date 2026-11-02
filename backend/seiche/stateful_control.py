@@ -103,7 +103,9 @@ MAX_DEPLOYMENT_LOG_BYTES = 8 * 1024 * 1024
 MAX_RECOVERY_MEMBER_BYTES = 5 * 1024**3
 COMMAND_MAX_LIFETIME = timedelta(minutes=15)
 COMMAND_FUTURE_SKEW = timedelta(minutes=1)
-DOWNLOAD_MAX_LIFETIME = timedelta(hours=2)
+# Matches stateful_recovery.DOWNLOAD_MAX_AGE: receipt readiness of up to 150
+# minutes plus the download that follows. Finite and explicit.
+DOWNLOAD_MAX_LIFETIME = timedelta(hours=4)
 
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
 _SHA64_RE = re.compile(r"[0-9a-f]{64}")

@@ -71,21 +71,38 @@ def continuity_transport(body):
     return body
 
 
+# Finite ceilings for the reviewed workflow's export timing. The application
+# admits a download credential for at most four hours after the request
+# (stateful_recovery.DOWNLOAD_MAX_AGE), and the credential must outlast receipt
+# readiness by 30 minutes so the download that follows can start.
+MAX_JOB_MINUTES = 300
+MAX_READINESS_SECONDS = 9000
+MAX_DOWNLOAD_SECONDS = 4 * 3600
+DOWNLOAD_AFTER_READINESS_SECONDS = 1800
+ORIGINAL_DOWNLOAD_LIFETIME = "download_expires_at=$(date -u -d '+110 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+
+
 def workflow_timing(document):
     """Read bounded timing from the reviewed workflow, not a stale adapter."""
     job = document["jobs"]["export-recovery"]
     minutes = job.get("timeout-minutes")
     export = [step["run"] for step in job["steps"]
               if step.get("name") == RECURRING_STEPS["export-native.sh"]]
-    if type(minutes) is not int or not 1 <= minutes <= 120 or len(export) != 1:
+    if type(minutes) is not int or not 1 <= minutes <= MAX_JOB_MINUTES or len(export) != 1:
         raise ValueError("reviewed export job timing is invalid")
     matches = re.findall(r"recovery_ready_deadline=\$\(\(SECONDS \+ ([0-9]+)\)\)", export[0])
     if len(matches) != 1:
         raise ValueError("reviewed receipt readiness timing is ambiguous")
     readiness = int(matches[0])
-    if not 0 < readiness <= 4500 or readiness >= minutes * 60:
+    if not 0 < readiness <= MAX_READINESS_SECONDS or readiness >= minutes * 60:
         raise ValueError("reviewed receipt readiness exceeds the export job")
-    return {"job_seconds": minutes * 60, "readiness_seconds": readiness}
+    lifetimes = re.findall(r"download_expires_at=\$\(date -u -d '\+([0-9]+) minutes' \+%Y-%m-%dT%H:%M:%SZ\)", export[0])
+    if len(lifetimes) != 1:
+        raise ValueError("reviewed download credential lifetime is ambiguous")
+    download = int(lifetimes[0]) * 60
+    if not readiness + DOWNLOAD_AFTER_READINESS_SECONDS <= download <= MAX_DOWNLOAD_SECONDS:
+        raise ValueError("reviewed download credential does not outlast receipt readiness")
+    return {"job_seconds": minutes * 60, "readiness_seconds": readiness, "download_seconds": download}
 
 
 def recurring_scripts(document, *, timing=None):
@@ -110,6 +127,12 @@ def recurring_scripts(document, *, timing=None):
                     raise ValueError("original receipt readiness timing changed")
                 body = body.replace(original, "recovery_ready_deadline=$((SECONDS + "
                                     + str(timing["readiness_seconds"]) + "))")
+                # The credential must still be valid when the download follows
+                # the longer readiness wait; it carries the reviewed lifetime.
+                if body.count(ORIGINAL_DOWNLOAD_LIFETIME) != 1:
+                    raise ValueError("original download credential lifetime changed")
+                body = body.replace(ORIGINAL_DOWNLOAD_LIFETIME, ORIGINAL_DOWNLOAD_LIFETIME.replace(
+                    "+110 minutes", "+" + str(timing["download_seconds"] // 60) + " minutes"))
         if "GITHUB_" in body or "${{" in body:
             raise ValueError("unmapped GitHub execution input in the native recovery body")
         result[filename] = body
