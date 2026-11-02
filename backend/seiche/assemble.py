@@ -37,7 +37,7 @@ import httpx
 import numpy as np
 import pandas as pd
 
-from seiche import alerts, rubric, store
+from seiche import alerts, rubric, source_access, store
 from seiche.config import (
     ALL_SERIES,
     ALERT_RULES,
@@ -2098,11 +2098,19 @@ def _provenance(src: dict) -> list[dict]:
             series = matches[0]
             # Preserve the original per-series/native publication policy,
             # including H.10 and the distinct ECB/CBUAE FX semantics.
-            prov.append({
+            entry = {
                 **series.provenance(),
                 **metadata,
                 "availability": "empty" if series.asof is None else "available",
-            })
+            }
+            # A reviewed access refusal (seiche.source_access) shows the
+            # retained observation as stale with its reason, never current.
+            refused = source_access.stale_override(
+                spec.source, mnemonic, current_fetched_at=series.fetched_at,
+            )
+            if refused is not None:
+                entry.update(refused)
+            prov.append(entry)
         else:
             reason = (
                 "source_identity_mismatch" if mnemonic in invalid
@@ -2119,6 +2127,7 @@ def _provenance(src: dict) -> list[dict]:
                 "freshness_basis": "no admitted observation in this completed source snapshot",
                 "availability": "unavailable", "unavailable_reason": reason,
                 **metadata,
+                **(source_access.stale_override(spec.source, mnemonic, current_fetched_at=None) or {}),
             })
     for key, label in (
         ("nyfed_rates", "NY Fed secured rates"),
