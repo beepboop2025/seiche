@@ -725,7 +725,9 @@ def test_market_series_preserves_unknown_publication_and_actual_knowledge(tmp_pa
     assert record["canonical_unit"] == "basis_points"
     assert record["source_publication_time"] is None
     assert record["knowledge_time"] == ingested.isoformat()
-    assert record["staleness"] == "dead"
+    # Same rule as the atlas: with no publication clock the missed releases
+    # cannot be counted, so the row is UNKNOWN, never fresh.
+    assert record["staleness"] == "unknown"
     assert payload["evidence_eligibility"]["eligible"] is False
     assert not SQLiteMarketRepository().load_observations_as_of(
         "US-USD", ingested - timedelta(seconds=1)
@@ -863,8 +865,10 @@ def test_market_series_readiness_is_page_independent_and_ages_at_read_time(
                 source="nyfed_rates",
                 revision_id="current-sofr",
             ),
+            # One daily release behind (Friday's 08:00 print is due at this
+            # cutoff): AGING under the publication-opportunity clock, so READY.
             _rate_observation(
-                event_time=cutoff - timedelta(days=2),
+                event_time=cutoff - timedelta(days=1, hours=1),
                 instrument_id="US.FED.IORB",
                 role=SemanticRole.POLICY_TARGET,
                 source="fred_daily",

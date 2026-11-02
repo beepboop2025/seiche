@@ -202,6 +202,17 @@ publish only as `DEGRADED`.
   and a precise missing-capability reason. It becomes numeric only with at
   least two aligned `FX_SWAP_BASIS` histories.
 
+Row freshness in `/api/v2/markets/{market_id}/series` (each record's
+`staleness`, instrument availability and `stale_inputs`) uses the atlas rule:
+missed pack-calendar publication opportunities under the instrument's or
+adapter's declared publication clock. Daily US series are fresh with none
+missed, aging with one, stale with two to eight; other native cadences are
+fresh up to two, aging three to four, stale five to eight; nine or more is
+dead; an unknown publication clock or calendar is unknown. The earlier
+wall-clock age rule (two, four and eight cadence periods) ignored weekends,
+holidays and publication lags, so it called Thursday's prints stale on Monday
+mornings, and it failed on monthly cadences.
+
 Only `allowed` and `derived_only` rows may enter public calculations.
 `metadata_only` rows may describe availability in the v2 series contract, but
 their values are redacted and never feed a local gauge or Global Tide.

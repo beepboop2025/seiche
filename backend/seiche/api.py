@@ -72,8 +72,13 @@ from seiche.domain.observation import (
     StalenessState,
 )
 from seiche.engines import money_market as money_market_engine
-from seiche.markets.base import CapabilityStatus, PackSupportStatus
+from seiche.markets.base import (
+    CalendarUnavailableError,
+    CapabilityStatus,
+    PackSupportStatus,
+)
 from seiche.markets.atlas import (
+    _publication_opportunity_clock,
     build_global_money_market_atlas,
     market_source_reference,
 )
@@ -953,45 +958,56 @@ def _series_evidence_eligibility(
     }
 
 
-def _series_cadence_seconds(value: str) -> float:
-    if value.startswith("PT"):
-        amount = int(value[2:-1])
-        return amount * {"H": 3600, "M": 60, "S": 1}[value[-1]]
-    amount = int(value[1:-1])
-    return amount * {"D": 86400, "W": 7 * 86400}[value[-1]]
+def _series_dead_probe_span(cadence: str) -> timedelta:
+    """A span after an event by which nine missed releases are all but certain.
 
-
-_STALENESS_RANK = {
-    StalenessState.FRESH: 0,
-    StalenessState.AGING: 1,
-    StalenessState.UNKNOWN: 2,
-    StalenessState.STALE: 2,
-    StalenessState.DEAD: 3,
-    StalenessState.UNAVAILABLE: 4,
-}
+    Only a performance bound: a wrong span changes speed, never a result.
+    """
+    amount = int(cadence[2:-1] if cadence.startswith("PT") else cadence[1:-1])
+    unit = (
+        {"H": timedelta(hours=1), "M": timedelta(minutes=1), "S": timedelta(seconds=1)}
+        if cadence.startswith("PT")
+        else {"D": timedelta(days=1), "W": timedelta(weeks=1), "M": timedelta(days=31)}
+    )[cadence[-1]]
+    return 20 * amount * unit + timedelta(days=10)
 
 
 def _series_effective_staleness(pack, observation, cutoff: datetime) -> StalenessState:
-    """Age a row at read time against its adapter's declared native cadence."""
+    """Age a row exactly as the money-market atlas ages its metrics.
+
+    One rule for both surfaces: count the pack-calendar publication
+    opportunities missed since the row, under the instrument's (or adapter's)
+    declared publication clock. Wall-clock age ignored weekends, holidays and
+    publication lags, so on a Monday morning it called Thursday's SOFR stale
+    before Friday's print was even due, while the atlas called it fresh. An
+    unknown publication clock stays UNKNOWN, never fresh.
+    """
 
     instrument = pack.instrument_map[observation.instrument_id]
     adapter = pack.adapter_map[instrument.source_adapter_id]
-    age_seconds = max((cutoff - observation.event_time).total_seconds(), 0.0)
-    cadence_seconds = _series_cadence_seconds(adapter.expected_cadence)
-    aged = (
-        StalenessState.FRESH
-        if age_seconds <= cadence_seconds * 2
-        else (
-            StalenessState.AGING
-            if age_seconds <= cadence_seconds * 4
-            else (
-                StalenessState.STALE
-                if age_seconds <= cadence_seconds * 8
-                else StalenessState.DEAD
-            )
-        )
-    )
-    return max((observation.staleness, aged), key=_STALENESS_RANK.__getitem__)
+    calendar = pack.settlement_calendar
+
+    def state_at(moment: datetime) -> StalenessState:
+        return _publication_opportunity_clock(
+            observation,
+            adapter,
+            calendar,
+            moment,
+            publication_clock=instrument.freshness_clock,
+        )[0]
+
+    # Missed opportunities never decrease as the cutoff advances, so a row
+    # already DEAD a bounded span after its event is DEAD now. This keeps deep
+    # history pages from walking years of calendar days per row. The cutoff's
+    # own calendar year is still validated, exactly as the full clock does.
+    probe = observation.event_time + _series_dead_probe_span(adapter.expected_cadence)
+    if probe < cutoff and state_at(probe) is StalenessState.DEAD:
+        try:
+            calendar.is_business_day(cutoff.astimezone(calendar.timezone).date())
+        except (CalendarUnavailableError, ValueError):
+            return StalenessState.UNKNOWN
+        return StalenessState.DEAD
+    return state_at(cutoff)
 
 
 def _latest_public_series_observations(repository, pack, cutoff: datetime) -> dict:
