@@ -104,6 +104,7 @@ CANDIDATE_ADAPTER_KEYS = {
     "frb_h15_release": (("US-USD", "fed_h15"),),
     "frb_h10_release": (("US-USD", "fed_h10"),),
     "frb_g17_release": (("US-USD", "fed_g17"),),
+    "bea_nipa_flat_files": (("US-USD", "bea_nipa"),),
 }
 
 

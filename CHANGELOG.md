@@ -8,6 +8,7 @@
 - Parse the H.15 commercial paper rates but hold them in code, metadata-only, until the owner decides their DTCC provenance.
 - Serve the FOMC federal funds target range from the NY Fed's EFFR rows and the Standing Repo Facility rate from its overnight repo results, as context that never becomes the policy anchor; the FRED DFEDTARU copy stays withheld.
 - Add a BLS Public Data API reader for core and energy CPI that stays off until the owner accepts the BLS.gov Terms of Service; the FRED copies stay withheld.
+- Serve U.S. nominal GDP (`US.BEA.GDP_NOMINAL_SAAR`, BEA `A191RC`) from BEA's own NIPA flat file with its series-register declaration pinned, cited to BEA; the FRED `GDP` copy stays withheld.
 
 ## 0.16.12: blank-data repairs, direct US sources and atlas delivery (2026-11-02)
 

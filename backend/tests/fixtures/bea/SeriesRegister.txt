@@ -1,0 +1,5 @@
+%SeriesCode,SeriesLabel,MetricName,CalculationType,DefaultScale,TableId:LineNo,SeriesCodeParents
+A001RC,"Gross national product","Current Dollars","Level",-6,T10705:4|T11705:6,A027RC
+A191RC,"Gross domestic product","Current Dollars","Level",-6,OECD10205:1|T10105:1|T10205:1|T10305:1|T10405:1|T10505:1|T10705:1|T11705:1,A001RC|A712RC|A962RC|BB00RC|Y695RC
+A191RL,"Gross domestic product","Fisher Quantity Index","Percent change, annual rate",0,T10101:1|T10102:1|T10201:1|T10202:1|T10301:1|T10401:1|T10501:1|T10502:1|T10701:1|T10803:15|T11701:1,NONE
+A191RX,"Gross domestic product","Chained Dollars","Level",-6,OECD10206:1|T10106:1|T10206:1|T10306:1|T10406:1|T10506:1|T10706:1|T10806:1|T11706:1,NONE

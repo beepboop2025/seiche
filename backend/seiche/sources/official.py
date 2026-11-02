@@ -2518,6 +2518,25 @@ def build_official_adapters(
             fetch_board_package, parse_board_package_window,
             timeout=package.adapter_timeout_seconds)
 
+    from seiche.sources import bea_nipa
+
+    # BEA nominal GDP from BEA's own flat file runs only while the US pack
+    # declares the official-open bea_nipa adapter with redistribution allowed
+    # and the GDP instrument on it; any other declaration requests nothing.
+    if bea_nipa.rights_gate_open(markets.get("US-USD")):
+
+        def parse_bea_window(document):
+            start, end = request_window(timezone_name="America/New_York")
+            if not backfill:
+                # A quarter appears a month after it ends and is revised for
+                # years; routine runs keep the last 400 days of vintages.
+                start = end - timedelta(days=400)
+            return tuple(point for point in bea_nipa.parse_document(document)
+                         if start <= point.event_time <= end)
+
+        add("US-USD", bea_nipa.ADAPTER_ID, bea_nipa.ADAPTER_ID,
+            bea_nipa.fetch_documents, parse_bea_window, timeout=240.0)
+
     from seiche.sources import bls_cpi
 
     # BLS CPI is built but held: accepting the BLS.gov Terms of Service is an
@@ -3193,6 +3212,7 @@ PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
         ("US-USD", "fed_h15"),
         ("US-USD", "fed_h10"),
         ("US-USD", "fed_g17"),
+        ("US-USD", "bea_nipa"),
         ("US-USD", "treasury_par_yields"),
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),

@@ -872,6 +872,24 @@
       "implementation_status": "policy_blocked",
       "blocker": "The data are public domain: the BLS copyright page (https://www.bls.gov/opub/copyright-information.htm) says \"everything that we publish, both in hard copy and electronically, is in the public domain, except for previously copyrighted photographs and illustrations. You are free to use our public domain material without specific permission, although we do ask that you cite the Bureau of Labor Statistics as the source.\" The API, however, comes with the BLS.gov Terms of Service, checked 2026-11-02: \"Access to or use of BLS.gov services or its content constitutes acceptance to this Agreement.\" They require \"Users of the public API should cite the date that data were accessed or retrieved using the API. Users must clearly state that \"BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.\"\", forbid presenting modified content as BLS's, and include an indemnity for non-government users. Accepting that agreement for the company is an owner decision not yet made. Adapter bls_cpi (seiche.sources.bls_cpi) is implemented for CUSR0000SA0E (energy; FRED CPIENGSL) and CUSR0000SA0L1E (all items less food and energy; FRED CPILFESL), seasonally adjusted index levels dated by month end, with the attribution \"Source: U.S. Bureau of Labor Statistics, Consumer Price Index, retrieved through the BLS Public Data API on each value's knowledge date. BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.\" It carries a code-level hold: its gate stays closed even if a pack declared it, the US pack declares no bls_cpi adapter, and nothing is requested, stored or served. The FRED copies stay metadata-only.",
       "next_action": "Owner decision on accepting the BLS.gov Terms of Service, including the indemnity; then remove the hold, add the CONSUMER_PRICE_INDEX role and declare an allowed bls_cpi adapter with both instruments in the US pack, in one reviewed change. A registered BLS key would raise the request limits."
+    },
+    {
+      "id": "bea_nipa_flat_files",
+      "priority": "P1",
+      "publisher": "U.S. Bureau of Economic Analysis",
+      "publisher_url": "https://www.bea.gov/data/gdp/gross-domestic-product",
+      "access_url": "https://apps.bea.gov/national/Release/TXT/NipaDataQ.txt",
+      "access_format": ["UTF-8 comma-delimited flat files"],
+      "cadence": "P3M",
+      "rights_status": "explicit_public_domain_with_exclusions",
+      "rights_evidence_url": "https://www.bea.gov/help/faq/147",
+      "target_markets": ["US-USD"],
+      "semantic_roles": ["GROSS_DOMESTIC_PRODUCT"],
+      "proposed_roles": [],
+      "target_engines": ["US-USD:money_market_atlas"],
+      "implementation_status": "implemented",
+      "blocker": "BEA's answer on copyright (checked 2026-11-02) reads: \"Unless stated otherwise, the information posted on this web site is in the public domain and may be used or reproduced without specific permission. A citation such as \"Source: U.S. Bureau of Economic Analysis\" would be appreciated.\" The NIPA flat files are posted on that web site; the BEA API and its terms are not used. Every served value carries the attribution \"Source: U.S. Bureau of Economic Analysis, National Income and Product Accounts\". Adapter bea_nipa (seiche.sources.bea_nipa) reads the series register (https://apps.bea.gov/national/Release/TXT/SeriesRegister.txt), pins its A191RC declaration (\"Gross domestic product\", Current Dollars, Level, default scale -6, table T10105 line 1) so any change fails closed, and maps A191RC from NipaDataQ.txt (FRED GDP) to US.BEA.GDP_NOMINAL_SAAR in USD millions at a seasonally adjusted annual rate, dated by quarter end, under role GROSS_DOMESTIC_PRODUCT that no capability or engine reads. BEA's release calendar is not in the files, so publication time stays unknown; routine runs read 400 days back to keep revisions as vintages. The FRED copy stays metadata-only.",
+      "next_action": "After the 0.17.0 release, run a one-off canonical backfill of bea_nipa; the 2026-11-02 file runs from 1947Q1 to 2026Q3. Archived NIPA vintages for a signed vintage cut are Stage 5 work."
     }
   ]
 }
