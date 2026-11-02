@@ -91,6 +91,14 @@ async def test_request_batch_has_one_window_and_next_fetch_advances(
             assert {row[parameter].split(",")[0] for row in requests} == {f"record_date:gte:{start}"}
         else:
             expected = start.strftime("%d/%b/%Y") if parameter == "Datefrom" else start.isoformat()
+            if adapter_id == "boe_policy":
+                # BoE maintenance-period and monthly series appear weeks after
+                # their labels. They take a longer start from the same single
+                # clock sample; Bank Rate keeps the rolling window.
+                periodic = {row[parameter] for row in requests if row.get("xml.x") == "yes"}
+                requests = [row for row in requests if row.get("xml.x") != "yes"]
+                long_start = start if backfill else end - timedelta(days=400)
+                assert periodic == {long_start.strftime("%d/%b/%Y")}
             assert {row[parameter] for row in requests} == {expected}
 
 

@@ -32,6 +32,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from seiche.domain.observation import QualityState
 from seiche.markets.registry import MarketRegistry, default_registry
 from seiche.repository import MarketRepository
 from seiche.sources.base import SourcePolicyUnavailableError
@@ -386,6 +387,83 @@ def parse_boe_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     if not points:
         raise ValueError("Bank of England CSV contains no numeric observations")
     return tuple(points)
+
+
+# Bank of England series behind the declared boe_policy instruments other than
+# Bank Rate, with a phrase their database description must contain. The OSF
+# rates are reported per MPC maintenance period and labelled by the period's
+# start date; reserves are the monthly average of Wednesday balances.
+BOE_POLICY_XML_SERIES = {
+    "GB.BOE.OSF_DEPOSIT": ("YWMB83C", "Operational Standing Facility rate - deposit"),
+    "GB.BOE.OSF_LENDING": ("YWMB82C", "Operational Standing Facility rate - lending"),
+    "GB.BOE.RESERVE_BALANCES": ("LPMBL22", "sterling reserves balance liabilities"),
+}
+
+
+def parse_boe_xml(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    """Parse one Bank of England database series from its XML export.
+
+    The XML, unlike the CSV, carries each observation's LAST_UPDATED time.
+    That is the source's own release clock. The database states it without
+    a zone; it is read in the Bank's Europe/London time with estimated
+    quality, never replaced by the capture time.
+    """
+
+    import xml.etree.ElementTree as ElementTree
+
+    try:
+        code, description = BOE_POLICY_XML_SERIES[document.label]
+    except KeyError as exc:
+        raise ValueError(f"unknown Bank of England XML label {document.label!r}") from exc
+    # The export declares no document type. Refusing one also refuses any
+    # entity declaration, so no expansion or external fetch can occur.
+    if b"<!DOCTYPE" in document.payload.upper() or b"<!ENTITY" in document.payload.upper():
+        raise ValueError("Bank of England XML declares a document type")
+    root = ElementTree.fromstring(document.payload)
+    cubes = [element for element in root.iter() if element.tag.rsplit("}", 1)[-1] == "Cube"]
+    series = [element for element in cubes if element.get("SCODE") is not None]
+    if (len(series) != 1 or series[0].get("SCODE") != code
+            or description not in (series[0].get("DESC") or "")):
+        raise ValueError("Bank of England XML series identity changed")
+    points: list[ParsedPoint] = []
+    seen: set[date] = set()
+    for element in series[0].iter():
+        if element.tag.rsplit("}", 1)[-1] != "Cube" or element.get("TIME") is None:
+            continue
+        event_day = _date(element.get("TIME") or "", "%Y-%m-%d")
+        value = _number(element.get("OBS_VALUE") or "")
+        updated = _date_time(element.get("LAST_UPDATED") or "")
+        if event_day is None or value is None or updated is None:
+            raise ValueError("Bank of England XML observation is incomplete")
+        if element.get("OBS_CONF") != "N":
+            raise ValueError("Bank of England XML observation is not marked public")
+        if event_day in seen:
+            raise ValueError("Bank of England XML observation date is duplicated")
+        seen.add(event_day)
+        published = updated.replace(tzinfo=ZoneInfo("Europe/London"))
+        points.append(
+            ParsedPoint(
+                document.label,
+                event_day,
+                value,
+                json.dumps(
+                    {"series": code, "date": event_day.isoformat(), "value": str(value)},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                source_publication_time=published,
+                quality=QualityState.ESTIMATED,
+            )
+        )
+    # An empty request window is not a fault; Bank Rate rides in the same capture.
+    return tuple(points)
+
+
+def _date_time(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 def parse_boj_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
@@ -2506,13 +2584,51 @@ def build_official_adapters(
         boe_fetcher("GB.BOE.SONIA", "IUDSOIA"),
         parse_boe_csv,
     )
-    add(
-        "UK-GBP",
-        "boe_policy",
-        "boe_policy",
-        boe_fetcher("GB.BOE.BANK_RATE", "IUDBEDR"),
-        parse_boe_csv,
-    )
+    async def fetch_boe_policy(client):
+        start, end = request_window()
+        # Maintenance-period and monthly series appear weeks after their
+        # labels, so a 45-day window would often hold none of them.
+        periodic_start = start if backfill else end - timedelta(days=400)
+        bank_rate = {
+            "csv.x": "yes",
+            "Datefrom": start.strftime("%d/%b/%Y"),
+            "Dateto": "now",
+            "SeriesCodes": "IUDBEDR",
+            "CSVF": "TN",
+            "UsingCodes": "Y",
+            "VPD": "Y",
+            "VFD": "N",
+        }
+        return await get_documents(
+            client,
+            (
+                ("GB.BOE.BANK_RATE", boe_base, bank_rate),
+                *(
+                    (
+                        label,
+                        boe_base,
+                        {
+                            "CodeVer": "new",
+                            "xml.x": "yes",
+                            "Datefrom": periodic_start.strftime("%d/%b/%Y"),
+                            "Dateto": "now",
+                            "SeriesCodes": code,
+                            "UsingCodes": "Y",
+                            "VPD": "Y",
+                            "VFD": "N",
+                        },
+                    )
+                    for label, (code, _) in BOE_POLICY_XML_SERIES.items()
+                ),
+            ),
+        )
+
+    def parse_boe_policy(document):
+        if document.label == "GB.BOE.BANK_RATE":
+            return parse_boe_csv(document)
+        return parse_boe_xml(document)
+
+    add("UK-GBP", "boe_policy", "boe_policy", fetch_boe_policy, parse_boe_policy)
 
     rba_f1 = "https://www.rba.gov.au/statistics/tables/xls/f01d.xlsx"
     rba_a2 = "https://www.rba.gov.au/statistics/tables/xls/a02hist.xlsx"

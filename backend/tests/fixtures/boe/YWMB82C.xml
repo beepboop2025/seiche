@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='ISO-8859-1'?>
+<Envelope xmlns="http://www.gesmes.org/xml/2002-08-01">
+
+ 				<Cube xmlns="https://web.prod.iadb.ext.az.cloud.bankofengland.co.uk/website/agg_series" SCODE="YWMB82C" DESC="Operational Standing Facility rate - lending, by Maintenance Period not seasonally adjusted" COUNTRY="" CONCAT="NOT_AVAILABLE ">
+						<Cube FREQ_NAME="Monthly" FREQ_CODE="M" FREQ_ORD="7"/><SERIES_COM>The dates for this series represent the month of the start date of the Maintenance Period for which the data point relates.</SERIES_COM><SERIES_COM>On 8 December 2025, the rates paid on Operational Standing Facilities was changed to a spread of +/-15 basis points to Bank Rate.</SERIES_COM>
+					<Cube FIRST_OBS="2008-10-09" LAST_OBS="2026-07-30"/>
+									<Cube TIME="2025-08-07" OBS_VALUE="4.25" OBS_CONF="N"  LAST_UPDATED="2025-09-22 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-09-18" OBS_VALUE="4.25" OBS_CONF="N"  LAST_UPDATED="2025-11-10 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-11-06" OBS_VALUE="4.25" OBS_CONF="N"  LAST_UPDATED="2025-12-22 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-12-18" OBS_VALUE="3.9" OBS_CONF="N"  LAST_UPDATED="2026-05-05 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-02-05" OBS_VALUE="3.9" OBS_CONF="N"  LAST_UPDATED="2026-05-05 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-03-19" OBS_VALUE="3.9" OBS_CONF="N"  LAST_UPDATED="2026-05-05 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-04-30" OBS_VALUE="3.9" OBS_CONF="N"  LAST_UPDATED="2026-06-22 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-06-18" OBS_VALUE="3.9" OBS_CONF="N"  LAST_UPDATED="2026-08-03 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-07-30" OBS_VALUE="3.9" OBS_CONF="N"  LAST_UPDATED="2026-09-21 09:30:00" >
+									</Cube></Cube>
+</Envelope>
