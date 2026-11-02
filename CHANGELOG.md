@@ -7,6 +7,7 @@
 - New roles keep these series out of every capability, the v1 composite and every engine; they appear on the money-market atlas and the US-USD series page only.
 - Parse the H.15 commercial paper rates but hold them in code, metadata-only, until the owner decides their DTCC provenance.
 - Serve the FOMC federal funds target range from the NY Fed's EFFR rows and the Standing Repo Facility rate from its overnight repo results, as context that never becomes the policy anchor; the FRED DFEDTARU copy stays withheld.
+- Add a BLS Public Data API reader for core and energy CPI that stays off until the owner accepts the BLS.gov Terms of Service; the FRED copies stay withheld.
 
 ## 0.16.12: blank-data repairs, direct US sources and atlas delivery (2026-11-02)
 

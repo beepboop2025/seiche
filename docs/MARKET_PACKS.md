@@ -501,6 +501,23 @@ unchanged even though IORB's publication clock is unknown. The FRED copy
 (`US.FED.POLICY_CEILING`, DFEDTARU) stays metadata-only, and the
 `us_policy_floor` gap stays open.
 
+### US CPI from the BLS Public Data API: built, held (0.17.0 candidate, Stage 2b)
+
+`seiche.sources.bls_cpi` reads `CUSR0000SA0E` (energy) and `CUSR0000SA0L1E`
+(all items less food and energy), seasonally adjusted index levels, in one
+bounded POST to `https://api.bls.gov/publicAPI/v2/timeseries/data/` with no
+key, dated by month end. It pins both series, skips `M13` annual averages,
+keeps a month BLS marks "-" (October 2025, lost to the lapse in
+appropriations) absent, and fails closed on any other change. BLS data are
+public domain, but the BLS.gov Terms of Service state that "Access to or use
+of BLS.gov services or its content constitutes acceptance to this Agreement",
+require the access date and the statement "BLS.gov cannot vouch for the data
+or analyses derived from these data after the data have been retrieved from
+BLS.gov.", and include an indemnity. Accepting them is an owner decision, so a
+code-level hold keeps the gate closed, the US pack declares nothing and the
+registry records `bls_public_data_api` as `review_required` and
+`policy_blocked`. The attribution already carries the required statement.
+
 ## Deliberate trade-offs and validation boundary
 
 - v1 stays US-centred until parity migration completes. That preserves users but

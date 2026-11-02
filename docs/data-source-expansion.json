@@ -854,6 +854,24 @@
       "implementation_status": "implemented",
       "blocker": "G.17 is a Board release, public domain under the Board's notice: \"Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information.\" The total industrial production index is the Board's own Fisher aggregate; the release and About pages (checked 2026-11-02) carry no third-party copyright notice. Every served value carries the attribution \"Source: Board of Governors of the Federal Reserve System, G.17 Industrial Production and Capacity Utilization\". Adapter fed_g17 pins data set IP_MAJOR_INDUSTRY_GROUPS (the series appears identically in two other data sets) and maps IP.B50001.S (total index, seasonally adjusted, 2017=100; FRED INDPRO) as INDUSTRIAL_PRODUCTION, a role no capability or engine reads. The release is published around the middle of the month on a calendar the package does not carry, so publication time stays unknown; routine runs read 400 days back to keep later revisions as vintages. The FRED copy stays metadata-only.",
       "next_action": "The Board's annual revision on 2026-11-24 moves the base year to 2022, which changes the pinned UNIT attribute and faults fed_g17 closed by design: review the new declaration, update the pin in one reviewed change, then backfill so the rebased history enters as revisions."
+    },
+    {
+      "id": "bls_public_data_api",
+      "priority": "P1",
+      "publisher": "U.S. Bureau of Labor Statistics",
+      "publisher_url": "https://www.bls.gov/cpi/",
+      "access_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+      "access_format": ["JSON REST API"],
+      "cadence": "P1M",
+      "rights_status": "review_required",
+      "rights_evidence_url": "https://www.bls.gov/developers/termsOfService.htm",
+      "target_markets": ["US-USD"],
+      "semantic_roles": [],
+      "proposed_roles": ["CONSUMER_PRICE_INDEX"],
+      "target_engines": ["oilfunding"],
+      "implementation_status": "policy_blocked",
+      "blocker": "The data are public domain: the BLS copyright page (https://www.bls.gov/opub/copyright-information.htm) says \"everything that we publish, both in hard copy and electronically, is in the public domain, except for previously copyrighted photographs and illustrations. You are free to use our public domain material without specific permission, although we do ask that you cite the Bureau of Labor Statistics as the source.\" The API, however, comes with the BLS.gov Terms of Service, checked 2026-11-02: \"Access to or use of BLS.gov services or its content constitutes acceptance to this Agreement.\" They require \"Users of the public API should cite the date that data were accessed or retrieved using the API. Users must clearly state that \"BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.\"\", forbid presenting modified content as BLS's, and include an indemnity for non-government users. Accepting that agreement for the company is an owner decision not yet made. Adapter bls_cpi (seiche.sources.bls_cpi) is implemented for CUSR0000SA0E (energy; FRED CPIENGSL) and CUSR0000SA0L1E (all items less food and energy; FRED CPILFESL), seasonally adjusted index levels dated by month end, with the attribution \"Source: U.S. Bureau of Labor Statistics, Consumer Price Index, retrieved through the BLS Public Data API on each value's knowledge date. BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.\" It carries a code-level hold: its gate stays closed even if a pack declared it, the US pack declares no bls_cpi adapter, and nothing is requested, stored or served. The FRED copies stay metadata-only.",
+      "next_action": "Owner decision on accepting the BLS.gov Terms of Service, including the indemnity; then remove the hold, add the CONSUMER_PRICE_INDEX role and declare an allowed bls_cpi adapter with both instruments in the US pack, in one reviewed change. A registered BLS key would raise the request limits."
     }
   ]
 }
