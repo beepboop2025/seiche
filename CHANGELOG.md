@@ -7,6 +7,7 @@
 - New roles keep these series out of every capability, the v1 composite and every engine; they appear on the money-market atlas and the US-USD series page only.
 - Parse the H.15 commercial paper rates but hold them in code, metadata-only, until the owner decides their DTCC provenance.
 - Serve the FOMC federal funds target range from the NY Fed's EFFR rows and the Standing Repo Facility rate from its overnight repo results, as context that never becomes the policy anchor; the FRED DFEDTARU copy stays withheld.
+- Add a BLS Public Data API reader for core and energy CPI that stays off until the owner accepts the BLS.gov Terms of Service; the FRED copies stay withheld.
 
 - Read 56 of the 76 FRED series Seiche used from their original publishers: the Board's H.4.1, H.15, H.10, G.17, commercial paper and PRATES release XML zips (never the retiring Data Download Program), the NY Fed Markets API (SOFR, EFFR, the target range that replaces DFEDTARU, and ON RRP), BEA, BLS, the ECB, the Bank of England and the Bank of Japan.
 - Record the owner's four 2026-11-08 source-use decisions (Fed CP with DTCC origin, the BLS API Terms of Service, Bank of Japan total assets on the free site, raw SONIA under the Bank of England's open licence) in `backend/seiche/source_decisions.json` and `docs/rights/`; the adapters and the public projection read them.

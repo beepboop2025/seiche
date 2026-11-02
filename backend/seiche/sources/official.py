@@ -2429,6 +2429,33 @@ def build_official_adapters(
             fetch_board_package, parse_board_package_window,
             timeout=package.adapter_timeout_seconds)
 
+    from seiche.sources import bls_cpi
+
+    # BLS CPI is built but held: accepting the BLS.gov Terms of Service is an
+    # owner decision. Until the hold is removed and the US pack declares an
+    # allowed record, no request is made and nothing is stored or served.
+    if bls_cpi.rights_gate_open(markets.get("US-USD")):
+        bls_declared = bls_cpi.declared_instruments(markets.get("US-USD"))
+
+        def bls_window():
+            start, end = request_window(timezone_name="America/New_York")
+            # Monthly values appear weeks after their label and are revised.
+            return (start if backfill else end - timedelta(days=400)), end
+
+        async def fetch_bls_cpi(client):
+            start, end = bls_window()
+            first_year = max(start.year, end.year - bls_cpi.MAX_YEARS_PER_REQUEST + 1)
+            return await bls_cpi.fetch_documents(client, first_year, end.year)
+
+        def parse_bls_cpi_window(document):
+            start, end = bls_window()
+            return tuple(point for point in bls_cpi.parse_document(document)
+                         if point.instrument_id in bls_declared
+                         and start <= point.event_time <= end)
+
+        add("US-USD", bls_cpi.ADAPTER_ID, bls_cpi.ADAPTER_ID,
+            fetch_bls_cpi, parse_bls_cpi_window, timeout=90.0)
+
     from seiche.sources import treasury_par_yields
 
     # Treasury's own par yield curve runs only while the US pack itself
