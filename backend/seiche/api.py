@@ -78,7 +78,11 @@ from seiche.markets.atlas import (
     market_source_reference,
 )
 from seiche.markets.calibration import get_local_calibration
-from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
+from seiche.markets.materialize import (
+    PUBLIC_SNAPSHOT_VISIBILITY,
+    RESTRICTED_SNAPSHOT_VISIBILITY,
+)
+from seiche.markets.reading_rights import reading_restricted
 from seiche.markets.registry import UnknownMarketError, default_registry
 from seiche.markets.world import (
     WORLD_MARKETS_SELECTORS,
@@ -1514,7 +1518,8 @@ def _public_openapi_document() -> dict[str, Any]:
                         "schema": {"type": "string"},
                     }
                 ],
-                "responses": {"200": object_response, "503": object_response},
+                "responses": {"200": object_response, "503": object_response,
+                              "403": {"description": "Reading withheld: an input is not cleared for redistribution (seiche.source-rights-restriction.v1)"}},
             },
         },
         "/api/v2/markets/{market_id}/gauge": {
@@ -1529,7 +1534,8 @@ def _public_openapi_document() -> dict[str, Any]:
                         "schema": {"type": "string"},
                     }
                 ],
-                "responses": {"200": object_response, "503": object_response},
+                "responses": {"200": object_response, "503": object_response,
+                              "403": {"description": "Reading withheld: an input is not cleared for redistribution (seiche.source-rights-restriction.v1)"}},
             },
         },
         "/api/v2/markets/{market_id}/asof/{timestamp}": {
@@ -1550,7 +1556,8 @@ def _public_openapi_document() -> dict[str, Any]:
                         "schema": {"type": "string", "format": "date-time"},
                     },
                 ],
-                "responses": {"200": object_response, "404": object_response},
+                "responses": {"200": object_response, "404": object_response,
+                              "403": {"description": "Reading withheld: an input is not cleared for redistribution (seiche.source-rights-restriction.v1)"}},
             },
         },
         "/api/v2/markets/{market_id}/series": {
@@ -2081,6 +2088,55 @@ def _public_snapshot_payload(record: dict | None) -> dict | None:
     return sanitize_public_fault_payload(payload)
 
 
+# Catalog fields of a sealed snapshot. They describe coverage, eligibility,
+# clocks, faults and stale inputs; none of them is a reading, component,
+# headline or data-quality value.
+_SNAPSHOT_METADATA_KEYS = (
+    "data_coverage",
+    "evidence_eligibility",
+    "event_cutoff",
+    "knowledge_cutoff",
+    "faults",
+    "stale_inputs",
+)
+
+
+def _snapshot_metadata(record: dict | None) -> dict | None:
+    """Catalog metadata of a public or source-rights restricted snapshot.
+
+    The catalog, coverage and series pages read only these fields, so a
+    restricted reading keeps the same catalog entry it had while its values
+    stay unserved.
+    """
+    if record is None:
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict) or payload.get("visibility") not in {
+        PUBLIC_SNAPSHOT_VISIBILITY,
+        RESTRICTED_SNAPSHOT_VISIBILITY,
+    }:
+        return None
+    sanitized = sanitize_public_fault_payload(payload)
+    return {key: sanitized[key] for key in _SNAPSHOT_METADATA_KEYS if key in sanitized}
+
+
+def _restricted_reading(pack) -> JSONResponse | None:
+    """The source-rights refusal for a pack whose reading has unqualified inputs.
+
+    Decided from the pack's declared rights before any snapshot is read, so a
+    snapshot sealed under an older visibility stamp cannot reopen the reading.
+    """
+    if not reading_restricted(pack):
+        return None
+    from seiche import public_rights
+
+    return JSONResponse(
+        public_rights.legacy_unavailable(f"/api/v2/markets/{pack.market_id}"),
+        status_code=403,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/v2/markets")
 def markets_v2(response: Response):
     response.headers["Cache-Control"] = "public, max-age=300"
@@ -2095,7 +2151,7 @@ def markets_v2(response: Response):
     collector_runs = (
         repository.latest_collector_runs()
         if latest_by_market is not None and any(
-            _public_snapshot_payload(latest_by_market.get(pack.market_id)) is None
+            _snapshot_metadata(latest_by_market.get(pack.market_id)) is None
             for pack in packs
         ) else None
     )
@@ -2105,7 +2161,8 @@ def markets_v2(response: Response):
             latest_by_market.get(pack.market_id) if latest_by_market is not None
             else repository.load_latest_market_snapshot(pack.market_id, "gauge")
         )
-        payload = _public_snapshot_payload(latest)
+        # Catalog metadata only: a restricted reading never enters the catalog.
+        payload = _snapshot_metadata(latest)
         latest = latest if payload is not None else None
         summary["latest_snapshot"] = (
             {
@@ -2148,6 +2205,8 @@ def markets_v2(response: Response):
 @app.get("/api/v2/markets/{market_id}/overview")
 def market_overview_v2(market_id: str, response: Response):
     pack = _market_pack(market_id)
+    if (restricted := _restricted_reading(pack)) is not None:
+        return restricted
     record = get_repository().load_latest_market_snapshot(pack.market_id, "overview")
     payload = _public_snapshot_payload(record)
     if payload is None:
@@ -2163,6 +2222,8 @@ def market_overview_v2(market_id: str, response: Response):
 @app.get("/api/v2/markets/{market_id}/gauge")
 def market_gauge_v2(market_id: str, response: Response):
     pack = _market_pack(market_id)
+    if (restricted := _restricted_reading(pack)) is not None:
+        return restricted
     record = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
     payload = _public_snapshot_payload(record)
     if payload is None:
@@ -2178,6 +2239,8 @@ def market_gauge_v2(market_id: str, response: Response):
 @app.get("/api/v2/markets/{market_id}/asof/{timestamp}")
 def market_asof_v2(market_id: str, timestamp: str, response: Response):
     pack = _market_pack(market_id)
+    if (restricted := _restricted_reading(pack)) is not None:
+        return restricted
     cutoff = _parse_v2_timestamp(timestamp)
     record = get_repository().load_market_snapshot_as_of(
         pack.market_id, "overview", cutoff
@@ -2327,7 +2390,7 @@ def market_series_v2(
     ]
     capabilities, missing = _v2_capabilities(pack)
     latest_gauge = repository.load_latest_market_snapshot(pack.market_id, "gauge")
-    gauge_payload = _public_snapshot_payload(latest_gauge) or {}
+    gauge_payload = _snapshot_metadata(latest_gauge) or {}
     faults = [
         item
         for item in (gauge_payload.get("faults") or _v2_collector_faults(pack))
@@ -2909,8 +2972,9 @@ def coverage_v2(response: Response):
             latest_by_market.get(pack.market_id) if latest_by_market is not None
             else repository.load_latest_market_snapshot(pack.market_id, "gauge")
         )
-        payload = _public_snapshot_payload(latest) or {}
-        latest = latest if payload else None
+        metadata = _snapshot_metadata(latest)
+        payload = metadata or {}
+        latest = latest if metadata is not None else None
         public_adapters = _public_adapter_ids(pack)
         markets.append(
             {

@@ -14,7 +14,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from seiche.markets.base import CapabilityStatus
-from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
+from seiche.markets.materialize import (
+    DERIVABLE_REDISTRIBUTION,
+    PUBLIC_SNAPSHOT_VISIBILITY,
+    RESTRICTED_SNAPSHOT_VISIBILITY,
+)
 from seiche.markets.us_usd.pack import PACK
 from seiche.markets.validation_forward import verify_repository_forward_chain
 from seiche.domain.forward_record import (
@@ -98,6 +102,37 @@ def _capability_payload() -> tuple[dict[str, str], list[dict[str, str | None]]]:
     return matrix, missing
 
 
+def legacy_reading_visibility(snapshot: dict) -> str:
+    """The bridged reading's visibility, computed from the v1 inputs it read.
+
+    The bridge copies the v1 board's composite, Tell, stacker members, headline
+    and data quality, which read the board's admitted series. Every admitted
+    input must be cleared by its own legacy policy (``history_export_allowed``
+    in the board's provenance) and, when this pack maps it, by that
+    instrument's adapter policy. An input without that evidence, or a board
+    without provenance, seals the products as restricted.
+    """
+
+    provenance = snapshot.get("provenance")
+    if not isinstance(provenance, list) or not provenance:
+        return RESTRICTED_SNAPSHOT_VISIBILITY
+    by_mnemonic = {item.mnemonic: item for item in PACK.instruments}
+    for entry in provenance:
+        if not isinstance(entry, dict):
+            return RESTRICTED_SNAPSHOT_VISIBILITY
+        if entry.get("availability") in {"unavailable", "empty"}:
+            continue  # An input with no admitted observation was not read.
+        if entry.get("history_export_allowed") is not True:
+            return RESTRICTED_SNAPSHOT_VISIBILITY
+        instrument = by_mnemonic.get(entry.get("mnemonic"))
+        if instrument is not None and (
+            PACK.adapter_map[instrument.source_adapter_id].redistribution_status
+            not in DERIVABLE_REDISTRIBUTION
+        ):
+            return RESTRICTED_SNAPSHOT_VISIBILITY
+    return PUBLIC_SNAPSHOT_VISIBILITY
+
+
 def build_products(snapshot: dict) -> tuple[dict, dict]:
     engines = snapshot.get("engines") or {}
     deep = snapshot.get("deep") or {}
@@ -119,7 +154,8 @@ def build_products(snapshot: dict) -> tuple[dict, dict]:
     # available on the legacy board but cannot inherit the filtered marker.
 
     common = {
-        "visibility": PUBLIC_SNAPSHOT_VISIBILITY,
+        # Computed from the inputs this reading copies, never asserted.
+        "visibility": legacy_reading_visibility(snapshot),
         "market_id": PACK.market_id,
         "monetary_area_id": PACK.monetary_area_id,
         "jurisdiction_codes": list(PACK.jurisdiction_codes),

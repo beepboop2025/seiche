@@ -9,6 +9,7 @@ forward-validation records.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -59,6 +60,10 @@ from seiche.repository import MarketRepository, get_repository
 GLOBAL_TIDE_CALIBRATION_ID = "global-tide-coupling-forward-v1"
 GLOBAL_TIDE_CALIBRATION_MATURITY = "FORWARD_ONLY"
 PUBLIC_SNAPSHOT_VISIBILITY = "PUBLIC_REDISTRIBUTION_FILTERED"
+# A sealed product whose own inputs include anything outside the derivable
+# boundary. It is kept for forward evidence and catalog metadata; the API never
+# serves its reading.
+RESTRICTED_SNAPSHOT_VISIBILITY = "SOURCE_RIGHTS_RESTRICTED"
 DERIVABLE_REDISTRIBUTION = frozenset(
     {RedistributionStatus.ALLOWED, RedistributionStatus.DERIVED_ONLY}
 )
@@ -120,6 +125,23 @@ def _public_observations(
         if observation.instrument_id in public_ids
         and observation.redistribution_status in DERIVABLE_REDISTRIBUTION
     ]
+
+
+def computed_visibility(pack: MarketPack, observations: Iterable[Observation]) -> str:
+    """The visibility a product's own inputs support, computed rather than asserted.
+
+    Public only when every observation the product read is itself derivable and
+    belongs to an instrument whose adapter and instrument policy the pack
+    declares derivable. Anything else seals the product as restricted.
+    """
+
+    public_ids = frozenset(_public_instrument_ids(pack))
+    restricted = any(
+        observation.instrument_id not in public_ids
+        or observation.redistribution_status not in DERIVABLE_REDISTRIBUTION
+        for observation in observations
+    )
+    return RESTRICTED_SNAPSHOT_VISIBILITY if restricted else PUBLIC_SNAPSHOT_VISIBILITY
 
 
 def _public_runs(pack: MarketPack, runs: list[dict]) -> list[dict]:
@@ -629,7 +651,8 @@ def build_local_products(
     eligible = not eligibility_reasons and index is not None
     coverage = _public_coverage(observations)
     common = {
-        "visibility": PUBLIC_SNAPSHOT_VISIBILITY,
+        # Every input of the reading is in ``aged``; its rights decide the stamp.
+        "visibility": computed_visibility(pack, aged),
         "market_id": pack.market_id,
         "monetary_area_id": pack.monetary_area_id,
         "jurisdiction_codes": list(pack.jurisdiction_codes),
@@ -789,6 +812,7 @@ def materialize_global_tide(
     coverage: list[dict[str, Any]] = []
     all_observations: list[Observation] = []
     faults: list[dict[str, Any]] = []
+    visibility = PUBLIC_SNAPSHOT_VISIBILITY
     from seiche.markets.funding_reference import EURO_COUNTRIES
     national_sovereign_ids = {code + "-EUR" for code in EURO_COUNTRIES}
     for pack in markets.list():
@@ -808,6 +832,8 @@ def materialize_global_tide(
         observations = _public_observations(pack, observations)
         runs = _public_runs(pack, _latest_runs(repo, pack.market_id))
         aged = _age_observations(pack, observations, cutoff)
+        if computed_visibility(pack, aged) != PUBLIC_SNAPSHOT_VISIBILITY:
+            visibility = RESTRICTED_SNAPSHOT_VISIBILITY
         all_observations.extend(aged)
         series = _fx_series(pack, aged) if aged else None
         if series is not None:
@@ -886,7 +912,7 @@ def materialize_global_tide(
     payload = {
         "schema": "seiche.global-tide.v2",
         "product": "GLOBAL_SEICHE_TIDE",
-        "visibility": PUBLIC_SNAPSHOT_VISIBILITY,
+        "visibility": visibility,
         "status": status,
         "market_id": "GLOBAL",
         "monetary_area_id": None,

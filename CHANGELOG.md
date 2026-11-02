@@ -21,6 +21,7 @@
 - Serve Federal Reserve total assets (`US.FED.TOTAL_ASSETS_DIRECT`, H.4.1 `RESPPMA_N.WW`) from the same Board package and rights record, cited to the Board; the FRED `WALCL` copy stays withheld.
 - Serve Treasury's own Daily Treasury Par Yield Curve Rates at 1M, 3M, 6M, 1Y, 2Y, 5Y, 10Y and 30Y (`US.TREASURY.PAR_YIELD_*`), a US Government work cited to Treasury on every served value; the FRED `DGS` copies stay withheld.
 - Add a parser for the Board's commercial paper rates that stays off: the release is derived from DTCC data, so it waits for an owner rights decision and the FRED copies stay withheld.
+- Withhold the v2 US-USD reading: `/api/v2/markets/US-USD/gauge`, `/overview` and `/asof/{timestamp}` return the `seiche.source-rights-restriction.v1` refusal (403) because the legacy parity bridge copies the withheld v1 board; materializers compute the snapshot visibility stamp from their actual inputs; the markets catalog, coverage and series pages are unchanged. A sweep test calls every GET route and MCP tool against seeded restricted values.
 
 ## 0.16.11: static source-rights projection and source clocks (2026-11-01)
 
