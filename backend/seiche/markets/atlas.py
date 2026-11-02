@@ -71,6 +71,7 @@ _SOURCE_URLS = {
     "fed_h15": "https://www.federalreserve.gov/releases/h15/data/FRB_H15_xml.zip",
     "fed_h10": "https://www.federalreserve.gov/releases/h10/data/FRB_H10_xml.zip",
     "fed_g17": "https://www.federalreserve.gov/releases/g17/data/FRB_G17_xml.zip",
+    "bea_nipa": "https://apps.bea.gov/national/Release/TXT/NipaDataQ.txt",
     "treasury_par_yields": (
         "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
         "TextView?type=daily_treasury_yield_curve"
@@ -117,6 +118,7 @@ _SOURCE_PUBLISHERS = {
     "fed_h15": "Board of Governors of the Federal Reserve System",
     "fed_h10": "Board of Governors of the Federal Reserve System",
     "fed_g17": "Board of Governors of the Federal Reserve System",
+    "bea_nipa": "U.S. Bureau of Economic Analysis",
     "treasury_par_yields": "U.S. Department of the Treasury",
     "fred_daily": "Federal Reserve Bank of St. Louis",
     "fred_weekly": "Federal Reserve Bank of St. Louis",
@@ -190,6 +192,10 @@ _SOURCE_ATTRIBUTIONS: dict[str, dict[str, str]] = {
             "Production and Capacity Utilization"
         ),
         "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+    "bea_nipa": {
+        "attribution": "Source: U.S. Bureau of Economic Analysis, National Income and Product Accounts",
+        "terms_url": "https://www.bea.gov/help/faq/147",
     },
     "treasury_par_yields": {
         "attribution": "Source: U.S. Department of the Treasury, Daily Treasury Par Yield Curve Rates",
@@ -1832,6 +1838,7 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.EXCHANGE_RATE: "A reference exchange rate in the direction its source quotes it; not an executable quote.",
         SemanticRole.CURRENCY_INDEX: "A trade-weighted index of the currency's value against a basket of currencies; an index level, not a price.",
         SemanticRole.INDUSTRIAL_PRODUCTION: "Real output of the industrial sector as an index of a base year; revised after first publication.",
+        SemanticRole.GROSS_DOMESTIC_PRODUCT: "Nominal output of the whole economy at a seasonally adjusted annual rate; revised with every estimate.",
     }
     return explanations.get(role, "Official local money-market observation.")
 
@@ -2605,6 +2612,19 @@ def build_global_money_market_atlas(
                     "rebased at the Board's annual revisions; each revision is kept as "
                     "its own vintage. Seiche statistics are not official Board analysis "
                     "or endorsement. The release package supplies observation dates, "
+                    "not publication receipts; its acquisition establishes knowledge time."
+                ),
+            },
+            {
+                "source": "U.S. Bureau of Economic Analysis, NIPA A191RC",
+                "terms_url": "https://www.bea.gov/help/faq/147",
+                "notice": (
+                    "Source: U.S. Bureau of Economic Analysis, National Income and Product "
+                    "Accounts. BEA web information is public domain unless stated otherwise. "
+                    "Gross domestic product is in USD millions at a seasonally adjusted "
+                    "annual rate, dated by the quarter's last day and revised with every "
+                    "estimate; each revision is kept as its own vintage. Seiche statistics "
+                    "are not BEA analysis or endorsement. The flat file supplies periods, "
                     "not publication receipts; its acquisition establishes knowledge time."
                 ),
             },

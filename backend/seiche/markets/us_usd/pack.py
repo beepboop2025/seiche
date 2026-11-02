@@ -145,6 +145,15 @@ _FED_H10_CURRENTNESS_CLOCK = PublicationClock(
     precision=PublicationClockPrecision.SCHEDULED,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
+# BEA posts GDP estimates on a release calendar its flat files do not carry,
+# so, as for G.17, the publication clock is unknown.
+_BEA_NIPA_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=None,
+    business_day_lag=0,
+    precision=PublicationClockPrecision.UNKNOWN,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
 # G.17 is published "around the middle of the month" on a release calendar the
 # package does not carry. As for PRATES, the publication clock is unknown and
 # acquisition establishes knowledge time.
@@ -427,6 +436,13 @@ PACK = MarketPack(
             collection_cadence="P1D",
         ),
         SourceAdapterSpec(
+            # BEA's own NIPA flat file, not FRED's GDP copy. BEA web
+            # information is public domain unless stated otherwise, with a
+            # citation requested (bea.gov/help/faq/147). Quarterly, polled daily.
+            "bea_nipa", _OPEN, "P3M", _BEA_NIPA_CLOCK, _ALLOW,
+            collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
             "nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW,
             collection_cadence="PT1H",
         ),
@@ -661,6 +677,12 @@ PACK = MarketPack(
         InstrumentSpec(
             "US.FED.G17_INDUSTRIAL_PRODUCTION", "G17_INDUSTRIAL_PRODUCTION",
             SemanticRole.INDUSTRIAL_PRODUCTION, "fed_g17", "index, 2017 = 100", _INDEX,
+        ),
+        # BEA nominal GDP (A191RC), USD millions at a seasonally adjusted annual
+        # rate. Its role is context only; the FRED GDP copy stays metadata-only.
+        InstrumentSpec(
+            "US.BEA.GDP_NOMINAL_SAAR", "BEA_GDP_NOMINAL_SAAR", SemanticRole.GROSS_DOMESTIC_PRODUCT,
+            "bea_nipa", "USD millions, seasonally adjusted annual rate", _LCY_M,
         ),
     ),
     capabilities=(

@@ -466,6 +466,25 @@ code-level hold keeps the gate closed, the US pack declares nothing and the
 registry records `bls_public_data_api` as `review_required` and
 `policy_blocked`. The attribution already carries the required statement.
 
+### US nominal GDP from BEA's flat file (0.17.0 candidate, Stage 2b)
+
+`seiche.sources.bea_nipa` reads `A191RC` (gross domestic product, current
+dollars) from BEA's quarterly NIPA flat file
+(`https://apps.bea.gov/national/Release/TXT/NipaDataQ.txt`, 35.6 MB on
+2026-11-02) as `US.BEA.GDP_NOMINAL_SAAR`, USD millions at a seasonally adjusted
+annual rate, dated by quarter end, under role `GROSS_DOMESTIC_PRODUCT`, which no
+capability reads. Each run first reads BEA's series register and pins its
+`A191RC` declaration (label, "Current Dollars", "Level", default scale -6,
+table 1.1.5 line 1), so a rescaled or relabelled series fails closed; the data
+must keep its header, quarters strictly increasing, comma-grouped values and a
+plausible range. Rights: "Unless stated otherwise, the information posted on
+this web site is in the public domain and may be used or reproduced without
+specific permission" (bea.gov/help/faq/147); every value carries "Source: U.S.
+Bureau of Economic Analysis, National Income and Product Accounts". The BEA API
+and its terms are not used. Publication time is unknown; routine runs read 400
+days back so revisions enter as vintages. Registry record
+`bea_nipa_flat_files`; the FRED `GDP` copy stays metadata-only.
+
 ## Deliberate trade-offs and validation boundary
 
 - v1 stays US-centred until parity migration completes. That preserves users but
