@@ -119,7 +119,9 @@ test("Money markets wires the ECB request, the withheld board state and the atla
   assert.doesNotMatch(source, /fx_rows, engine\?\.fx_labels|chg_60d_pct, "%", true\)\}<\/strong>/);
 });
 
-test("the withheld board state reaches Money markets", async () => {
+test("the terminal footer no longer claims a CNY leg that is withheld, and the board state reaches Money markets", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(app, /<MoneyMarkets snap=\{\{\}\} boardWithheld=\{withheld\} \/>/);
+  assert.doesNotMatch(app, /keeps the Federal Reserve H\.10 CNY FX leg/);
+  assert.match(app, /The China desk under Money markets reads its CNY leg from the ECB USD\/CNY reference rate; Federal Reserve H\.10 CNY values, local benchmark rates and a local-rate regime remain withheld pending redistribution permission\./);
 });
