@@ -710,6 +710,24 @@
       "implementation_status": "implemented",
       "blocker": "Core collection works; heterogeneous tables need per-row observation freshness and historical current-state vintages where available.",
       "next_action": "Persist table observation/release clocks and archive exact upcoming-auction/MSPD payloads forward."
+    },
+    {
+      "id": "frb_h41_release",
+      "priority": "P0",
+      "publisher": "Board of Governors of the Federal Reserve System",
+      "publisher_url": "https://www.federalreserve.gov/releases/h41/",
+      "access_url": "https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip",
+      "access_format": ["SDMX-ML release package (ZIP)"],
+      "cadence": "P1W",
+      "rights_status": "explicit_public_domain_with_exclusions",
+      "rights_evidence_url": "https://www.federalreserve.gov/disclaimer.htm",
+      "target_markets": ["US-USD"],
+      "semantic_roles": ["RESERVE_BALANCES"],
+      "proposed_roles": [],
+      "target_engines": ["US-USD:money_market_atlas", "US-USD:local_gauge"],
+      "implementation_status": "implemented",
+      "blocker": "Board-created H.4.1 data are public domain under the Board's notice: \"Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information.\" Every served value carries the attribution \"Source: Board of Governors of the Federal Reserve System, H.4.1\"; Board seals and logos and identified non-Board material are excluded. Only series RESH4R_XAW_N.WW (week-average reserve balances, USD millions) is mapped, and the FRED WRESBAL copy stays metadata-only.",
+      "next_action": "Run a one-off canonical backfill of fed_h41 after release, then verify the Thursday 16:30 New York release clock and the attribution on every public surface."
     }
   ]
 }

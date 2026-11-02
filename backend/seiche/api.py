@@ -2301,6 +2301,12 @@ def market_series_v2(
                 "source_adapter": adapter.adapter_id,
                 "publisher": source_reference["publisher"],
                 "source_url": source_reference["source_url"],
+                # A source that asks to be cited carries its citation here.
+                **{
+                    key: source_reference[key]
+                    for key in ("attribution", "terms_url")
+                    if key in source_reference
+                },
                 "connector_classification": adapter.classification.value,
                 "redistribution_status": adapter.redistribution_status.value,
                 "expected_cadence": adapter.expected_cadence,

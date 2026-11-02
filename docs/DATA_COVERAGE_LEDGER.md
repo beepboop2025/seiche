@@ -247,6 +247,12 @@ can already produce a numeric forward-only component. `US-USD` remains
 | `cross_basin_coupling` | At least two aligned public-derivable `FX_SWAP_BASIS` histories | `UNAVAILABLE` | `UNAVAILABLE` |
 | `historical_prediction` | No extra market role; requires point-in-time canonical observations and a forward validation record | `FORWARD_ONLY` | `FORWARD_ONLY` |
 
+Since 2026-11-02 the US `RESERVE_BALANCES` role also has a public direct
+instrument: `US.FED.RESERVE_BALANCES_DIRECT`, the Board's own H.4.1 week
+average through adapter `fed_h41` (registry record `frb_h41_release`, public
+domain with a required Board citation). The FRED `WRESBAL` copy named in the
+table stays metadata-only.
+
 Authoritative declarations are `PACK.capabilities` in
 `backend/seiche/markets/us_usd/pack.py:374-454` and
 `pre_support_capabilities` in `backend/seiche/markets/reference.py:14-38`.

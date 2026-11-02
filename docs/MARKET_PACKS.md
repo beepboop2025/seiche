@@ -258,7 +258,7 @@ declared after SRF, so pack order keeps SRF as the kernel's facility take-up.
 A failed fetch of either feed faults the whole adapter run rather than leaving
 one series silently stale. The FRED copy (`RRPONTSYD`) remains withheld.
 
-### US direct reserve balances: built, off pending a rights record
+### US direct reserve balances (2026-11-02)
 
 `seiche.sources.fed_h41` reads reserve balances from the Board's own H.4.1
 release package (`https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip`),
@@ -269,16 +269,26 @@ The parser streams the package once, pins the series' declared frequency,
 unit, multiplier and currency, refuses XML declarations, rejects duplicate,
 non-Wednesday or invalid rows, and skips `NA` rows rather than zero-filling.
 
-No existing allowed rights record covers this release: the `fed_prates`
-record names only the PRATES file and the source registry has no Board H.4.1
-entry. The adapter is therefore registered only when the US pack itself
-declares an official-open `fed_h41` adapter with redistribution allowed and
-`US.FED.RESERVE_BALANCES_DIRECT` on it. Until the owner adds that record,
-no request is made, nothing is stored or served, and `US.FED.RESERVE_BALANCES`
-stays withheld. Activation is that pack declaration (weekly cadence, a
-Thursday 16:30 New York scheduled clock with one business day of lag on the
-US Fedwire calendar) plus a matching source-registry entry; no code change is
-needed.
+Rights: the Board's notice at `https://www.federalreserve.gov/disclaimer.htm`
+("Copyright/trademark", captured 2026-11-02) reads: "Unless otherwise
+indicated, information on Board's website is in the public domain and may be
+copied and distributed without permission. Please cite to the Board as the
+source of the information." The source registry records this as
+`frb_h41_release` (`explicit_public_domain_with_exclusions`), and the US pack
+declares the official-open `fed_h41` adapter with redistribution allowed:
+weekly cadence, polled daily, released Thursday 16:30 New York with one
+business day of lag on the US Fedwire calendar. The instrument is
+`US.FED.RESERVE_BALANCES_DIRECT` (mnemonic `RESERVE_BALANCES_DIRECT`, USD
+millions), declared before the FRED copy so pack order prefers it.
+
+Every served value carries the citation `Source: Board of Governors of the
+Federal Reserve System, H.4.1` with `terms_url`: on the atlas metric, on the
+series page's instrument reference and in the atlas `legal_notices`. The
+adapter is still registered only while the pack declares that allowed record;
+any other declaration makes no request and serves nothing. The FRED copy
+(`US.FED.RESERVE_BALANCES`, `fred_weekly`) stays metadata-only and redacted.
+Routine collection keeps the last 45 days; a deeper history needs a one-off
+`seiche market-backfill --market US-USD` after release.
 
 ## Deliberate trade-offs and validation boundary
 
