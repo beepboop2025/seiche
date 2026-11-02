@@ -114,6 +114,16 @@ test("the live atlas uses qualified original-publisher histories, never metadata
   assert.equal(atlasFundingModels(atlas([{...metric,redistribution_status:"metadata_only"}])).size,0);
   assert.equal(atlasFundingModels(atlas([{...metric,asof:"2026-10-29"}])).size,0);
 });
+test("the atlas Treasury cash history feeds chart 04 in millions, never in another unit", () => {
+  const tga={id:"US.TREASURY.GOVERNMENT_CASH",unit:"local_currency_millions",availability:"AVAILABLE",redistribution_status:"allowed",source:"fiscaldata",status:"FRESH",cadence:"P1D",asof:"2026-10-29",history:[["2026-10-28",1052530],["2026-10-29",1015632]]};
+  const atlas=metrics=>({schema:"seiche.global-money-markets.v1",markets:[{market_id:"US-USD",metrics}]});
+  const item=atlasFundingModels(atlas([tga])).get("TGA_LONG");
+  assert.equal(item.unit,"$M");
+  assert.equal(item.points.at(-1).value,1015632);
+  assert.equal(fundingPoints(item,"$M",1000).at(-1).y,1015.632);
+  for (const row of [{...tga,unit:"$B"},{...tga,redistribution_status:"metadata_only"},{...tga,availability:"RESTRICTED"},{...tga,asof:"2026-10-30"}])
+    assert.equal(atlasFundingModels(atlas([row])).has("TGA_LONG"),false);
+});
 
 test("newer published headline points extend histories without filling absent dates", () => {
   const snapshot=published({policy:{columns:["date","iorb_pct"],rows:[["2026-10-28",3.9]]},

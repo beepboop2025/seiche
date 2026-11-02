@@ -80,35 +80,42 @@ export function mountFundingAnalytics(target: HTMLElement, snapshot: () => unkno
   const link = el('a', 'Explore the funding workbench →'); link.href = '#workbench'; view.controls.append(link);
   async function refresh() {
     if (request) return; const controller = new AbortController(); request = controller; refreshButton.disabled = true;
-    const timer = setTimeout(() => controller.abort(), 45000);
+    // Disposal cancels everything. The large atlas and the small series reads keep separate time
+    // budgets, and the series reads no longer wait for the atlas, so a slow atlas cannot abort them.
+    const seriesBudget = new AbortController(), atlasBudget = new AbortController();
+    const cancel = () => {seriesBudget.abort(); atlasBudget.abort();};
+    controller.signal.addEventListener('abort', cancel, {once: true});
+    const seriesTimer = setTimeout(() => seriesBudget.abort(), 45000), atlasTimer = setTimeout(() => atlasBudget.abort(), 90000);
     let next = publishedFundingModels(snapshot());
     view.status.textContent = 'Checking source dates and histories; dated observations stay visible…';
     try {
-      const [atlas, catalog] = await Promise.allSettled([
-        readFundingAtlas(controller.signal),
-        readJSON(`${API}/api/series/index.json`, controller.signal),
-      ]);
-      if (atlas.status === "fulfilled") next = mergeFundingModels(next, atlasFundingModels(atlas.value));
-      if (catalog.status === "fulfilled" && record(catalog.value) && catalog.value.schema === 'seiche.series-index.v1' && Array.isArray(catalog.value.series)) {
+      const settle = (read: Promise<unknown>) => read.then(value => ({ok: true as const, value}), () => ({ok: false as const, value: undefined}));
+      const atlasRead = settle(readFundingAtlas(atlasBudget.signal));
+      const catalog = await settle(readJSON(`${API}/api/series/index.json`, seriesBudget.signal));
+      const loaded = new Map<string, ReturnType<typeof seriesModel>>();
+      if (catalog.ok && record(catalog.value) && catalog.value.schema === 'seiche.series-index.v1' && Array.isArray(catalog.value.series)) {
         const entries: unknown[] = catalog.value.series;
         for (let i = 0; i < FUNDING_KEYS.length; i += 3) {
           await Promise.all(FUNDING_KEYS.slice(i, i + 3).map(async key => {
             const entry = entries.find(row => record(row) && row.mnemonic === key);
             if (!record(entry) || entry.available !== true || entry.csv_restricted || entry.json !== `/api/series/${key}`) return;
             try {
-              const item = seriesModel(await readJSON(`${API}${entry.json}?n=520`, controller.signal), entry);
-              next = mergeFundingModels(next, new Map([[key, item]]));
+              loaded.set(key, seriesModel(await readJSON(`${API}${entry.json}?n=520`, seriesBudget.signal), entry));
             } catch { /* Retain the dated published or previously collected history. */ }
           }));
         }
       }
+      const atlas = await atlasRead;
+      // Same precedence as before: published, then the atlas, then each series history in key order.
+      if (atlas.ok) next = mergeFundingModels(next, atlasFundingModels(atlas.value));
+      for (const key of FUNDING_KEYS) { const item = loaded.get(key); if (item) next = mergeFundingModels(next, new Map([[key, item]])); }
       if (disposed) return;
       models = mergeFundingModels(models, next); render();
       view.status.textContent = `${models.size} dated histories loaded. Each chart keeps its own source dates; unavailable histories remain explicit.`;
-      if (atlas.status === "rejected" && catalog.status === "rejected") view.status.textContent += ' Live refresh failed; dated histories retained.';
+      if (!atlas.ok && !catalog.ok) view.status.textContent += ' Live refresh failed; dated histories retained.';
     } catch {
       if (!disposed) {render(); view.status.textContent = 'Live refresh failed; dated histories remain visible. Retry to check for newer observations.';}
-    } finally {clearTimeout(timer); request = null; if (!disposed) refreshButton.disabled = false;}
+    } finally {clearTimeout(seriesTimer); clearTimeout(atlasTimer); controller.signal.removeEventListener('abort', cancel); request = null; if (!disposed) refreshButton.disabled = false;}
   }
   const updateSnapshot = () => {models = mergeFundingModels(models, publishedFundingModels(snapshot())); render();};
   target.addEventListener("funding-snapshot", updateSnapshot);
