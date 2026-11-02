@@ -419,13 +419,20 @@ def test_nyfed_unsecured_adapter_registration_and_pack_contract() -> None:
     assert spec.publication_clock.business_day_lag == 1
     assert spec.publication_clock.local_time is not None
     assert spec.publication_clock.local_time.isoformat() == "09:00:00"
+    # The EFFR rows also carry the FOMC target range, declared as context.
+    target_range = {"US.NYFED.FFR_TARGET_RANGE_LOWER", "US.NYFED.FFR_TARGET_RANGE_UPPER"}
     assert set(instruments) == {
         f"US.NYFED.{benchmark}_{suffix}"
         for benchmark in ("EFFR", "OBFR")
         for suffix in ("P01", "P25", "MEDIAN", "P75", "P99", "VOLUME")
-    }
+    } | target_range
     for instrument_id, instrument in instruments.items():
-        if instrument_id.endswith("_VOLUME"):
+        if instrument_id in target_range:
+            assert instrument.semantic_role in {
+                SemanticRole.POLICY_RANGE_LOWER, SemanticRole.POLICY_RANGE_UPPER}
+            assert instrument.canonical_unit is CanonicalUnit.BASIS_POINTS
+            assert instrument.value_multiplier == Decimal("100")
+        elif instrument_id.endswith("_VOLUME"):
             assert instrument.semantic_role is SemanticRole.UNSECURED_FUNDING_VOLUME
             assert instrument.source_unit == "USD billions"
             assert instrument.canonical_unit is CanonicalUnit.LOCAL_CURRENCY_MILLIONS
@@ -444,7 +451,26 @@ def test_nyfed_unsecured_adapter_registration_and_pack_contract() -> None:
     )
     adapter = _official_adapter("nyfed_unsecured_rates")
     assert adapter.source == "nyfed_unsecured_rates"
-    assert adapter.parser is parse_nyfed_unsecured_rates
+    # The adapter parses the distribution exactly as parse_nyfed_unsecured_rates
+    # does, plus the target range from the same EFFR rows.
+    sample = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/unsecured/all/search.json",
+        "application/json",
+        json.dumps({"refRates": [{
+            "effectiveDate": "2026-08-10", "type": "EFFR", "percentRate": 3.58,
+            "percentPercentile1": 3.53, "percentPercentile25": 3.57,
+            "percentPercentile75": 3.59, "percentPercentile99": 3.65,
+            "volumeInBillions": 110, "targetRateFrom": 3.5, "targetRateTo": 3.75,
+            "revisionIndicator": "",
+        }]}).encode(),
+    )
+    parsed = adapter.parser(sample)
+    assert [p for p in parsed if p.instrument_id not in target_range] == list(
+        parse_nyfed_unsecured_rates(sample))
+    assert {p.instrument_id: p.raw_value for p in parsed if p.instrument_id in target_range} == {
+        "US.NYFED.FFR_TARGET_RANGE_LOWER": Decimal("3.5"),
+        "US.NYFED.FFR_TARGET_RANGE_UPPER": Decimal("3.75"),
+    }
 
 
 def test_nyfed_sofrai_pack_contract_has_honest_rate_and_index_semantics() -> None:

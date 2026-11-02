@@ -367,6 +367,85 @@ def parse_ecb_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     return tuple(points)
 
 
+ECB_EUROSYSTEM_TOTAL_ASSETS_KEY = "ILM.W.U2.C.T000000.Z5.Z01"
+ECB_EUROSYSTEM_TOTAL_ASSETS_ID = "EA.ECB.EUROSYSTEM_TOTAL_ASSETS"
+_ECB_ISO_WEEK = re.compile(r"^(\d{4})-W(\d{2})$")
+_ECB_PLAIN_NUMBER = re.compile(r"^\d+(?:\.\d+)?$")
+_MAX_EUROSYSTEM_ASSETS = Decimal("100000000")
+
+
+def parse_ecb_eurosystem_total_assets(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    """Eurosystem total assets from the ECB's weekly ILM series, in EUR millions.
+
+    Each row must be the pinned series key, weekly, in euro with unit
+    multiplier 6 (millions). One 2026 row omits the multiplier while its
+    neighbours declare it, so a blank multiplier is accepted only beside a
+    declared 6 and never with any other value. An ISO week is dated by its
+    Friday, the reference date of the Eurosystem's weekly financial statement.
+    Any other change fails closed.
+    """
+
+    text = document.payload.decode("utf-8-sig")
+    lines = text.splitlines()
+    if len(lines) < 2:
+        raise ValueError("ECB total assets CSV contains no data rows")
+    header = next(csv.reader([lines[0]]))
+    required = {"KEY", "FREQ", "TIME_PERIOD", "OBS_VALUE", "UNIT", "UNIT_MULT"}
+    if not required <= set(header):
+        raise ValueError("ECB total assets CSV header changed")
+    points: list[ParsedPoint] = []
+    multipliers: set[str] = set()
+    seen: set[date] = set()
+    for raw_line in lines[1:]:
+        values = next(csv.reader([raw_line]))
+        if len(values) != len(header):
+            raise ValueError("ECB total assets CSV row reshaped")
+        row = dict(zip(header, values, strict=True))
+        if (row["KEY"], row["FREQ"], row["UNIT"]) != (ECB_EUROSYSTEM_TOTAL_ASSETS_KEY, "W", "EUR"):
+            raise ValueError("ECB total assets series, frequency or currency changed")
+        multipliers.add(row["UNIT_MULT"])
+        week = _ECB_ISO_WEEK.match(row["TIME_PERIOD"])
+        if week is None:
+            raise ValueError("ECB total assets period is not an ISO week")
+        try:
+            day = date.fromisocalendar(int(week[1]), int(week[2]), 5)
+        except ValueError as exc:
+            raise ValueError("ECB total assets ISO week invalid") from exc
+        if day in seen:
+            raise ValueError("ECB total assets repeats a week")
+        seen.add(day)
+        raw_value = row["OBS_VALUE"]
+        if raw_value == "":
+            continue  # an unavailable week stays absent, never zero
+        if not _ECB_PLAIN_NUMBER.match(raw_value):
+            raise ValueError("ECB total assets value invalid")
+        value = Decimal(raw_value)
+        if not Decimal(0) < value < _MAX_EUROSYSTEM_ASSETS:
+            raise ValueError("ECB total assets value out of bounds")
+        evidence = json.dumps({
+            "key": row["KEY"], "time_period": row["TIME_PERIOD"], "obs_value": raw_value,
+            "obs_status": row.get("OBS_STATUS"), "unit": row["UNIT"], "unit_mult": "6",
+        }, sort_keys=True, separators=(",", ":")).encode()
+        points.append(ParsedPoint(
+            ECB_EUROSYSTEM_TOTAL_ASSETS_ID, day, value, evidence,
+            revision_id=(f"ecb:ILM-W-total-assets:{row['TIME_PERIOD']}:"
+                         f"{hashlib.sha256(evidence).hexdigest()[:16]}"),
+        ))
+    if not multipliers <= {"6", ""} or "6" not in multipliers:
+        raise ValueError("ECB total assets unit multiplier changed")
+    if not points:
+        raise ValueError("ECB total assets CSV contains no numeric observations")
+    return tuple(sorted(points, key=lambda point: point.event_time))
+
+
+def parse_ecb_liquidity(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    """Excess liquidity (daily, generic ECB CSV) and total assets (weekly, pinned)."""
+
+    if document.label == ECB_EUROSYSTEM_TOTAL_ASSETS_ID:
+        return parse_ecb_eurosystem_total_assets(document)
+    return parse_ecb_csv(document)
+
+
 def parse_boe_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     text = document.payload.decode("utf-8-sig")
     lines = [line for line in text.splitlines() if line.strip()]
@@ -1063,6 +1142,155 @@ def parse_nyfed_unsecured_rates(
     )
 
 
+# The FOMC's federal funds target range, as the NY Fed reports it on every EFFR
+# row (``targetRateFrom`` and ``targetRateTo``). Context only: no capability
+# reads these roles and neither bound becomes the policy anchor. FRED's
+# DFEDTARL and DFEDTARU copies stay metadata-only.
+NYFED_TARGET_RANGE_INSTRUMENTS = (
+    ("targetRateFrom", "US.NYFED.FFR_TARGET_RANGE_LOWER"),
+    ("targetRateTo", "US.NYFED.FFR_TARGET_RANGE_UPPER"),
+)
+_MAX_TARGET_RANGE_WIDTH = Decimal("1")
+
+
+def parse_nyfed_target_range(
+    document: FetchedDocument,
+    *,
+    publication_time_policy: PublicationTimePolicy = PublicationTimePolicy.INFER,
+) -> tuple[ParsedPoint, ...]:
+    """The federal funds target range bounds reported on the NY Fed's EFFR rows.
+
+    A row without either bound carries no range and is skipped. One bound
+    alone, an inverted range or one wider than 100 bp fails the run closed.
+    Evidence keeps only the date, the type and the bound, so a revision of the
+    rate or its volume on the same row is not a revision of the range. The
+    signed NY Fed history archive never calls this parser, so its fixed
+    instrument set is unchanged.
+    """
+
+    publication_time_policy = PublicationTimePolicy(publication_time_policy)
+    payload = json.loads(document.payload)
+    rows = payload.get("refRates")
+    if not isinstance(rows, list):
+        raise ValueError("NY Fed unsecured response has no refRates list")
+    points: list[ParsedPoint] = []
+    seen: set[date] = set()
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("type") or "").strip().upper() != "EFFR":
+            continue
+        event_day = _date(row.get("effectiveDate"), "%Y-%m-%d")
+        if event_day is None:
+            continue
+        lower, upper = (_number(row.get(field)) for field, _ in NYFED_TARGET_RANGE_INSTRUMENTS)
+        if lower is None and upper is None:
+            continue
+        if (
+            lower is None
+            or upper is None
+            or not Decimal(0) <= upper - lower <= _MAX_TARGET_RANGE_WIDTH
+        ):
+            raise ValueError(
+                f"NY Fed EFFR target range for {event_day.isoformat()} is "
+                "incomplete, inverted or wider than 100 bp"
+            )
+        if event_day in seen:
+            raise ValueError(
+                "NY Fed unsecured response repeats the EFFR target range for "
+                f"{event_day.isoformat()}"
+            )
+        seen.add(event_day)
+        for (field, instrument), value in zip(NYFED_TARGET_RANGE_INSTRUMENTS, (lower, upper)):
+            row_evidence = _row_evidence(
+                f"EFFR.{field}",
+                {"effectiveDate": row.get("effectiveDate"), "type": "EFFR", field: row.get(field)},
+            )
+            points.append(
+                ParsedPoint(
+                    instrument,
+                    event_day,
+                    value,
+                    row_evidence,
+                    publication_time_policy=publication_time_policy,
+                    revision_id=(
+                        f"nyfed:EFFR:{field}:{event_day.isoformat()}:"
+                        f"{hashlib.sha256(row_evidence).hexdigest()[:16]}"
+                    ),
+                )
+            )
+    return tuple(sorted(points, key=lambda point: (point.event_time, point.instrument_id)))
+
+
+# The Standing Repo Facility rate each overnight repo operation method states:
+# a fixed offering rate under full allotment (from 2025-12-11) and a minimum
+# bid rate in the earlier multiple-price auctions. The FOMC established the
+# SRF on 2021-07-28; earlier overnight repos were temporary operations.
+_SRF_RATE_FIELDS = {"Full Allotment": "percentOfferingRate", "Multiple Price": "minimumBidRate"}
+_SRF_FIRST_OPERATION = date(2021, 7, 29)
+_MAX_SRF_RATE = Decimal("50")
+
+
+def _parse_nyfed_srf_rate(operations: list[Any]) -> list[ParsedPoint]:
+    """One SRF rate per operation date, from every overnight repo operation.
+
+    A date is published only when every overnight repo operation on it states a
+    rate in its method's field and all of them agree; otherwise the date is
+    withheld, never inferred. Term operations are not the SRF.
+    """
+
+    grouped: dict[date, list[dict[str, Any]]] = {}
+    for operation in operations:
+        if (
+            not isinstance(operation, dict)
+            or str(operation.get("operationType") or "").strip() != "Repo"
+            or str(operation.get("term") or "").strip() != "Overnight"
+        ):
+            continue
+        event_day = _date(operation.get("operationDate"), "%Y-%m-%d")
+        if event_day is None or event_day < _SRF_FIRST_OPERATION:
+            continue
+        grouped.setdefault(event_day, []).append(operation)
+    points = []
+    for event_day, rows in sorted(grouped.items()):
+        rates: set[Decimal] = set()
+        stated = []
+        complete = True
+        for operation in sorted(rows, key=lambda item: str(item.get("operationId") or "")):
+            field = _SRF_RATE_FIELDS.get(str(operation.get("operationMethod") or "").strip())
+            details = operation.get("details")
+            if field is None or not isinstance(details, list) or not details:
+                complete = False
+                break
+            values = [
+                _number(detail.get(field)) if isinstance(detail, dict) else None
+                for detail in details
+            ]
+            if any(value is None for value in values):
+                complete = False
+                break
+            rates.update(values)  # type: ignore[arg-type]
+            stated.append({
+                "operationId": operation.get("operationId"),
+                "operationMethod": operation.get("operationMethod"),
+                "field": field,
+                "rates": [detail.get(field) for detail in details],
+            })
+        if not complete or len(rates) != 1:
+            continue
+        (rate,) = rates
+        if not Decimal(0) <= rate < _MAX_SRF_RATE:
+            raise ValueError(f"NY Fed SRF rate for {event_day.isoformat()} is out of bounds")
+        points.append(
+            ParsedPoint(
+                "US.NYFED.SRF_RATE",
+                event_day,
+                rate,
+                _row_evidence("repo.overnight.srf_rate", {"operationDate": event_day.isoformat(),
+                                                          "operations": stated}),
+            )
+        )
+    return points
+
+
 NYFED_REPO_RESULTS_URI = "https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json"
 NYFED_REVERSE_REPO_RESULTS_URI = (
     "https://markets.newyorkfed.org/api/rp/reverserepo/all/results/last/{count}.json"
@@ -1154,6 +1382,7 @@ def parse_nyfed_facilities(document: FetchedDocument) -> tuple[ParsedPoint, ...]
                 _row_evidence("totalAmtAccepted", rows),
             )
         )
+    points.extend(_parse_nyfed_srf_rate(operations))
     if not points:
         raise ValueError("NY Fed response contains no explicit facility results")
     return tuple(points)
@@ -2334,33 +2563,85 @@ def build_official_adapters(
             )
         )
 
-    from seiche.sources import fed_prates
+    from seiche.sources import frb_release_package
 
-    def parse_fed_prates_window(document):
-        start, end = request_window()
-        return tuple(point for point in fed_prates.parse_document(document)
-                     if start <= point.event_time <= end)
+    def board_package_adapter(package, declared):
+        async def fetch_board_package(client):
+            return await frb_release_package.fetch_package(client, package)
 
-    add("US-USD", "fed_prates", "fed_prates",
-        fed_prates.fetch_document, parse_fed_prates_window, timeout=30.0)
+        def parse_board_package_window(document):
+            start, end = request_window(timezone_name=package.window_timezone)
+            if not backfill:
+                start = end - timedelta(days=package.routine_window_days)
+            # Every pinned series is validated; only declared, in-window rows return.
+            return frb_release_package.parse_package(
+                document, package, instruments=declared, start=start, end=end,
+            )
 
-    from seiche.sources import fed_h41
+        return fetch_board_package, parse_board_package_window
 
-    # Direct Board H.4.1 reserve balances and total assets run only while the
-    # US pack itself declares the official-open fed_h41 adapter with
-    # redistribution allowed, and only for the instruments it declares there.
-    # Any other declaration makes no request and stores or serves nothing.
-    if fed_h41.rights_gate_open(markets.get("US-USD")):
-        fed_h41_declared = fed_h41.declared_instruments(markets.get("US-USD"))
+    # The Board's own release packages (PRATES, H.4.1, H.15, H.10, G.17), not
+    # FRED. Each runs only while the US pack itself declares its official-open
+    # adapter with redistribution allowed, and only for the instruments it
+    # declares there; a package under a rights hold (the H.15 commercial paper
+    # rates) never runs. Any other declaration makes no request and stores or
+    # serves nothing.
+    us_pack = markets.get("US-USD")
+    for package in frb_release_package.PACKAGES:
+        if not frb_release_package.rights_gate_open(us_pack, package):
+            continue
+        fetch_board_package, parse_board_package_window = board_package_adapter(
+            package, frb_release_package.declared_instruments(us_pack, package),
+        )
+        add("US-USD", package.adapter_id, package.adapter_id,
+            fetch_board_package, parse_board_package_window,
+            timeout=package.adapter_timeout_seconds)
 
-        def parse_fed_h41_window(document):
+    from seiche.sources import bea_nipa
+
+    # BEA nominal GDP from BEA's own flat file runs only while the US pack
+    # declares the official-open bea_nipa adapter with redistribution allowed
+    # and the GDP instrument on it; any other declaration requests nothing.
+    if bea_nipa.rights_gate_open(markets.get("US-USD")):
+
+        def parse_bea_window(document):
             start, end = request_window(timezone_name="America/New_York")
-            return tuple(point for point in fed_h41.parse_document(document)
-                         if point.instrument_id in fed_h41_declared
+            if not backfill:
+                # A quarter appears a month after it ends and is revised for
+                # years; routine runs keep the last 400 days of vintages.
+                start = end - timedelta(days=400)
+            return tuple(point for point in bea_nipa.parse_document(document)
+                         if start <= point.event_time <= end)
+
+        add("US-USD", bea_nipa.ADAPTER_ID, bea_nipa.ADAPTER_ID,
+            bea_nipa.fetch_documents, parse_bea_window, timeout=240.0)
+
+    from seiche.sources import bls_cpi
+
+    # BLS CPI is built but held: accepting the BLS.gov Terms of Service is an
+    # owner decision. Until the hold is removed and the US pack declares an
+    # allowed record, no request is made and nothing is stored or served.
+    if bls_cpi.rights_gate_open(markets.get("US-USD")):
+        bls_declared = bls_cpi.declared_instruments(markets.get("US-USD"))
+
+        def bls_window():
+            start, end = request_window(timezone_name="America/New_York")
+            # Monthly values appear weeks after their label and are revised.
+            return (start if backfill else end - timedelta(days=400)), end
+
+        async def fetch_bls_cpi(client):
+            start, end = bls_window()
+            first_year = max(start.year, end.year - bls_cpi.MAX_YEARS_PER_REQUEST + 1)
+            return await bls_cpi.fetch_documents(client, first_year, end.year)
+
+        def parse_bls_cpi_window(document):
+            start, end = bls_window()
+            return tuple(point for point in bls_cpi.parse_document(document)
+                         if point.instrument_id in bls_declared
                          and start <= point.event_time <= end)
 
-        add("US-USD", fed_h41.ADAPTER_ID, fed_h41.ADAPTER_ID,
-            fed_h41.fetch_document, parse_fed_h41_window, timeout=150.0)
+        add("US-USD", bls_cpi.ADAPTER_ID, bls_cpi.ADAPTER_ID,
+            fetch_bls_cpi, parse_bls_cpi_window, timeout=90.0)
 
     from seiche.sources import treasury_par_yields
 
@@ -2495,13 +2776,21 @@ def build_official_adapters(
             ),
         )
 
+    def parse_nyfed_unsecured_with_target_range(document):
+        # The EFFR rows also carry the FOMC target range. It is parsed apart
+        # so the signed NY Fed history archive keeps its fixed instruments.
+        return (
+            *parse_nyfed_unsecured_rates(document),
+            *parse_nyfed_target_range(document),
+        )
+
     add("US-USD", "nyfed_rates", "nyfed_rates", fetch_nyfed_rates, parse_nyfed_rates)
     add(
         "US-USD",
         "nyfed_unsecured_rates",
         "nyfed_unsecured_rates",
         fetch_nyfed_unsecured_rates,
-        parse_nyfed_unsecured_rates,
+        parse_nyfed_unsecured_with_target_range,
     )
     add(
         "US-USD",
@@ -2598,8 +2887,13 @@ def build_official_adapters(
         "EA-EUR",
         "ecb_liquidity",
         "ecb_liquidity",
-        ecb_fetcher({"EA.ECB.EXCESS_LIQUIDITY": "ILM/D.U2.C.EXLIQ.U2.EUR"}),
-        parse_ecb_csv,
+        ecb_fetcher({
+            "EA.ECB.EXCESS_LIQUIDITY": "ILM/D.U2.C.EXLIQ.U2.EUR",
+            # Eurosystem total assets, weekly, the series FRED copies as
+            # ECBASSETSW; that copy stays metadata-only.
+            ECB_EUROSYSTEM_TOTAL_ASSETS_ID: "ILM/W.U2.C.T000000.Z5.Z01",
+        }),
+        parse_ecb_liquidity,
     )
 
     boe_base = (
@@ -2999,6 +3293,10 @@ PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
         ("US-USD", "fed_h41"),
+        ("US-USD", "fed_h15"),
+        ("US-USD", "fed_h10"),
+        ("US-USD", "fed_g17"),
+        ("US-USD", "bea_nipa"),
         ("US-USD", "treasury_par_yields"),
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),

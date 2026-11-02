@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased (0.17.0 candidate): the Board's own release packages, direct
+
+- Read the Board's PRATES, H.4.1, H.15, H.10 and G.17 release packages through one pinned, bounded adapter (`seiche.sources.frb_release_package`); `fed_h41` and `fed_prates` now use it and keep every stored row's revision identity.
+- Serve seven more H.4.1 lines (Treasury General Account and currency in circulation week averages; primary credit, liquidity swaps, foreign official reverse repos and repos, and custody holdings of Treasuries), IOER beside IORB (2008-10-09 to 2021-07-28), the H.15 3-month, 2-year, 10-year and 30-year constant maturities and 4-week and 3-month bill rates, 22 H.10 exchange rates and the three nominal dollar indexes, and G.17 industrial production, each cited to the Board on every served value; the FRED copies stay withheld.
+- New roles keep these series out of every capability, the v1 composite and every engine; they appear on the money-market atlas and the US-USD series page only.
+- Parse the H.15 commercial paper rates but hold them in code, metadata-only, until the owner decides their DTCC provenance.
+- Serve the FOMC federal funds target range from the NY Fed's EFFR rows and the Standing Repo Facility rate from its overnight repo results, as context that never becomes the policy anchor; the FRED DFEDTARU copy stays withheld.
+- Add a BLS Public Data API reader for core and energy CPI that stays off until the owner accepts the BLS.gov Terms of Service; the FRED copies stay withheld.
+- Serve U.S. nominal GDP (`US.BEA.GDP_NOMINAL_SAAR`, BEA `A191RC`) from BEA's own NIPA flat file with its series-register declaration pinned, cited to BEA; the FRED `GDP` copy stays withheld.
+- Serve Eurosystem total assets (`EA.ECB.EUROSYSTEM_TOTAL_ASSETS`) from the ECB Data API beside the existing direct deposit facility rate; the FRED `ECBASSETSW` copy stays withheld.
+- Record in the source registry that the Bank of England licenses its Database SONIA under the Open Government Licence v3.0 with a fixed attribution; SONIA stays derived-only until the owner approves serving it.
+
 ## 0.16.12: blank-data repairs, direct US sources and atlas delivery (2026-11-02)
 
 - Show the NY Fed's own SOFR and the Board's PRATES IORB on the GIFT City USD funding row instead of an unavailable benchmark.

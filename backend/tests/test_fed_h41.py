@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -79,7 +80,17 @@ DECOY = (
     '<kf:Series SERIES_NAME="RESPPA_N.WW" FREQ="19" UNIT="Currency" UNIT_MULT="1000000" CURRENCY="USD">'
     '<frb:Obs OBS_STATUS="A" OBS_VALUE="6999999" TIME_PERIOD="2026-10-28" /></kf:Series>'
 )
-FULL = HEADER + DECOY + TARGET + TOTAL + FOOTER
+# The seven other pinned H.4.1 lines (TGA and currency week averages; primary
+# credit, swaps, foreign official RRP, custody holdings and foreign official
+# repo Wednesday levels), as published for the same Wednesdays. Every pinned
+# series must be present, so the package fixture carries all nine.
+_FIXTURE = (Path(__file__).resolve().parent / "fixtures" / "frb" / "H41_data.xml").read_text()
+OTHER_LINES = "".join(
+    block for block in re.findall(r"<kf:Series [^>]*>.*?</kf:Series>", _FIXTURE)
+    if re.search(r'SERIES_NAME="([^"]+)"', block)[1] in set(fed_h41.SERIES) - {
+        fed_h41.SERIES_NAME, fed_h41.TOTAL_ASSETS_SERIES_NAME}
+)
+FULL = HEADER + DECOY + TARGET + TOTAL + OTHER_LINES + FOOTER
 
 
 def document(xml: str | None = None, *, members: dict[str, str] | None = None) -> FetchedDocument:
@@ -134,7 +145,9 @@ def test_the_us_pack_declares_the_allowed_board_record_and_registers_the_adapter
             if item.semantic_role is SemanticRole.CENTRAL_BANK_TOTAL_ASSETS] == [fed_h41.TOTAL_ASSETS_INSTRUMENT_ID]
     order = [item.instrument_id for item in pack.instruments]
     assert order.index(fed_h41.INSTRUMENT_ID) < order.index("US.FED.RESERVE_BALANCES")
-    assert fed_h41.declared_instruments(pack) == {fed_h41.INSTRUMENT_ID, fed_h41.TOTAL_ASSETS_INSTRUMENT_ID}
+    # The pack declares every pinned H.4.1 series on this adapter, these two included.
+    assert fed_h41.declared_instruments(pack) == set(fed_h41.SERIES.values())
+    assert {fed_h41.INSTRUMENT_ID, fed_h41.TOTAL_ASSETS_INSTRUMENT_ID} <= fed_h41.declared_instruments(pack)
     assert fed_h41.rights_gate_open(pack) is True
     adapters = build_official_adapters(repository=SQLiteMarketRepository())
     assert fed_h41.ADAPTER_ID in {item.adapter_id for item in adapters}
@@ -173,7 +186,8 @@ def test_the_attribution_matches_the_registry_and_the_serving_maps():
     assert record["rights_evidence_url"] == fed_h41.TERMS_URL
     assert record["rights_status"] == "explicit_public_domain_with_exclusions"
     assert record["implementation_status"] == "implemented"
-    assert record["semantic_roles"] == ["RESERVE_BALANCES", "CENTRAL_BANK_TOTAL_ASSETS"]
+    assert record["semantic_roles"] == [
+        "RESERVE_BALANCES", "CENTRAL_BANK_TOTAL_ASSETS", "CENTRAL_BANK_BALANCE_SHEET_ITEM"]
     assert "RESPPMA_N.WW" in record["blocker"] and "WALCL" in record["blocker"]
     assert ("Unless otherwise indicated, information on Board's website is in the public domain and may be "
             "copied and distributed without permission. Please cite to the Board as the source of the "
@@ -181,7 +195,7 @@ def test_the_attribution_matches_the_registry_and_the_serving_maps():
     assert fed_h41.ATTRIBUTION in record["blocker"]
 
 
-def test_parser_reads_only_the_two_mapped_series_in_millions():
+def test_parser_reads_only_the_mapped_series_in_millions():
     points = fed_h41.parse_document(document())
     reserves = [(p.event_time, p.raw_value) for p in points if p.instrument_id == fed_h41.INSTRUMENT_ID]
     assert reserves == [

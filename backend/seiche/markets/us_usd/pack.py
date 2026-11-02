@@ -113,6 +113,57 @@ _FED_H41_CLOCK = PublicationClock(
     precision=PublicationClockPrecision.SCHEDULED,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
+# H.15 is "posted daily Monday through Friday at 4:15pm" New York with the
+# previous business day's rates (H.15 release page, checked 2026-11-02).
+_FED_H15_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(16, 15),
+    business_day_lag=1,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
+# H.10 posts the previous week's daily rates once a week: "updated weekly on
+# Mondays at 4:15 p.m." (H.10 About page, checked 2026-11-02). A business-day
+# lag cannot say "next Monday", so two clocks are declared. The adapter clock,
+# the next business day at 16:15, is the earliest a row could be public: exact
+# for a Friday row, earlier than the weekly posting for the others, and never a
+# publication receipt; knowledge time is always the actual capture. Currentness
+# uses the instrument clock, five business days at 16:15, under which the day
+# after the last published row falls due at the next Monday posting (a business
+# day later when a holiday falls in between, never earlier).
+_FED_H10_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(16, 15),
+    business_day_lag=1,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
+_FED_H10_CURRENTNESS_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(16, 15),
+    business_day_lag=5,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
+# BEA posts GDP estimates on a release calendar its flat files do not carry,
+# so, as for G.17, the publication clock is unknown.
+_BEA_NIPA_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=None,
+    business_day_lag=0,
+    precision=PublicationClockPrecision.UNKNOWN,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
+# G.17 is published "around the middle of the month" on a release calendar the
+# package does not carry. As for PRATES, the publication clock is unknown and
+# acquisition establishes knowledge time.
+_FED_G17_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=None,
+    business_day_lag=0,
+    precision=PublicationClockPrecision.UNKNOWN,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
 # Treasury: "Yield curve rates are usually available at Treasury's interest
 # rate website by 6:00 PM Eastern Time each trading day" (methodology page).
 _TREASURY_PAR_CLOCK = PublicationClock(
@@ -158,6 +209,7 @@ _COMPOUNDED = RateCompounding.COMPOUNDED
 _ACT_360 = DayCountConvention.ACT_360
 _BP = CanonicalUnit.BASIS_POINTS
 _INDEX = CanonicalUnit.INDEX_POINTS
+_RATIO = CanonicalUnit.RATIO
 _LCY_M = CanonicalUnit.LOCAL_CURRENCY_MILLIONS
 _NATIVE_COMPOUNDING = RateCompounding.SOURCE_NATIVE
 _NATIVE_DAY_COUNT = DayCountConvention.SOURCE_NATIVE
@@ -187,6 +239,93 @@ def _treasury_par_yields() -> tuple[InstrumentSpec, ...]:
             _NATIVE_DAY_COUNT,
         )
         for suffix in _TREASURY_PAR_TENORS
+    )
+
+
+# Direct Board H.4.1 balance-sheet lines beyond reserves and total assets, from
+# the same package and rights record. The series each one reads is pinned in
+# seiche.sources.frb_release_package.H41; the FRED copy of each stays
+# metadata-only and is not declared here. All are in USD millions.
+_FED_H41_ITEMS = (
+    "TGA_WEEK_AVERAGE_DIRECT",  # RESPPLLDT_XAW_N.WW, week average
+    "CURRENCY_IN_CIRCULATION_DIRECT",  # RESTBC_XAW_N.WW, week average
+    "PRIMARY_CREDIT_DIRECT",  # RESPPALDP_N.WW, Wednesday level
+    "LIQUIDITY_SWAPS_DIRECT",  # RESH4SCS_N.WW, Wednesday level
+    "FOREIGN_OFFICIAL_RRP_DIRECT",  # RESPPLLRF_N.WW, Wednesday level
+    "CUSTODY_TREASURIES_DIRECT",  # RESH4FG_N.WW, Wednesday level (memorandum)
+    "FOREIGN_OFFICIAL_REPO_DIRECT",  # RESPPALGTRF_N.WW, Wednesday level
+)
+
+
+def _fed_h41_items() -> tuple[InstrumentSpec, ...]:
+    """H.4.1 lines as published, under a role no capability or engine reads."""
+
+    return tuple(
+        InstrumentSpec(
+            f"US.FED.{mnemonic}",
+            mnemonic,
+            SemanticRole.CENTRAL_BANK_BALANCE_SHEET_ITEM,
+            "fed_h41",
+            "USD millions",
+            _LCY_M,
+        )
+        for mnemonic in _FED_H41_ITEMS
+    )
+
+
+def _fed_h15() -> tuple[InstrumentSpec, ...]:
+    """H.15 Treasury constant maturities and bill rates from the Board's package.
+
+    Constant maturity yields are Treasury's interpolations, bond-equivalent like
+    the par yields above, so they are SOVEREIGN_YIELD. Bill rates are on a
+    bank-discount basis with a 360-day year, so they take their own role,
+    TBILL_DISCOUNT_RATE, and do not displace the DTB3 binding of ``TBILL_3M``.
+    """
+
+    yields = tuple(
+        InstrumentSpec(
+            f"US.FED.H15_CMT_{tenor}", f"H15_CMT_{tenor}", SemanticRole.SOVEREIGN_YIELD,
+            "fed_h15", "percent", _BP, 100, _NATIVE_COMPOUNDING, _NATIVE_DAY_COUNT,
+        )
+        for tenor in ("3M", "2Y", "10Y", "30Y")
+    )
+    bills = tuple(
+        InstrumentSpec(
+            f"US.FED.H15_TBILL_{tenor}", f"H15_TBILL_{tenor}", SemanticRole.TBILL_DISCOUNT_RATE,
+            "fed_h15", "percent, discount basis", _BP, 100, _NATIVE_COMPOUNDING, _ACT_360,
+        )
+        for tenor in ("4W", "3M")
+    )
+    return (*yields, *bills)
+
+
+# H.10 bilateral rates, in the direction the release quotes them: the starred
+# currencies as U.S. dollars per unit, the rest as units per U.S. dollar.
+_FED_H10_USD_PER = ("EUR", "GBP", "AUD", "NZD")
+_FED_H10_PER_USD = (
+    "CAD", "CHF", "MXN", "BRL", "ZAR", "DKK", "HKD", "MYR", "NOK",
+    "SEK", "SGD", "TWD", "THB", "LKR", "CNY", "JPY", "KRW", "INR",
+)
+_FED_H10_INDEXES = ("BROAD", "AFE", "EME")
+
+
+def _fed_h10() -> tuple[InstrumentSpec, ...]:
+    """H.10 noon buying rates and nominal dollar indexes, as reference context."""
+
+    def spec(mnemonic: str, role: SemanticRole, source_unit: str, unit: CanonicalUnit) -> InstrumentSpec:
+        return InstrumentSpec(
+            f"US.FED.{mnemonic}", mnemonic, role, "fed_h10", source_unit, unit,
+            freshness_clock=_FED_H10_CURRENTNESS_CLOCK,
+        )
+
+    return (
+        *(spec(f"H10_USD_PER_{code}", SemanticRole.EXCHANGE_RATE, f"USD per {code}", _RATIO)
+          for code in _FED_H10_USD_PER),
+        *(spec(f"H10_{code}_PER_USD", SemanticRole.EXCHANGE_RATE, f"{code} per USD", _RATIO)
+          for code in _FED_H10_PER_USD),
+        *(spec(f"H10_DOLLAR_INDEX_{name}", SemanticRole.CURRENCY_INDEX,
+               "index, January 2006 = 100", _INDEX)
+          for name in _FED_H10_INDEXES),
     )
 
 
@@ -278,6 +417,31 @@ PACK = MarketPack(
             "treasury_par_yields", _OPEN, "P1D", _TREASURY_PAR_CLOCK, _ALLOW,
             collection_cadence="PT1H",
         ),
+        # The Board's own H.15, H.10 and G.17 release packages, not FRED and
+        # not the Data Download Program tool the Board is retiring. Board
+        # information is public domain unless otherwise indicated, citing the
+        # Board as the source (federalreserve.gov/disclaimer.htm). The H.15
+        # commercial paper rates are held off (seiche.sources.
+        # frb_release_package.H15_COMMERCIAL_PAPER) and are not declared here.
+        SourceAdapterSpec(
+            "fed_h15", _OPEN, "P1D", _FED_H15_CLOCK, _ALLOW,
+            collection_cadence="PT3H",
+        ),
+        SourceAdapterSpec(
+            "fed_h10", _OPEN, "P1D", _FED_H10_CLOCK, _ALLOW,
+            collection_cadence="PT6H",
+        ),
+        SourceAdapterSpec(
+            "fed_g17", _OPEN, "P1M", _FED_G17_CLOCK, _ALLOW,
+            collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
+            # BEA's own NIPA flat file, not FRED's GDP copy. BEA web
+            # information is public domain unless stated otherwise, with a
+            # citation requested (bea.gov/help/faq/147). Quarterly, polled daily.
+            "bea_nipa", _OPEN, "P3M", _BEA_NIPA_CLOCK, _ALLOW,
+            collection_cadence="P1D",
+        ),
         SourceAdapterSpec(
             "nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW,
             collection_cadence="PT1H",
@@ -302,6 +466,13 @@ PACK = MarketPack(
     instruments=(
         InstrumentSpec(
             "US.FED.IORB_DIRECT", "IORB_DIRECT", SemanticRole.POLICY_TARGET,
+            "fed_prates", "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
+        # IOER (PRATES RESBME_N.D, 2008-10-09 to 2021-07-28), the splice leg
+        # that IORB replaced on 2021-07-29. Its own role keeps it out of every
+        # policy-anchor selection: it is dated history, never a current anchor.
+        InstrumentSpec(
+            "US.FED.IOER_DIRECT", "IOER_DIRECT", SemanticRole.RETIRED_ADMINISTERED_RATE,
             "fed_prates", "percent", _BP, 100, _SIMPLE, _ACT_360,
         ),
         InstrumentSpec(
@@ -401,6 +572,7 @@ PACK = MarketPack(
             "USD millions",
             _LCY_M,
         ),
+        *_fed_h41_items(),
         InstrumentSpec(
             "US.TREASURY.GOVERNMENT_CASH",
             "TGA_DAILY",
@@ -431,7 +603,27 @@ PACK = MarketPack(
             _LCY_M,
             1000,
         ),
+        # Policy settings as the NY Fed publishes them, read direct: the FOMC
+        # target range from every EFFR row and the SRF rate from the overnight
+        # repo results. Their roles are context only, so no capability reads
+        # them and IORB stays the policy anchor. The FRED target-range copy
+        # (US.FED.POLICY_CEILING, DFEDTARU) stays metadata-only.
+        InstrumentSpec(
+            "US.NYFED.FFR_TARGET_RANGE_LOWER", "FFR_TARGET_RANGE_LOWER",
+            SemanticRole.POLICY_RANGE_LOWER, "nyfed_unsecured_rates",
+            "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.FFR_TARGET_RANGE_UPPER", "FFR_TARGET_RANGE_UPPER",
+            SemanticRole.POLICY_RANGE_UPPER, "nyfed_unsecured_rates",
+            "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.SRF_RATE", "SRF_RATE", SemanticRole.STANDING_REPO_RATE,
+            "nyfed_facilities", "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
         *_treasury_par_yields(),
+        *_fed_h15(),
         *_nyfed_distribution("SOFR"),
         InstrumentSpec(
             "US.NYFED.SOFR_AVERAGE_30D",
@@ -478,6 +670,20 @@ PACK = MarketPack(
         *_nyfed_distribution("OBFR", unsecured=True),
         *_nyfed_distribution("TGCR"),
         *_nyfed_distribution("BGCR"),
+        # Reference context from the Board's H.10 and G.17 packages: exchange
+        # rates, dollar indexes and industrial production. No capability or
+        # engine reads their roles.
+        *_fed_h10(),
+        InstrumentSpec(
+            "US.FED.G17_INDUSTRIAL_PRODUCTION", "G17_INDUSTRIAL_PRODUCTION",
+            SemanticRole.INDUSTRIAL_PRODUCTION, "fed_g17", "index, 2017 = 100", _INDEX,
+        ),
+        # BEA nominal GDP (A191RC), USD millions at a seasonally adjusted annual
+        # rate. Its role is context only; the FRED GDP copy stays metadata-only.
+        InstrumentSpec(
+            "US.BEA.GDP_NOMINAL_SAAR", "BEA_GDP_NOMINAL_SAAR", SemanticRole.GROSS_DOMESTIC_PRODUCT,
+            "bea_nipa", "USD millions, seasonally adjusted annual rate", _LCY_M,
+        ),
     ),
     capabilities=(
         Capability(

@@ -262,6 +262,21 @@ commercial paper rates are parsed by `fed_cp` but stay off (registry record
 `frb_commercial_paper`, `review_required`): the release is derived from DTCC
 data, so the `CP_3M` input stays the metadata-only FRED copy.
 
+For 0.17.0 (Stage 2a of the board re-sourcing plan), one generic Board
+release-package adapter (`seiche.sources.frb_release_package`) adds 40 direct
+US instruments, none of which changes a role binding in the table above:
+seven more H.4.1 lines on `fed_h41` (role `CENTRAL_BANK_BALANCE_SHEET_ITEM`),
+IOER on `fed_prates` (`RETIRED_ADMINISTERED_RATE`, never a policy anchor), four
+H.15 constant maturities (`SOVEREIGN_YIELD`) and two H.15 bill rates
+(`TBILL_DISCOUNT_RATE`, so the DTB3 `TBILL_3M` input to `term_funding` does not
+move) on `fed_h15`, 22 H.10 exchange rates (`EXCHANGE_RATE`) and three dollar
+indexes (`CURRENCY_INDEX`) on `fed_h10`, and G.17 industrial production
+(`INDUSTRIAL_PRODUCTION`) on `fed_g17`. No capability reads these roles. Their
+registry records are `frb_prates_release`, `frb_h41_release`,
+`frb_h15_release`, `frb_h10_release` and `frb_g17_release`; the H.15 commercial
+paper rates are parsed but held (`frb_h15_commercial_paper`, `metadata_only`),
+so `CP_3M` still has no public direct instrument.
+
 Authoritative declarations are `PACK.capabilities` in
 `backend/seiche/markets/us_usd/pack.py:374-454` and
 `pre_support_capabilities` in `backend/seiche/markets/reference.py:14-38`.
