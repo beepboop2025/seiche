@@ -1947,18 +1947,27 @@ def _first_metric(metrics: list[dict], roles: tuple[SemanticRole, ...]) -> dict 
     # Prefer a current lower-priority role to a dead higher-priority role.  A
     # stale secured print, for example, must not displace a fresh unsecured
     # overnight benchmark merely because secured appears first in the tuple.
-    for current_only in (True, False):
-        for role in roles:
-            for metric in metrics:
-                if (
-                    metric["semantic_role"] == role.value
-                    and metric["availability"] == "AVAILABLE"
-                    and (
-                        metric.get("status") in {"FRESH", "AGING"}
-                    )
-                    is current_only
-                ):
-                    return metric
+    for role in roles:
+        for metric in metrics:
+            if (
+                metric["semantic_role"] == role.value
+                and metric["availability"] == "AVAILABLE"
+                and metric.get("status") in {"FRESH", "AGING"}
+            ):
+                return metric
+    # With no current candidate, the newest dated observation of a role wins.
+    # A month-old monthly aggregate must not displace a newer daily print of
+    # the same role merely because it is declared first, for example when
+    # neither has a known publication clock. Declaration order breaks ties.
+    for role in roles:
+        candidates = [
+            metric
+            for metric in metrics
+            if metric["semantic_role"] == role.value
+            and metric["availability"] == "AVAILABLE"
+        ]
+        if candidates:
+            return max(candidates, key=lambda metric: str(metric.get("asof") or ""))
     return None
 
 
@@ -2230,6 +2239,9 @@ def _market_read(
         f"{level:.4f}%" if isinstance(level, (int, float)) else "an unavailable level"
     )
     benchmark_is_stale = benchmark.get("status") not in {"FRESH", "AGING"}
+    # UNKNOWN is not evidence of staleness: the observation may be current,
+    # but without a source publication clock its currentness cannot be shown.
+    currentness_unknown = benchmark.get("status") == "UNKNOWN"
     if (
         spread is not None
         and spread.get("current_for_prose") is True
@@ -2242,12 +2254,19 @@ def _market_read(
         )
     else:
         plain = f"{benchmark['label']} is {level_text} as of {benchmark['asof']}."
-    if benchmark_is_stale:
+    if currentness_unknown:
+        plain += (
+            " Its source publication time is unknown, so its currentness cannot be "
+            "established and it cannot enter the current global ranking."
+        )
+    elif benchmark_is_stale:
         plain += " This is a stale historical observation and cannot enter the current global ranking."
     percentile = benchmark.get("percentile_3y")
+    qualifier = "stale historical " if benchmark_is_stale and not currentness_unknown else ""
     quant = (
-        f"The {'stale historical ' if benchmark_is_stale else ''}benchmark is at the {percentile:.1f}th percentile of its own available history; "
+        f"The {qualifier}benchmark is at the {percentile:.1f}th percentile of its own available history; "
         f"robust z={benchmark.get('robust_z_1y')}."
+        + (" Its currentness is unknown." if currentness_unknown else "")
         if isinstance(percentile, (int, float))
         else "History is still too short for a stable own-market percentile; no cross-market level score is inferred."
     )

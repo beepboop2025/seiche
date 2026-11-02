@@ -75,6 +75,11 @@ the same projection embedded in the completed global atlas.
   call, commercial-paper and government-bond rates are source-defined monthly
   market averages. The current CBC discount indicator keeps its decision date
   and is an `EVENT` series.
+- When no candidate for a benchmark role has a known-current clock, the newest
+  dated observation of that role is chosen; declaration order only breaks ties.
+  Taiwan's daily CBC overnight call rate therefore leads its monthly average.
+  Its publication time is still unknown, so it stays out of the current global
+  ranking and is described as unknown rather than stale.
 - Policy settings that change only on decision dates (RBA ES floor and
   standing-facility ceiling, CBC discount decision) are `EVENT` series: an
   unchanged setting is current while a daily observation from the same capture
