@@ -34,6 +34,21 @@ export function usdMarket(atlas: unknown): Row | null {
   if (root?.schema !== "seiche.global-money-markets.v1") return null;
   return rows(root.markets).find(row => row.market_id === "US-USD") ?? null;
 }
+/** The server's same-date SOFR minus IORB spread, only when both legs are public on its exact date. */
+export function qualifiedPolicySpread(market: unknown): Row | null {
+  const current = record(market);
+  const live = rows(current?.metrics);
+  const spread = record(current?.policy_relative_spread);
+  const legIds = ["US.NYFED.SOFR_MEDIAN", "US.FED.IORB_DIRECT"];
+  const lineage = rows(spread?.input_lineage);
+  return spread && spread.semantic_role === "POLICY_RELATIVE_SPREAD"
+    && spread.formula_version === "mm.atlas.policy-spread.v1"
+    && !spread.redistribution_status
+    && lineage.length === 2
+    && legIds.every(id => live.some(row => row.id === id && eligible(row, true))
+      && lineage.some(row => row.instrument_id === id && text(row.event_time).slice(0, 10) === spread.asof))
+    ? spread : null;
+}
 /** Compare observation dates per series; never derive a spread from mismatched dates. */
 export function usdFundingCards(snapshot: unknown, market: unknown): FundingCard[] {
   const engines = record(record(snapshot)?.engines);
@@ -47,18 +62,9 @@ export function usdFundingCards(snapshot: unknown, market: unknown): FundingCard
   };
   const headline = record(record(snapshot)?.headline);
 
-  const current = record(market);
-  const live = rows(current?.metrics);
-  const spread = record(current?.policy_relative_spread);
-  const legIds = ["US.NYFED.SOFR_MEDIAN", "US.FED.IORB_DIRECT"];
-  const lineage = rows(spread?.input_lineage);
-  const qualifiedSpread = spread?.semantic_role === "POLICY_RELATIVE_SPREAD"
-    && spread.formula_version === "mm.atlas.policy-spread.v1"
-    && !spread.redistribution_status
-    && lineage.length === 2
-    && legIds.every(id => live.some(row => row.id === id && eligible(row, true))
-      && lineage.some(row => row.instrument_id === id && text(row.event_time).slice(0, 10) === spread.asof));
-  if (spread && qualifiedSpread) live.push(spread);
+  const live = rows(record(market)?.metrics);
+  const spread = qualifiedPolicySpread(market);
+  if (spread) live.push(spread);
   return definitions.map(([id, label, unit, cadence, liveId]) => {
 
     let prior = published.find(row => row.id === id && row.unit === unit && eligible(row, false));
@@ -67,7 +73,7 @@ export function usdFundingCards(snapshot: unknown, market: unknown): FundingCard
         && (!prior || String(latest.asof) > String(prior.asof))) {
       prior = {...latest, id, unit, status:"available", source:prior?.source || "Published board headline"};
     }
-    const next = live.find(row => row.id === liveId && eligible(row, true, row === spread && qualifiedSpread)
+    const next = live.find(row => row.id === liveId && eligible(row, true, row === spread)
       && (row.unit === unit || (unit === "$B" && row.unit === "local_currency_millions")));
     const useLive = Boolean(next && (!prior || String(next.asof) >= String(prior.asof)));
     const chosen = useLive ? next : prior;

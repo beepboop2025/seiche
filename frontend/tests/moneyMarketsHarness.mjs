@@ -43,12 +43,14 @@ export function ChartStub(props) {
 export async function loadMoneyMarkets() {
   const funding = await load("usdFunding.ts");
   const ecb = await load("ecbReference.ts");
+  const usdDesk = await load("usdAtlasDesk.ts", { "./usdFunding": funding });
   const snapshot = await load("snapshotStatus.ts");
   const summary = await load("UsdFundingSummary.tsx", { "./apiBase": { API_BASE: "https://example.invalid" }, "./usdFunding": funding }, true);
   const moneyMarkets = await load("tabs/MoneyMarkets.tsx", {
     "../snapshotStatus": snapshot,
     "../UsdFundingSummary": summary,
     "../ecbReference": ecb,
+    "../usdAtlasDesk": usdDesk,
     "../apiBase": { API_BASE: "https://example.invalid" },
     "../auth": { authHeaders: () => ({}) },
     "../palette": { P: {} },
@@ -59,5 +61,5 @@ export async function loadMoneyMarkets() {
     "./IndiaFunding": { default: () => null },
     "./CountryFunding": { default: () => null },
   }, true);
-  return { moneyMarkets, ecb, funding };
+  return { moneyMarkets, ecb, usdDesk, funding };
 }

@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { fixture, loadMoneyMarkets } from "./moneyMarketsHarness.mjs";
 
 const { moneyMarkets, ecb } = await loadMoneyMarkets();
-const { ChinaDesk, HarborPressure, transmissionGap } = moneyMarkets;
+const { ChinaDesk, HarborPressure, UsdAtlasDesk, transmissionGap } = moneyMarkets;
 const atlas = await fixture("moneyMarketsAtlas.live.json");
 const workbench = await fixture("ecbWorkbench.live.json");
 const ready = { status: "ready", data: ecb.readEcbUsdReferences(workbench) };
@@ -86,10 +86,35 @@ test("an ECB failure keeps the local rates and offers a retry", () => {
   assert.match(html, /ECB reference unavailable/);
 });
 
-test("Money markets wires the ECB request and the withheld board state", async () => {
+test("the USD desk is rebuilt from the atlas's rights-cleared US rows instead of rendering blank", () => {
+  const html = render(UsdAtlasDesk, { market: market("US-USD"), generatedAt: atlas.generated_at, board: "withheld", notices: [] });
+  assert.match(html, /Inside the dollar clearing stack/);
+  assert.match(html, /DESCRIPTIVE REGIME<\/span><strong>WITHHELD<\/strong>[\s\S]*2026-10-28 source-rights policy\. A withheld regime is not a calm reading\./);
+  assert.match(html, /<strong>37 \/ 44<\/strong>/);
+  assert.match(html, /LATEST OBSERVATION<\/span><strong>2026-11-02<\/strong>/);
+  for (const [section, count] of [["Policy corridor", 2], ["Secured repo", 18], ["Unsecured funding", 12], ["SOFR averages and index", 4], ["Treasury cash and facilities", 2]]) {
+    assert.match(html, new RegExp(`<span>${section}</span><small>${count} public</small>`));
+  }
+  assert.match(html, /<b>IORB DIRECT<\/b>[\s\S]*?3\.9 %[\s\S]*?as of 2026-11-02[\s\S]*?fed_prates/);
+  assert.match(html, /<b>SOFR MEDIAN minus IORB DIRECT<\/b>[\s\S]*?4 bp[\s\S]*?as of 2026-10-29/);
+  assert.match(html, /data-chart="rate \(%\)" data-rows="12"[^>]*data-series="IORB DIRECT"/);
+  assert.match(html, /<b>WRESBAL<\/b><span>reserve balances<\/span><small>withheld: metadata only · weekly · fred_weekly<\/small>/);
+  assert.match(html, /<b>nyfed_rates<\/b><\/th><td>markets\.newyorkfed\.org<\/td><td>22<\/td><td>2026-10-30<\/td>/);
+  assert.doesNotMatch(html, DASH);
+});
+
+test("the rebuilt USD desk never claims a regime it cannot see", () => {
+  const pending = render(UsdAtlasDesk, { market: market("US-USD"), generatedAt: atlas.generated_at, board: "not_loaded", notices: [] });
+  assert.match(pending, /<strong>NOT ASSESSED<\/strong><small>Set by the overview engine, which has not loaded on this page\./);
+  const empty = render(UsdAtlasDesk, { market: null, generatedAt: atlas.generated_at, board: "withheld", notices: [] });
+  assert.match(empty, /returned no public dated US observation[\s\S]*Missing evidence is not a calm reading\./);
+});
+
+test("Money markets wires the ECB request, the withheld board state and the atlas desk", async () => {
   const source = await readFile(new URL("../src/tabs/MoneyMarkets.tsx", import.meta.url), "utf8");
   assert.match(source, /fetch\(`\$\{API_BASE\}\/api\/v2\/market-workbench\?\$\{ECB_USD_CNY_QUERY\}`/);
   assert.match(source, /const board: BoardState = snap\.engines \? "loaded" : boardWithheld \? "withheld" : "not_loaded";/);
+  assert.match(source, /usdEngine\s*\? <UsdDesk engine=\{usdEngine\} \/>\s*: liveAtlas && <UsdAtlasDesk/);
   // The China desk no longer reads the withheld harbors engine for its currency leg.
   assert.doesNotMatch(source, /fx_rows, engine\?\.fx_labels|chg_60d_pct, "%", true\)\}<\/strong>/);
 });

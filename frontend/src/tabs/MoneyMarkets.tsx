@@ -18,6 +18,7 @@ import {
   transmissionInputs,
   type EcbUsdReferences,
 } from "../ecbReference";
+import { usdAtlasDesk, usdChartPanes } from "../usdAtlasDesk";
 import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
@@ -1573,6 +1574,156 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
   );
 }
 
+function deskRegime(board: BoardState): { state: string; note: string } {
+  if (board === "withheld") {
+    return { state: "WITHHELD", note: "Set by the overview engine, which is withheld with the funding board under the 2026-10-28 source-rights policy. A withheld regime is not a calm reading." };
+  }
+  if (board === "not_loaded") {
+    return { state: "NOT ASSESSED", note: "Set by the overview engine, which has not loaded on this page. A missing regime is not a calm reading." };
+  }
+  return { state: "NOT ASSESSED", note: "This snapshot carries no overview USD engine. A missing regime is not a calm reading." };
+}
+
+const PANE_LABELS: Record<string, string> = { "%": "rate (%)", bp: "spread (bp)", $B: "amount ($B)" };
+
+/** The dollar clearing stack from the atlas's US pack, used when the overview engine is unavailable. */
+export function UsdAtlasDesk({
+  market,
+  generatedAt,
+  board,
+  notices,
+}: {
+  market: MoneyMarket | null;
+  generatedAt?: string;
+  board: BoardState;
+  notices: LegalNotice[];
+}) {
+  const desk = useMemo(() => usdAtlasDesk(market), [market]);
+  const [sectionId, setSectionId] = useState("");
+  const section = desk?.sections.find((item) => item.id === sectionId) || desk?.sections[0];
+  const regime = deskRegime(board);
+  const head = (
+    <SectionHead
+      eyebrow="USD MICROSTRUCTURE / GLOBAL ATLAS"
+      title="Inside the dollar clearing stack"
+      note="Built from the US observations the global atlas serves with redistribution allowed. Each row keeps its own observation date and source; withheld inputs stay listed without values."
+      titleId="mm-usd-heading"
+    />
+  );
+  if (!desk || !section) {
+    return (
+      <section className="mm-usd-desk" aria-labelledby="mm-usd-heading">
+        {head}
+        <p className="mm-inline-gap" role="status">The global atlas returned no public dated US observation, so the dollar clearing stack cannot be shown. Missing evidence is not a calm reading.</p>
+      </section>
+    );
+  }
+  const panes = usdChartPanes(section.metrics);
+  const counter = prose(market?.countercase);
+  return (
+    <section className="mm-usd-desk" aria-labelledby="mm-usd-heading">
+      {head}
+      <div className="mm-usd-status">
+        <div>
+          <span>DESCRIPTIVE REGIME</span>
+          <strong>{regime.state}</strong>
+          <small>{regime.note}</small>
+        </div>
+        <div>
+          <span>PUBLIC COVERAGE</span>
+          <strong>{desk.publicCount} / {desk.declaredCount}</strong>
+          <small>declared US instruments with a public dated value; {desk.gaps.length} listed below as withheld or unavailable</small>
+        </div>
+        <div>
+          <span>LATEST OBSERVATION</span>
+          <strong>{desk.latestObservation || "not published"}</strong>
+          <small>each row keeps its own date · atlas assembled {shortDate(generatedAt)} UTC</small>
+        </div>
+      </div>
+      <div className="mm-read-grid mm-read-grid--compact">
+        <article><span>IN SIMPLE LANGUAGE</span><p>{market?.plain_language || "No plain-language reading is available."}</p></article>
+        <article><span>QUANT READ</span><p>{market?.quant_read || "No scaled reading is available."}</p></article>
+        <article className="mm-counter"><span>COUNTERCASE</span><p>{counter || "A policy-relative level alone does not establish stress."}</p></article>
+      </div>
+      <nav className="mm-section-tabs" aria-label="USD money-market sections">
+        {desk.sections.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={item.id === section.id ? "is-active" : ""}
+            aria-pressed={item.id === section.id}
+            onClick={() => setSectionId(item.id)}
+          >
+            <span>{item.label}</span>
+            <small>{item.metrics.length} public</small>
+          </button>
+        ))}
+      </nav>
+      <div className="mm-subsection-intro">
+        <div><StatusPill value="public" /><strong>{section.label}</strong></div>
+        <p>{section.plain}</p>
+      </div>
+      {panes.length > 0 && (
+        <div className="mm-usd-charts" aria-label="USD section charts">
+          {panes.map((pane) => (
+            <article key={section.id + ":" + pane.key}>
+              <header>
+                <span>{PANE_LABELS[pane.unit] || pane.unit}</span>
+                <h3>{pane.labels.join(" · ")}</h3>
+              </header>
+              <Chart
+                key={section.id + ":" + pane.key}
+                rows={pane.rows}
+                series={pane.labels.map((label, index) => ({ label, color: CHART_COLORS[index % CHART_COLORS.length] }))}
+                height={220}
+                yLabel={PANE_LABELS[pane.unit] || pane.unit}
+                source={pane.sources.join(" + ") + " via the Seiche global atlas"}
+                asOf={pane.asof}
+                note="native observation dates; gaps stay empty, nothing is interpolated"
+              />
+            </article>
+          ))}
+        </div>
+      )}
+      <MetricTable metrics={section.metrics as unknown as MoneyMarketMetric[]} caption={section.label + " metrics"} />
+      <div className="mm-usd-gaps" aria-labelledby="mm-usd-gaps-title">
+        <h3 id="mm-usd-gaps-title">Withheld and unavailable US inputs</h3>
+        <p>Declared instruments without a public dated value. Their values are not shown or reconstructed, and their absence is not a calm reading.</p>
+        <ul>
+          {desk.gaps.map((gap) => (
+            <li key={gap.id}>
+              <b>{gap.label}</b>
+              <span>{gap.role || "role not supplied"}</span>
+              <small>{gap.state} · {formatCadence(gap.cadence)} · {gap.source || "source not supplied"}</small>
+            </li>
+          ))}
+          {desk.gaps.length === 0 && <li><b>None</b><span>Every declared US instrument has a public dated value.</span></li>}
+        </ul>
+      </div>
+      <details className="mm-disclosure">
+        <summary>USD sources behind this desk</summary>
+        <div className="mm-table-wrap">
+          <table className="mm-table mm-table--sources">
+            <caption>USD sources behind the public rows</caption>
+            <thead><tr><th scope="col">Source adapter</th><th scope="col">Publisher host</th><th scope="col">Public rows</th><th scope="col">Latest observation</th></tr></thead>
+            <tbody>
+              {desk.sources.map((source) => (
+                <tr key={source.source}>
+                  <th scope="row"><b>{source.source}</b></th>
+                  <td>{source.host || "not supplied"}</td>
+                  <td>{source.rows}</td>
+                  <td>{source.latest || "not published"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      <LegalNoticePanel notices={notices} title="USD source terms and independence" />
+    </section>
+  );
+}
+
 export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
   const watch = useMoneyMarketWatchlist();
   const [watchedOnly, setWatchedOnly] = useState(() => watch.ids.length > 0);
@@ -1743,6 +1894,9 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
   const atlasLegalNotices = suppliedAtlasNotices.length > 0
     ? suppliedAtlasNotices
     : [GENERAL_INDEPENDENCE_NOTICE, NY_FED_FALLBACK_NOTICE];
+  const usdNotices = suppliedAtlasNotices
+    .filter((notice) => notice.title === "Source terms" || /federal reserve|treasury/i.test(notice.title));
+  const usdAtlasNotices = usdNotices.length > 0 ? usdNotices : [GENERAL_INDEPENDENCE_NOTICE, NY_FED_FALLBACK_NOTICE];
   const visibleExpansion = useMemo(() => {
     const rows = atlas?.expansion_ledger || [];
     const query = expansionQuery.trim().toLowerCase();
@@ -1884,7 +2038,14 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
 
       {view === "usd" && <>
         <UsdFundingSummary snap={snap} atlas={liveAtlas} />
-        {usdEngine && <UsdDesk engine={usdEngine} />}
+        {usdEngine
+          ? <UsdDesk engine={usdEngine} />
+          : liveAtlas && <UsdAtlasDesk
+            market={liveAtlas.markets.find((market) => market.market_id === "US-USD") || null}
+            generatedAt={liveAtlas.generated_at}
+            board={board}
+            notices={usdAtlasNotices}
+          />}
       </>}
 
       {!atlas && (

@@ -34,6 +34,13 @@ const ecbContext = { exports: {} };
 vm.runInNewContext(ts.transpileModule(await readFile(new URL("../src/ecbReference.ts", import.meta.url), "utf8"), {
   compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
 }).outputText, ecbContext);
+const usdDeskContext = { exports: {}, URL, require(name) {
+  if (name === "./usdFunding") return fundingContext.exports;
+  throw new Error("Unexpected USD desk dependency: " + name);
+} };
+vm.runInNewContext(ts.transpileModule(await readFile(new URL("../src/usdAtlasDesk.ts", import.meta.url), "utf8"), {
+  compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
+}).outputText, usdDeskContext);
 
 const moneyMarketsSource = await readFile(new URL("../src/tabs/MoneyMarkets.tsx", import.meta.url), "utf8");
 const moneyMarketsContext = { exports: {}, URL, console, require(name) {
@@ -41,6 +48,7 @@ const moneyMarketsContext = { exports: {}, URL, console, require(name) {
   if (name === "react/jsx-runtime") return jsxRuntime;
   if (name === "../snapshotStatus") return context.exports;
   if (name === "../ecbReference") return ecbContext.exports;
+  if (name === "../usdAtlasDesk") return usdDeskContext.exports;
   if (name === "../UsdFundingSummary") return summaryContext.exports;
   if (name === "../apiBase") return { API_BASE: "https://example.invalid" };
   if (name === "../auth") return { authHeaders: () => ({}) };

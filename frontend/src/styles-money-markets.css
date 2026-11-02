@@ -2225,6 +2225,15 @@
   font-size: 10px;
 }
 
+/* The USD desk's declared instruments without a public dated value. */
+.mm-usd-gaps { padding: 18px clamp(16px, 2.5vw, 28px); border-top: 1px solid var(--panel-edge); }
+.mm-usd-gaps h3 { font-size: 13px; font-weight: 500; }
+.mm-usd-gaps > p { max-width: 720px; margin-top: 6px; color: var(--faint); font-size: 9.5px; line-height: 1.5; }
+.mm-usd-gaps ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 12px; padding: 0; list-style: none; }
+.mm-usd-gaps li { display: grid; gap: 3px; padding: 10px 12px; border: 1px solid var(--panel-edge); border-radius: var(--r-md); background: var(--mm-water); }
+.mm-usd-gaps li b { font-family: var(--mono); font-size: 9.5px; font-weight: 500; }
+.mm-usd-gaps li span { color: var(--faint); font-size: 9px; }
+.mm-usd-gaps li small { color: var(--ghost); font-family: var(--mono); font-size: 8px; line-height: 1.4; }
 
 .mm-brief-actions {
   display: grid;
