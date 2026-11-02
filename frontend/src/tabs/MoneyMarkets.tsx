@@ -10,6 +10,14 @@ import { moneyMarketSharePath } from "../shareRoutes";
 import { MAX_WATCHED_MARKETS, filterWatchedMarkets, missingWatchedMarkets } from "../moneyMarketWatchlist";
 import { useMoneyMarketWatchlist } from "../useMoneyMarketWatchlist";
 import { moneyMarketDisplay } from "../snapshotStatus";
+import {
+  ECB_USD_CNY_QUERY,
+  currencyDirection,
+  readEcbUsdReferences,
+  signedPercent,
+  transmissionInputs,
+  type EcbUsdReferences,
+} from "../ecbReference";
 import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
@@ -265,7 +273,17 @@ interface Props {
       harbors?: unknown;
     };
   };
+  /** The publisher withheld the funding board under its source-rights policy. */
+  boardWithheld?: boolean;
 }
+
+/** Whether the funding board, which carries the overview engines, reached this view. */
+type BoardState = "loaded" | "withheld" | "not_loaded";
+
+type EcbReferenceState =
+  | { status: "idle" | "loading" }
+  | { status: "ready"; data: EcbUsdReferences }
+  | { status: "error"; message: string };
 
 interface HarborReading {
   harbor?: string;
@@ -298,6 +316,9 @@ interface HarborReading {
 
 interface HarborsEngine {
   ok?: boolean;
+  reason?: string;
+  /** "source_rights_restricted" when a publisher served the restriction in place of the engine. */
+  category?: string;
   asof?: string;
   harbors?: HarborReading[];
   rate_rows?: unknown;
@@ -1087,12 +1108,110 @@ function parseHarbors(value: unknown): HarborsEngine | null {
   return value as unknown as HarborsEngine;
 }
 
-function HarborPressure({
+/** Why no transmission score is shown, in the terms of the board's actual state. */
+export function transmissionGap(board: BoardState, engine: HarborsEngine | null): string {
+  if (board === "withheld" || engine?.category === "source_rights_restricted") {
+    return "Transmission scores are withheld under Seiche’s 2026-10-28 source-rights policy. They come from the legacy Harbors engine in the funding board, which is withheld while its source reuse rights are qualified, and Seiche does not reconstruct them. A withheld score is not a calm reading.";
+  }
+  if (board === "not_loaded") {
+    return "Transmission scores come from the funding board, which has not loaded on this page, so they are not assessed. A missing score is not a calm reading.";
+  }
+  if (!engine || engine.ok === false) {
+    return "This snapshot carries no Harbors transmission engine" + (engine?.reason ? ` (${engine.reason})` : "") + ", so no score is shown. A missing score is not a calm reading.";
+  }
+  return "The global transmission engine is still accruing enough local history.";
+}
+
+function referenceGap(references: EcbReferenceState, currency: string): string {
+  if (references.status === "ready") return `no ECB reference for ${currency}`;
+  if (references.status === "error") return "ECB reference unavailable";
+  return "ECB reference loading";
+}
+
+function TransmissionInputs({
+  markets,
+  references,
+  onRetry,
+}: {
+  markets: MoneyMarket[];
+  references: EcbReferenceState;
+  onRetry: () => void;
+}) {
+  const crosses = references.status === "ready" ? references.data.crosses : [];
+  const rows = transmissionInputs<MoneyMarketMetric>(markets, crosses);
+  return (
+    <div className="mm-transmission">
+      <p className="mm-transmission__lead">What is available instead: each market’s ECB reference cross against the US dollar and its public local rate, side by side and never blended into a score.</p>
+      {references.status === "error" && (
+        <p className="mm-transmission__state" role="status">
+          ECB reference rates could not be read ({references.message}). Local rates below are unaffected.
+          <button type="button" onClick={onRetry}>Retry</button>
+        </p>
+      )}
+      {rows.length > 0 ? (
+        <div className="mm-transmission__wrap">
+          <table className="mm-transmission__table">
+            <caption>Rights-cleared transmission inputs by market. US dollar is the reference currency; China has its own desk.</caption>
+            <thead><tr><th scope="col">Market</th><th scope="col">vs USD, 60 obs</th><th scope="col">Volatility, 20 obs</th><th scope="col">Local rate</th></tr></thead>
+            <tbody>
+              {rows.map((row) => {
+                const cross = row.cross;
+                const rate = row.localRate;
+                const rateChange = finite(rate?.change_20_observations);
+                return (
+                  <tr key={row.marketId}>
+                    <th scope="row"><b>{row.currency}</b><span>{row.name}</span></th>
+                    <td>
+                      {cross ? <>
+                        <strong>{cross.change60 === null ? "n/a" : signedPercent(cross.change60)}</strong>
+                        <span>{cross.change60 === null ? "fewer than 61 observations" : currencyDirection(row.currency, cross.change60)}</span>
+                        <small>ECB · {cross.status} · {cross.asof}</small>
+                      </> : <span>{referenceGap(references, row.currency)}</span>}
+                    </td>
+                    <td>
+                      {cross ? <>
+                        <strong>{cross.vol20 === null ? "n/a" : cross.vol20.toFixed(2) + "%"}</strong>
+                        <span>annualized, last 20 obs</span>
+                      </> : <span>{referenceGap(references, row.currency)}</span>}
+                    </td>
+                    <td>
+                      {rate ? <>
+                        <strong>{rate.label} {fmt(rate.value, rate.unit)}</strong>
+                        <span>{rateChange === null ? "20-obs change unavailable" : fmt(rateChange, rate.change_unit || rate.unit, true) + " over 20 obs"}</span>
+                        <small>{formatCadence(rate.cadence)} · {statusLabel(rate)} · {rate.asof}</small>
+                      </> : <span>no public local rate</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="mm-transmission__state" role="status">
+          {references.status === "idle" || references.status === "loading"
+            ? "Reading ECB reference rates."
+            : "No market in this atlas has a public local rate or an ECB reference cross."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function HarborPressure({
   engine,
   excludedHarbors = [],
+  board,
+  markets,
+  references,
+  onRetryReferences,
 }: {
   engine: HarborsEngine | null;
   excludedHarbors?: string[];
+  board: BoardState;
+  markets: MoneyMarket[];
+  references: EcbReferenceState;
+  onRetryReferences: () => void;
 }) {
   const harbors = (engine?.harbors || [])
     .filter((harbor) => !excludedHarbors.includes(harbor.harbor || ""))
@@ -1115,8 +1234,13 @@ function HarborPressure({
             );
           })}
         </div>
-      ) : <p className="mm-inline-gap">The global transmission engine is still accruing enough local history.</p>}
-      <footer>Each score is a blend of that harbor’s own FX volatility, FX direction and six-month rate change. Missing components reweight the blend; they never count as calm.</footer>
+      ) : <>
+        <p className="mm-inline-gap" role="status">{transmissionGap(board, engine)}</p>
+        <TransmissionInputs markets={markets} references={references} onRetry={onRetryReferences} />
+      </>}
+      <footer>{harbors.length > 0
+        ? "Each score is a blend of that harbor’s own FX volatility, FX direction and six-month rate change. Missing components reweight the blend; they never count as calm."
+        : "ECB crosses are reference rates quoted as local currency per US dollar, so a positive change means the local currency weakened. Windows count ECB or local observations, not calendar days. A local rate is the market’s public traded benchmark, or its policy rate when no benchmark is public."}</footer>
     </section>
   );
 }
@@ -1210,28 +1334,36 @@ function MomentumTable({ market }: { market: MoneyMarket }) {
   );
 }
 
-function labeledSeriesRows(
-  rowsValue: unknown,
-  labels: string[] | undefined,
-  label: string,
-): (string | number | null)[][] {
-  const rows = chartRows(rowsValue);
-  const index = (labels || []).findIndex((item) => item.toUpperCase() === label.toUpperCase());
-  if (index < 0) return [];
-  return rows.map((row) => [row[0], row[index + 1] ?? null]);
+function cnyReferenceGap(references: EcbReferenceState): { title: string; detail: string } {
+  if (references.status === "error") {
+    return { title: "ECB reference rate unavailable", detail: `The reference-rate request failed (${references.message}). No direction is inferred from a missing currency series.` };
+  }
+  if (references.status === "ready") {
+    return { title: "ECB USD/CNY reference not served", detail: "The workbench returned no rights-cleared USD/CNY row. No direction is inferred from a missing currency series." };
+  }
+  return { title: "Reading the ECB reference rate", detail: "The CNY leg appears once the ECB reference cross arrives." };
 }
 
-function ChinaDesk({
-  engine,
+function renminbiMove(change: number): string {
+  if (change > 0) return "the renminbi weakened against the dollar";
+  if (change < 0) return "the renminbi strengthened against the dollar";
+  return "the renminbi was unchanged against the dollar";
+}
+
+export function ChinaDesk({
   market,
   onOpenLab,
+  references,
+  onRetryReferences,
 }: {
-  engine: HarborsEngine | null;
   market: MoneyMarket | null;
   onOpenLab: () => void;
+  references: EcbReferenceState;
+  onRetryReferences: () => void;
 }) {
-  const china = engine?.harbors?.find((item) => item.harbor === "CHINA") || null;
-  const fxRows = labeledSeriesRows(engine?.fx_rows, engine?.fx_labels, "CHINA");
+  // The CNY leg is the ECB reference cross: Federal Reserve H.10 values stay withheld.
+  const cny = references.status === "ready" ? references.data.cny : null;
+  const cnyGap = cnyReferenceGap(references);
   const benchmark = market ? comparisonBenchmark(market) : null;
   const unsecuredRate = market?.metrics.find((metric) => metric.id.includes("SHIBOR")) || null;
   const securedRate = market?.metrics.find((metric) => metric.id.includes("FDR007")) || null;
@@ -1251,7 +1383,16 @@ function ChinaDesk({
         <article><span>UNSECURED CASH</span><strong>{isPublicValue(unsecuredRate) ? fmt(unsecuredRate?.value, unsecuredRate?.unit) : "WITHHELD"}</strong><p>{unsecuredRate?.label || "SHIBOR overnight"}</p><small>{statusLabel(unsecuredRate)}</small></article>
         <article><span>SECURED 7-DAY FIXING</span><strong>{isPublicValue(securedRate) ? fmt(securedRate?.value, securedRate?.unit) : "WITHHELD"}</strong><p>{securedRate?.label || "FDR007"}</p><small>{statusLabel(securedRate)}</small></article>
         <article><span>RATE EVIDENCE</span><strong>{[unsecuredRate, securedRate].filter((metric) => (metric?.availability || "").toUpperCase() === "RESTRICTED").length} / 2</strong><p>fixings rights-restricted</p><small>metadata only · never treated as calm</small></article>
-        <article><span>CNY / 60 DAYS</span><strong>{fmt(china?.fx?.chg_60d_pct, "%", true)}</strong><p>{china?.fx?.vol10_ann_pct == null ? "volatility unavailable" : fmt(china.fx.vol10_ann_pct, "%") + " 10d annualized vol"}</p><small>{shortDate(china?.fx?.asof)}</small></article>
+        <article>
+          <span>CNY / 60 ECB OBSERVATIONS</span>
+          <strong>{cny ? (cny.change60 === null ? "n/a" : signedPercent(cny.change60)) : references.status === "error" ? "UNAVAILABLE" : "LOADING"}</strong>
+          <p>{cny
+            ? `${cny.value.toFixed(4)} CNY per USD on ${cny.asof}; ${cny.vol20 === null ? "20-observation volatility unavailable" : cny.vol20.toFixed(2) + "% annualized volatility over the last 20 observations"}`
+            : cnyGap.title}</p>
+          <small>{cny
+            ? `ECB reference · ${cny.status}${cny.change60From ? ` · since ${cny.change60From}` : ""}`
+            : "no direction inferred from a missing series"}</small>
+        </article>
         <article><span>COMPOSITE PRESSURE</span><strong>WITHHELD</strong><p>rights-cleared projection pending</p><small>no legacy rate blend reused</small></article>
       </section>
 
@@ -1265,8 +1406,14 @@ function ChinaDesk({
           </div>
         </article>
         <article className="mm-analysis-panel">
-          <header><span>VALVE 02 / CURRENCY</span><h3>The currency pressure release</h3><p>CNY per USD indexed to 100 one year earlier. Up means a weaker renminbi.</p></header>
-          {fxRows.length >= 2 ? <Chart rows={fxRows} series={[{ label: "CNY per USD, 1y ago = 100", color: P.erosion }]} height={230} yLabel="CNY index" refLine={{ value: 100, color: P.ghost, label: "one-year anchor" }} source="Seiche global FX cache" note="daily fixes; indexed only for direction and scale" /> : <div className="mm-chart-gap mm-chart-gap--compact"><b>FX history unavailable</b><span>No direction is inferred from a missing currency series.</span></div>}
+          <header><span>VALVE 02 / CURRENCY</span><h3>The currency pressure release</h3><p>ECB reference rate for CNY per US dollar, crossed through the euro on shared dates. Up means a weaker renminbi.</p></header>
+          {cny && cny.history.length >= 2
+            ? <Chart rows={cny.history} series={[{ label: "CNY per USD, ECB reference", color: P.erosion }]} height={230} yLabel="CNY per USD" source="ECB euro reference rates; USD/CNY cross by Seiche" asOf={cny.asof} note={`${cny.history.length} ECB observations from ${cny.history[0][0]} to ${cny.asof}; reference rates, not executable quotes or the PBoC central parity`} />
+            : <div className="mm-chart-gap mm-chart-gap--compact">
+              <b>{cny ? "ECB history unavailable" : cnyGap.title}</b>
+              <span>{cny ? "The latest reference rate is shown above; its history did not reach this view, so no chart is drawn." : cnyGap.detail}</span>
+              {references.status === "error" && <button type="button" onClick={onRetryReferences}>Retry the reference rate</button>}
+            </div>}
         </article>
         <article className="mm-analysis-panel">
           <header><span>VALVE 03 / EVIDENCE RIGHTS</span><h3>The canonical China pack stays deliberately sparse</h3><p>Availability is a data fact. Restricted or missing instruments cannot be turned into a calm reading.</p></header>
@@ -1280,7 +1427,13 @@ function ChinaDesk({
       <section className="mm-china-interpretation">
         <article><span>01 / PRICE</span><h3>Is unsecured cash repricing?</h3><p>{isPublicValue(unsecuredRate) ? `${unsecuredRate?.label || "The unsecured fixing"} is public in the canonical pack; its native changes appear in the Market Lab.` : "The exact fixing and its rate changes stay withheld under the canonical source terms, so Seiche leaves the direction open."}</p></article>
         <article><span>02 / COLLATERAL</span><h3>Does secured funding confirm it?</h3><p>{isPublicValue(securedRate) ? "The FDR007 fixing is public, but it still cannot be subtracted from a different-tenor unsecured contract as if the two matched." : "FDR007, a fixing calculated from underlying DR007 transactions, is registered as secured seven-day evidence, but its exact quote is rights-restricted. Missing confirmation is shown as missing—not as an easy collateral market."}</p></article>
-        <article><span>03 / EXTERNAL VALVE</span><h3>Is pressure escaping through CNY?</h3><p>{china?.fx?.chg_60d_pct == null ? "The currency leg is unavailable." : `CNY moved ${fmt(china.fx.chg_60d_pct, "%", true)} versus USD over 60 days, with ${fmt(china.fx.vol10_ann_pct, "%")} annualized 10-day volatility.`}</p></article>
+        <article><span>03 / EXTERNAL VALVE</span><h3>Is pressure escaping through CNY?</h3><p>{cny && cny.change60 !== null
+          ? `USD/CNY moved ${signedPercent(cny.change60)} over the last 60 ECB observations${cny.change60From ? ` (${cny.change60From} to ${cny.asof})` : ""}, so ${renminbiMove(cny.change60)}. `
+            + (cny.vol20 === null
+              ? "Volatility over the last 20 observations is unavailable. "
+              : `Annualized volatility over the last 20 observations${cny.window20From ? ` (from ${cny.window20From})` : ""} is ${cny.vol20.toFixed(2)}%. `)
+            + "A reference-rate move is context, not a stress score."
+          : "The ECB currency leg is unavailable, so Seiche leaves the direction open."}</p></article>
         <article className="mm-counter"><span>COUNTERCASE</span><h3>Policy and calendar can dominate.</h3><p>Tax dates, holiday liquidity operations, reserve requirements and benchmark changes can move one valve without producing broad funding stress.</p></article>
       </section>
 
@@ -1420,7 +1573,7 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
   );
 }
 
-export default function MoneyMarkets({ snap }: Props) {
+export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
   const watch = useMoneyMarketWatchlist();
   const [watchedOnly, setWatchedOnly] = useState(() => watch.ids.length > 0);
   const usdEngine = useMemo(() => parseUsdEngine(snap.engines?.money_market), [snap.engines?.money_market]);
@@ -1440,6 +1593,11 @@ export default function MoneyMarkets({ snap }: Props) {
   const [marketId, setMarketId] = useState("");
   const [expansionQuery, setExpansionQuery] = useState("");
   const hasChinaDesk = mode === "live" && Boolean(atlas?.markets.some((market) => market.market_id === "CN-CNY"));
+  const board: BoardState = snap.engines ? "loaded" : boardWithheld ? "withheld" : "not_loaded";
+  const [ecb, setEcb] = useState<EcbReferenceState>({ status: "idle" });
+  const [ecbAttempt, setEcbAttempt] = useState(0);
+  const ecbNeeded = view === "china" || view === "briefing";
+  const ecbReady = ecb.status === "ready";
 
   useEffect(() => () => {
     const request = activeRequest.current;
@@ -1492,6 +1650,38 @@ export default function MoneyMarkets({ snap }: Props) {
         }
       });
   }, [retryKey, usdFallback]);
+
+  // The China desk and the briefing's transmission check share one ECB reference
+  // request, made the first time either view opens. Daily reference rates need no polling.
+  useEffect(() => {
+    if (!ecbNeeded || ecbReady) return undefined;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 30000);
+    setEcb({ status: "loading" });
+    fetch(`${API_BASE}/api/v2/market-workbench?${ECB_USD_CNY_QUERY}`, {
+      credentials: "omit",
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    })
+      .then(async (response) => {
+        if (!response.ok || !(response.headers.get("content-type") || "").includes("json")) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = readEcbUsdReferences(await response.json());
+        if (!data) throw new Error("unexpected response contract");
+        setEcb({ status: "ready", data });
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted && !timedOut) return;
+        setEcb({ status: "error", message: timedOut ? "timed out" : reason instanceof Error ? reason.message : "request failed" });
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [ecbNeeded, ecbReady, ecbAttempt]);
 
   useEffect(() => {
     if (!atlas?.markets.length) return;
@@ -1724,7 +1914,14 @@ export default function MoneyMarkets({ snap }: Props) {
               <PressureSonar markets={atlas.markets} selectedId={selected.market_id} onOpen={openMarket} />
               <div className="mm-brief-grid">
                 <CoverageLanes markets={atlas.markets} />
-                {mode === "live" && <HarborPressure engine={harborsEngine} excludedHarbors={["CHINA"]} />}
+                {mode === "live" && <HarborPressure
+                  engine={harborsEngine}
+                  excludedHarbors={["CHINA"]}
+                  board={board}
+                  markets={atlas.markets}
+                  references={ecb}
+                  onRetryReferences={() => setEcbAttempt((value) => value + 1)}
+                />}
               </div>
               <section className="mm-brief-actions" aria-label="Continue the analysis">
                 <button type="button" onClick={() => setView("world")}><span>COMPARE</span><b>See every clearing system</b><small>Pressure, coverage and native clock →</small></button>
@@ -1877,7 +2074,12 @@ export default function MoneyMarkets({ snap }: Props) {
           {selected.market_id === "US-USD" && usdEngine && <UsdDesk engine={usdEngine} />}
           </>}
 
-          {view === "china" && hasChinaDesk && <ChinaDesk engine={harborsEngine} market={chinaMarket} onOpenLab={() => openMarket("CN-CNY")} />}
+          {view === "china" && hasChinaDesk && <ChinaDesk
+            market={chinaMarket}
+            onOpenLab={() => openMarket("CN-CNY")}
+            references={ecb}
+            onRetryReferences={() => setEcbAttempt((value) => value + 1)}
+          />}
 
           {view === "countries" && <CountryFunding data={atlas.country_funding} />}
           {view === "india" && <IndiaFunding data={atlas.markets.find(market => market.market_id === "IN-INR")?.funding_curve} />}

@@ -289,7 +289,7 @@ function AppInner() {
   }
   if (tab === "MONEY MARKETS" && (!snap || err)) {
     return <main className="app research-app" id="main" data-tab={tab}>
-      <Suspense fallback={<TabSkeleton />}><MoneyMarkets snap={{}} /></Suspense></main>;
+      <Suspense fallback={<TabSkeleton />}><MoneyMarkets snap={{}} boardWithheld={withheld} /></Suspense></main>;
   }
   if (tab === "WORKBENCH" && (!snap || err)) {
     return <main className="app research-app" id="main" data-tab={tab}>

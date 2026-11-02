@@ -2198,6 +2198,34 @@
 .mm-harbor-pressure > footer { padding: 13px 22px 18px; border-top: 1px solid var(--panel-edge); color: var(--ghost); font-size: 8.5px; line-height: 1.55; }
 .mm-inline-gap { padding: 24px; color: var(--faint); line-height: 1.6; }
 
+/* Rights-cleared transmission inputs, shown when no transmission score is available. */
+.mm-harbor-pressure > .mm-transmission { padding: 0 22px 18px; }
+.mm-transmission__lead { margin-bottom: 12px; color: var(--dim); font-size: 10px; line-height: 1.55; }
+.mm-transmission__state { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; color: var(--faint); font-size: 9.5px; line-height: 1.5; }
+.mm-transmission__wrap { width: 100%; overflow-x: auto; scrollbar-color: var(--panel-edge-2) transparent; }
+.mm-transmission__table { width: 100%; min-width: 460px; border-collapse: collapse; font-family: var(--mono); font-size: 9px; }
+.mm-transmission__table caption { padding-bottom: 8px; color: var(--ghost); font-size: 8px; text-align: left; caption-side: top; }
+.mm-transmission__table th,
+.mm-transmission__table td { padding: 8px 8px 8px 0; vertical-align: top; border-bottom: 1px solid var(--panel-edge); color: var(--dim); text-align: left; }
+.mm-transmission__table thead th { color: var(--faint); font-size: 7.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.mm-transmission__table tbody th b,
+.mm-transmission__table td strong { display: block; color: var(--text); font-weight: 500; }
+.mm-transmission__table tbody th span,
+.mm-transmission__table td span,
+.mm-transmission__table td small { display: block; margin-top: 2px; color: var(--ghost); font-size: 8px; line-height: 1.4; }
+.mm-transmission__state button,
+.mm-chart-gap button {
+  justify-self: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent-deep);
+  border-radius: 999px;
+  color: var(--accent-bright);
+  background: transparent;
+  font-size: 10px;
+}
+
+
 .mm-brief-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

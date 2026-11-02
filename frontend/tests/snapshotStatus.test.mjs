@@ -30,11 +30,17 @@ vm.runInNewContext(ts.transpileModule(await readFile(new URL("../src/UsdFundingS
   compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX},
 }).outputText, summaryContext);
 
+const ecbContext = { exports: {} };
+vm.runInNewContext(ts.transpileModule(await readFile(new URL("../src/ecbReference.ts", import.meta.url), "utf8"), {
+  compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
+}).outputText, ecbContext);
+
 const moneyMarketsSource = await readFile(new URL("../src/tabs/MoneyMarkets.tsx", import.meta.url), "utf8");
 const moneyMarketsContext = { exports: {}, URL, console, require(name) {
   if (name === "react") return React;
   if (name === "react/jsx-runtime") return jsxRuntime;
   if (name === "../snapshotStatus") return context.exports;
+  if (name === "../ecbReference") return ecbContext.exports;
   if (name === "../UsdFundingSummary") return summaryContext.exports;
   if (name === "../apiBase") return { API_BASE: "https://example.invalid" };
   if (name === "../auth") return { authHeaders: () => ({}) };
