@@ -1,6 +1,7 @@
 """Treasury's own par yield curve: enabled by the declared rights record, cited everywhere."""
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -282,6 +283,38 @@ async def test_bounded_fetch_reads_only_the_named_documents_and_rejects_changes(
                 "content-type": "text/xml", "content-length": str(ust.MAX_DOCUMENT_BYTES + 1)}))) as client:
         with pytest.raises(ValueError, match="bound"):
             await ust.fetch_documents(client, (OCTOBER,))
+
+
+@pytest.mark.asyncio
+async def test_fetch_keeps_request_order_caps_concurrency_and_raises_the_first_failure():
+    urls = ust.document_urls(date(2018, 1, 1), date(2026, 11, 2), by_year=True)
+    active = peak = 0
+
+    async def handler(request):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        if "field_tdr_date_value=2020" in str(request.url) and failing:
+            return httpx.Response(500)
+        return httpx.Response(200, stream=httpx.ByteStream(feed()), headers={"content-type": "text/xml"})
+
+    failing = False
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = await ust.fetch_documents(client, urls)
+    assert [item.source_uri for item in documents] == list(urls)
+    assert 1 < peak <= ust.MAX_CONCURRENT_DOCUMENTS
+    failing = True
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="HTTP 500"):
+            await ust.fetch_documents(client, urls)
+    # A bad URL anywhere in the list stops the run before any request is made.
+    calls = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: calls.append(request))) as client:
+        with pytest.raises(ValueError, match="unrecognized"):
+            await ust.fetch_documents(client, (OCTOBER, "https://example.invalid/feed"))
+    assert calls == []
 
 
 async def collected(captured: datetime, monkeypatch):

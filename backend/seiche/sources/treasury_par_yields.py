@@ -76,6 +76,10 @@ MAX_DOCUMENT_BYTES = 4_000_000
 MAX_ENTRIES = 400
 MAX_MONTH_DOCUMENTS = 24
 MAX_YEAR_DOCUMENTS = 40
+# The feed took 17 to 21 seconds to first byte on 2026-11-02. Three requests at
+# a time keep a nine-year backfill well inside the collector's 300 s deadline.
+MAX_CONCURRENT_DOCUMENTS = 3
+DOCUMENT_TIMEOUT_SECONDS = 90
 # A bound against garbage, not a market view: no Treasury par yield on record
 # is near it, and a value outside it faults the run instead of being stored.
 MAX_ABS_PERCENT = Decimal("50")
@@ -143,39 +147,55 @@ def rights_gate_open(pack) -> bool:
     )
 
 
-async def fetch_documents(client, urls: tuple[str, ...]) -> tuple[FetchedDocument, ...]:
-    """Download only the named Treasury feed documents with byte/time bounds."""
-
-    documents = []
-    for url in urls:
-        if not _PERIOD_URI.match(url):
-            raise ValueError("unrecognized Treasury par yield request")
-        async with asyncio.timeout(60):
-            async with client.stream(
-                "GET", url, follow_redirects=False,
-                headers={"Accept-Encoding": "identity", "Accept": "application/xml,text/xml",
-                         "User-Agent": USER_AGENT},
-            ) as response:
-                if response.status_code != 200:
-                    raise ValueError(f"Treasury par yield HTTP {response.status_code}")
-                if str(response.url) != url:
-                    raise ValueError("Treasury par yield source changed")
-                encoding = response.headers.get("content-encoding", "").lower().strip()
-                if encoding not in {"", "identity"}:
-                    raise ValueError("Treasury par yield transport encoding changed")
-                media = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                if media not in {"text/xml", "application/xml", "application/atom+xml"}:
-                    raise ValueError("Treasury par yield media type changed")
-                declared = response.headers.get("content-length")
-                if declared is not None and not 0 <= int(declared) <= MAX_DOCUMENT_BYTES:
+async def _fetch_one(client, url: str) -> FetchedDocument:
+    async with asyncio.timeout(DOCUMENT_TIMEOUT_SECONDS):
+        async with client.stream(
+            "GET", url, follow_redirects=False,
+            headers={"Accept-Encoding": "identity", "Accept": "application/xml,text/xml",
+                     "User-Agent": USER_AGENT},
+        ) as response:
+            if response.status_code != 200:
+                raise ValueError(f"Treasury par yield HTTP {response.status_code}")
+            if str(response.url) != url:
+                raise ValueError("Treasury par yield source changed")
+            encoding = response.headers.get("content-encoding", "").lower().strip()
+            if encoding not in {"", "identity"}:
+                raise ValueError("Treasury par yield transport encoding changed")
+            media = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if media not in {"text/xml", "application/xml", "application/atom+xml"}:
+                raise ValueError("Treasury par yield media type changed")
+            declared = response.headers.get("content-length")
+            if declared is not None and not 0 <= int(declared) <= MAX_DOCUMENT_BYTES:
+                raise ValueError("Treasury par yield document exceeds bound")
+            payload = bytearray()
+            async for chunk in response.aiter_raw():
+                payload.extend(chunk)
+                if len(payload) > MAX_DOCUMENT_BYTES:
                     raise ValueError("Treasury par yield document exceeds bound")
-                payload = bytearray()
-                async for chunk in response.aiter_raw():
-                    payload.extend(chunk)
-                    if len(payload) > MAX_DOCUMENT_BYTES:
-                        raise ValueError("Treasury par yield document exceeds bound")
-        documents.append(FetchedDocument(url, "text/xml", bytes(payload), ADAPTER_ID))
-    return tuple(documents)
+    return FetchedDocument(url, "text/xml", bytes(payload), ADAPTER_ID)
+
+
+async def fetch_documents(client, urls: tuple[str, ...]) -> tuple[FetchedDocument, ...]:
+    """Download only the named Treasury feed documents with byte/time bounds.
+
+    Every URL is checked before any request. Up to ``MAX_CONCURRENT_DOCUMENTS``
+    requests run at once; the first failure cancels the rest and is raised.
+    """
+
+    if any(not _PERIOD_URI.match(url) for url in urls):
+        raise ValueError("unrecognized Treasury par yield request")
+    slots = asyncio.Semaphore(MAX_CONCURRENT_DOCUMENTS)
+
+    async def bounded(url: str) -> FetchedDocument:
+        async with slots:
+            return await _fetch_one(client, url)
+
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(bounded(url)) for url in urls]
+    except ExceptionGroup as failed:
+        raise failed.exceptions[0] from None
+    return tuple(task.result() for task in tasks)
 
 
 def _scan(payload: bytes) -> tuple[str, list[dict[str, tuple[dict[str, str], str]]]]:
