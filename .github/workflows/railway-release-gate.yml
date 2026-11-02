@@ -426,7 +426,7 @@ jobs:
 
       - name: Upload the canonical Railway evidence for source-free publication
         id: evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: railway-gate-${{ steps.request.outputs.target }}
           path: ${{ runner.temp }}/gate.json
@@ -449,7 +449,7 @@ jobs:
       receipt_sha256: ${{ steps.publish.outputs.receipt_sha256 }}
     steps:
       - name: Download the exact Railway receipt without a source checkout
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.railway-gate.outputs.evidence_artifact_id }}
           path: ${{ runner.temp }}/evidence
@@ -482,7 +482,7 @@ jobs:
           echo "${RUNNER_TEMP}/tools" >>"$GITHUB_PATH"
 
       - name: Log in only after the source-free evidence checks pass
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
