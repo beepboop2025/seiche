@@ -974,11 +974,72 @@ def parse_nyfed_unsecured_rates(
     )
 
 
+NYFED_REPO_RESULTS_URI = "https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json"
+NYFED_REVERSE_REPO_RESULTS_URI = (
+    "https://markets.newyorkfed.org/api/rp/reverserepo/all/results/last/{count}.json"
+)
+_NYFED_REVERSE_REPO_PATH = "/api/rp/reverserepo/"
+
+
+def _parse_nyfed_overnight_reverse_repo(
+    operations: list[Any],
+) -> tuple[ParsedPoint, ...]:
+    """ON RRP take-up: accepted overnight reverse repos per operation date.
+
+    The reverse-repo endpoint uses the same ``repo.operations`` envelope as
+    the repo endpoint, so the operation type is checked rather than assumed.
+    All overnight reverse repos settled on a date are summed, including the
+    occasional small value exercise, which matches the published daily total
+    of overnight reverse repurchase agreements. A term operation is not ON RRP
+    and is never folded in. Missing is not zero: a date with any unreported
+    accepted amount is withheld, while an explicit zero is a valid no-take-up
+    observation because the official result reported it.
+    """
+
+    grouped: dict[date, list[dict[str, Any]]] = {}
+    for operation in operations:
+        if not isinstance(operation, dict):
+            continue
+        if (
+            str(operation.get("operationType") or "").strip() != "Reverse Repo"
+            or str(operation.get("term") or "").strip() != "Overnight"
+        ):
+            continue
+        event_day = _date(operation.get("operationDate"), "%Y-%m-%d")
+        if event_day is None:
+            continue
+        grouped.setdefault(event_day, []).append(operation)
+    points = []
+    for event_day, rows in sorted(grouped.items()):
+        amounts = [_number(row.get("totalAmtAccepted")) for row in rows]
+        if any(value is None or value < 0 for value in amounts):
+            continue
+        # API amounts are dollars; pack normalization expects USD billions.
+        value = sum(amounts, Decimal(0)) / Decimal(1_000_000_000)  # type: ignore[arg-type]
+        points.append(
+            ParsedPoint(
+                "US.NYFED.ON_RRP_TAKEUP",
+                event_day,
+                value,
+                _row_evidence("reverseRepo.totalAmtAccepted", rows),
+            )
+        )
+    if not points:
+        raise ValueError(
+            "NY Fed reverse repo response contains no explicit overnight results"
+        )
+    return tuple(points)
+
+
 def parse_nyfed_facilities(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     payload = json.loads(document.payload)
     operations = (payload.get("repo") or {}).get("operations")
     if not isinstance(operations, list):
         raise ValueError("NY Fed response has no repo operations")
+    if urllib.parse.urlsplit(document.source_uri).path.startswith(
+        _NYFED_REVERSE_REPO_PATH
+    ):
+        return _parse_nyfed_overnight_reverse_repo(operations)
     grouped: dict[date, list[dict[str, Any]]] = {}
     for operation in operations:
         if not isinstance(operation, dict):
@@ -2265,13 +2326,21 @@ def build_official_adapters(
         # HTTP 400). This reaches roughly one year of standing-facility
         # operations at current cadence and fails neither the US pack nor its
         # siblings during the one-time canonical import.
+        # The overnight reverse repo (ON RRP) results come from the same
+        # publisher API, terms and adapter; one operation a day makes 500
+        # reach about two years and 120 about six months.
         count = 500 if backfill else 120
         return await get_documents(
             client,
             (
                 (
                     "nyfed_repo_operations",
-                    f"https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json",
+                    NYFED_REPO_RESULTS_URI.format(count=count),
+                    None,
+                ),
+                (
+                    "nyfed_reverse_repo_operations",
+                    NYFED_REVERSE_REPO_RESULTS_URI.format(count=count),
                     None,
                 ),
             ),
