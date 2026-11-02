@@ -1,7 +1,8 @@
 import {publishedFundingModels, atlasFundingModels, mergeFundingModels, readFundingAtlas} from "./fundingSources";
+import {atlasUsMarket, observatoryCards, type AtlasRead} from "./observatoryCards";
 import {readJSON, record, visibleRefresh} from './core';
 import {seriesModel, type EconomicSeries} from './seriesModel';
-import {chartCard, dashboard, stats, selectControl, el, number, difference, changes, windowPoints, type Point, type Series, type ChartSpec} from './analyticsCharts';
+import {chartCard, dashboard, stats, selectControl, el, difference, changes, windowPoints, type Point, type Series, type ChartSpec} from './analyticsCharts';
 import './analytics.css';
 
 const API = 'https://api.seiche.info';
@@ -65,15 +66,13 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
 export function mountFundingAnalytics(target: HTMLElement, snapshot: () => unknown = () => undefined): () => void {
   const view = dashboard(target, {eyebrow: 'SEICHE / FUNDING OBSERVATORY', title: 'Follow the pressure through the system.', description: 'From the overnight corridor to reserves, Treasury cash and money-fund repo. Ten analytical views preserve the clocks and definitions behind the funding picture.'});
   let models = publishedFundingModels(snapshot()), days: number | null = 365, request: AbortController | null = null, disposed = false;
+  // The headline cards read direct atlas rows only; until the first read settles they say so.
+  let cardSource: AtlasRead = {status: 'loading'};
   const render = () => {
     view.grid.replaceChildren(...fundingSpecs(models, days).map(chartCard));
-    const latest = (key: string) => models.get(key)?.points.filter(p => Date.parse(p.date + 'T00:00:00Z') <= Date.now()).at(-1);
-    const sofr = latest('SOFR'), reserve = latest('WRESBAL'), rrp = latest('RRPONTSYD');
-    const sp = difference(fundingPoints(models.get('SOFR'), '%'), fundingPoints(models.get('IORB'), '%'), 100).at(-1);
-    stats(view.stats, [['SOFR', sofr ? `${number(sofr.value)}%` : 'Unavailable', sofr?.date || 'No dated observation'],
-      ['SOFR − IORB', sp ? `${number(sp.y!)} bp` : 'Unavailable', sp?.label || 'No matching dates'],
-      ['Reserve balances', reserve && models.get('WRESBAL')?.unit === '$M' ? `$${number(reserve.value / 1000, 1)}bn` : 'Unavailable', reserve?.date || 'No dated observation'],
-      ['ON RRP', rrp && models.get('RRPONTSYD')?.unit === '$B' ? `$${number(rrp.value, 1)}bn` : 'Unavailable', rrp?.date || 'No dated observation']]);
+    const cards = observatoryCards(cardSource);
+    stats(view.stats, cards.map((card): [string, string, string] => [card.label, card.value, card.note]));
+    [...view.stats.children].forEach((item, index) => {if (item instanceof HTMLElement && cards[index]) item.dataset.state = cards[index].state;});
   };
   view.controls.append(selectControl('History window', [['90', '3 months'], ['365', '1 year'], ['all', 'All loaded observations']], '365', value => {days = value === 'all' ? null : Number(value); render();}));
   const refreshButton = el('button', 'Refresh sources'); refreshButton.type = 'button'; view.controls.append(refreshButton);
@@ -108,12 +107,17 @@ export function mountFundingAnalytics(target: HTMLElement, snapshot: () => unkno
       const atlas = await atlasRead;
       // Same precedence as before: published, then the atlas, then each series history in key order.
       if (atlas.ok) next = mergeFundingModels(next, atlasFundingModels(atlas.value));
+      // A failed refresh keeps the last dated card values; only a first failure reports it.
+      const market = atlas.ok ? atlasUsMarket(atlas.value) : null;
+      if (market) cardSource = {status: 'ready', market};
+      else if (cardSource.status !== 'ready') cardSource = {status: 'failed'};
       for (const key of FUNDING_KEYS) { const item = loaded.get(key); if (item) next = mergeFundingModels(next, new Map([[key, item]])); }
       if (disposed) return;
       models = mergeFundingModels(models, next); render();
       view.status.textContent = `${models.size} dated histories loaded. Each chart keeps its own source dates; unavailable histories remain explicit.`;
       if (!atlas.ok && !catalog.ok) view.status.textContent += ' Live refresh failed; dated histories retained.';
     } catch {
+      if (cardSource.status === 'loading') cardSource = {status: 'failed'};
       if (!disposed) {render(); view.status.textContent = 'Live refresh failed; dated histories remain visible. Retry to check for newer observations.';}
     } finally {clearTimeout(seriesTimer); clearTimeout(atlasTimer); controller.signal.removeEventListener('abort', cancel); request = null; if (!disposed) refreshButton.disabled = false;}
   }

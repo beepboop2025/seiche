@@ -7,7 +7,9 @@ const read = name => readFile(new URL('../src/research/' + name, import.meta.url
 const core = uri(await read('core.ts')), charts = uri(await read('analyticsCharts.ts'));
 const series = uri((await read('seriesModel.ts')).replace("from \"./core\"", `from '${core}'`));
 const fundingSources = uri((await read('fundingSources.ts')).replace('from "./core"', `from '${core}'`).replace('from "./seriesModel"', `from '${series}'`));
-const funding = uri((await read('fundingAnalytics.ts')).replace("from './core'", `from '${core}'`).replace("from './seriesModel'", `from '${series}'`).replace("from './analyticsCharts'", `from '${charts}'`).replace("import './analytics.css';", '').replace('from "./fundingSources"', `from '${fundingSources}'`));
+const usdFunding = uri(await readFile(new URL('../src/usdFunding.ts', import.meta.url), 'utf8'));
+const observatoryCards = uri((await read('observatoryCards.ts')).replace('from "./core"', `from '${core}'`).replace('from "../usdFunding"', `from '${usdFunding}'`));
+const funding = uri((await read('fundingAnalytics.ts')).replace("from './core'", `from '${core}'`).replace("from './seriesModel'", `from '${series}'`).replace("from './analyticsCharts'", `from '${charts}'`).replace("import './analytics.css';", '').replace('from "./fundingSources"', `from '${fundingSources}'`).replace('from "./observatoryCards"', `from '${observatoryCards}'`));
 const {difference, changes, dateValue, windowPoints, csv, number} = await import(charts);
 const {fundingPoints, moneyFundBillions, treasuryCurve, fundingSpecs} = await import(funding);
 const {publishedFundingModels, atlasFundingModels, mergeFundingModels, readFundingAtlas} = await import(fundingSources);
