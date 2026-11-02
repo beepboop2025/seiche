@@ -13,6 +13,11 @@ import, regulatory or collateral eligibility.
   stale after two. RBI money-market operations report the previous business
   day; holidays and the distinction between inferred publication clocks and
   observed source timestamps remain explicit.
+- The USD funding row reads the NY Fed's own published SOFR
+  (`US.NYFED.SOFR_MEDIAN`, the Markets API `percentRate`) and the Board's
+  PRATES IORB (`US.FED.IORB_DIRECT`) as its policy anchor, the same
+  original-publisher rows the money-market atlas serves. The FRED copies
+  (`US.NYFED.SOFR`, `US.FED.IORB`) stay metadata-only and never fill the row.
 - Seven CBUAE reference currencies are acquired through the ordinary source
   worker. Original bytes, source identity, observation date, collection time and
   atomic capture metadata accompany the data. The USD/AED, AED/INR and USD/INR

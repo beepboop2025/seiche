@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -162,3 +162,81 @@ def test_funding_source_failure_does_not_hide_another_currency(monkeypatch):
     assert rows["INR"]["as_of"] == "2026-09-30"
     assert rows["INR"]["evidence"]["knowledge_time"] == row.knowledge_time.isoformat()
     assert rows["INR"]["reason"] is None
+
+
+def _usd_row(instrument_id, role, source, value, day, *, redistribution=None, published=None):
+    from seiche.domain.observation import (
+        CanonicalUnit, ConnectorClassification, DayCountConvention, Observation,
+        QualityState, RateCompounding, RedistributionStatus, StalenessState, evidence_sha256,
+    )
+    event = datetime.fromisoformat(day + "T00:00:00+00:00")
+    publication = datetime.fromisoformat(published) if published else None
+    return Observation(
+        market_id="US-USD", monetary_area_id="US", jurisdiction_codes=("US",),
+        currency="USD", instrument_id=instrument_id, semantic_role=role,
+        value=Decimal(value), canonical_unit=CanonicalUnit.BASIS_POINTS,
+        rate_compounding=RateCompounding.SIMPLE, day_count=DayCountConvention.ACT_360,
+        event_time=event, source_publication_time=publication,
+        knowledge_time=(publication or event) + timedelta(minutes=10),
+        revision_id=f"fixture-{instrument_id}-{day}", source=source,
+        evidence_hash=evidence_sha256(f"{instrument_id}-{day}-{value}"),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=redistribution or RedistributionStatus.ALLOWED,
+        quality=QualityState.VERIFIED, staleness=StalenessState.FRESH,
+    )
+
+
+def test_usd_row_uses_direct_sofr_and_iorb_and_never_the_fred_copies(monkeypatch):
+    """Live state on 2026-11-02: SOFR_MEDIAN 3.94% (10-29) and IORB_DIRECT 3.90%."""
+    from seiche.domain.observation import RedistributionStatus, SemanticRole
+    rows = [
+        _usd_row("US.NYFED.SOFR_MEDIAN", SemanticRole.RATE_MEDIAN, "nyfed_rates", "394",
+                 "2026-10-29", published="2026-10-30T12:00:00+00:00"),
+        _usd_row("US.FED.IORB_DIRECT", SemanticRole.POLICY_TARGET, "fed_prates", "390", "2026-10-29"),
+        # Newer FRED copies stay withheld: metadata-only rows never fill the card.
+        _usd_row("US.NYFED.SOFR", SemanticRole.SECURED_OVERNIGHT, "fred", "399", "2026-10-30",
+                 redistribution=RedistributionStatus.METADATA_ONLY, published="2026-11-02T12:00:00+00:00"),
+        _usd_row("US.FED.IORB", SemanticRole.POLICY_TARGET, "fred", "391", "2026-10-30",
+                 redistribution=RedistributionStatus.METADATA_ONLY),
+    ]
+    requested = {}
+
+    class Repo:
+        def load_observations_as_of(self, market, *args, **kwargs):
+            requested[market] = set(kwargs["instrument_ids"])
+            return [r for r in rows if r.instrument_id in kwargs["instrument_ids"]] if market == "US-USD" else []
+
+    monkeypatch.setattr(desk, "get_repository", lambda: Repo())
+    now = datetime(2026, 11, 2, 8, 29, tzinfo=UTC)
+    usd = next(r for r in desk._funding(now) if r["currency"] == "USD")
+    assert {"US.NYFED.SOFR_MEDIAN", "US.FED.IORB_DIRECT"} <= requested["US-USD"]
+    assert usd["instrument"] == "SOFR_MEDIAN"
+    assert usd["value"] == 3.94 and usd["unit"] == "%"
+    assert usd["as_of"] == "2026-10-29"
+    # Friday's 08:00 New York print is due Monday 13:00 UTC, so Thursday's
+    # observation is still the latest expected publication at 08:29 UTC.
+    assert usd["status"] == "FRESH"
+    assert usd["missed_publication_opportunities"] == 0
+    assert usd["source"] == "nyfed_rates"
+    assert usd["evidence"]["id"] == "US.NYFED.SOFR_MEDIAN"
+    assert usd["evidence"]["redistribution_status"] == "allowed"
+    assert usd["reason"] is None
+
+
+def test_usd_row_stays_unavailable_when_only_fred_copies_exist(monkeypatch):
+    from seiche.domain.observation import RedistributionStatus, SemanticRole
+    rows = [
+        _usd_row("US.NYFED.SOFR", SemanticRole.SECURED_OVERNIGHT, "fred", "399", "2026-10-30",
+                 redistribution=RedistributionStatus.METADATA_ONLY, published="2026-11-02T12:00:00+00:00"),
+        _usd_row("US.FED.IORB", SemanticRole.POLICY_TARGET, "fred", "391", "2026-10-30",
+                 redistribution=RedistributionStatus.METADATA_ONLY),
+    ]
+
+    class Repo:
+        def load_observations_as_of(self, market, *args, **kwargs):
+            return [r for r in rows if r.instrument_id in kwargs["instrument_ids"]] if market == "US-USD" else []
+
+    monkeypatch.setattr(desk, "get_repository", lambda: Repo())
+    usd = next(r for r in desk._funding(datetime(2026, 11, 2, 8, 29, tzinfo=UTC)) if r["currency"] == "USD")
+    assert usd["value"] is None
+    assert usd["status"] == "UNAVAILABLE"
