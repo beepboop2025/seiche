@@ -478,6 +478,8 @@ function AppInner() {
         <br />
         Part of the <a href="https://liquilens.in" style={{ color: "var(--dim)" }}>LiquiLens ecosystem</a>.
         <br />
+        <span className="company-line">Seiche · LIQUILENS PRIVATE LIMITED · registered company in India · DPIIT recognised startup, certificate DIPP290644</span>
+        <br />
         From the same lab: <a href="https://liquilens-undertow.com" style={{ color: "var(--dim)" }}>Undertow</a>, the cross-market liquidity terminal — exit cost at your size, tiers across nine segments, and a sealed record that keeps its own misses. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit. Live on the MARKET tab.
         <br />
         The full editorial wire: <a href="https://myquantdoesntspeakenglish.com/" style={{ color: "var(--dim)" }}>My Quant Doesn’t Speak English</a> consolidates every Seiche, LiquiLens and Undertow dispatch, plus original investigations.
