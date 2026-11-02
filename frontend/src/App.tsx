@@ -484,7 +484,7 @@ function AppInner() {
         <br />
         The full editorial wire: <a href="https://myquantdoesntspeakenglish.com/" style={{ color: "var(--dim)" }}>My Quant Doesn’t Speak English</a> consolidates every Seiche, LiquiLens and Undertow dispatch, plus original investigations.
         <br />
-        Sibling project: <a href="https://palimpsest.info" style={{ color: "var(--dim)" }}>Palimpsest</a>, which works the opposite problem. Seiche exists because the Fed publishes its plumbing every week; Palimpsest measures what happens when a state stops publishing by watching China's information controls. The China desk under Money markets reads its CNY leg from the ECB USD/CNY reference rate; Federal Reserve H.10 CNY values, local benchmark rates and a local-rate regime remain withheld pending redistribution permission.
+        Sibling project: <a href="https://palimpsest.info" style={{ color: "var(--dim)" }}>Palimpsest</a>, which works the opposite problem. Seiche exists because the Fed publishes its plumbing every week; Palimpsest measures what happens when a state stops publishing by watching China's information controls. The China desk under Money markets reads its CNY leg from the ECB USD/CNY reference rate; the Federal Reserve H.10 CNY FX leg, local benchmark rates and a local-rate regime remain withheld pending redistribution permission.
       </div>
     </main>
   );
