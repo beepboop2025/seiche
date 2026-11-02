@@ -162,3 +162,41 @@ test("the whole-atlas allowance remains bounded and cancels an oversized respons
   await assert.rejects(readFundingAtlas(new AbortController().signal),/exceeds the display limit/);
   assert.equal(cancelled,true);
 });
+
+const directAtlas = metrics => ({schema:"seiche.global-money-markets.v1",markets:[{market_id:"US-USD",metrics}]});
+const directReserves = {id:"US.FED.RESERVE_BALANCES_DIRECT",unit:"local_currency_millions",availability:"AVAILABLE",redistribution_status:"allowed",
+  source:"fed_h41",status:"FRESH",cadence:"P1W",asof:"2026-10-28",history:[["2026-10-21",2901000],["2026-10-28",2893770]],
+  attribution:"Source: Board of Governors of the Federal Reserve System, H.4.1",terms_url:"https://www.federalreserve.gov/disclaimer.htm"};
+const directRrp = {id:"US.NYFED.ON_RRP_TAKEUP",unit:"local_currency_millions",availability:"AVAILABLE",redistribution_status:"allowed",
+  source:"nyfed_facilities",status:"FRESH",cadence:"P1D",asof:"2026-10-30",history:[["2026-10-29",0],["2026-10-30",4375]]};
+const chartOf = (specs, id) => specs.find(s => s.id === id);
+
+test("the direct H.4.1 and NY Fed series feed charts 03 and 05 in billions, with the H.4.1 citation and terms", () => {
+  const specs = fundingSpecs(atlasFundingModels(directAtlas([directReserves, directRrp])), null);
+  const reserves = chartOf(specs, "reserve-balances"), rrp = chartOf(specs, "reverse-repo");
+  assert.equal(reserves.series[0].points.at(-1).y, 2893.77);
+  assert.equal(rrp.series[0].points.at(-1).y, 4.375);
+  assert.equal(rrp.series[0].points[0].y, 0, "zero take-up is an observation");
+  assert.match(reserves.note, /Source: Board of Governors of the Federal Reserve System, H\.4\.1\./);
+  assert.ok(reserves.sources.some(s => s.url === "https://www.federalreserve.gov/disclaimer.htm" && /terms of use/.test(s.label)));
+  assert.doesNotMatch(rrp.note, /Board of Governors/);
+});
+test("the direct series lead a published copy, and FRED copies never enter the charts", () => {
+  const models = mergeFundingModels(publishedFundingModels(published({liquidity:{columns:["date","reserves_b"],rows:[["2026-10-28",2000]]}})),
+    atlasFundingModels(directAtlas([directReserves])));
+  assert.equal(chartOf(fundingSpecs(models, null), "reserve-balances").series[0].points.at(-1).y, 2893.77);
+  const fredCopies = [{...directReserves, id:"US.FED.RESERVE_BALANCES", source:"fred_weekly"}, {...directRrp, id:"US.NYFED.RRPONTSYD", source:"fred_daily"}];
+  assert.equal(atlasFundingModels(directAtlas(fredCopies)).size, 0);
+  for (const row of [{...directReserves, unit:"$B"}, {...directReserves, redistribution_status:"metadata_only"}, {...directReserves, availability:"RESTRICTED"}, {...directReserves, asof:"2026-10-29"}])
+    assert.equal(atlasFundingModels(directAtlas([row])).has("RESERVES_DIRECT"), false);
+  assert.equal(atlasFundingModels(directAtlas([{...directReserves, terms_url:"http://example.invalid/terms"}])).get("RESERVES_DIRECT").terms, undefined);
+});
+test("charts without a public history say why, naming the direct source that is due", () => {
+  const specs = fundingSpecs(new Map(), 365);
+  assert.match(chartOf(specs, "reserve-balances").empty, /^Withheld: the FRED copy is not cleared for republication; the Federal Reserve's own H\.4\.1 series arrives in the next release\./);
+  assert.match(chartOf(specs, "reverse-repo").empty, /^Withheld: the FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release\./);
+  for (const id of ["commercial-paper-premium", "treasury-curve", "fed-balance-sheet"])
+    assert.match(chartOf(specs, id).empty, /^Withheld: the FRED cop(y|ies) .* not cleared for republication, and no direct source is served yet\. Missing data is not zero\.$/, id);
+  for (const id of ["funding-corridor", "funding-spreads", "treasury-cash", "overnight-repricing", "mmf-repo-allocation"])
+    assert.equal(chartOf(specs, id).empty, undefined, id);
+});

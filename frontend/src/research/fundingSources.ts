@@ -75,6 +75,9 @@ export function publishedFundingModels(snapshot: unknown): Map<string, EconomicS
   }
   return result;
 }
+/** An https link with a plain host and no credentials; anything else is not rendered. */
+const httpsTerms = (value: unknown) => typeof value === "string"
+  && /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:\/[^\s"'<>]*)?$/.test(value) ? value : undefined;
 export function atlasFundingModels(atlas: unknown): Map<string, EconomicSeries> {
   const result = new Map<string, EconomicSeries>();
   if (!record(atlas) || atlas.schema !== "seiche.global-money-markets.v1" || !Array.isArray(atlas.markets)) return result;
@@ -94,6 +97,18 @@ export function atlasFundingModels(atlas: unknown): Map<string, EconomicSeries> 
       && tga.unit === "local_currency_millions" && Array.isArray(tga.history)) {
     const item = model("TGA_LONG", "$M", tga.history, String(tga.source), "US.TREASURY.GOVERNMENT_CASH", String(tga.status), String(tga.cadence), "https://api.seiche.info/api/v2/money-markets");
     if (item && item.asOf === tga.asof) result.set("TGA_LONG", item);
+  }
+  // The publishers' own reserve balances (Board H.4.1 week average) and ON RRP take-up, in USD
+  // millions like the Treasury cash row, with any citation they carry. Their FRED copies stay
+  // metadata-only and are never mapped here.
+  for (const [key, id] of [["RESERVES_DIRECT", "US.FED.RESERVE_BALANCES_DIRECT"], ["ON_RRP_DIRECT", "US.NYFED.ON_RRP_TAKEUP"]] as const) {
+    const row = market.metrics.find(item => record(item) && item.id === id);
+    if (!record(row) || row.availability !== "AVAILABLE" || row.redistribution_status !== "allowed"
+        || row.unit !== "local_currency_millions" || !Array.isArray(row.history)) continue;
+    const item = model(key, "$M", row.history, String(row.source), id, String(row.status), String(row.cadence), "https://api.seiche.info/api/v2/money-markets");
+    const attribution = typeof row.attribution === "string" && row.attribution ? row.attribution : undefined;
+    const terms = httpsTerms(row.terms_url);
+    if (item && item.asOf === row.asof) result.set(key, {...item, ...(attribution ? {attribution} : {}), ...(terms ? {terms} : {})});
   }
   return result;
 }
