@@ -336,6 +336,18 @@ PACK = MarketPack(
             _LCY_M,
             1000,
         ),
+        # Declared after SRF on purpose: pack order is the kernel's role
+        # priority, so facility_usage keeps reading SRF take-up. ON RRP comes
+        # from the same NY Fed Markets API adapter, rights and clock.
+        InstrumentSpec(
+            "US.NYFED.ON_RRP_TAKEUP",
+            "ON_RRP_ACCEPTED",
+            SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP,
+            "nyfed_facilities",
+            "USD billions",
+            _LCY_M,
+            1000,
+        ),
         *_nyfed_distribution("SOFR"),
         InstrumentSpec(
             "US.NYFED.SOFR_AVERAGE_30D",

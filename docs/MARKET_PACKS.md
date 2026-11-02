@@ -242,6 +242,22 @@ the pack's `metadata_only` redistribution status. See the
 Licensed and tenant adapters remain declarations until an entitled deployment
 supplies credentials/data. Their absence is a capability state, never a zero.
 
+### US direct facility results (2026-11-02)
+
+The `nyfed_facilities` adapter reads two NY Fed Markets API result feeds under
+the same adapter record, rights, clock and validation: repo operations
+(`/api/rp/repo/all/results/last/N.json`) give `US.NYFED.SRF_TAKEUP`, and
+reverse repo operations (`/api/rp/reverserepo/all/results/last/N.json`) give
+`US.NYFED.ON_RRP_TAKEUP` (mnemonic `ON_RRP_ACCEPTED`, USD billions at source,
+local-currency millions canonical). ON RRP is the sum of accepted overnight
+reverse repos on each operation date, including the occasional small value
+exercise, which is the published daily total of overnight reverse repurchase
+agreements; term operations and other operation types are excluded. A date
+with any unreported accepted amount is withheld, never zero-filled. ON RRP is
+declared after SRF, so pack order keeps SRF as the kernel's facility take-up.
+A failed fetch of either feed faults the whole adapter run rather than leaving
+one series silently stale. The FRED copy (`RRPONTSYD`) remains withheld.
+
 ## Deliberate trade-offs and validation boundary
 
 - v1 stays US-centred until parity migration completes. That preserves users but
