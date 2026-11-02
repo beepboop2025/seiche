@@ -55,6 +55,10 @@ _ACT_365 = DayCountConvention.ACT_365
 CURVE_TENORS = (1, 2, 3, 5, 7, 10, 14, 30, 40)
 BENCHMARK_TENORS = (1, 2, 3, 5, 7, 10, 14, 15, 30, 40)
 RBI_HOME_TENORS = (3, 5, 10, 15, 30)
+# Tenors of the RBI/GoI issuance calendar for October 2026 to March 2027
+# (press release 2026-2027/1190, prid=63668): 3, 5, 7, 10, 15, 30, 40 and
+# 50 years. Sovereign green bonds are a separate security type, not a slot.
+AUCTION_TENORS = (3, 5, 7, 10, 15, 30, 40, 50)
 # RBI conducts these operations only on some days. A blank MMO row means no
 # operation that day, so the latest row is the latest operation, not a gap.
 EVENT_OPERATIONS = ("VRR_TODAY", "VRRR_TODAY", "FIXED_REPO_TODAY", "FIXED_REVERSE_REPO_TODAY")
@@ -216,8 +220,11 @@ PACK = MarketPack(
           for tenor in BENCHMARK_TENORS),
         *(_yield(f"IN.RBI.SGL_MONTHLY_{tenor}Y", f"RBI_SGL_MONTHLY_{tenor}Y", "rbi_monthly_curve")
           for tenor in CURVE_TENORS),
-        *(_yield(f"IN.RBI.GSEC_AUCTION_{tenor}Y", f"RBI_GSEC_AUCTION_{tenor}Y", "rbi_auctions")
-          for tenor in CURVE_TENORS),
+        # The calendar rotates each tenor through the weekly auctions once
+        # every four weeks, so one tenor's native cadence is four weeks.
+        *(replace(_yield(f"IN.RBI.GSEC_AUCTION_{tenor}Y", f"RBI_GSEC_AUCTION_{tenor}Y", "rbi_auctions"),
+                  observation_cadence="P4W")
+          for tenor in AUCTION_TENORS),
         *(_yield(f"IN.CCIL.ZERO_{tenor}Y", f"CCIL_ZERO_{tenor}Y", "ccil_curve")
           for tenor in CURVE_TENORS),
         rate_instrument("IN.MARKET.FX_FORWARD_BASIS", "INR_FX_BASIS", SemanticRole.FX_SWAP_BASIS, "licensed_inr_market", _ACT_365),

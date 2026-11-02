@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from seiche.domain.observation import QualityState
-from seiche.markets.india_inr.pack import RBI_HOME_TENORS, CURVE_TENORS
+from seiche.markets.india_inr.pack import AUCTION_TENORS, CURVE_TENORS, RBI_HOME_TENORS
 from seiche.sources.canonical import FetchedDocument, ParsedPoint, PublicationTimePolicy, get_documents
 
 MMO_URL = "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx/Statistics.aspx"
@@ -28,7 +28,17 @@ HOME_URL = "https://www.rbi.org.in/"
 RATES_URL = "https://www.rbi.org.in/Scripts/BS_NSDPDisplay.aspx?param=4"
 POLICY_URL = "https://www.rbi.org.in/Scripts/annualpolicy.aspx"
 RSS_URL = "https://www.rbi.org.in/pressreleases_rss.xml"
-AUCTION_REFERENCE_URL = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63517"
+# The press-release listing carries roughly a week of titled releases; the RSS
+# feed carries only the latest ten, which a busy release day can roll past.
+RELEASES_URL = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx"
+AUCTION_TITLE = "Government Stock - Full Auction Results"
+# Named, dated full results. 63517 (4 Sep 2026) preserves the observable 40Y
+# auction. 63775 (9 Oct 2026: 15Y and 50Y) and 63889 (30 Oct 2026: 3Y, 7Y, 30Y
+# and a 30Y green bond) are the latest results of their calendar buckets that
+# the former validator rejected. None becomes current merely by refetching.
+AUCTION_REFERENCE_PRIDS = ("63517", "63775", "63889")
+AUCTION_REFERENCE_URL = f"{RELEASES_URL}?prid=63517"
+MAX_DISCOVERED_AUCTIONS = 4
 
 
 class _ReportHTML(HTMLParser):
@@ -420,24 +430,67 @@ def parse_money_market_document(document):
     return tuple(by_event.values())
 
 
+def _release_prid(url: str) -> str | None:
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or parsed.hostname not in {"www.rbi.org.in", "rbi.org.in"}
+            or parsed.path.lower() != "/scripts/bs_pressreleasedisplay.aspx"):
+        return None
+    match = re.fullmatch(r"prid=(\d+)", parsed.query)
+    return match[1] if match else None
+
+
+def _feed_release_url(prid: str) -> str:
+    # The form the release feed links to. Feed and listing captures of one
+    # release share this row evidence, so neither looks like a revision.
+    return f"https://www.rbi.org.in/scripts/BS_PressReleaseDisplay.aspx?prid={prid}"
+
+
 async def fetch_auctions(client):
-    # A named, dated bootstrap reference preserves the observable 40Y auction
-    # until newer full results enter the rolling official feed. It never
-    # becomes a current daily quote merely because it is fetched again.
-    return await get_documents(client, (("rbi_auction_rss", RSS_URL, None),
-                                        ("rbi_auction_reference", AUCTION_REFERENCE_URL, None)))
+    """Full government-stock auction results from the feed, listing and references.
+
+    The feed supplies a native publication clock but rolls after ten
+    releases. The dated listing keeps about a week of titles, so a result the
+    feed rolled past is still found. Discovery is bounded, follows only RBI
+    release links titled as full auction results, and never fetches one
+    release twice in a capture.
+    """
+    feed, index = await get_documents(client, (("rbi_auction_rss", RSS_URL, None),
+                                               ("rbi_auction_index", RELEASES_URL, None)))
+    known = set(AUCTION_REFERENCE_PRIDS)
+    known.update(prid for title, url, *_ in _rss_items(feed)
+                 if title == AUCTION_TITLE and (prid := _release_prid(url)) is not None)
+    discovered = []
+    text = index.payload.decode("utf-8-sig", errors="replace")
+    # Relative or absolute links; _release_prid admits only RBI release URLs.
+    for href, label in re.findall(r"<a\b[^>]*href=[\"']?([^\"'\s>]*BS_PressReleaseDisplay\.aspx\?prid=\d+)[\"']?[^>]*>(.*?)</a>",
+                                  text, re.I | re.S):
+        prid = _release_prid(urljoin(RELEASES_URL, html.unescape(href)))
+        if _text(label) == AUCTION_TITLE and prid is not None and prid not in known and prid not in discovered:
+            discovered.append(prid)
+    requests = [("rbi_auction_release", f"{RELEASES_URL}?prid={prid}", None)
+                for prid in discovered[:MAX_DISCOVERED_AUCTIONS]]
+    requests += [("rbi_auction_reference", f"{RELEASES_URL}?prid={prid}", None)
+                 for prid in AUCTION_REFERENCE_PRIDS]
+    return (feed, index, *await get_documents(client, tuple(requests)))
+
+
+# A conventional dated security, new or reissued.
+_CONVENTIONAL_SECURITY = re.compile(r"(?:New|\d+(?:\.\d+)?%)\s+GS\s+(\d{4})")
+# Other Government of India securities that can share a mixed auction:
+# sovereign green bonds and floating rate bonds. They are identified, and
+# kept out of the conventional slots because their yields are not comparable.
+_OTHER_GOI_SECURITY = re.compile(r"(?:(?:New|\d+(?:\.\d+)?%)\s+)?GOI\s+(?:SGrB|FRB)\s+\d{4}", re.I)
 
 
 def _auction_points(text, source_url):
     plain = _text(text)
-    if "Government Stock - Full Auction Results" not in plain:
+    if AUCTION_TITLE not in plain:
         return ()
     stamp = re.search(r"Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})", plain)
     day = _day(stamp[1]) if stamp else None
     if day is None:
         raise ValueError("RBI government auction date is missing")
     securities = []
-    out = []
     cut_off = False
     for _, cells, _ in _rows(text):
         if cells and cells[0] == "Auction Results":
@@ -445,30 +498,52 @@ def _auction_points(text, source_url):
         if any("Cut-off" in cell for cell in cells):
             cut_off = True
         quotes = [re.search(r"\(YTM:\s*(\d+(?:\.\d+)?)%\)", cell) for cell in cells]
-        if cut_off and securities and len(quotes) == len(securities) and all(quotes):
-            for security, quote in zip(securities, quotes):
-                maturity = re.fullmatch(r"(?:New|\d+(?:\.\d+)?%)\s+GS\s+(\d{4})", security)
-                if maturity is None:
-                    raise ValueError("RBI auction security identity is unrecognized")
-                tenor = int(maturity[1]) - day.year
-                # Separate primary-auction series: approximate year slot,
-                # never used to fill a daily or monthly secondary-market node.
-                if tenor in CURVE_TENORS:
-                    out.append(_point(f"IN.RBI.GSEC_AUCTION_{tenor}Y", day, Decimal(quote[1]),
-                                      [source_url, security, quote[0]], revision_id=f"auction:{security}:prid:{source_url.rsplit('=', 1)[-1]}",
-                                      publication_time_policy=PublicationTimePolicy.UNKNOWN))
-            break
-    if not out:
-        raise ValueError("RBI full auction results contain no recognized cut-off yields")
-    return tuple(out)
+        if not (cut_off and securities and len(quotes) == len(securities) and all(quotes)):
+            continue
+        conventional = {}
+        for index, security in enumerate(securities):
+            maturity = _CONVENTIONAL_SECURITY.fullmatch(security)
+            if maturity is not None:
+                conventional[index] = int(maturity[1]) - day.year
+            elif not _OTHER_GOI_SECURITY.fullmatch(security):
+                raise ValueError("RBI auction security identity is unrecognized")
+        # Separate primary-auction series by approximate calendar tenor. A new
+        # issue sits at its tenor; a reissue after the calendar year turns sits
+        # one year short of it. Exact matches claim a slot first, and other
+        # maturities stay outside the slots rather than being relabelled. The
+        # named security is retained, and no daily or monthly node is filled.
+        slots = {}
+        for offset in (0, 1):
+            for index, years in conventional.items():
+                tenor = years + offset
+                if index not in slots and tenor in AUCTION_TENORS and tenor not in slots.values():
+                    slots[index] = tenor
+        prid = source_url.rsplit("=", 1)[-1]
+        # The release is dated by its own "Date :" stamp. Without a release
+        # instant the canonical clock is the end of that publication day.
+        return tuple(
+            _point(f"IN.RBI.GSEC_AUCTION_{slots[index]}Y", day, Decimal(quotes[index][1]),
+                   [source_url, securities[index], quotes[index][0]],
+                   revision_id=f"auction:{securities[index]}:prid:{prid}")
+            for index in sorted(slots))
+    raise ValueError("RBI full auction results contain no recognized cut-off yields")
 
 
 def parse_auctions(document):
+    if document.label == "rbi_auction_index":
+        return ()
+    if document.label == "rbi_auction_release":
+        prid = _release_prid(document.source_uri)
+        if prid is None:
+            raise ValueError("RBI auction release is not an RBI press release")
+        return _auction_points(document.payload.decode("utf-8-sig"), _feed_release_url(prid))
     if document.label != "rbi_auction_rss":
         return _auction_points(document.payload.decode("utf-8-sig"), document.source_uri)
     out = []
     for title, url, body, stamp in _rss_items(document):
-        if title != "Government Stock - Full Auction Results":
+        prid = _release_prid(url)
+        # A named reference is captured only through its own request.
+        if title != AUCTION_TITLE or prid is None or prid in AUCTION_REFERENCE_PRIDS:
             continue
         published = parsedate_to_datetime(stamp)
         prefix = f"Date : {published:%b %d, %Y} {title}"
@@ -478,7 +553,7 @@ def parse_auctions(document):
         out.extend(replace(point, source_publication_time=published.astimezone(UTC),
                            publication_time_policy=PublicationTimePolicy.INFER,
                            quality=QualityState.ESTIMATED)
-                   for point in _auction_points(prefix + body, url))
+                   for point in _auction_points(prefix + body, _feed_release_url(prid)))
     return tuple(out)
 
 

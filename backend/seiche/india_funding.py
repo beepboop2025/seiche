@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from seiche.domain.observation import Observation, RedistributionStatus
-from seiche.markets.india_inr.pack import PACK, BENCHMARK_TENORS, CURVE_TENORS
+from seiche.markets.india_inr.pack import PACK, AUCTION_TENORS, BENCHMARK_TENORS, CURVE_TENORS
 from seiche.repository import get_repository
 
 SCHEMA = "seiche.india-funding-curve.v1"
@@ -25,7 +25,7 @@ CAVEATS = [
     "Concurrent absorption and curve movement support a possible mechanism, not a causal finding or prediction.",
     "Missing operation amounts are unknown, not zero. Missing tenors are not interpolated or extrapolated.",
     "Monthly SGL maturity yields are a separate RBI report, not daily benchmark yields or a daily trading signal. Archive capture does not establish historical first-seen vintages.",
-    "Government-bond auction cut-off yields are primary-issuance references. The 40Y auction reference is not a daily secondary-market observation.",
+    "Government-bond auction cut-off yields are primary-issuance references in the issuance calendar's 3/5/7/10/15/30/40/50Y buckets, never daily secondary-market observations. Sovereign green bonds in a mixed auction are kept out of these conventional slots.",
     "Policy decisions and RBI VRR/VRRR operations are event-dated: a row exists only when RBI acts, so an unchanged setting or a day without an operation is not a missed publication.",
 ]
 
@@ -245,7 +245,7 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
         "money_market": ["IN.MARKET.CALL_WAR", "IN.RBI.TREPS_WAR", "IN.RBI.MARKET_REPO_WAR", *[f"IN.RBI.TBILL_{d}D_WEEKLY" for d in (91, 182, 364)],
                          *[f"IN.RBI.{k}_RATE_{b}" for k in ("CD", "CP") for b in ("LOW", "HIGH")]],
         "liquidity": [key for key, m in metrics.items() if m["unit"] == "INR crore"],
-        "bond_auctions": [f"IN.RBI.GSEC_AUCTION_{t}Y" for t in CURVE_TENORS],
+        "bond_auctions": [f"IN.RBI.GSEC_AUCTION_{t}Y" for t in AUCTION_TENORS],
     }
     return {"schema": SCHEMA, "market_id": "IN-INR", "generated_at": now.isoformat(),
             "asof": max(latest_dates, default=None), "status": "partial" if available else "unavailable",
