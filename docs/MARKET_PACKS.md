@@ -476,6 +476,31 @@ until the pin is reviewed. After release, a one-off
 `seiche market-backfill --market US-USD` gives the new series history; IOER
 rows never fall in a routine window.
 
+### US direct policy settings from the NY Fed (0.17.0 candidate, Stage 2b)
+
+The existing NY Fed Markets API adapters and terms also serve two policy
+settings as context. `nyfed_unsecured_rates` reads the FOMC federal funds
+target range that every EFFR row reports (`targetRateFrom`, `targetRateTo`) as
+`US.NYFED.FFR_TARGET_RANGE_LOWER` and `_UPPER`, the numbers FRED republishes
+as DFEDTARL and DFEDTARU. A row without either bound carries no range; one
+bound alone, an inverted range or one wider than 100 bp fails the run closed.
+The evidence keeps only the date and the bound, so a revised rate or volume on
+the same row is not a revised range. The range is parsed apart from the
+distribution, so the signed NY Fed history archive keeps its fixed
+instruments. `nyfed_facilities` reads the Standing Repo Facility rate
+(`US.NYFED.SRF_RATE`) from the overnight repo results: `percentOfferingRate`
+under full allotment (from 2025-12-11) and `minimumBidRate` in the earlier
+multiple-price auctions. A date is published only when every overnight
+operation states the same rate; term operations and repos before the SRF's
+first operation on 2021-07-29 are excluded.
+
+Their roles (`POLICY_RANGE_LOWER`, `POLICY_RANGE_UPPER`,
+`STANDING_REPO_RATE`) are not policy-anchor roles and no capability reads
+them, so IORB stays the atlas anchor and the SOFR minus IORB spread is
+unchanged even though IORB's publication clock is unknown. The FRED copy
+(`US.FED.POLICY_CEILING`, DFEDTARU) stays metadata-only, and the
+`us_policy_floor` gap stays open.
+
 ## Deliberate trade-offs and validation boundary
 
 - v1 stays US-centred until parity migration completes. That preserves users but

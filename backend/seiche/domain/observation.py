@@ -49,6 +49,11 @@ class SemanticRole(StrEnum):
     CENTRAL_BANK_BALANCE_SHEET_ITEM = "CENTRAL_BANK_BALANCE_SHEET_ITEM"
     # An administered rate the authority has replaced: dated history only.
     RETIRED_ADMINISTERED_RATE = "RETIRED_ADMINISTERED_RATE"
+    # Policy settings shown as context, never a policy anchor: the bounds of a
+    # policy-rate target range and a standing repo facility's rate.
+    POLICY_RANGE_LOWER = "POLICY_RANGE_LOWER"
+    POLICY_RANGE_UPPER = "POLICY_RANGE_UPPER"
+    STANDING_REPO_RATE = "STANDING_REPO_RATE"
     SYSTEM_LIQUIDITY = "SYSTEM_LIQUIDITY"
     CENTRAL_BANK_FACILITY_RATE = "CENTRAL_BANK_FACILITY_RATE"
     CENTRAL_BANK_FACILITY_TAKEUP = "CENTRAL_BANK_FACILITY_TAKEUP"
@@ -153,6 +158,9 @@ RATE_ROLES = frozenset(
         SemanticRole.CD_3M,
         SemanticRole.CENTRAL_BANK_FACILITY_RATE,
         SemanticRole.RETIRED_ADMINISTERED_RATE,
+        SemanticRole.POLICY_RANGE_LOWER,
+        SemanticRole.POLICY_RANGE_UPPER,
+        SemanticRole.STANDING_REPO_RATE,
         SemanticRole.RATE_P01,
         SemanticRole.RATE_P25,
         SemanticRole.RATE_MEDIAN,

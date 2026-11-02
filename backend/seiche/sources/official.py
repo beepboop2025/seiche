@@ -1063,6 +1063,155 @@ def parse_nyfed_unsecured_rates(
     )
 
 
+# The FOMC's federal funds target range, as the NY Fed reports it on every EFFR
+# row (``targetRateFrom`` and ``targetRateTo``). Context only: no capability
+# reads these roles and neither bound becomes the policy anchor. FRED's
+# DFEDTARL and DFEDTARU copies stay metadata-only.
+NYFED_TARGET_RANGE_INSTRUMENTS = (
+    ("targetRateFrom", "US.NYFED.FFR_TARGET_RANGE_LOWER"),
+    ("targetRateTo", "US.NYFED.FFR_TARGET_RANGE_UPPER"),
+)
+_MAX_TARGET_RANGE_WIDTH = Decimal("1")
+
+
+def parse_nyfed_target_range(
+    document: FetchedDocument,
+    *,
+    publication_time_policy: PublicationTimePolicy = PublicationTimePolicy.INFER,
+) -> tuple[ParsedPoint, ...]:
+    """The federal funds target range bounds reported on the NY Fed's EFFR rows.
+
+    A row without either bound carries no range and is skipped. One bound
+    alone, an inverted range or one wider than 100 bp fails the run closed.
+    Evidence keeps only the date, the type and the bound, so a revision of the
+    rate or its volume on the same row is not a revision of the range. The
+    signed NY Fed history archive never calls this parser, so its fixed
+    instrument set is unchanged.
+    """
+
+    publication_time_policy = PublicationTimePolicy(publication_time_policy)
+    payload = json.loads(document.payload)
+    rows = payload.get("refRates")
+    if not isinstance(rows, list):
+        raise ValueError("NY Fed unsecured response has no refRates list")
+    points: list[ParsedPoint] = []
+    seen: set[date] = set()
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("type") or "").strip().upper() != "EFFR":
+            continue
+        event_day = _date(row.get("effectiveDate"), "%Y-%m-%d")
+        if event_day is None:
+            continue
+        lower, upper = (_number(row.get(field)) for field, _ in NYFED_TARGET_RANGE_INSTRUMENTS)
+        if lower is None and upper is None:
+            continue
+        if (
+            lower is None
+            or upper is None
+            or not Decimal(0) <= upper - lower <= _MAX_TARGET_RANGE_WIDTH
+        ):
+            raise ValueError(
+                f"NY Fed EFFR target range for {event_day.isoformat()} is "
+                "incomplete, inverted or wider than 100 bp"
+            )
+        if event_day in seen:
+            raise ValueError(
+                "NY Fed unsecured response repeats the EFFR target range for "
+                f"{event_day.isoformat()}"
+            )
+        seen.add(event_day)
+        for (field, instrument), value in zip(NYFED_TARGET_RANGE_INSTRUMENTS, (lower, upper)):
+            row_evidence = _row_evidence(
+                f"EFFR.{field}",
+                {"effectiveDate": row.get("effectiveDate"), "type": "EFFR", field: row.get(field)},
+            )
+            points.append(
+                ParsedPoint(
+                    instrument,
+                    event_day,
+                    value,
+                    row_evidence,
+                    publication_time_policy=publication_time_policy,
+                    revision_id=(
+                        f"nyfed:EFFR:{field}:{event_day.isoformat()}:"
+                        f"{hashlib.sha256(row_evidence).hexdigest()[:16]}"
+                    ),
+                )
+            )
+    return tuple(sorted(points, key=lambda point: (point.event_time, point.instrument_id)))
+
+
+# The Standing Repo Facility rate each overnight repo operation method states:
+# a fixed offering rate under full allotment (from 2025-12-11) and a minimum
+# bid rate in the earlier multiple-price auctions. The FOMC established the
+# SRF on 2021-07-28; earlier overnight repos were temporary operations.
+_SRF_RATE_FIELDS = {"Full Allotment": "percentOfferingRate", "Multiple Price": "minimumBidRate"}
+_SRF_FIRST_OPERATION = date(2021, 7, 29)
+_MAX_SRF_RATE = Decimal("50")
+
+
+def _parse_nyfed_srf_rate(operations: list[Any]) -> list[ParsedPoint]:
+    """One SRF rate per operation date, from every overnight repo operation.
+
+    A date is published only when every overnight repo operation on it states a
+    rate in its method's field and all of them agree; otherwise the date is
+    withheld, never inferred. Term operations are not the SRF.
+    """
+
+    grouped: dict[date, list[dict[str, Any]]] = {}
+    for operation in operations:
+        if (
+            not isinstance(operation, dict)
+            or str(operation.get("operationType") or "").strip() != "Repo"
+            or str(operation.get("term") or "").strip() != "Overnight"
+        ):
+            continue
+        event_day = _date(operation.get("operationDate"), "%Y-%m-%d")
+        if event_day is None or event_day < _SRF_FIRST_OPERATION:
+            continue
+        grouped.setdefault(event_day, []).append(operation)
+    points = []
+    for event_day, rows in sorted(grouped.items()):
+        rates: set[Decimal] = set()
+        stated = []
+        complete = True
+        for operation in sorted(rows, key=lambda item: str(item.get("operationId") or "")):
+            field = _SRF_RATE_FIELDS.get(str(operation.get("operationMethod") or "").strip())
+            details = operation.get("details")
+            if field is None or not isinstance(details, list) or not details:
+                complete = False
+                break
+            values = [
+                _number(detail.get(field)) if isinstance(detail, dict) else None
+                for detail in details
+            ]
+            if any(value is None for value in values):
+                complete = False
+                break
+            rates.update(values)  # type: ignore[arg-type]
+            stated.append({
+                "operationId": operation.get("operationId"),
+                "operationMethod": operation.get("operationMethod"),
+                "field": field,
+                "rates": [detail.get(field) for detail in details],
+            })
+        if not complete or len(rates) != 1:
+            continue
+        (rate,) = rates
+        if not Decimal(0) <= rate < _MAX_SRF_RATE:
+            raise ValueError(f"NY Fed SRF rate for {event_day.isoformat()} is out of bounds")
+        points.append(
+            ParsedPoint(
+                "US.NYFED.SRF_RATE",
+                event_day,
+                rate,
+                _row_evidence("repo.overnight.srf_rate", {"operationDate": event_day.isoformat(),
+                                                          "operations": stated}),
+            )
+        )
+    return points
+
+
 NYFED_REPO_RESULTS_URI = "https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json"
 NYFED_REVERSE_REPO_RESULTS_URI = (
     "https://markets.newyorkfed.org/api/rp/reverserepo/all/results/last/{count}.json"
@@ -1154,6 +1303,7 @@ def parse_nyfed_facilities(document: FetchedDocument) -> tuple[ParsedPoint, ...]
                 _row_evidence("totalAmtAccepted", rows),
             )
         )
+    points.extend(_parse_nyfed_srf_rate(operations))
     if not points:
         raise ValueError("NY Fed response contains no explicit facility results")
     return tuple(points)
@@ -2501,13 +2651,21 @@ def build_official_adapters(
             ),
         )
 
+    def parse_nyfed_unsecured_with_target_range(document):
+        # The EFFR rows also carry the FOMC target range. It is parsed apart
+        # so the signed NY Fed history archive keeps its fixed instruments.
+        return (
+            *parse_nyfed_unsecured_rates(document),
+            *parse_nyfed_target_range(document),
+        )
+
     add("US-USD", "nyfed_rates", "nyfed_rates", fetch_nyfed_rates, parse_nyfed_rates)
     add(
         "US-USD",
         "nyfed_unsecured_rates",
         "nyfed_unsecured_rates",
         fetch_nyfed_unsecured_rates,
-        parse_nyfed_unsecured_rates,
+        parse_nyfed_unsecured_with_target_range,
     )
     add(
         "US-USD",

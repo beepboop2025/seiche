@@ -587,6 +587,25 @@ PACK = MarketPack(
             _LCY_M,
             1000,
         ),
+        # Policy settings as the NY Fed publishes them, read direct: the FOMC
+        # target range from every EFFR row and the SRF rate from the overnight
+        # repo results. Their roles are context only, so no capability reads
+        # them and IORB stays the policy anchor. The FRED target-range copy
+        # (US.FED.POLICY_CEILING, DFEDTARU) stays metadata-only.
+        InstrumentSpec(
+            "US.NYFED.FFR_TARGET_RANGE_LOWER", "FFR_TARGET_RANGE_LOWER",
+            SemanticRole.POLICY_RANGE_LOWER, "nyfed_unsecured_rates",
+            "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.FFR_TARGET_RANGE_UPPER", "FFR_TARGET_RANGE_UPPER",
+            SemanticRole.POLICY_RANGE_UPPER, "nyfed_unsecured_rates",
+            "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.SRF_RATE", "SRF_RATE", SemanticRole.STANDING_REPO_RATE,
+            "nyfed_facilities", "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ),
         *_treasury_par_yields(),
         *_fed_h15(),
         *_nyfed_distribution("SOFR"),
