@@ -51,8 +51,11 @@ test('reserve balances and ON RRP name the coming direct source until it is serv
 
 test('the direct H.4.1 and NY Fed series fill the cards in billions with their dates and attribution', () => {
   const market = us();
-  market.metrics.push(direct(RESERVES_DIRECT_ID, 2893770, '2026-10-28'), direct(ON_RRP_DIRECT_ID, 1234, '2026-10-30'));
+  market.metrics.push(direct(RESERVES_DIRECT_ID, 2893770, '2026-10-28', {terms_url: 'https://www.federalreserve.gov/disclaimer.htm'}),
+    direct(ON_RRP_DIRECT_ID, 1234, '2026-10-30'));
   const {'Reserve balances': reserves, 'ON RRP': rrp} = cards(market);
+  assert.equal(reserves.terms, 'https://www.federalreserve.gov/disclaimer.htm', 'the cited source keeps its terms beside the value');
+  assert.equal(rrp.terms, undefined);
   assert.deepEqual([reserves.value, reserves.note, reserves.state],
     ['$2,893.8bn', '2026-10-28 · Source: Board of Governors of the Federal Reserve System, H.4.1', 'live']);
   assert.deepEqual([rrp.value, rrp.note, rrp.state],
@@ -62,8 +65,9 @@ test('the direct H.4.1 and NY Fed series fill the cards in billions with their d
     assert.equal(cards(small)['ON RRP'].value, shown, 'zero and small take-up are observations');
   }
   const attributed = us();
-  attributed.metrics.push(direct(RESERVES_DIRECT_ID, 2893770, '2026-10-28', {attribution: 'Source: H.4.1 as served'}));
+  attributed.metrics.push(direct(RESERVES_DIRECT_ID, 2893770, '2026-10-28', {attribution: 'Source: H.4.1 as served', terms_url: 'http://example.invalid/terms'}));
   assert.equal(cards(attributed)['Reserve balances'].note, '2026-10-28 · Source: H.4.1 as served');
+  assert.equal(cards(attributed)['Reserve balances'].terms, undefined, 'only https terms links are rendered');
 });
 
 test('a direct series without permission, a date or the expected unit shows no value', () => {
@@ -109,4 +113,5 @@ test('the Observatory renders these cards and no longer reads FRED keys for them
   assert.match(source, /const cards = observatoryCards\(cardSource\);/);
   assert.match(source, /if \(market\) cardSource = \{status: 'ready', market\};/);
   assert.doesNotMatch(source, /latest\('WRESBAL'\)|latest\('RRPONTSYD'\)|No dated observation|No matching dates/);
+  assert.match(source, /item\.querySelector\('small'\)\?\.append\(' · Terms: ', terms\);/);
 });

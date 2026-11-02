@@ -9,7 +9,8 @@ import {qualifiedPolicySpread} from "../usdFunding";
  */
 export type AtlasRead = {status: "loading"} | {status: "failed"} | {status: "ready"; market: unknown};
 export type CardState = "live" | "loading" | "withheld" | "unavailable";
-export type ObservatoryCard = {label: string; value: string; note: string; state: CardState};
+/** `terms` is the source's terms URL, shown with the value when the source asks to be cited. */
+export type ObservatoryCard = {label: string; value: string; note: string; state: CardState; terms?: string};
 
 export const RESERVES_DIRECT_ID = "US.FED.RESERVE_BALANCES_DIRECT";
 export const ON_RRP_DIRECT_ID = "US.NYFED.ON_RRP_TAKEUP";
@@ -26,6 +27,11 @@ export function atlasUsMarket(atlas: unknown): Row | null {
   if (!record(atlas) || atlas.schema !== "seiche.global-money-markets.v1" || !Array.isArray(atlas.markets)) return null;
   const market = atlas.markets.find(row => record(row) && row.market_id === "US-USD");
   return record(market) && Array.isArray(market.metrics) ? market : null;
+}
+
+/** An https link with a plain host and no credentials; anything else is not rendered. */
+function termsUrl(value: unknown): string | undefined {
+  return typeof value === "string" && /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:\/[^\s"'<>]*)?$/.test(value) ? value : undefined;
 }
 
 function metric(market: unknown, id: string): Row | null {
@@ -95,8 +101,9 @@ function directStockCard(read: AtlasRead, stock: DirectStock): ObservatoryCard {
   if (!row) return {label, value: "Withheld", note: stock.coming, state: "withheld"};
   if (publicRow(row) && row.unit === "local_currency_millions") {
     const billions = row.value / 1000;
+    const terms = termsUrl(row.terms_url);
     return {label, value: `$${format(billions, Math.abs(billions) < 1 ? 3 : 1)}bn`,
-      note: `${row.asof} · ${text(row.attribution) || stock.attribution}`, state: "live"};
+      note: `${row.asof} · ${text(row.attribution) || stock.attribution}`, state: "live", ...(terms ? {terms} : {})};
   }
   if (publicRow(row)) {
     return {label, value: "Unavailable", note: `The ${stock.publisher} series arrived in an unexpected unit (${text(row.unit) || "none"}), so no value is shown.`, state: "unavailable"};

@@ -52,11 +52,35 @@ test("a spread comes from the server's same-date derivation, never latest mismat
   market.policy_relative_spread.input_lineage[1].event_time="2026-10-30T00:00:00+00:00";
   assert.equal(card({},market,"policy.sofr_minus_iorb").value,null);
 });
+const H41 = {source:"fed_h41", attribution:"Source: Board of Governors of the Federal Reserve System, H.4.1", terms_url:"https://www.federalreserve.gov/disclaimer.htm"};
 test("zero is an observation and reserve millions convert to billions exactly once", () => {
-  const result=card({}, {metrics:[live("US.FED.RESERVE_BALANCES",2893770,"local_currency_millions")]}, "liquidity.reserves");
+  const result=card({}, {metrics:[{...live("US.FED.RESERVE_BALANCES_DIRECT",2893770,"local_currency_millions"),...H41}]}, "liquidity.reserves");
   assert.equal(result.value,2893.77);
   assert.equal(fundingValue(result),"$2,893.77B");
+  assert.equal(result.source,"Source: Board of Governors of the Federal Reserve System, H.4.1");
+  assert.equal(result.terms,"https://www.federalreserve.gov/disclaimer.htm");
+  assert.equal(result.gap,null);
   assert.equal(card(snap(saved("liquidity.on_rrp",0,"$B")),null,"liquidity.on_rrp").value,0);
+});
+test("the New York Fed's own ON RRP take-up fills its card in billions", () => {
+  const result=card(null, {metrics:[{...live("US.NYFED.ON_RRP_TAKEUP",4375,"local_currency_millions","2026-10-30"),source:"nyfed_facilities"}]}, "liquidity.on_rrp");
+  assert.equal(result.value,4.375);
+  assert.equal(result.asof,"2026-10-30");
+  assert.equal(result.origin,"live");
+  assert.equal(result.source,"nyfed facilities");
+  assert.equal(result.terms,null);
+});
+test("until the direct series arrive, reserves and ON RRP say why they are withheld and never show the FRED copy", () => {
+  const fred={metrics:[live("US.FED.RESERVE_BALANCES",2893770,"local_currency_millions"),live("US.NYFED.RRPONTSYD",5000,"local_currency_millions")]};
+  const reserves=card(null,fred,"liquidity.reserves"), rrp=card(null,fred,"liquidity.on_rrp");
+  assert.equal(reserves.value,null);
+  assert.equal(fundingValue(reserves),"Withheld");
+  assert.equal(reserves.gap,"The FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release.");
+  assert.equal(fundingValue(rrp),"Withheld");
+  assert.equal(rrp.gap,"The FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release.");
+  assert.equal(card(null,null,"policy.sofr").gap,null, "other empty cards stay plainly unavailable");
+  const unsafe=card(null,{metrics:[{...live("US.FED.RESERVE_BALANCES_DIRECT",2893770,"local_currency_millions"),...H41,terms_url:"http://example.invalid/terms"}]},"liquidity.reserves");
+  assert.equal(unsafe.terms,null, "only https terms links are rendered");
 });
 test("malformed dates, nonfinite values and unavailable rows stay gaps", () => {
   for (const row of [

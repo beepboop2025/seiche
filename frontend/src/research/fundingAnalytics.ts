@@ -72,7 +72,17 @@ export function mountFundingAnalytics(target: HTMLElement, snapshot: () => unkno
     view.grid.replaceChildren(...fundingSpecs(models, days).map(chartCard));
     const cards = observatoryCards(cardSource);
     stats(view.stats, cards.map((card): [string, string, string] => [card.label, card.value, card.note]));
-    [...view.stats.children].forEach((item, index) => {if (item instanceof HTMLElement && cards[index]) item.dataset.state = cards[index].state;});
+    [...view.stats.children].forEach((item, index) => {
+      const card = cards[index];
+      if (!(item instanceof HTMLElement) || !card) return;
+      item.dataset.state = card.state;
+      // A source that asks to be cited keeps its terms beside its value.
+      if (card.terms) {
+        const terms = el('a', card.terms.replace(/^https:\/\//, ''));
+        terms.href = card.terms; terms.target = '_blank'; terms.rel = 'noopener noreferrer';
+        item.querySelector('small')?.append(' · Terms: ', terms);
+      }
+    });
   };
   view.controls.append(selectControl('History window', [['90', '3 months'], ['365', '1 year'], ['all', 'All loaded observations']], '365', value => {days = value === 'all' ? null : Number(value); render();}));
   const refreshButton = el('button', 'Refresh sources'); refreshButton.type = 'button'; view.controls.append(refreshButton);

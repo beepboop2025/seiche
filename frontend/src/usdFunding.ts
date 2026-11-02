@@ -3,15 +3,25 @@ export type FundingCard = {
   id: string; label: string; value: number | null; unit: string;
   asof: string | null; cadence: string; source: string;
   origin: "live" | "published" | "missing"; status: string;
+  /** The source's terms URL, shown with its value when the source asks to be cited. */
+  terms: string | null;
+  /** Why a card without an observation is empty, when that is known. */
+  gap: string | null;
+};
+// Until the direct series are served, these cards say why they are empty: the FRED copies
+// are not cleared for republication and are never shown.
+const PENDING_DIRECT: Record<string, string> = {
+  "liquidity.reserves": "The FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release.",
+  "liquidity.on_rrp": "The FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release.",
 };
 const definitions = [
   ["policy.sofr", "SOFR", "%", "Daily", "US.NYFED.SOFR_MEDIAN"],
   ["policy.iorb", "IORB", "%", "Daily", "US.FED.IORB_DIRECT"],
   ["policy.sofr_minus_iorb", "SOFR − IORB", "bp", "Same-date daily spread", "US.NYFED.SOFR_MEDIAN_MINUS_US.FED.IORB_DIRECT"],
-  ["liquidity.reserves", "Reserve balances", "$B", "Weekly average", "US.FED.RESERVE_BALANCES"],
+  ["liquidity.reserves", "Reserve balances", "$B", "Weekly average", "US.FED.RESERVE_BALANCES_DIRECT"],
   ["policy.effr", "Effective federal funds rate", "%", "Daily", "US.NYFED.EFFR_MEDIAN"],
   ["liquidity.tga", "Treasury General Account", "$B", "Daily opening balance", "US.TREASURY.GOVERNMENT_CASH"],
-  ["liquidity.on_rrp", "ON RRP take-up", "$B", "Daily", ""],
+  ["liquidity.on_rrp", "ON RRP take-up", "$B", "Daily", "US.NYFED.ON_RRP_TAKEUP"],
   ["liquidity.srf", "Standing Repo Facility", "$B", "Daily", "US.NYFED.SRF_TAKEUP"],
 ] as const;
 const record = (value: unknown): Row | null =>
@@ -19,6 +29,10 @@ const record = (value: unknown): Row | null =>
 const rows = (value: unknown): Row[] => Array.isArray(value)
   ? value.map(record).filter((row): row is Row => row !== null) : [];
 const text = (value: unknown) => typeof value === "string" ? value : "";
+/** An https link with a plain host and no credentials; anything else is not rendered. */
+function termsUrl(value: unknown): string | null {
+  return typeof value === "string" && /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:\/[^\s"'<>]*)?$/.test(value) ? value : null;
+}
 function observationDate(value: unknown): string | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const time = Date.parse(value);
@@ -82,14 +96,17 @@ export function usdFundingCards(snapshot: unknown, market: unknown): FundingCard
       id, label, unit, cadence,
       value: chosen ? Number(chosen.value) / divisor : null,
       asof: observationDate(chosen?.asof),
-      source: text(chosen?.source).replaceAll("_", " ") || "Source not supplied",
+      // A source that asks to be cited shows its citation wherever its value is shown.
+      source: text(chosen?.attribution) || text(chosen?.source).replaceAll("_", " ") || "Source not supplied",
       origin: chosen ? useLive ? "live" : "published" : "missing",
       status: text(chosen?.freshness || chosen?.status),
+      terms: chosen ? termsUrl(chosen.terms_url) : null,
+      gap: chosen ? null : PENDING_DIRECT[id] ?? null,
     };
   });
 }
 export function fundingValue(card: FundingCard): string {
-  if (card.value === null) return "Unavailable";
+  if (card.value === null) return card.gap ? "Withheld" : "Unavailable";
   const digits = card.unit === "bp" ? 2 : card.unit === "$B" && Math.abs(card.value) < 1 ? 3 : 2;
   const value = card.value.toLocaleString("en-US", {minimumFractionDigits: card.unit === "%" ? 2 : 0, maximumFractionDigits: digits});
   return card.unit === "$B" ? "$" + value + "B"
