@@ -213,6 +213,28 @@ wall-clock age rule (two, four and eight cadence periods) ignored weekends,
 holidays and publication lags, so it called Thursday's prints stale on Monday
 mornings, and it failed on monthly cadences.
 
+`/api/v2/money-markets` is served through a generation-keyed cache
+(`seiche.atlas_cache`) that changes how often the server rebuilds, never what
+a request receives. Each request asks the repository for a fingerprint of the
+exact rows the atlas would read (count, latest knowledge time and exact sums of
+knowledge and event instants over the same selection, cutoff and window); rows
+are append-only, so any new row, vintage or row leaving the window rebuilds.
+The key also covers every pack's identity and each adapter's classification
+and redistribution status, so a rights change is never served from an older
+build. While building, every publication-opportunity clock records the first
+instant its state can change; a build expires at the earliest such instant or
+the next UTC midnight, so every freshness state equals a fresh evaluation.
+Collector runs are re-read on every request and spliced into each market's
+`adapters` and `faults`, so run state is always current. `generated_at` and
+`observation_age_days` describe the reused build's evaluation instant. The
+route sends a strong `ETag`, answers `If-None-Match` with 304, gzips on
+request and reports `X-Seiche-Atlas-Cache: hit|miss|bypass`; a repository read
+fault is never cached. On a local PostgreSQL 16 store sized like production
+(about 50,000 selected rows, 2.2 MB response) a rebuild took 1.2 to 1.4 s and a
+reuse about 0.04 s; the fingerprint query took about 35 ms against 730 ms for
+the full read. In-process callers of `api.global_money_markets_v2` still get an
+uncached build.
+
 Only `allowed` and `derived_only` rows may enter public calculations.
 `metadata_only` rows may describe availability in the v2 series contract, but
 their values are redacted and never feed a local gauge or Global Tide.

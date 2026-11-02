@@ -1423,3 +1423,75 @@ def test_postgres_catalog_snapshot_batch_matches_individual_reads(monkeypatch) -
     connections = len(opened)
     assert repository.load_latest_market_snapshots((), product) == {}
     assert len(opened) == connections
+
+
+def test_postgres_atlas_fingerprint_tracks_exactly_the_selected_rows() -> None:
+    """The atlas cache key: any change to the ranked row set changes it."""
+
+    repository = PostgresMarketRepository(os.environ["SEICHE_TEST_POSTGRES_URL"])
+    token = uuid4().hex
+    event = datetime(2026, 8, 8, tzinfo=UTC)
+    cutoff = event + timedelta(days=2)
+    floor = event - timedelta(days=1)
+    shared_id = f"TEST.FINGERPRINT.{token}.SHARED"
+    other_id = f"TEST.FINGERPRINT.{token}.OTHER"
+    base = Observation(
+        market_id="US-USD",
+        monetary_area_id="US",
+        jurisdiction_codes=("US",),
+        currency="USD",
+        instrument_id=shared_id,
+        semantic_role=SemanticRole.SECURED_OVERNIGHT,
+        value="531",
+        canonical_unit=CanonicalUnit.BASIS_POINTS,
+        rate_compounding=RateCompounding.SIMPLE,
+        day_count=DayCountConvention.ACT_360,
+        event_time=event,
+        source_publication_time=event,
+        knowledge_time=event,
+        revision_id="v1",
+        source="postgres-fingerprint-test",
+        evidence_hash=evidence_sha256(f"synthetic postgres fingerprint {token}"),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=RedistributionStatus.ALLOWED,
+        quality=QualityState.VERIFIED,
+        staleness=StalenessState.FRESH,
+    )
+    selection = {"us-usd": (shared_id,), "EA-EUR": ()}
+
+    def fingerprint():
+        return repository.observation_fingerprint_batch_as_of(
+            selection, cutoff, event_time=cutoff, event_time_from=floor,
+        )
+
+    repository.save_observations([base])
+    first = fingerprint()
+    assert first[0] == 1
+    assert first[1] == event.isoformat()
+    assert fingerprint() == first
+    # Identical re-saves, unselected instruments, rows outside the event
+    # window and rows not yet known at the cutoff leave the key unchanged.
+    repository.save_observations([
+        base,
+        replace(base, instrument_id=other_id),
+        replace(base, event_time=floor - timedelta(seconds=1), revision_id="old"),
+        replace(base, knowledge_time=cutoff + timedelta(seconds=1), revision_id="future"),
+    ])
+    assert fingerprint() == first
+    # A new vintage of a selected row changes it.
+    revision_time = event + timedelta(hours=1)
+    repository.save_observations([replace(
+        base, value="532", knowledge_time=revision_time,
+        source_publication_time=revision_time, revision_id="v2",
+    )])
+    second = fingerprint()
+    assert second != first
+    assert second[0] == 2 and second[1] == revision_time.isoformat()
+    # A row leaving the event window changes it as the floor moves.
+    later_floor = event + timedelta(seconds=1)
+    assert repository.observation_fingerprint_batch_as_of(
+        selection, cutoff, event_time=cutoff, event_time_from=later_floor,
+    )[0] == 0
+    assert repository.observation_fingerprint_batch_as_of(
+        {"US-USD": ()}, cutoff, event_time=cutoff, event_time_from=floor,
+    ) == (0, None, "0", "0")

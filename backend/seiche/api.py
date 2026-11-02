@@ -39,6 +39,7 @@ from seiche import (
     accounts,
     agent_room,
     assemble,
+    atlas_cache,
     context_views,
     hetzner_runtime,
     mcp_server,
@@ -2408,17 +2409,13 @@ def global_tide_v2(response: Response):
     }
 
 
-@app.get("/api/v2/money-markets")
-def global_money_markets_v2(response: Response):
-    """Read a canonical, licence-aware atlas without collecting on request."""
+_MONEY_MARKET_EVENT_WINDOW = timedelta(days=1120)
+_MONEY_MARKET_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=240"
+_ATLAS_CACHE = atlas_cache.AtlasCache()
 
-    cutoff = datetime.now(UTC).replace(microsecond=0)
-    event_floor = cutoff - timedelta(days=1120)
-    repository = get_repository()
-    observations_by_market: dict[str, list] = {}
-    read_faults: list[dict[str, str]] = []
-    packs = default_registry().list()
-    instruments_by_market = {
+
+def _money_market_selection(packs) -> dict[str, list[str]]:
+    return {
         pack.market_id: [
             instrument.instrument_id
             for instrument in pack.instruments
@@ -2430,6 +2427,13 @@ def global_money_markets_v2(response: Response):
         ]
         for pack in packs
     }
+
+
+def _money_market_observations(repository, packs, selection, cutoff, event_floor):
+    """Read every market's selected canonical rows; one market cannot erase another."""
+
+    observations_by_market: dict[str, list] = {}
+    read_faults: list[dict[str, str]] = []
     # PostgreSQL can read these selected histories in one connection/query.
     # Keep compatibility with repositories exposing only the single-market
     # method, and retain per-market fault isolation if a batch read fails.
@@ -2438,7 +2442,7 @@ def global_money_markets_v2(response: Response):
     if callable(batch_loader):
         try:
             batched_rows = batch_loader(
-                instruments_by_market,
+                selection,
                 cutoff,
                 event_time=cutoff,
                 event_time_from=event_floor,
@@ -2457,7 +2461,7 @@ def global_money_markets_v2(response: Response):
                     cutoff,
                     event_time=cutoff,
                     event_time_from=event_floor,
-                    instrument_ids=instruments_by_market[pack.market_id],
+                    instrument_ids=selection[pack.market_id],
                 )
             )
         except Exception:  # one market cannot erase the atlas
@@ -2475,23 +2479,28 @@ def global_money_markets_v2(response: Response):
         observations_by_market[pack.market_id] = [
             row for row in rows if _observation_is_publicly_derivable(pack, row)
         ]
+    return observations_by_market, read_faults
 
+
+def _money_market_runs(repository) -> tuple[list[dict], list[dict[str, str]]]:
     try:
-        collector_runs = [
+        return [
             sanitize_fault_record(item) for item in repository.latest_collector_runs()
-        ]
+        ], []
     except Exception:
         logging.getLogger("seiche.api").error(
             "canonical atlas collector-run read failed"
         )
-        collector_runs = []
-        read_faults.append(
+        return [], [
             {
                 "market_id": "GLOBAL",
                 "source": "collector_run_repository",
                 "detail": "collector-run repository read failed",
             }
-        )
+        ]
+
+
+def _money_market_payload(packs, observations_by_market, collector_runs, read_faults, cutoff):
     payload = build_global_money_market_atlas(
         packs,
         observations_by_market,
@@ -2501,8 +2510,119 @@ def global_money_markets_v2(response: Response):
     payload["read_faults"] = read_faults
     if read_faults:
         payload["status"] = "PARTIAL"
-    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return sanitize_public_fault_payload(payload)
+
+
+def global_money_markets_v2(response: Response):
+    """Build the canonical, licence-aware atlas without collecting on request.
+
+    The uncached in-process builder; the HTTP route below serves the same
+    bytes through the generation-keyed atlas cache.
+    """
+
+    cutoff = datetime.now(UTC).replace(microsecond=0)
+    repository = get_repository()
+    packs = default_registry().list()
+    observations_by_market, read_faults = _money_market_observations(
+        repository,
+        packs,
+        _money_market_selection(packs),
+        cutoff,
+        cutoff - _MONEY_MARKET_EVENT_WINDOW,
+    )
+    collector_runs, run_faults = _money_market_runs(repository)
+    response.headers["Cache-Control"] = _MONEY_MARKET_CACHE_CONTROL
+    return _money_market_payload(
+        packs, observations_by_market, collector_runs, read_faults + run_faults, cutoff
+    )
+
+
+@app.get("/api/v2/money-markets")
+def global_money_markets_v2_http(request: Request):
+    """Serve the atlas, rebuilding only when its data, rights or states change.
+
+    See ``seiche.atlas_cache``: the key is the repository fingerprint of the
+    exact selected rows plus the rights declarations; an entry expires at the
+    first instant any freshness state could change; collector runs are
+    re-read and spliced on every request. ETag and If-None-Match are honoured.
+    A repository read fault, or a repository without a fingerprint, bypasses
+    the cache and returns exactly the uncached build.
+    """
+
+    cutoff = datetime.now(UTC).replace(microsecond=0)
+    event_floor = cutoff - _MONEY_MARKET_EVENT_WINDOW
+    repository = get_repository()
+    packs = default_registry().list()
+    selection = _money_market_selection(packs)
+    collector_runs, run_faults = _money_market_runs(repository)
+    fingerprint = None
+    fingerprinter = getattr(repository, "observation_fingerprint_batch_as_of", None)
+    if callable(fingerprinter) and not run_faults:
+        try:
+            fingerprint = tuple(
+                fingerprinter(
+                    selection, cutoff, event_time=cutoff, event_time_from=event_floor
+                )
+            )
+        except Exception:
+            logging.getLogger("seiche.api").warning(
+                "canonical atlas fingerprint failed; serving an uncached build"
+            )
+    read: dict[str, Any] = {}
+
+    def build_without_runs():
+        read["rows"] = _money_market_observations(
+            repository, packs, selection, cutoff, event_floor
+        )
+        observations_by_market, read_faults = read["rows"]
+        if read_faults:
+            return None
+        return _money_market_payload(packs, observations_by_market, (), [], cutoff)
+
+    delivery = None
+    if fingerprint is not None:
+        try:
+            delivery = _ATLAS_CACHE.deliver(
+                key=(atlas_cache.rights_identity(packs), fingerprint),
+                cutoff=cutoff,
+                packs=packs,
+                collector_runs=collector_runs,
+                build_without_runs=build_without_runs,
+            )
+        except Exception:
+            # The cache is an optimization; an unexpected cache fault must
+            # degrade to the uncached build, never to a failed atlas.
+            logging.getLogger("seiche.api").exception(
+                "canonical atlas cache failed; serving an uncached build"
+            )
+    if delivery is None:
+        observations_by_market, read_faults = read.get("rows") or _money_market_observations(
+            repository, packs, selection, cutoff, event_floor
+        )
+        body = atlas_cache.encode(
+            _money_market_payload(
+                packs, observations_by_market, collector_runs, read_faults + run_faults, cutoff
+            )
+        )
+        delivery = atlas_cache.Delivery(
+            body, b"", '"' + hashlib.sha256(body).hexdigest()[:32] + '"', "bypass"
+        )
+    headers = {
+        "ETag": delivery.etag,
+        "Cache-Control": _MONEY_MARKET_CACHE_CONTROL,
+        "Vary": "Accept-Encoding",
+        "X-Seiche-Atlas-Cache": delivery.state,
+    }
+    if atlas_cache.etag_matches(request.headers.get("if-none-match"), delivery.etag):
+        return Response(status_code=304, headers=headers)
+    if "gzip" in (request.headers.get("accept-encoding") or "").lower():
+        headers["Content-Encoding"] = "gzip"
+        return Response(
+            content=delivery.gzip or gzip.compress(delivery.body, 6),
+            media_type="application/json",
+            headers=headers,
+        )
+    return Response(content=delivery.body, media_type="application/json", headers=headers)
 
 
 def _completed_world_markets_snapshot() -> dict[str, Any] | None:

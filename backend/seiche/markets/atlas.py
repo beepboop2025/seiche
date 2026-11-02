@@ -13,7 +13,9 @@ import calendar as civil_calendar
 import re
 import statistics
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -1269,6 +1271,33 @@ def _next_event_day(event_day: date, cadence: str, calendar) -> date:
     return calendar.roll_forward(event_day + timedelta(weeks=amount))
 
 
+# Freshness states change only when an evaluation instant crosses a publication
+# opportunity. A caller that reuses a built payload records, while building,
+# the earliest such instant for every state it computed.
+_FRESHNESS_TRANSITIONS: ContextVar[list[datetime] | None] = ContextVar(
+    "seiche_atlas_freshness_transitions", default=None
+)
+
+
+@contextmanager
+def freshness_transitions() -> Iterator[list[datetime]]:
+    """Collect the instants at which any freshness state computed inside may change.
+
+    Every publication-opportunity clock evaluated in the block appends the
+    first instant at which its missed-opportunity count can grow, plus the
+    next local new year (calendar coverage is reviewed by year). Before the
+    earliest recorded instant, every state computed in the block is exactly
+    what a fresh evaluation would return.
+    """
+
+    instants: list[datetime] = []
+    token = _FRESHNESS_TRANSITIONS.set(instants)
+    try:
+        yield instants
+    finally:
+        _FRESHNESS_TRANSITIONS.reset(token)
+
+
 def _publication_opportunity_clock(
     latest,
     adapter,
@@ -1320,12 +1349,17 @@ def _publication_opportunity_clock(
                 next_due.astimezone(local_zone).date()
             ):
                 next_due += interval
+            next_change = next_due
         elif cadence.endswith("W"):
             # Weekly/native files often have no validated weekday schedule.
             # Calendar-aware due resolution handles holidays and publication
             # lag; ceiling preserves the native interval clock between files.
             elapsed = max((cutoff - baseline_due).total_seconds(), 0.0)
             missed = math.ceil(elapsed / _cadence_seconds(cadence)) if elapsed else 0
+            # The ceiling grows once elapsed time passes the next whole interval.
+            next_change = baseline_due + timedelta(
+                seconds=_cadence_seconds(cadence) * missed
+            )
             next_event = _next_event_day(event_day, cadence, calendar)
             next_due = _publication_due(
                 next_event,
@@ -1359,6 +1393,7 @@ def _publication_opportunity_clock(
                     calendar,
                     latest.source_publication_time,
                 )
+            next_change = next_due
     except (CalendarUnavailableError, ValueError) as exc:
         return (
             StalenessState.UNKNOWN,
@@ -1366,6 +1401,11 @@ def _publication_opportunity_clock(
             None,
             f"calendar unavailable ({type(exc).__name__})",
         )
+    transitions = _FRESHNESS_TRANSITIONS.get()
+    if transitions is not None:
+        transitions.append(next_change)
+        local_year = cutoff.astimezone(local_zone).year
+        transitions.append(datetime(local_year + 1, 1, 1, tzinfo=local_zone).astimezone(UTC))
 
     # A missed daily release means the latest expected observation is absent,
     # regardless of currency. Collection success cannot grant extra fresh days.
@@ -2078,18 +2118,12 @@ def _market_read(
     return plain, quant, countercase
 
 
-def build_global_money_market_atlas(
-    packs: Iterable[MarketPack],
-    observations_by_market: Mapping[str, Iterable[Observation]],
-    *,
-    collector_runs: Iterable[Mapping[str, Any]] = (),
-    as_of: datetime | None = None,
-) -> dict[str, Any]:
-    """Build a public, native-frequency atlas from already policy-filtered rows."""
+def collector_run_map(
+    collector_runs: Iterable[Mapping[str, Any]],
+    cutoff: datetime,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Select the latest finished run per market adapter at the cutoff."""
 
-    packs = tuple(packs)
-
-    cutoff = (as_of or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
     run_map: dict[tuple[str, str], dict[str, Any]] = {}
     run_order: dict[tuple[str, str], tuple[datetime, str]] = {}
     for run in collector_runs:
@@ -2107,6 +2141,81 @@ def build_global_money_market_atlas(
         if key not in run_order or order > run_order[key]:
             run_map[key] = dict(run)
             run_order[key] = order
+    return run_map
+
+
+def market_adapter_records(
+    pack: MarketPack,
+    run_map: Mapping[tuple[str, str], Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A market's public adapter rows and faults; the only run-derived fields."""
+
+    faults = []
+    adapters = []
+    for adapter in pack.source_adapters:
+        # A prohibited connector is outside the public projection entirely:
+        # even its identifier, classification, and schedule are source
+        # metadata that the pack contract forbids redistributing.
+        if adapter.redistribution_status is RedistributionStatus.PROHIBITED:
+            continue
+        run = run_map.get((pack.market_id, adapter.adapter_id))
+        run_metadata_public = (
+            adapter.classification.value == "official_open"
+            and adapter.redistribution_status is RedistributionStatus.ALLOWED
+        )
+        record = {
+            "adapter_id": adapter.adapter_id,
+            "classification": adapter.classification.value,
+            "redistribution_status": adapter.redistribution_status.value,
+            "expected_cadence": adapter.expected_cadence,
+            "collection_cadence": adapter.collection_cadence or adapter.expected_cadence,
+            "source_url": _SOURCE_URLS.get(adapter.adapter_id),
+            "last_run_status": (
+                run.get("status")
+                if run is not None and run_metadata_public
+                else "NO_RUN_RECORDED"
+                if run is None and run_metadata_public
+                else "WITHHELD_BY_POLICY"
+            ),
+            "last_finished_at": (
+                run.get("finished_at")
+                if run is not None and run_metadata_public
+                else None
+            ),
+            "next_due": (
+                run.get("next_due")
+                if run is not None and run_metadata_public
+                else None
+            ),
+            "fault": (
+                run.get("fault")
+                if run is not None and run_metadata_public
+                else None
+            ),
+        }
+        adapters.append(record)
+        if record["last_run_status"] not in {
+            "SUCCESS",
+            "NO_RUN_RECORDED",
+            "WITHHELD_BY_POLICY",
+        }:
+            faults.append(record)
+    return adapters, faults
+
+
+def build_global_money_market_atlas(
+    packs: Iterable[MarketPack],
+    observations_by_market: Mapping[str, Iterable[Observation]],
+    *,
+    collector_runs: Iterable[Mapping[str, Any]] = (),
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """Build a public, native-frequency atlas from already policy-filtered rows."""
+
+    packs = tuple(packs)
+
+    cutoff = (as_of or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    run_map = collector_run_map(collector_runs, cutoff)
     markets: list[dict[str, Any]] = []
     deviations: list[tuple[float, str, str, float]] = []
 
@@ -2188,56 +2297,7 @@ def build_global_money_market_atlas(
             metric["availability"] == "DERIVED_CONTEXT" for metric in metrics
         )
         restricted = sum(metric["availability"] == "RESTRICTED" for metric in metrics)
-        faults = []
-        adapters = []
-        for adapter in pack.source_adapters:
-            # A prohibited connector is outside the public projection entirely:
-            # even its identifier, classification, and schedule are source
-            # metadata that the pack contract forbids redistributing.
-            if adapter.redistribution_status is RedistributionStatus.PROHIBITED:
-                continue
-            run = run_map.get((pack.market_id, adapter.adapter_id))
-            run_metadata_public = (
-                adapter.classification.value == "official_open"
-                and adapter.redistribution_status is RedistributionStatus.ALLOWED
-            )
-            record = {
-                "adapter_id": adapter.adapter_id,
-                "classification": adapter.classification.value,
-                "redistribution_status": adapter.redistribution_status.value,
-                "expected_cadence": adapter.expected_cadence,
-                "collection_cadence": adapter.collection_cadence or adapter.expected_cadence,
-                "source_url": _SOURCE_URLS.get(adapter.adapter_id),
-                "last_run_status": (
-                    run.get("status")
-                    if run is not None and run_metadata_public
-                    else "NO_RUN_RECORDED"
-                    if run is None and run_metadata_public
-                    else "WITHHELD_BY_POLICY"
-                ),
-                "last_finished_at": (
-                    run.get("finished_at")
-                    if run is not None and run_metadata_public
-                    else None
-                ),
-                "next_due": (
-                    run.get("next_due")
-                    if run is not None and run_metadata_public
-                    else None
-                ),
-                "fault": (
-                    run.get("fault")
-                    if run is not None and run_metadata_public
-                    else None
-                ),
-            }
-            adapters.append(record)
-            if record["last_run_status"] not in {
-                "SUCCESS",
-                "NO_RUN_RECORDED",
-                "WITHHELD_BY_POLICY",
-            }:
-                faults.append(record)
+        adapters, faults = market_adapter_records(pack, run_map)
         status = (
             "LIVE_REFERENCE"
             if benchmark is not None and benchmark.get("status") in {"FRESH", "AGING"}
