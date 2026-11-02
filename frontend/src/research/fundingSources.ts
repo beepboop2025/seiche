@@ -87,6 +87,14 @@ export function atlasFundingModels(atlas: unknown): Map<string, EconomicSeries> 
     const item = model(key, "%", row.history, String(row.source), id, String(row.status), String(row.cadence), "https://api.seiche.info/api/v2/money-markets");
     if (item && item.asOf === row.asof) result.set(key, item);
   }
+  // The Daily Treasury Statement opening balance arrives in USD millions, the same unit as the
+  // published TGA_LONG history that chart 04 divides by 1,000. No other unit is accepted.
+  const tga = market.metrics.find(item => record(item) && item.id === "US.TREASURY.GOVERNMENT_CASH");
+  if (record(tga) && tga.availability === "AVAILABLE" && tga.redistribution_status === "allowed"
+      && tga.unit === "local_currency_millions" && Array.isArray(tga.history)) {
+    const item = model("TGA_LONG", "$M", tga.history, String(tga.source), "US.TREASURY.GOVERNMENT_CASH", String(tga.status), String(tga.cadence), "https://api.seiche.info/api/v2/money-markets");
+    if (item && item.asOf === tga.asof) result.set("TGA_LONG", item);
+  }
   return result;
 }
 /** A failed, empty or older refresh cannot erase a dated history. Sources are not spliced. */

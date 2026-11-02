@@ -1454,7 +1454,9 @@ export default function MoneyMarkets({ snap }: Props) {
     // Snapshot refreshes may request new data, but must let an existing atlas finish.
     if (activeRequest.current) return;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 25000);
+    // The atlas is a large, uncached response (about 2 MB, 8-10 s to first byte). Measured browser
+    // delivery reached 30-46 s, so a 25 s abort blanked every section; allow 90 s before giving up.
+    const timeout = window.setTimeout(() => controller.abort(), 90000);
     const request = { controller, timeout };
     activeRequest.current = request;
     setLoading(true);

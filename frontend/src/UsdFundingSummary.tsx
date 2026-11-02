@@ -17,7 +17,7 @@ export default function UsdFundingSummary({ snap, atlas }: { snap: unknown; atla
       if (pending || document.visibilityState === "hidden") return;
       pending = true;
       controller = new AbortController();
-      const timeout = window.setTimeout(() => controller?.abort(), 25000);
+      const timeout = window.setTimeout(() => controller?.abort(), 90000); // same budget as Money Markets' atlas read
       try {
         const response = await fetch(API_BASE + "/api/v2/money-markets", {
           credentials: "omit", cache: "no-cache", signal: controller.signal,

@@ -90,3 +90,29 @@ test("newer published headline observations retain their native dates without re
   assert.equal(card(snapshot,null,"policy.sofr_minus_iorb").asof,"2026-10-28");
   assert.equal(card(snapshot,null,"policy.sofr_minus_iorb").value,4);
 });
+
+test("direct Treasury and NY Fed facility rows fill the TGA and SRF cards while the board is withheld", () => {
+  const market={metrics:[
+    {...live("US.TREASURY.GOVERNMENT_CASH",1015632,"local_currency_millions","2026-10-29"),source:"fiscaldata"},
+    {...live("US.NYFED.SRF_TAKEUP",0,"local_currency_millions","2026-10-30"),source:"nyfed_facilities"},
+  ]};
+  const tga=card(null,market,"liquidity.tga");
+  assert.equal(tga.value,1015.632);
+  assert.equal(tga.asof,"2026-10-29");
+  assert.equal(tga.origin,"live");
+  assert.equal(tga.source,"fiscaldata");
+  assert.equal(fundingValue(tga),"$1,015.63B");
+  const srf=card(null,market,"liquidity.srf");
+  assert.equal(srf.value,0);
+  assert.equal(srf.asof,"2026-10-30");
+  assert.equal(srf.source,"nyfed facilities");
+  assert.equal(card(null,market,"liquidity.on_rrp").value,null);
+});
+
+test("restricted or older direct TGA and SRF rows never replace or invent a value", () => {
+  const restricted={metrics:[{...live("US.TREASURY.GOVERNMENT_CASH",1,"local_currency_millions"),availability:"RESTRICTED",redistribution_status:"metadata_only"}]};
+  assert.equal(card(null,restricted,"liquidity.tga").value,null);
+  const older={metrics:[live("US.NYFED.SRF_TAKEUP",5000,"local_currency_millions","2026-10-27")]};
+  assert.equal(card(snap(saved("liquidity.srf",0,"$B","2026-10-28")),older,"liquidity.srf").value,0);
+  assert.equal(card(snap(saved("liquidity.srf",0,"$B","2026-10-28")),older,"liquidity.srf").origin,"published");
+});
