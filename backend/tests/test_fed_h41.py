@@ -1,4 +1,4 @@
-"""Direct Board H.4.1 reserve balances: enabled by the declared rights record, cited everywhere."""
+"""Direct Board H.4.1 reserves and total assets: enabled by the declared rights record, cited everywhere."""
 from __future__ import annotations
 
 import io
@@ -57,17 +57,35 @@ TARGET = (
     '<frb:Obs OBS_STATUS="A" OBS_VALUE="2893770" TIME_PERIOD="2026-10-28" />'
     "</kf:Series>"
 )
-# A neighbouring series (Wednesday level) must never be read as the week average.
+# Total assets less eliminations from consolidation, Wednesday level (the
+# number FRED republishes as WALCL), for the same four Wednesdays.
+TOTAL = (
+    '<kf:Series SERIES_NAME="RESPPMA_N.WW" FREQ="19" CATEGORY="ASSET" SUBCATEGORY="TA" COMPONENT="TA" '
+    'DISTRIBUTION="TOTC" SERIESTYPE="L" UNIT="Currency" UNIT_MULT="1000000" CURRENCY="USD">'
+    '<frb:Annotations><common:Annotation><common:AnnotationType>Short Description</common:AnnotationType>'
+    '<common:AnnotationText>Assets: Total Assets: Total assets (Less eliminations from consolidation): '
+    'Wednesday level</common:AnnotationText></common:Annotation></frb:Annotations>'
+    '<frb:Obs OBS_STATUS="A" OBS_VALUE="6747560" TIME_PERIOD="2026-10-07" />'
+    '<frb:Obs OBS_STATUS="A" OBS_VALUE="6755639" TIME_PERIOD="2026-10-14" />'
+    '<frb:Obs OBS_STATUS="A" OBS_VALUE="6753604" TIME_PERIOD="2026-10-21" />'
+    '<frb:Obs OBS_STATUS="A" OBS_VALUE="6745635" TIME_PERIOD="2026-10-28" />'
+    "</kf:Series>"
+)
+# Neighbouring series (a Wednesday level of reserves, total assets before
+# eliminations) must never be read as either mapped series.
 DECOY = (
     '<kf:Series SERIES_NAME="RESH4R_N.WW" FREQ="19" UNIT="Currency" UNIT_MULT="1000000" CURRENCY="USD">'
     '<frb:Obs OBS_STATUS="A" OBS_VALUE="2895236" TIME_PERIOD="2026-10-28" /></kf:Series>'
+    '<kf:Series SERIES_NAME="RESPPA_N.WW" FREQ="19" UNIT="Currency" UNIT_MULT="1000000" CURRENCY="USD">'
+    '<frb:Obs OBS_STATUS="A" OBS_VALUE="6999999" TIME_PERIOD="2026-10-28" /></kf:Series>'
 )
+FULL = HEADER + DECOY + TARGET + TOTAL + FOOTER
 
 
 def document(xml: str | None = None, *, members: dict[str, str] | None = None) -> FetchedDocument:
     raw = io.BytesIO()
     with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, body in (members or {fed_h41.MEMBER: xml if xml is not None else HEADER + DECOY + TARGET + FOOTER}).items():
+        for name, body in (members or {fed_h41.MEMBER: xml if xml is not None else FULL}).items():
             archive.writestr(name, body)
     return FetchedDocument(fed_h41.SOURCE_URL, "application/zip", raw.getvalue(), fed_h41.ADAPTER_ID)
 
@@ -107,8 +125,16 @@ def test_the_us_pack_declares_the_allowed_board_record_and_registers_the_adapter
     assert (spec.source_adapter_id, spec.semantic_role, spec.canonical_unit) == (
         fed_h41.ADAPTER_ID, SemanticRole.RESERVE_BALANCES, CanonicalUnit.LOCAL_CURRENCY_MILLIONS)
     assert spec.normalize(Decimal("2893770")) == Decimal("2893770")
+    total = pack.instrument_map[fed_h41.TOTAL_ASSETS_INSTRUMENT_ID]
+    assert (total.source_adapter_id, total.semantic_role, total.canonical_unit) == (
+        fed_h41.ADAPTER_ID, SemanticRole.CENTRAL_BANK_TOTAL_ASSETS, CanonicalUnit.LOCAL_CURRENCY_MILLIONS)
+    assert total.normalize(Decimal("6745635")) == Decimal("6745635")
+    # Total assets is the only instrument of its role: no existing binding moves.
+    assert [item.instrument_id for item in pack.instruments
+            if item.semantic_role is SemanticRole.CENTRAL_BANK_TOTAL_ASSETS] == [fed_h41.TOTAL_ASSETS_INSTRUMENT_ID]
     order = [item.instrument_id for item in pack.instruments]
     assert order.index(fed_h41.INSTRUMENT_ID) < order.index("US.FED.RESERVE_BALANCES")
+    assert fed_h41.declared_instruments(pack) == {fed_h41.INSTRUMENT_ID, fed_h41.TOTAL_ASSETS_INSTRUMENT_ID}
     assert fed_h41.rights_gate_open(pack) is True
     adapters = build_official_adapters(repository=SQLiteMarketRepository())
     assert fed_h41.ADAPTER_ID in {item.adapter_id for item in adapters}
@@ -147,29 +173,45 @@ def test_the_attribution_matches_the_registry_and_the_serving_maps():
     assert record["rights_evidence_url"] == fed_h41.TERMS_URL
     assert record["rights_status"] == "explicit_public_domain_with_exclusions"
     assert record["implementation_status"] == "implemented"
-    assert record["semantic_roles"] == ["RESERVE_BALANCES"]
+    assert record["semantic_roles"] == ["RESERVE_BALANCES", "CENTRAL_BANK_TOTAL_ASSETS"]
+    assert "RESPPMA_N.WW" in record["blocker"] and "WALCL" in record["blocker"]
     assert ("Unless otherwise indicated, information on Board's website is in the public domain and may be "
             "copied and distributed without permission. Please cite to the Board as the source of the "
             "information.") in record["blocker"]
     assert fed_h41.ATTRIBUTION in record["blocker"]
 
 
-def test_parser_reads_only_the_week_average_series_in_millions():
+def test_parser_reads_only_the_two_mapped_series_in_millions():
     points = fed_h41.parse_document(document())
-    assert [(p.instrument_id, p.event_time, p.raw_value) for p in points] == [
-        (fed_h41.INSTRUMENT_ID, date(2026, 10, 7), Decimal("3029659")),
-        (fed_h41.INSTRUMENT_ID, date(2026, 10, 14), Decimal("3022140")),
+    reserves = [(p.event_time, p.raw_value) for p in points if p.instrument_id == fed_h41.INSTRUMENT_ID]
+    assert reserves == [
+        (date(2026, 10, 7), Decimal("3029659")),
+        (date(2026, 10, 14), Decimal("3022140")),
         # 2026-10-21 is NA in this fixture: withheld, never zero.
-        (fed_h41.INSTRUMENT_ID, date(2026, 10, 28), Decimal("2893770")),
+        (date(2026, 10, 28), Decimal("2893770")),
     ]
+    total = [(p.event_time, p.raw_value) for p in points if p.instrument_id == fed_h41.TOTAL_ASSETS_INSTRUMENT_ID]
+    assert total == [
+        (date(2026, 10, 7), Decimal("6747560")),
+        (date(2026, 10, 14), Decimal("6755639")),
+        (date(2026, 10, 21), Decimal("6753604")),
+        (date(2026, 10, 28), Decimal("6745635")),
+    ]
+    # Neither decoy (reserves Wednesday level, total assets before eliminations) is read.
+    assert {p.instrument_id for p in points} == set(fed_h41.SERIES.values())
+    assert Decimal("2895236") not in {p.raw_value for p in points}
+    assert Decimal("6999999") not in {p.raw_value for p in points}
+    total_evidence = json.loads(next(p for p in points if p.instrument_id == fed_h41.TOTAL_ASSETS_INSTRUMENT_ID).row_evidence)
+    assert total_evidence["series"] == "RESPPMA_N.WW"
     assert all(p.source_publication_time is None for p in points)
     # The pack's declared schedule supplies the inferred publication time.
     assert all(p.publication_time_policy is PublicationTimePolicy.INFER for p in points)
-    evidence = json.loads(points[-1].row_evidence)
+    last_reserves = [p for p in points if p.instrument_id == fed_h41.INSTRUMENT_ID][-1]
+    evidence = json.loads(last_reserves.row_evidence)
     assert evidence["source_url"] == fed_h41.SOURCE_URL
     assert evidence["series"] == "RESH4R_XAW_N.WW" and evidence["field"] == "OBS_VALUE"
     assert evidence["declared"] == fed_h41.SERIES_ATTRIBUTES
-    assert points[-1].revision_id.startswith("fed-h41:RESH4R_XAW_N.WW:2026-10-28:")
+    assert last_reserves.revision_id.startswith("fed-h41:RESH4R_XAW_N.WW:2026-10-28:")
 
 
 @pytest.mark.parametrize("mutation", [
@@ -186,9 +228,17 @@ def test_parser_reads_only_the_week_average_series_in_millions():
     lambda s: s.replace('OBS_VALUE="3022140"', 'OBS_VALUE="3,022,140"'),
     lambda s: s.replace(HEADER, HEADER.replace("?>\n", '?>\n<!DOCTYPE m [<!ENTITY x "y">]>')),
     lambda s: s[:-40],
+    # The total-assets series is pinned and required in the same way.
+    lambda s: s.replace(TOTAL, ""),
+    lambda s: s.replace(TOTAL, TOTAL + TOTAL),
+    lambda s: s.replace('SERIES_NAME="RESPPMA_N.WW" FREQ="19"', 'SERIES_NAME="RESPPMA_N.WW" FREQ="20"'),
+    lambda s: s.replace('SERIESTYPE="L" UNIT="Currency" UNIT_MULT="1000000"', 'SERIESTYPE="L" UNIT="Currency" UNIT_MULT="1000"'),
+    lambda s: s.replace('OBS_VALUE="6755639" TIME_PERIOD="2026-10-14"', 'OBS_VALUE="6755639" TIME_PERIOD="2026-10-13"'),
+    lambda s: s.replace('OBS_VALUE="6755639"', 'OBS_VALUE="-6755639"'),
+    lambda s: s.replace('OBS_STATUS="A" OBS_VALUE="67', 'OBS_STATUS="NA" OBS_VALUE="67'),
 ])
 def test_changed_units_identity_dates_values_or_xml_fail_closed(mutation):
-    xml = HEADER + DECOY + TARGET + FOOTER
+    xml = FULL
     with pytest.raises(ValueError):
         fed_h41.parse_document(document(mutation(xml)))
 
@@ -199,10 +249,10 @@ def test_package_identity_member_and_size_bounds_fail_closed():
         fed_h41.parse_document(FetchedDocument("https://example.invalid/FRB_H41_xml.zip",
                                                "application/zip", good.payload, fed_h41.ADAPTER_ID))
     with pytest.raises(ValueError):
-        fed_h41.parse_document(document(members={"OTHER.xml": HEADER + TARGET + FOOTER}))
+        fed_h41.parse_document(document(members={"OTHER.xml": FULL}))
     with pytest.raises(ValueError):
         fed_h41.parse_document(document(members={f"extra{i}.xml": "x" for i in range(fed_h41.MAX_MEMBERS)}
-                                        | {fed_h41.MEMBER: HEADER + TARGET + FOOTER}))
+                                        | {fed_h41.MEMBER: FULL}))
 
 
 @pytest.mark.asyncio
@@ -267,9 +317,15 @@ async def test_board_rows_serve_allowed_with_the_citation_and_fred_stays_withhel
     # Friday 2026-10-30: Thursday's 16:30 release for the week ending 10-28 is out.
     captured = datetime(2026, 10, 30, 12, tzinfo=UTC)
     batch = await collected(captured)
-    assert [(row.event_time.date().isoformat(), row.value) for row in batch.observations] == [
+    assert [(row.event_time.date().isoformat(), row.value) for row in batch.observations
+            if row.instrument_id == fed_h41.INSTRUMENT_ID] == [
         ("2026-10-07", Decimal("3029659")), ("2026-10-14", Decimal("3022140")),
         ("2026-10-28", Decimal("2893770")),
+    ]
+    assert [(row.event_time.date().isoformat(), row.value) for row in batch.observations
+            if row.instrument_id == fed_h41.TOTAL_ASSETS_INSTRUMENT_ID] == [
+        ("2026-10-07", Decimal("6747560")), ("2026-10-14", Decimal("6755639")),
+        ("2026-10-21", Decimal("6753604")), ("2026-10-28", Decimal("6745635")),
     ]
     assert all(row.source == fed_h41.ADAPTER_ID for row in batch.observations)
     assert all(row.redistribution_status is RedistributionStatus.ALLOWED for row in batch.observations)
@@ -289,6 +345,13 @@ async def test_board_rows_serve_allowed_with_the_citation_and_fred_stays_withhel
     assert direct["attribution"] == fed_h41.ATTRIBUTION
     assert direct["terms_url"] == fed_h41.TERMS_URL
     assert direct["source_url"] == fed_h41.SOURCE_URL
+    total = metrics[fed_h41.TOTAL_ASSETS_INSTRUMENT_ID]
+    assert total["availability"] == "AVAILABLE" and total["redistribution_status"] == "allowed"
+    assert total["value"] == 6745635.0 and total["unit"] == "local_currency_millions"
+    assert total["asof"] == "2026-10-28" and total["status"] == "FRESH"
+    assert total["semantic_role"] == "CENTRAL_BANK_TOTAL_ASSETS"
+    assert total["attribution"] == fed_h41.ATTRIBUTION and total["terms_url"] == fed_h41.TERMS_URL
+    assert [point[1] for point in total["history"]] == [6747560.0, 6755639.0, 6753604.0, 6745635.0]
     # The FRED copy of the same number stays withheld, with no value or history.
     fred = metrics["US.FED.RESERVE_BALANCES"]
     assert fred["availability"] == "RESTRICTED" and fred["value"] is None and fred["history"] == []
@@ -325,7 +388,11 @@ async def test_series_page_cites_the_board_and_redacts_the_fred_copy(tmp_path, m
     assert direct["publisher"] == "Board of Governors of the Federal Reserve System"
     assert instruments["US.FED.RESERVE_BALANCES"]["availability"] == "RESTRICTED"
     assert "attribution" not in instruments["US.FED.RESERVE_BALANCES"]
+    total = instruments[fed_h41.TOTAL_ASSETS_INSTRUMENT_ID]
+    assert total["availability"] == "READY" and total["redistribution_status"] == "allowed"
+    assert total["attribution"] == fed_h41.ATTRIBUTION and total["terms_url"] == fed_h41.TERMS_URL
     records = {(item["instrument_id"], item["event_time"][:10]): item for item in payload["observations"]}
     assert records[(fed_h41.INSTRUMENT_ID, "2026-10-28")]["value"] == "2893770"
+    assert records[(fed_h41.TOTAL_ASSETS_INSTRUMENT_ID, "2026-10-28")]["value"] == "6745635"
     fred_record = records[("US.FED.RESERVE_BALANCES", "2026-10-28")]
     assert fred_record["value"] is None and fred_record["value_status"] == "REDACTED_BY_LICENCE"

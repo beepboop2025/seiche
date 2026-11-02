@@ -68,6 +68,10 @@ _REGIONS = {
 _SOURCE_URLS = {
     "fed_prates": "https://www.federalreserve.gov/releases/prates/data/FRB_PRATES_xml.zip",
     "fed_h41": "https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip",
+    "treasury_par_yields": (
+        "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+        "TextView?type=daily_treasury_yield_curve"
+    ),
     "fred_daily": "https://fred.stlouisfed.org/",
     "fred_weekly": "https://fred.stlouisfed.org/",
     "fiscaldata": "https://fiscaldata.treasury.gov/",
@@ -106,6 +110,7 @@ _SOURCE_URLS = {
 }
 _SOURCE_PUBLISHERS = {
     "fed_h41": "Board of Governors of the Federal Reserve System",
+    "treasury_par_yields": "U.S. Department of the Treasury",
     "fred_daily": "Federal Reserve Bank of St. Louis",
     "fred_weekly": "Federal Reserve Bank of St. Louis",
     "fiscaldata": "U.S. Department of the Treasury, Bureau of the Fiscal Service",
@@ -146,13 +151,18 @@ _SOURCE_PUBLISHERS = {
 }
 
 
-# Sources whose terms ask for a citation wherever their values are shown. The
-# citation travels with every served value (atlas and country-desk metrics,
-# series instrument references) as well as in the atlas legal notices.
+# Sources cited wherever their values are shown, because their terms ask for it
+# or the source registry records it as the basis of use. The citation travels
+# with every served value (atlas and country-desk metrics, series instrument
+# references) as well as in the atlas legal notices.
 _SOURCE_ATTRIBUTIONS: dict[str, dict[str, str]] = {
     "fed_h41": {
         "attribution": "Source: Board of Governors of the Federal Reserve System, H.4.1",
         "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+    "treasury_par_yields": {
+        "attribution": "Source: U.S. Department of the Treasury, Daily Treasury Par Yield Curve Rates",
+        "terms_url": "https://home.treasury.gov/subfooter/site-policies-and-notices",
     },
 }
 
@@ -1772,6 +1782,7 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.CP_3M: "Three-month corporate short-term borrowing cost.",
         SemanticRole.CD_3M: "Three-month bank certificate-of-deposit funding cost.",
         SemanticRole.RESERVE_BALANCES: "Settlement cash held by banks at the central bank.",
+        SemanticRole.CENTRAL_BANK_TOTAL_ASSETS: "The central bank's reported total assets: balance-sheet size, not reserves or a liquidity score.",
         SemanticRole.SYSTEM_LIQUIDITY: "A local stock or flow describing cash available to the banking system.",
         SemanticRole.CENTRAL_BANK_FACILITY_RATE: "The price of an explicit central-bank liquidity facility.",
         SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP: "Actual use of a central-bank liquidity facility.",
@@ -2479,16 +2490,32 @@ def build_global_money_market_atlas(
                 ),
             },
             {
-                "source": "Board of Governors of the Federal Reserve System, H.4.1 RESH4R_XAW_N.WW",
+                "source": "Board of Governors of the Federal Reserve System, H.4.1 RESH4R_XAW_N.WW and RESPPMA_N.WW",
                 "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
                 "notice": (
                     "Source: Board of Governors of the Federal Reserve System, H.4.1. "
                     "Board information is public domain unless otherwise indicated "
                     "and the Board asks to be cited as the source. Reserve balances "
-                    "are the Board's week average ending each Wednesday, in USD "
-                    "millions; Seiche statistics are not official Board analysis or "
-                    "endorsement. The release package supplies observation dates, "
-                    "not publication receipts; its acquisition establishes knowledge time."
+                    "are the Board's week average ending each Wednesday and total "
+                    "assets its Wednesday level, both in USD millions; Seiche "
+                    "statistics are not official Board analysis or endorsement. The "
+                    "release package supplies observation dates, not publication "
+                    "receipts; its acquisition establishes knowledge time."
+                ),
+            },
+            {
+                "source": "U.S. Department of the Treasury, Daily Treasury Par Yield Curve Rates",
+                "terms_url": "https://home.treasury.gov/subfooter/site-policies-and-notices",
+                "notice": (
+                    "Source: U.S. Department of the Treasury, Daily Treasury Par Yield "
+                    "Curve Rates. The par yield curve is Treasury's own computation, a "
+                    "work of the United States Government not subject to US copyright "
+                    "(17 U.S.C. 105); Treasury's site policies state no reuse "
+                    "restriction. Values are bond-equivalent par yields at fixed "
+                    "maturities, dated by the trading day; they are not executable "
+                    "quotes, and Seiche statistics are not Treasury analysis or "
+                    "endorsement. The feed supplies observation dates, not publication "
+                    "receipts; its acquisition establishes knowledge time."
                 ),
             },
             {

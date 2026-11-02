@@ -6,6 +6,12 @@
 - Record the owner's four 2026-11-08 source-use decisions (Fed CP with DTCC origin, the BLS API Terms of Service, Bank of Japan total assets on the free site, raw SONIA under the Bank of England's open licence) in `backend/seiche/source_decisions.json` and `docs/rights/`; the adapters and the public projection read them.
 - Replace the all-or-nothing legacy gate with policy `seiche.public-source-rights.2026-11-09`: an engine, deep block, card or headline value is public only when every input it reads is an allowed direct or open source proven by the snapshot's provenance. The composite, the money desk, the funding-spread engines and the history family return; readings that depend on a FRED copy, the 17 blocked series or an unqualified source stay withheld.
 - Serve raw SONIA in the atlas with its Open Government Licence attribution and the Bank's Database clock.
+- Show the NY Fed's own SOFR and the Board's PRATES IORB on the GIFT City USD funding row instead of an unavailable benchmark.
+- Serve ON RRP take-up (`US.NYFED.ON_RRP_TAKEUP`) from the NY Fed's reverse repo results under the existing NY Fed Markets API record.
+- Serve reserve balances (`US.FED.RESERVE_BALANCES_DIRECT`) from the Board's own H.4.1 release, public domain with the Board cited as the source on every served value; the FRED copy stays withheld.
+- Serve Federal Reserve total assets (`US.FED.TOTAL_ASSETS_DIRECT`, H.4.1 `RESPPMA_N.WW`) from the same Board package and rights record, cited to the Board; the FRED `WALCL` copy stays withheld.
+- Serve Treasury's own Daily Treasury Par Yield Curve Rates at 1M, 3M, 6M, 1Y, 2Y, 5Y, 10Y and 30Y (`US.TREASURY.PAR_YIELD_*`), a US Government work cited to Treasury on every served value; the FRED `DGS` copies stay withheld.
+- Add a parser for the Board's commercial paper rates that stays off: the release is derived from DTCC data, so it waits for an owner rights decision and the FRED copies stay withheld.
 
 ## 0.16.11: static source-rights projection and source clocks (2026-11-01)
 

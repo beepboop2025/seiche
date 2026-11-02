@@ -258,16 +258,21 @@ declared after SRF, so pack order keeps SRF as the kernel's facility take-up.
 A failed fetch of either feed faults the whole adapter run rather than leaving
 one series silently stale. The FRED copy (`RRPONTSYD`) remains withheld.
 
-### US direct reserve balances (2026-11-02)
+### US direct reserve balances and total assets (2026-11-02)
 
-`seiche.sources.fed_h41` reads reserve balances from the Board's own H.4.1
-release package (`https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip`),
-not FRED and not the Data Download Program tool the Board is retiring. Series
+`seiche.sources.fed_h41` reads reserve balances and total assets from the
+Board's own H.4.1 release package
+(`https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip`), not FRED
+and not the Data Download Program tool the Board is retiring. Series
 `RESH4R_XAW_N.WW` ("Reserve balances with Federal Reserve Banks: week average",
-USD millions, Wednesday dates) is the number FRED republishes as `WRESBAL`.
-The parser streams the package once, pins the series' declared frequency,
-unit, multiplier and currency, refuses XML declarations, rejects duplicate,
-non-Wednesday or invalid rows, and skips `NA` rows rather than zero-filling.
+USD millions, Wednesday dates) is the number FRED republishes as `WRESBAL`;
+series `RESPPMA_N.WW` ("Total assets (Less eliminations from consolidation):
+Wednesday level", USD millions) is the number FRED republishes as `WALCL`.
+The shared Board package reader (`seiche.sources.frb_release`) streams the
+package once and refuses XML declarations; the parser pins each series'
+declared frequency, unit, multiplier and currency, requires both series,
+rejects duplicate, non-Wednesday or invalid rows, and skips `NA` rows rather
+than zero-filling.
 
 Rights: the Board's notice at `https://www.federalreserve.gov/disclaimer.htm`
 ("Copyright/trademark", captured 2026-11-02) reads: "Unless otherwise
@@ -279,16 +284,80 @@ declares the official-open `fed_h41` adapter with redistribution allowed:
 weekly cadence, polled daily, released Thursday 16:30 New York with one
 business day of lag on the US Fedwire calendar. The instrument is
 `US.FED.RESERVE_BALANCES_DIRECT` (mnemonic `RESERVE_BALANCES_DIRECT`, USD
-millions), declared before the FRED copy so pack order prefers it.
+millions), declared before the FRED copy so pack order prefers it, and
+`US.FED.TOTAL_ASSETS_DIRECT` (mnemonic `TOTAL_ASSETS_DIRECT`, USD millions,
+role `CENTRAL_BANK_TOTAL_ASSETS`, which no capability reads). The adapter keeps
+only rows for the instruments the pack declares on it.
 
 Every served value carries the citation `Source: Board of Governors of the
 Federal Reserve System, H.4.1` with `terms_url`: on the atlas metric, on the
 series page's instrument reference and in the atlas `legal_notices`. The
 adapter is still registered only while the pack declares that allowed record;
-any other declaration makes no request and serves nothing. The FRED copy
-(`US.FED.RESERVE_BALANCES`, `fred_weekly`) stays metadata-only and redacted.
-Routine collection keeps the last 45 days; a deeper history needs a one-off
-`seiche market-backfill --market US-USD` after release.
+any other declaration makes no request and serves nothing. The FRED copies
+(`US.FED.RESERVE_BALANCES` on `fred_weekly`, and the legacy `WALCL` series)
+stay metadata-only and redacted. Routine collection keeps the last 45 days; a
+deeper history needs a one-off `seiche market-backfill --market US-USD` after
+release.
+
+### US direct Treasury par yields (2026-11-02)
+
+`seiche.sources.treasury_par_yields` reads the Daily Treasury Par Yield Curve
+Rates from Treasury's documented XML feed
+(`https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve`),
+by month for routine collection (`field_tdr_date_value_month=YYYYMM`) and by
+year for a backfill (`field_tdr_date_value=YYYY`). The US pack declares eight
+tenors on adapter `treasury_par_yields`: `US.TREASURY.PAR_YIELD_1M`, `_3M`,
+`_6M`, `_1Y`, `_2Y`, `_5Y`, `_10Y` and `_30Y` (feed fields `BC_1MONTH` to
+`BC_30YEAR`), each a `SOVEREIGN_YIELD` in basis points with the source's own
+bond-equivalent convention. They are not the DTB3 discount-basis bill rate on
+`US.TREASURY.TBILL_3M`, so no existing role binding moves. The parser checks
+the feed title, the declared OData types, that every date lies in the
+requested month or year on a weekday, and a bound on values; it refuses XML
+declarations, skips absent or null tenors rather than zero-filling, and keeps
+the request URL out of the row evidence so a backfill re-reading a published
+row is not a revision.
+
+Rights: Treasury computes the curve itself ("The Treasury's official yield
+curve is a par yield curve derived using a monotone convex method", Treasury
+Yield Curve Methodology page), so it is a work of the United States
+Government, and 17 U.S.C. 105(a) reads: "Copyright protection under this
+title is not available for any work of the United States Government".
+Treasury's Site Policies and Notices page
+(`https://home.treasury.gov/subfooter/site-policies-and-notices`) and the
+Privacy and Legal Notices page it links, checked 2026-11-02, carry no copyright
+statement and no reuse restriction. The registry records this as
+`treasury_par_yield_curve` (`explicit_public_domain_with_exclusions`, evidence
+the statute), and every served value carries `Source: U.S. Department of the
+Treasury, Daily Treasury Par Yield Curve Rates` with that terms page, on the
+atlas metric, the series page and the atlas legal notices. Treasury seals and
+names and the NY Fed indicative quotations behind the curve are excluded.
+
+Clock: Treasury says the rates "are usually available at Treasury's interest
+rate website by 6:00 PM Eastern Time each trading day", so the adapter is
+daily, polled hourly, published 18:00 New York with no lag on the Fedwire
+calendar. A row seen before 18:00 on its own day waits for the next run. The
+bond market can close on a day Fedwire is open (Good Friday), which can age the
+rows by one opportunity until the next posting. The FRED copies (the legacy
+`DGS3M`, `DGS2`, `DGS10` and `DGS30` series and DTB3) stay metadata-only. A
+deeper history needs the same one-off `seiche market-backfill --market US-USD`.
+
+### US commercial paper: implemented, off pending rights (2026-11-02)
+
+`seiche.sources.fed_cp` parses the 90-day AA financial and nonfinancial rates
+(`RIFSPPFAAD90_N.B`, `RIFSPPNAAD90_N.B`) from the Board's own CP release
+package (`https://www.federalreserve.gov/releases/cp/data/FRB_CP_xml.zip`) and
+skips `ND` rows, which the release prints as "n.a." when trades were
+insufficient. It is off: the release page is headed "Derived from data supplied
+by The Depository Trust & Clearing Corporation" and the About page states that
+the release "is derived from data supplied by The Depository Trust & Clearing
+Corporation (DTCC)", which may take these rates outside the Board's "Unless
+otherwise indicated" public-domain notice; FRED marks its H.15 copies "Data in
+this graph are copyrighted". The registry records `frb_commercial_paper` as
+`review_required` and `policy_blocked`. The US pack declares no `fed_cp`
+adapter, so no request is made and nothing is stored or served, and the FRED
+copies (`US.CP.NONFINANCIAL_3M`, legacy `CP_FIN_3M` and `CP_NONFIN_3M`) stay
+metadata-only. Enabling needs an owner rights decision recorded in the
+registry and an allowed pack declaration; no code change.
 
 ## Deliberate trade-offs and validation boundary
 
