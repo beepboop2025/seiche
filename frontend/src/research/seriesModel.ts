@@ -13,6 +13,9 @@ export interface EconomicSeries {
   source: string;
   remote: string;
   sourceUrl?: string;
+  /** A citation the source asks for wherever its values are shown, with its https terms. */
+  attribution?: string;
+  terms?: string;
 }
 
 /** Validate the catalog and history together before displaying any number. */

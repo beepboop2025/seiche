@@ -108,3 +108,20 @@ test("failed initial and subsequent API checks cannot be presented as pending or
   assert.equal(apiCheckStatus("2026-10-21T23:12:00Z", "timeout"), "Refresh failed; last success 2026-10-21 23:12 UTC");
   assert.equal(apiCheckStatus("2026-10-22T10:05:00Z", null), "Last success 2026-10-22 10:05 UTC");
 });
+
+test("the USD summary cites H.4.1 with its terms beside the reserve value and says why empty direct cards are withheld", () => {
+  const Summary = summaryContext.exports.default;
+  const h41 = {id: "US.FED.RESERVE_BALANCES_DIRECT", availability: "AVAILABLE", redistribution_status: "allowed", value: 2893770,
+    unit: "local_currency_millions", asof: "2026-10-28", source: "fed_h41",
+    attribution: "Source: Board of Governors of the Federal Reserve System, H.4.1", terms_url: "https://www.federalreserve.gov/disclaimer.htm"};
+  const atlas = metrics => ({schema: "seiche.global-money-markets.v1", markets: [{market_id: "US-USD", metrics}]});
+  const card = (html, label) => html.match(new RegExp(`<h3>${label}</h3>[\\s\\S]*?</article>`))?.[0] ?? "";
+  const live = renderToStaticMarkup(React.createElement(Summary, {snap: {}, atlas: atlas([h41])}));
+  assert.match(card(live, "Reserve balances"), /<strong>\$2,893\.77B<\/strong><span>Week ended 2026-10-28<\/span>/);
+  assert.match(card(live, "Reserve balances"), /<small>Source: Board of Governors of the Federal Reserve System, H\.4\.1<\/small><small>Terms: <a href="https:\/\/www\.federalreserve\.gov\/disclaimer\.htm"[^>]*>www\.federalreserve\.gov\/disclaimer\.htm<\/a><\/small>/);
+  const empty = renderToStaticMarkup(React.createElement(Summary, {snap: {}, atlas: atlas([])}));
+  assert.match(card(empty, "Reserve balances"), /<strong>Withheld<\/strong>[\s\S]*?the Federal Reserve&#x27;s own H\.4\.1 series arrives in the next release\./);
+  assert.match(card(empty, "ON RRP take-up"), /<strong>Withheld<\/strong>[\s\S]*?the New York Fed&#x27;s own reverse repo series arrives in the next release\./);
+  assert.doesNotMatch(card(empty, "Reserve balances") + card(empty, "ON RRP take-up"), /Source not supplied|\$|Terms:/);
+  assert.match(card(empty, "SOFR"), /<strong>Unavailable<\/strong>/);
+});

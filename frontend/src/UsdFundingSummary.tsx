@@ -49,7 +49,8 @@ export default function UsdFundingSummary({ snap, atlas }: { snap: unknown; atla
             <h3>{card.label}</h3><strong>{fundingValue(card)}</strong>
             <span>{card.asof ? (card.id === "liquidity.reserves" ? "Week ended " : "As of ") + card.asof : "Observation date unavailable"}</span>
             <small>{card.cadence}{card.status.toLowerCase() === "stale" ? " · behind schedule" : ""}</small>
-            <small>{card.source}</small>
+            <small>{card.gap ?? card.source}</small>
+            {card.terms && <small>Terms: <a href={card.terms} target="_blank" rel="noopener noreferrer">{card.terms.replace(/^https:\/\//, "")}</a></small>}
             <small>{card.origin === "live" ? "Latest collected observation" : card.origin === "published" ? "Published board observation" : "No observation supplied"}</small>
           </article>
         ))}
