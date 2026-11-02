@@ -30,6 +30,8 @@ class SemanticRole(StrEnum):
     TBILL_3M = "TBILL_3M"
     TBILL_6M = "TBILL_6M"
     TBILL_12M = "TBILL_12M"
+    # A bill rate on a bank-discount basis, not a bond-equivalent yield.
+    TBILL_DISCOUNT_RATE = "TBILL_DISCOUNT_RATE"
     SOVEREIGN_YIELD = "SOVEREIGN_YIELD"
     TERM_FUNDING_RATE = "TERM_FUNDING_RATE"
     RESERVE_REQUIREMENT_RATIO = "RESERVE_REQUIREMENT_RATIO"
@@ -43,6 +45,10 @@ class SemanticRole(StrEnum):
     CD_3M = "CD_3M"
     RESERVE_BALANCES = "RESERVE_BALANCES"
     CENTRAL_BANK_TOTAL_ASSETS = "CENTRAL_BANK_TOTAL_ASSETS"
+    # One published balance-sheet or memorandum line of the central bank.
+    CENTRAL_BANK_BALANCE_SHEET_ITEM = "CENTRAL_BANK_BALANCE_SHEET_ITEM"
+    # An administered rate the authority has replaced: dated history only.
+    RETIRED_ADMINISTERED_RATE = "RETIRED_ADMINISTERED_RATE"
     SYSTEM_LIQUIDITY = "SYSTEM_LIQUIDITY"
     CENTRAL_BANK_FACILITY_RATE = "CENTRAL_BANK_FACILITY_RATE"
     CENTRAL_BANK_FACILITY_TAKEUP = "CENTRAL_BANK_FACILITY_TAKEUP"
@@ -60,6 +66,10 @@ class SemanticRole(StrEnum):
     COMPOUNDED_OVERNIGHT_RATE_INDEX = "COMPOUNDED_OVERNIGHT_RATE_INDEX"
     FX_SWAP_BASIS = "FX_SWAP_BASIS"
     COLLATERAL_HAIRCUT = "COLLATERAL_HAIRCUT"
+    # Reference context outside the funding kernel: no capability reads these.
+    EXCHANGE_RATE = "EXCHANGE_RATE"
+    CURRENCY_INDEX = "CURRENCY_INDEX"
+    INDUSTRIAL_PRODUCTION = "INDUSTRIAL_PRODUCTION"
 
 
 class CanonicalUnit(StrEnum):
@@ -136,11 +146,13 @@ RATE_ROLES = frozenset(
         SemanticRole.TBILL_3M,
         SemanticRole.TBILL_6M,
         SemanticRole.TBILL_12M,
+        SemanticRole.TBILL_DISCOUNT_RATE,
         SemanticRole.SOVEREIGN_YIELD,
         SemanticRole.TERM_FUNDING_RATE,
         SemanticRole.CP_3M,
         SemanticRole.CD_3M,
         SemanticRole.CENTRAL_BANK_FACILITY_RATE,
+        SemanticRole.RETIRED_ADMINISTERED_RATE,
         SemanticRole.RATE_P01,
         SemanticRole.RATE_P25,
         SemanticRole.RATE_MEDIAN,

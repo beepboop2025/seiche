@@ -100,6 +100,10 @@ CANDIDATE_ADAPTER_KEYS = {
     "treasury_fiscaldata": (("US-USD", "fiscaldata"),),
     "frb_h41_release": (("US-USD", "fed_h41"),),
     "treasury_par_yield_curve": (("US-USD", "treasury_par_yields"),),
+    "frb_prates_release": (("US-USD", "fed_prates"),),
+    "frb_h15_release": (("US-USD", "fed_h15"),),
+    "frb_h10_release": (("US-USD", "fed_h10"),),
+    "frb_g17_release": (("US-USD", "fed_g17"),),
 }
 
 

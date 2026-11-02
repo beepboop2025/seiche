@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (0.17.0 candidate): the Board's own release packages, direct
+
+- Read the Board's PRATES, H.4.1, H.15, H.10 and G.17 release packages through one pinned, bounded adapter (`seiche.sources.frb_release_package`); `fed_h41` and `fed_prates` now use it and keep every stored row's revision identity.
+- Serve seven more H.4.1 lines (Treasury General Account and currency in circulation week averages; primary credit, liquidity swaps, foreign official reverse repos and repos, and custody holdings of Treasuries), IOER beside IORB (2008-10-09 to 2021-07-28), the H.15 3-month, 2-year, 10-year and 30-year constant maturities and 4-week and 3-month bill rates, 22 H.10 exchange rates and the three nominal dollar indexes, and G.17 industrial production, each cited to the Board on every served value; the FRED copies stay withheld.
+- New roles keep these series out of every capability, the v1 composite and every engine; they appear on the money-market atlas and the US-USD series page only.
+- Parse the H.15 commercial paper rates but hold them in code, metadata-only, until the owner decides their DTCC provenance.
+
 ## 0.16.12: blank-data repairs, direct US sources and atlas delivery (2026-11-02)
 
 - Show the NY Fed's own SOFR and the Board's PRATES IORB on the GIFT City USD funding row instead of an unavailable benchmark.

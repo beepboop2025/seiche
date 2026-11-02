@@ -411,6 +411,71 @@ copies (`US.CP.NONFINANCIAL_3M`, legacy `CP_FIN_3M` and `CP_NONFIN_3M`) stay
 metadata-only. Enabling needs an owner rights decision recorded in the
 registry and an allowed pack declaration; no code change.
 
+### US direct Board release packages (0.17.0 candidate, Stage 2a)
+
+`seiche.sources.frb_release_package` is one declarative adapter for the
+Board's own release packages at
+`https://www.federalreserve.gov/releases/<rel>/data/FRB_<REL>_xml.zip`, the
+files each release page links as "XML", not FRED and not the Data Download
+Program tool the Board is retiring. It generalizes the 0.16.12 `fed_h41`
+parser; `fed_h41` and `fed_prates` are now thin modules over it, and a test
+pins that every row they stored before keeps its exact evidence bytes and
+revision ID. Each package pins its ZIP member, its SDMX data set and, per
+series, the exact publisher declarations (frequency, unit, multiplier and the
+dimensions that identify the instrument, such as H.4.1 `SERIESTYPE`, H.15
+`INSTRUMENT` and `MATURITY`, H.10 `FX`, G.17 `SA`). Every pinned series must
+appear exactly once in the pinned data set, dates must be strictly increasing
+on the package's calendar rule (Wednesdays, weekdays, month ends or any day),
+and every available value must be a plain decimal inside the package bounds.
+`NA` and `ND` rows stay absent. Any change fails the whole run closed. The
+archive, the member's declared and streamed size, the member count and the
+rows per series are bounded, and the fetch takes no redirects.
+
+| Adapter | Package | Series served | Role | Clock |
+|---|---|---|---|---|
+| `fed_prates` | PRATES | `RESBM_N.D` IORB (existing) and `RESBME_N.D` IOER, 2008-10-09 to 2021-07-28 (`US.FED.IOER_DIRECT`) | `POLICY_TARGET`; IOER `RETIRED_ADMINISTERED_RATE` | unknown, as before |
+| `fed_h41` | H.4.1 | reserves and total assets (existing) plus the TGA and currency week averages and primary credit, liquidity swaps, foreign official reverse repos and repos, and custody holdings of Treasuries, Wednesday levels | `CENTRAL_BANK_BALANCE_SHEET_ITEM` for the seven added lines | Thursday 16:30, as before |
+| `fed_h15` | H.15 | constant maturities 3M, 2Y, 10Y, 30Y; bills 4W and 3M, discount basis | `SOVEREIGN_YIELD`; bills `TBILL_DISCOUNT_RATE` | next business day 16:15, polled every 3 hours |
+| `fed_h10` | H.10 | 22 bilateral noon buying rates in the release's own direction and the Broad, AFE and EME nominal dollar indexes | `EXCHANGE_RATE`, `CURRENCY_INDEX` | weekly Monday 16:15 posting, polled every 6 hours |
+| `fed_g17` | G.17 | `IP.B50001.S`, total industrial production, seasonally adjusted, 2017=100 | `INDUSTRIAL_PRODUCTION` | unknown (mid-month), polled daily, 400-day routine window |
+
+None of the new roles is read by a capability, an event, the universal kernel,
+the v1 composite, the Tell, ML or any engine, and no new mnemonic collides with
+a v1 board key, so the bridged US-USD reading keeps exactly its inputs and its
+restriction. The series appear only as source-dated, cited rows: on the
+`/api/v2/money-markets` atlas metrics and legal notices and on the
+`/api/v2/markets/US-USD/series` instrument references and observations. No
+website panel or MCP tool is re-pointed to them in this stage. Every value
+carries its Board citation and
+`https://www.federalreserve.gov/disclaimer.htm`; the H.15 citation keeps
+"Treasury constant maturities: U.S. Treasury", the source its footnote names.
+The H.10 indexes are labelled "JAN06=100" on the release while the package's
+`UNIT` attribute still reads `Index:_1997_Jan_100`; the attribute is pinned as
+published.
+
+H.10 posts the previous week's daily rates on Mondays at 16:15 New York. The
+adapter clock (next business day, 16:15) is the earliest a row could be public:
+exact for Friday rows and earlier than the weekly posting for the others,
+never a receipt; knowledge time is always the actual capture. Currentness uses
+an instrument clock of five business days at 16:15, so the day after the last
+published row falls due at the next Monday posting.
+
+The H.15 commercial paper rates (`RIFSPPNAAD90_N.B`, `RIFSPPFAAD90_N.B`) are
+parsed by the held package `fed_h15_cp` from the same H.15 file but carry a
+code-level rights hold: the gate stays closed even if a pack declared them, the
+US pack declares nothing for them, and registry record
+`frb_h15_commercial_paper` is `metadata_only` and `policy_blocked` pending the
+owner's decision on the DTCC provenance. Their test fixture values are
+synthetic.
+
+Registry records: `frb_prates_release`, `frb_h41_release` (extended),
+`frb_h15_release`, `frb_h15_commercial_paper`, `frb_h10_release` and
+`frb_g17_release`. G.17's annual revision on 2026-11-24 rebases the index to
+2022, which changes the pinned `UNIT` and faults `fed_g17` closed by design
+until the pin is reviewed. After release, a one-off
+`seiche market-backfill --market US-USD` gives the new series history; IOER
+rows never fall in a routine window.
+
 ## Deliberate trade-offs and validation boundary
 
 - v1 stays US-centred until parity migration completes. That preserves users but
