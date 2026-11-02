@@ -21,13 +21,24 @@ from seiche.sources.canonical import FetchedDocument, PublicationTimePolicy
 from seiche.sources.official import build_official_adapters
 
 
+# The PRATES package shape: one pinned data set holding IOER (the 2008 to 2021
+# splice leg, last published 0.15 on 2021-07-28) and IORB. Both are required.
+_OPEN = ('<Message xmlns="urn:frb"><DataSet id="PRATES_POLICY_RATES">'
+         '<Series CURRENCY="NA" FREQ="8" INT_RATES_PAID="IOR" SERIES_NAME="RESBME_N.D" UNIT="Percent" UNIT_MULT="1">'
+         '<Obs TIME_PERIOD="2021-07-27" OBS_STATUS="A" OBS_VALUE="0.15"/>'
+         '<Obs TIME_PERIOD="2021-07-28" OBS_STATUS="A" OBS_VALUE="0.15"/>'
+         '</Series>'
+         '<Series CURRENCY="NA" FREQ="8" INT_RATES_PAID="IOR" SERIES_NAME="RESBM_N.D" UNIT="Percent" UNIT_MULT="1">')
+_CLOSE = '</Series></DataSet></Message>'
+
+
 def document(xml=None):
     if xml is None:
-        xml = ('<Message xmlns="urn:frb"><Series SERIES_NAME="RESBM_N.D" UNIT="Percent" UNIT_MULT="1">'
-               '<Obs TIME_PERIOD="2026-08-10" OBS_STATUS="A" OBS_VALUE="3.65"/>'
+        xml = (_OPEN
+               + '<Obs TIME_PERIOD="2026-08-10" OBS_STATUS="A" OBS_VALUE="3.65"/>'
                '<Obs TIME_PERIOD="2026-08-11" OBS_STATUS="A" OBS_VALUE="3.65"/>'
                '<Obs TIME_PERIOD="2026-08-12" OBS_STATUS="A" OBS_VALUE="3.70"/>'
-               '</Series></Message>')
+               + _CLOSE)
     raw = io.BytesIO()
     with zipfile.ZipFile(raw, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("PRATES_data.xml", xml)
@@ -36,21 +47,25 @@ def document(xml=None):
 
 def test_parser_retains_distinct_identity_dates_precision_and_unknown_publication():
     doc = document()
-    points = fed_prates.parse_document(doc)
+    every = fed_prates.parse_document(doc)
+    points = [p for p in every if p.instrument_id == fed_prates.INSTRUMENT_ID]
     assert len(points) == 3
     assert all(p.instrument_id == "US.FED.IORB_DIRECT" for p in points)
+    # IOER is its own instrument, never an IORB alias.
+    assert [(p.instrument_id, p.event_time.isoformat()) for p in every
+            if p.instrument_id != fed_prates.INSTRUMENT_ID] == [
+        ("US.FED.IOER_DIRECT", "2021-07-27"), ("US.FED.IOER_DIRECT", "2021-07-28")]
     assert points[0].raw_value == Decimal("3.65")
     assert points[0].event_time.isoformat() == "2026-08-10"
-    assert all(p.publication_time_policy is PublicationTimePolicy.UNKNOWN for p in points)
-    assert all(p.source_publication_time is None for p in points)
+    assert all(p.publication_time_policy is PublicationTimePolicy.UNKNOWN for p in every)
+    assert all(p.source_publication_time is None for p in every)
     evidence = json.loads(points[0].row_evidence)
     assert evidence["source_url"] == fed_prates.SOURCE_URL
     assert evidence["series"] == "RESBM_N.D" and evidence["field"] == "OBS_VALUE"
     assert points[0].revision_id.startswith("fed-prates:RESBM_N.D:2026-08-10:")
-    changed = document('<Message><Series SERIES_NAME="RESBM_N.D" UNIT="Percent" UNIT_MULT="1">'
-                       '<Obs TIME_PERIOD="2026-08-10" OBS_STATUS="A" OBS_VALUE="3.66"/>'
-                       '</Series></Message>')
-    assert fed_prates.parse_document(changed)[0].revision_id != points[0].revision_id
+    changed = document(_OPEN + '<Obs TIME_PERIOD="2026-08-10" OBS_STATUS="A" OBS_VALUE="3.66"/>' + _CLOSE)
+    changed_iorb = [p for p in fed_prates.parse_document(changed) if p.instrument_id == fed_prates.INSTRUMENT_ID]
+    assert changed_iorb[0].revision_id != points[0].revision_id
 
 
 @pytest.mark.parametrize("mutation", [

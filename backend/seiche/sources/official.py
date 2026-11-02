@@ -2245,33 +2245,39 @@ def build_official_adapters(
             )
         )
 
-    from seiche.sources import fed_prates
+    from seiche.sources import frb_release_package
 
-    def parse_fed_prates_window(document):
-        start, end = request_window()
-        return tuple(point for point in fed_prates.parse_document(document)
-                     if start <= point.event_time <= end)
+    def board_package_adapter(package, declared):
+        async def fetch_board_package(client):
+            return await frb_release_package.fetch_package(client, package)
 
-    add("US-USD", "fed_prates", "fed_prates",
-        fed_prates.fetch_document, parse_fed_prates_window, timeout=30.0)
+        def parse_board_package_window(document):
+            start, end = request_window(timezone_name=package.window_timezone)
+            if not backfill:
+                start = end - timedelta(days=package.routine_window_days)
+            # Every pinned series is validated; only declared, in-window rows return.
+            return frb_release_package.parse_package(
+                document, package, instruments=declared, start=start, end=end,
+            )
 
-    from seiche.sources import fed_h41
+        return fetch_board_package, parse_board_package_window
 
-    # Direct Board H.4.1 reserve balances and total assets run only while the
-    # US pack itself declares the official-open fed_h41 adapter with
-    # redistribution allowed, and only for the instruments it declares there.
-    # Any other declaration makes no request and stores or serves nothing.
-    if fed_h41.rights_gate_open(markets.get("US-USD")):
-        fed_h41_declared = fed_h41.declared_instruments(markets.get("US-USD"))
-
-        def parse_fed_h41_window(document):
-            start, end = request_window(timezone_name="America/New_York")
-            return tuple(point for point in fed_h41.parse_document(document)
-                         if point.instrument_id in fed_h41_declared
-                         and start <= point.event_time <= end)
-
-        add("US-USD", fed_h41.ADAPTER_ID, fed_h41.ADAPTER_ID,
-            fed_h41.fetch_document, parse_fed_h41_window, timeout=150.0)
+    # The Board's own release packages (PRATES, H.4.1, H.15, H.10, G.17), not
+    # FRED. Each runs only while the US pack itself declares its official-open
+    # adapter with redistribution allowed, and only for the instruments it
+    # declares there; a package under a rights hold (the H.15 commercial paper
+    # rates) never runs. Any other declaration makes no request and stores or
+    # serves nothing.
+    us_pack = markets.get("US-USD")
+    for package in frb_release_package.PACKAGES:
+        if not frb_release_package.rights_gate_open(us_pack, package):
+            continue
+        fetch_board_package, parse_board_package_window = board_package_adapter(
+            package, frb_release_package.declared_instruments(us_pack, package),
+        )
+        add("US-USD", package.adapter_id, package.adapter_id,
+            fetch_board_package, parse_board_package_window,
+            timeout=package.adapter_timeout_seconds)
 
     from seiche.sources import treasury_par_yields
 
@@ -2872,6 +2878,9 @@ PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
         ("US-USD", "fed_h41"),
+        ("US-USD", "fed_h15"),
+        ("US-USD", "fed_h10"),
+        ("US-USD", "fed_g17"),
         ("US-USD", "treasury_par_yields"),
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),

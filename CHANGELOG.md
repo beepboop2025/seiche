@@ -2,6 +2,11 @@
 
 ## Unreleased: original-publisher sources and the per-engine projection (2026-11-09)
 
+- Read the Board's PRATES, H.4.1, H.15, H.10 and G.17 release packages through one pinned, bounded adapter (`seiche.sources.frb_release_package`); `fed_h41` and `fed_prates` now use it and keep every stored row's revision identity.
+- Serve seven more H.4.1 lines (Treasury General Account and currency in circulation week averages; primary credit, liquidity swaps, foreign official reverse repos and repos, and custody holdings of Treasuries), IOER beside IORB (2008-10-09 to 2021-07-28), the H.15 3-month, 2-year, 10-year and 30-year constant maturities and 4-week and 3-month bill rates, 22 H.10 exchange rates and the three nominal dollar indexes, and G.17 industrial production, each cited to the Board on every served value; the FRED copies stay withheld.
+- New roles keep these series out of every capability, the v1 composite and every engine; they appear on the money-market atlas and the US-USD series page only.
+- Parse the H.15 commercial paper rates but hold them in code, metadata-only, until the owner decides their DTCC provenance.
+
 - Read 56 of the 76 FRED series Seiche used from their original publishers: the Board's H.4.1, H.15, H.10, G.17, commercial paper and PRATES release XML zips (never the retiring Data Download Program), the NY Fed Markets API (SOFR, EFFR, the target range that replaces DFEDTARU, and ON RRP), BEA, BLS, the ECB, the Bank of England and the Bank of Japan.
 - Record the owner's four 2026-11-08 source-use decisions (Fed CP with DTCC origin, the BLS API Terms of Service, Bank of Japan total assets on the free site, raw SONIA under the Bank of England's open licence) in `backend/seiche/source_decisions.json` and `docs/rights/`; the adapters and the public projection read them.
 - Replace the all-or-nothing legacy gate with policy `seiche.public-source-rights.2026-11-09`: an engine, deep block, card or headline value is public only when every input it reads is an allowed direct or open source proven by the snapshot's provenance. The composite, the money desk, the funding-spread engines and the history family return; readings that depend on a FRED copy, the 17 blocked series or an unqualified source stay withheld.

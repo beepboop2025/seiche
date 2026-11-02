@@ -68,6 +68,9 @@ _REGIONS = {
 _SOURCE_URLS = {
     "fed_prates": "https://www.federalreserve.gov/releases/prates/data/FRB_PRATES_xml.zip",
     "fed_h41": "https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip",
+    "fed_h15": "https://www.federalreserve.gov/releases/h15/data/FRB_H15_xml.zip",
+    "fed_h10": "https://www.federalreserve.gov/releases/h10/data/FRB_H10_xml.zip",
+    "fed_g17": "https://www.federalreserve.gov/releases/g17/data/FRB_G17_xml.zip",
     "treasury_par_yields": (
         "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
         "TextView?type=daily_treasury_yield_curve"
@@ -109,7 +112,11 @@ _SOURCE_URLS = {
     "rbnz_wholesale": "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates",
 }
 _SOURCE_PUBLISHERS = {
+    "fed_prates": "Board of Governors of the Federal Reserve System",
     "fed_h41": "Board of Governors of the Federal Reserve System",
+    "fed_h15": "Board of Governors of the Federal Reserve System",
+    "fed_h10": "Board of Governors of the Federal Reserve System",
+    "fed_g17": "Board of Governors of the Federal Reserve System",
     "treasury_par_yields": "U.S. Department of the Treasury",
     "fred_daily": "Federal Reserve Bank of St. Louis",
     "fred_weekly": "Federal Reserve Bank of St. Louis",
@@ -156,8 +163,32 @@ _SOURCE_PUBLISHERS = {
 # with every served value (atlas and country-desk metrics, series instrument
 # references) as well as in the atlas legal notices.
 _SOURCE_ATTRIBUTIONS: dict[str, dict[str, str]] = {
+    # The Board's release packages (seiche.sources.frb_release_package): a
+    # test keeps each citation identical to its package declaration.
+    "fed_prates": {
+        "attribution": "Source: Board of Governors of the Federal Reserve System, Policy Rates (PRATES)",
+        "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
     "fed_h41": {
         "attribution": "Source: Board of Governors of the Federal Reserve System, H.4.1",
+        "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+    "fed_h15": {
+        "attribution": (
+            "Source: Board of Governors of the Federal Reserve System, H.15 Selected "
+            "Interest Rates (Treasury constant maturities: U.S. Treasury)"
+        ),
+        "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+    "fed_h10": {
+        "attribution": "Source: Board of Governors of the Federal Reserve System, H.10 Foreign Exchange Rates",
+        "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+    "fed_g17": {
+        "attribution": (
+            "Source: Board of Governors of the Federal Reserve System, G.17 Industrial "
+            "Production and Capacity Utilization"
+        ),
         "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
     },
     "treasury_par_yields": {
@@ -1770,6 +1801,7 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.TBILL_3M: "The sovereign three-month cash benchmark in this local market.",
         SemanticRole.TBILL_6M: "The sovereign six-month bill reference in this local market.",
         SemanticRole.TBILL_12M: "The sovereign twelve-month bill reference in this local market.",
+        SemanticRole.TBILL_DISCOUNT_RATE: "A Treasury bill secondary-market rate quoted on a bank-discount basis with a 360-day year; not a bond-equivalent yield.",
         SemanticRole.SOVEREIGN_YIELD: "The source-labelled sovereign yield; benchmark, monthly maturity and auction families remain separate.",
         SemanticRole.TERM_FUNDING_RATE: "A source-native term funding rate or reported range, not a standardized three-month quote.",
         SemanticRole.RESERVE_REQUIREMENT_RATIO: "The required reserve ratio as a share of the applicable reserve base.",
@@ -1783,6 +1815,8 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.CD_3M: "Three-month bank certificate-of-deposit funding cost.",
         SemanticRole.RESERVE_BALANCES: "Settlement cash held by banks at the central bank.",
         SemanticRole.CENTRAL_BANK_TOTAL_ASSETS: "The central bank's reported total assets: balance-sheet size, not reserves or a liquidity score.",
+        SemanticRole.CENTRAL_BANK_BALANCE_SHEET_ITEM: "One line of the central bank's balance sheet or its memorandum items, as published; not reserves, a facility price or a liquidity score.",
+        SemanticRole.RETIRED_ADMINISTERED_RATE: "An administered central-bank rate the authority has since replaced; dated history only, never a current policy anchor.",
         SemanticRole.SYSTEM_LIQUIDITY: "A local stock or flow describing cash available to the banking system.",
         SemanticRole.CENTRAL_BANK_FACILITY_RATE: "The price of an explicit central-bank liquidity facility.",
         SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP: "Actual use of a central-bank liquidity facility.",
@@ -1792,6 +1826,9 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.RATE_P99: "The upper tail of transaction rates, useful for detecting concentrated pressure.",
         SemanticRole.FX_SWAP_BASIS: "The relative price of obtaining this currency or dollars through an FX swap.",
         SemanticRole.COLLATERAL_HAIRCUT: "The collateral discount applied by the covered funding market.",
+        SemanticRole.EXCHANGE_RATE: "A reference exchange rate in the direction its source quotes it; not an executable quote.",
+        SemanticRole.CURRENCY_INDEX: "A trade-weighted index of the currency's value against a basket of currencies; an index level, not a price.",
+        SemanticRole.INDUSTRIAL_PRODUCTION: "Real output of the industrial sector as an index of a base year; revised after first publication.",
     }
     return explanations.get(role, "Official local money-market observation.")
 
@@ -2478,29 +2515,94 @@ def build_global_money_market_atlas(
                 )
             },
             {
-                "source": "Board of Governors of the Federal Reserve System, PRATES RESBM_N.D",
+                "source": "Board of Governors of the Federal Reserve System, PRATES RESBM_N.D and RESBME_N.D",
                 "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
                 "notice": (
-                    "Source: Board of Governors of the Federal Reserve System. "
-                    "Board information is public domain unless otherwise indicated; "
-                    "non-Board material may have separate rights. Seiche calculations "
-                    "are not official Board analysis or endorsement. The current "
-                    "PRATES file supplies effective observation dates, not historical "
-                    "publication receipts; its acquisition establishes knowledge time."
+                    "Source: Board of Governors of the Federal Reserve System, Policy "
+                    "Rates (PRATES). Board information is public domain unless "
+                    "otherwise indicated; non-Board material may have separate rights. "
+                    "IORB runs from 2021-07-29; IOER, which it replaced, is dated "
+                    "history from 2008-10-09 to 2021-07-28 and is never a current "
+                    "policy anchor. Seiche calculations are not official Board "
+                    "analysis or endorsement. The current PRATES file supplies "
+                    "effective observation dates, not historical publication receipts; "
+                    "its acquisition establishes knowledge time."
                 ),
             },
             {
-                "source": "Board of Governors of the Federal Reserve System, H.4.1 RESH4R_XAW_N.WW and RESPPMA_N.WW",
+                "source": (
+                    "Board of Governors of the Federal Reserve System, H.4.1 RESH4R_XAW_N.WW, "
+                    "RESPPMA_N.WW, RESPPLLDT_XAW_N.WW, RESTBC_XAW_N.WW, RESPPALDP_N.WW, "
+                    "RESH4SCS_N.WW, RESPPLLRF_N.WW, RESH4FG_N.WW and RESPPALGTRF_N.WW"
+                ),
                 "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
                 "notice": (
                     "Source: Board of Governors of the Federal Reserve System, H.4.1. "
                     "Board information is public domain unless otherwise indicated "
-                    "and the Board asks to be cited as the source. Reserve balances "
-                    "are the Board's week average ending each Wednesday and total "
-                    "assets its Wednesday level, both in USD millions; Seiche "
-                    "statistics are not official Board analysis or endorsement. The "
-                    "release package supplies observation dates, not publication "
-                    "receipts; its acquisition establishes knowledge time."
+                    "and the Board asks to be cited as the source. Reserve balances, "
+                    "the Treasury General Account and currency in circulation are the "
+                    "Board's week averages ending each Wednesday; total assets, primary "
+                    "credit, central bank liquidity swaps, foreign official reverse "
+                    "repos and repos, and custody holdings of Treasury securities are "
+                    "Wednesday levels; all are in USD millions. Seiche statistics are "
+                    "not official Board analysis or endorsement. The release package "
+                    "supplies observation dates, not publication receipts; its "
+                    "acquisition establishes knowledge time."
+                ),
+            },
+            {
+                "source": (
+                    "Board of Governors of the Federal Reserve System, H.15 RIFLGFCM03_N.B, "
+                    "RIFLGFCY02_N.B, RIFLGFCY10_N.B, RIFLGFCY30_N.B, RIFSGFSW04_N.B and "
+                    "RIFSGFSM03_N.B"
+                ),
+                "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+                "notice": (
+                    "Source: Board of Governors of the Federal Reserve System, H.15 "
+                    "Selected Interest Rates (Treasury constant maturities: U.S. "
+                    "Treasury). Board information is public domain unless otherwise "
+                    "indicated; the release credits the constant maturity yields, which "
+                    "the U.S. Treasury interpolates from its yield curve, to the U.S. "
+                    "Treasury and cites no other owner. Bill rates "
+                    "are secondary-market rates on a discount basis, annualized on a "
+                    "360-day year; yields are in percent per annum. The H.15 commercial "
+                    "paper rates, derived from Depository Trust Company trades, are not "
+                    "served. Seiche statistics are not official Board or Treasury "
+                    "analysis or endorsement. The release package supplies observation "
+                    "dates, not publication receipts; its acquisition establishes "
+                    "knowledge time."
+                ),
+            },
+            {
+                "source": "Board of Governors of the Federal Reserve System, H.10 Foreign Exchange Rates",
+                "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+                "notice": (
+                    "Source: Board of Governors of the Federal Reserve System, H.10 "
+                    "Foreign Exchange Rates. Board information is public domain unless "
+                    "otherwise indicated. The rates are noon buying rates in New York "
+                    "for cable transfers, certified by the Federal Reserve Bank of New "
+                    "York for customs purposes, quoted as the release quotes them (U.S. "
+                    "dollars per euro, pound, Australian and New Zealand dollar; other "
+                    "currencies per U.S. dollar). The nominal dollar indexes are labelled "
+                    "January 2006 = 100 on the release. These are reference rates, not "
+                    "executable quotes, and Seiche statistics are not official Board "
+                    "analysis or endorsement. The weekly package supplies observation "
+                    "dates, not publication receipts; its acquisition establishes "
+                    "knowledge time."
+                ),
+            },
+            {
+                "source": "Board of Governors of the Federal Reserve System, G.17 IP.B50001.S",
+                "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+                "notice": (
+                    "Source: Board of Governors of the Federal Reserve System, G.17 "
+                    "Industrial Production and Capacity Utilization. Board information "
+                    "is public domain unless otherwise indicated. The total index is "
+                    "seasonally adjusted with 2017 = 100, revised in later releases and "
+                    "rebased at the Board's annual revisions; each revision is kept as "
+                    "its own vintage. Seiche statistics are not official Board analysis "
+                    "or endorsement. The release package supplies observation dates, "
+                    "not publication receipts; its acquisition establishes knowledge time."
                 ),
             },
             {
