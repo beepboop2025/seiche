@@ -2346,18 +2346,63 @@ def build_official_adapters(
 
     from seiche.sources import fed_h41
 
-    # Direct Board H.4.1 reserve balances run only while the US pack itself
-    # declares the official-open fed_h41 adapter with redistribution allowed.
+    # Direct Board H.4.1 reserve balances and total assets run only while the
+    # US pack itself declares the official-open fed_h41 adapter with
+    # redistribution allowed, and only for the instruments it declares there.
     # Any other declaration makes no request and stores or serves nothing.
     if fed_h41.rights_gate_open(markets.get("US-USD")):
+        fed_h41_declared = fed_h41.declared_instruments(markets.get("US-USD"))
 
         def parse_fed_h41_window(document):
             start, end = request_window(timezone_name="America/New_York")
             return tuple(point for point in fed_h41.parse_document(document)
-                         if start <= point.event_time <= end)
+                         if point.instrument_id in fed_h41_declared
+                         and start <= point.event_time <= end)
 
         add("US-USD", fed_h41.ADAPTER_ID, fed_h41.ADAPTER_ID,
             fed_h41.fetch_document, parse_fed_h41_window, timeout=150.0)
+
+    from seiche.sources import treasury_par_yields
+
+    # Treasury's own par yield curve runs only while the US pack itself
+    # declares the official-open treasury_par_yields adapter with
+    # redistribution allowed, and only for the tenors it declares there.
+    # Routine runs read the month documents of the window; a backfill reads
+    # whole years. Any other declaration makes no request and serves nothing.
+    if treasury_par_yields.rights_gate_open(markets.get("US-USD")):
+        treasury_declared = treasury_par_yields.declared_instruments(markets.get("US-USD"))
+
+        async def fetch_treasury_par_yields(client):
+            start, end = request_window(timezone_name="America/New_York")
+            return await treasury_par_yields.fetch_documents(
+                client, treasury_par_yields.document_urls(start, end, by_year=backfill))
+
+        def parse_treasury_par_window(document):
+            start, end = request_window(timezone_name="America/New_York")
+            return tuple(point for point in treasury_par_yields.parse_document(document)
+                         if point.instrument_id in treasury_declared
+                         and start <= point.event_time <= end)
+
+        add("US-USD", treasury_par_yields.ADAPTER_ID, treasury_par_yields.ADAPTER_ID,
+            fetch_treasury_par_yields, parse_treasury_par_window, timeout=120.0)
+
+    from seiche.sources import fed_cp
+
+    # Board commercial paper rates are implemented but stay off: the release is
+    # derived from data supplied by DTCC, and no allowed rights record covers
+    # it. Until the US pack itself declares one, no request is made and nothing
+    # is stored or served.
+    if fed_cp.rights_gate_open(markets.get("US-USD")):
+        fed_cp_declared = fed_cp.declared_instruments(markets.get("US-USD"))
+
+        def parse_fed_cp_window(document):
+            start, end = request_window(timezone_name="America/New_York")
+            return tuple(point for point in fed_cp.parse_document(document)
+                         if point.instrument_id in fed_cp_declared
+                         and start <= point.event_time <= end)
+
+        add("US-USD", fed_cp.ADAPTER_ID, fed_cp.ADAPTER_ID,
+            fed_cp.fetch_document, parse_fed_cp_window, timeout=150.0)
 
     fred_base = "https://fred.stlouisfed.org/graph/fredgraph.csv"
     fred_daily = {
@@ -2954,6 +2999,7 @@ PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
         ("US-USD", "fed_h41"),
+        ("US-USD", "treasury_par_yields"),
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),
         ("US-USD", "nyfed_rates"),

@@ -251,7 +251,16 @@ Since 2026-11-02 the US `RESERVE_BALANCES` role also has a public direct
 instrument: `US.FED.RESERVE_BALANCES_DIRECT`, the Board's own H.4.1 week
 average through adapter `fed_h41` (registry record `frb_h41_release`, public
 domain with a required Board citation). The FRED `WRESBAL` copy named in the
-table stays metadata-only.
+table stays metadata-only. The same adapter and record serve
+`US.FED.TOTAL_ASSETS_DIRECT` (role `CENTRAL_BANK_TOTAL_ASSETS`, H.4.1
+`RESPPMA_N.WW`), which no capability reads; the FRED `WALCL` copy stays
+metadata-only. Treasury's own Daily Treasury Par Yield Curve Rates serve eight
+`SOVEREIGN_YIELD` tenors through adapter `treasury_par_yields` (registry record
+`treasury_par_yield_curve`, a US Government work cited to Treasury); they do
+not replace the DTB3 `TBILL_3M` input to `term_funding`. The Board's
+commercial paper rates are parsed by `fed_cp` but stay off (registry record
+`frb_commercial_paper`, `review_required`): the release is derived from DTCC
+data, so the `CP_3M` input stays the metadata-only FRED copy.
 
 Authoritative declarations are `PACK.capabilities` in
 `backend/seiche/markets/us_usd/pack.py:374-454` and

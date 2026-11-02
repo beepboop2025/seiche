@@ -5,6 +5,9 @@
 - Show the NY Fed's own SOFR and the Board's PRATES IORB on the GIFT City USD funding row instead of an unavailable benchmark.
 - Serve ON RRP take-up (`US.NYFED.ON_RRP_TAKEUP`) from the NY Fed's reverse repo results under the existing NY Fed Markets API record.
 - Serve reserve balances (`US.FED.RESERVE_BALANCES_DIRECT`) from the Board's own H.4.1 release, public domain with the Board cited as the source on every served value; the FRED copy stays withheld.
+- Serve Federal Reserve total assets (`US.FED.TOTAL_ASSETS_DIRECT`, H.4.1 `RESPPMA_N.WW`) from the same Board package and rights record, cited to the Board; the FRED `WALCL` copy stays withheld.
+- Serve Treasury's own Daily Treasury Par Yield Curve Rates at 1M, 3M, 6M, 1Y, 2Y, 5Y, 10Y and 30Y (`US.TREASURY.PAR_YIELD_*`), a US Government work cited to Treasury on every served value; the FRED `DGS` copies stay withheld.
+- Add a parser for the Board's commercial paper rates that stays off: the release is derived from DTCC data, so it waits for an owner rights decision and the FRED copies stay withheld.
 - Age series-page rows with the atlas clock at each instrument's own cadence, so the two surfaces agree on Mondays, for event-dated India operations and for monthly series; the page no longer fails on monthly markets.
 - Serve `/api/v2/money-markets` through a cache keyed on the canonical row set and the rights declarations, expiring at the next freshness transition, with current collector runs, ETag and 304 responses.
 - Age instruments at their own declared cadence; event-dated rows follow a daily observation from the same capture and are otherwise unknown.
