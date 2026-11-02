@@ -58,7 +58,8 @@ def test_osf_rates_keep_the_published_fifteen_basis_point_spread():
 @pytest.mark.parametrize("mutate,message", [
     (lambda text: text.replace(b'SCODE="YWMB83C"', b'SCODE="YWMB82C"'), "identity"),
     (lambda text: text.replace(b"Operational Standing Facility rate - deposit", b"Something else"), "identity"),
-    (lambda text: text.replace(b'OBS_CONF="N"', b'OBS_CONF="Y"', 1), "public"),
+    (lambda text: text.replace(b'OBS_CONF="N"', b'OBS_CONF="Y"', 1), "conflicts"),
+    (lambda text: text.replace(b'OBS_CONF="N"', b'OBS_CONF="X"', 1), "unknown confidentiality"),
     (lambda text: text.replace(b'LAST_UPDATED="2026-09-21 09:30:00"', b'LAST_UPDATED=""'), "incomplete"),
     (lambda text: b'<!DOCTYPE x [<!ENTITY a "b">]>' + text.split(b"?>", 1)[1], "document type"),
 ])
@@ -66,6 +67,20 @@ def test_series_identity_rights_flag_and_clock_are_validated(mutate, message):
     payload = mutate((FIXTURES / "YWMB83C.xml").read_bytes())
     with pytest.raises(ValueError, match=message):
         parse_boe_xml(xml("GB.BOE.OSF_DEPOSIT", payload))
+
+
+def test_suppressed_values_stay_withheld_and_provisional_values_are_marked():
+    payload = (FIXTURES / "YWMB83C.xml").read_bytes()
+    suppressed = payload.replace(b'TIME="2026-07-30" OBS_VALUE="3.6" OBS_CONF="N"',
+                                 b'TIME="2026-07-30" OBS_VALUE=".." OBS_CONF="Y"')
+    rows = parse_boe_xml(xml("GB.BOE.OSF_DEPOSIT", suppressed))
+    assert date(2026, 7, 30) not in {p.event_time for p in rows} and rows
+    provisional = payload.replace(b'TIME="2026-07-30" OBS_VALUE="3.6"', b'TIME="2026-07-30" PROV_VALUE="3.6"')
+    final, = [p for p in parse_boe_xml(xml("GB.BOE.OSF_DEPOSIT")) if p.event_time == date(2026, 7, 30)]
+    early, = [p for p in parse_boe_xml(xml("GB.BOE.OSF_DEPOSIT", provisional)) if p.event_time == date(2026, 7, 30)]
+    assert (early.raw_value, early.quality) == (Decimal("3.6"), QualityState.PROVISIONAL)
+    # Becoming final is a new vintage of the same value, not a silent overwrite.
+    assert early.row_evidence != final.row_evidence
 
 
 def test_an_empty_request_window_is_not_a_fault():

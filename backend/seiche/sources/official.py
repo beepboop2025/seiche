@@ -431,28 +431,37 @@ def parse_boe_xml(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         if element.tag.rsplit("}", 1)[-1] != "Cube" or element.get("TIME") is None:
             continue
         event_day = _date(element.get("TIME") or "", "%Y-%m-%d")
-        value = _number(element.get("OBS_VALUE") or "")
+        # The Database help: a value suppressed for confidentiality reads
+        # OBS_VALUE=".." with OBS_CONF="Y"; published values carry "N".
+        # A suppressed value stays withheld: a gap, never a zero or a fault.
+        if element.get("OBS_CONF") == "Y":
+            if (element.get("OBS_VALUE") or element.get("PROV_VALUE") or "..").strip() != "..":
+                raise ValueError("Bank of England XML confidentiality flag conflicts with its value")
+            continue
+        if element.get("OBS_CONF") != "N":
+            raise ValueError("Bank of England XML observation has an unknown confidentiality flag")
+        # With VPD=Y a provisional observation arrives as PROV_VALUE.
+        provisional = element.get("OBS_VALUE") is None and element.get("PROV_VALUE") is not None
+        value = _number(element.get("PROV_VALUE" if provisional else "OBS_VALUE") or "")
         updated = _date_time(element.get("LAST_UPDATED") or "")
         if event_day is None or value is None or updated is None:
             raise ValueError("Bank of England XML observation is incomplete")
-        if element.get("OBS_CONF") != "N":
-            raise ValueError("Bank of England XML observation is not marked public")
         if event_day in seen:
             raise ValueError("Bank of England XML observation date is duplicated")
         seen.add(event_day)
         published = updated.replace(tzinfo=ZoneInfo("Europe/London"))
+        evidence = {"series": code, "date": event_day.isoformat(), "value": str(value)}
+        if provisional:
+            # A later final value is then recorded as a revision, not hidden.
+            evidence["status"] = "provisional"
         points.append(
             ParsedPoint(
                 document.label,
                 event_day,
                 value,
-                json.dumps(
-                    {"series": code, "date": event_day.isoformat(), "value": str(value)},
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8"),
+                json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8"),
                 source_publication_time=published,
-                quality=QualityState.ESTIMATED,
+                quality=QualityState.PROVISIONAL if provisional else QualityState.ESTIMATED,
             )
         )
     # An empty request window is not a fault; Bank Rate rides in the same capture.
