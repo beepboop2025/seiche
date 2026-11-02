@@ -2255,6 +2255,21 @@ def build_official_adapters(
     add("US-USD", "fed_prates", "fed_prates",
         fed_prates.fetch_document, parse_fed_prates_window, timeout=30.0)
 
+    from seiche.sources import fed_h41
+
+    # Direct Board H.4.1 reserve balances stay off until the US pack itself
+    # declares an allowed fed_h41 rights record. No existing record covers
+    # the H.4.1 release, so no request is made and nothing is stored or served.
+    if fed_h41.rights_gate_open(markets.get("US-USD")):
+
+        def parse_fed_h41_window(document):
+            start, end = request_window(timezone_name="America/New_York")
+            return tuple(point for point in fed_h41.parse_document(document)
+                         if start <= point.event_time <= end)
+
+        add("US-USD", fed_h41.ADAPTER_ID, fed_h41.ADAPTER_ID,
+            fed_h41.fetch_document, parse_fed_h41_window, timeout=150.0)
+
     fred_base = "https://fred.stlouisfed.org/graph/fredgraph.csv"
     fred_daily = {
         "US.FED.IORB": "IORB",
