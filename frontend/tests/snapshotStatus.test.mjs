@@ -120,8 +120,8 @@ test("the USD summary cites H.4.1 with its terms beside the reserve value and sa
   assert.match(card(live, "Reserve balances"), /<strong>\$2,893\.77B<\/strong><span>Week ended 2026-10-28<\/span>/);
   assert.match(card(live, "Reserve balances"), /<small>Source: Board of Governors of the Federal Reserve System, H\.4\.1<\/small><small>Terms: <a href="https:\/\/www\.federalreserve\.gov\/disclaimer\.htm"[^>]*>www\.federalreserve\.gov\/disclaimer\.htm<\/a><\/small>/);
   const empty = renderToStaticMarkup(React.createElement(Summary, {snap: {}, atlas: atlas([])}));
-  assert.match(card(empty, "Reserve balances"), /<strong>Withheld<\/strong>[\s\S]*?the Federal Reserve&#x27;s own H\.4\.1 series arrives in the next release\./);
-  assert.match(card(empty, "ON RRP take-up"), /<strong>Withheld<\/strong>[\s\S]*?the New York Fed&#x27;s own reverse repo series arrives in the next release\./);
+  assert.match(card(empty, "Reserve balances"), /<strong>Withheld<\/strong>[\s\S]*?the current atlas response has no public value from the Federal Reserve&#x27;s own H\.4\.1 series\./);
+  assert.match(card(empty, "ON RRP take-up"), /<strong>Withheld<\/strong>[\s\S]*?the current atlas response has no public value from the New York Fed&#x27;s own reverse repo series\./);
   assert.doesNotMatch(card(empty, "Reserve balances") + card(empty, "ON RRP take-up"), /Source not supplied|\$|Terms:/);
   assert.match(card(empty, "SOFR"), /<strong>Unavailable<\/strong>/);
 });

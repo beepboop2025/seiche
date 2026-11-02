@@ -70,14 +70,14 @@ test("the New York Fed's own ON RRP take-up fills its card in billions", () => {
   assert.equal(result.source,"nyfed facilities");
   assert.equal(result.terms,null);
 });
-test("until the direct series arrive, reserves and ON RRP say why they are withheld and never show the FRED copy", () => {
+test("when the direct series are absent, reserves and ON RRP say why they are withheld and never show the FRED copy", () => {
   const fred={metrics:[live("US.FED.RESERVE_BALANCES",2893770,"local_currency_millions"),live("US.NYFED.RRPONTSYD",5000,"local_currency_millions")]};
   const reserves=card(null,fred,"liquidity.reserves"), rrp=card(null,fred,"liquidity.on_rrp");
   assert.equal(reserves.value,null);
   assert.equal(fundingValue(reserves),"Withheld");
-  assert.equal(reserves.gap,"The FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release.");
+  assert.equal(reserves.gap,"The FRED copy is not cleared for republication, and the current atlas response has no public value from the Federal Reserve's own H.4.1 series.");
   assert.equal(fundingValue(rrp),"Withheld");
-  assert.equal(rrp.gap,"The FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release.");
+  assert.equal(rrp.gap,"The FRED copy is not cleared for republication, and the current atlas response has no public value from the New York Fed's own reverse repo series.");
   assert.equal(card(null,null,"policy.sofr").gap,null, "other empty cards stay plainly unavailable");
   const unsafe=card(null,{metrics:[{...live("US.FED.RESERVE_BALANCES_DIRECT",2893770,"local_currency_millions"),...H41,terms_url:"http://example.invalid/terms"}]},"liquidity.reserves");
   assert.equal(unsafe.terms,null, "only https terms links are rendered");

@@ -24,10 +24,15 @@ test('funding spreads join exact dates, preserve zero, and convert percentage po
   assert.equal(difference([point('2026-09-21', null)], b).length, 0);
 });
 test('treasury curve uses one common observation date and never substitutes a nearest tenor', () => {
-  const rows = new Map(['DGS3M', 'DGS2', 'DGS10', 'DGS30'].map((key, i) => [key, model(key, [['2026-09-21', i + 1], ['2026-09-22', i + 2]])]));
-  rows.set('DGS30', model('DGS30', [['2026-09-21', 4]]));
+  const rows = new Map(['UST_3M', 'UST_2Y', 'UST_10Y', 'UST_30Y'].map((key, i) => [key, model(key, [['2026-09-21', i + 1], ['2026-09-22', i + 2]])]));
+  rows.set('UST_30Y', model('UST_30Y', [['2026-09-21', 4]]));
   const curve = treasuryCurve(rows); assert.equal(curve.date, '2026-09-21'); assert.deepEqual(curve.points.map(p => p.x), [.25, 2, 10, 30]); assert.deepEqual(curve.points.map(p => p.y), [1, 2, 3, 4]);
-  rows.delete('DGS2'); assert.deepEqual(treasuryCurve(rows), {points: [], date: null});
+  rows.delete('UST_2Y'); assert.deepEqual(treasuryCurve(rows), {points: [], date: null});
+  // A FRED constant-maturity copy never completes or replaces Treasury's own curve.
+  rows.set('DGS2', model('DGS2', [['2026-09-21', 2]]));
+  assert.deepEqual(treasuryCurve(rows), {points: [], date: null});
+  const fredOnly = new Map(['DGS3M', 'DGS2', 'DGS10', 'DGS30'].map((key, i) => [key, model(key, [['2026-09-21', i + 1]])]));
+  assert.deepEqual(treasuryCurve(fredOnly), {points: [], date: null});
 });
 test('wrong source units cannot enter reserve or rate calculations', () => {
   assert.deepEqual(fundingPoints(model('SOFR', [['2026-09-21', 4]], 'bp'), '%'), []);
@@ -191,12 +196,63 @@ test("the direct series lead a published copy, and FRED copies never enter the c
     assert.equal(atlasFundingModels(directAtlas([row])).has("RESERVES_DIRECT"), false);
   assert.equal(atlasFundingModels(directAtlas([{...directReserves, terms_url:"http://example.invalid/terms"}])).get("RESERVES_DIRECT").terms, undefined);
 });
-test("charts without a public history say why, naming the direct source that is due", () => {
+test("charts without a public history say why, naming the direct source that is absent or awaiting a rights decision", () => {
   const specs = fundingSpecs(new Map(), 365);
-  assert.match(chartOf(specs, "reserve-balances").empty, /^Withheld: the FRED copy is not cleared for republication; the Federal Reserve's own H\.4\.1 series arrives in the next release\./);
-  assert.match(chartOf(specs, "reverse-repo").empty, /^Withheld: the FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release\./);
-  for (const id of ["commercial-paper-premium", "treasury-curve", "fed-balance-sheet"])
-    assert.match(chartOf(specs, id).empty, /^Withheld: the FRED cop(y|ies) .* not cleared for republication, and no direct source is served yet\. Missing data is not zero\.$/, id);
+  assert.match(chartOf(specs, "reserve-balances").empty, /^Withheld: the FRED copy is not cleared for republication, and the current atlas response has no public value from the Federal Reserve's own H\.4\.1 series\./);
+  assert.match(chartOf(specs, "reverse-repo").empty, /^Withheld: the FRED copy is not cleared for republication, and the current atlas response has no public value from the New York Fed's own reverse repo series\./);
+  for (const id of ["treasury-curve", "fed-balance-sheet"])
+    assert.match(chartOf(specs, id).empty, /^Withheld: the FRED cop(y|ies) .* not cleared for republication, and the current atlas response has no public value from .*\. Missing data is not zero\.$/, id);
+  assert.match(chartOf(specs, "commercial-paper-premium").empty, /^Withheld: the Federal Reserve Board's commercial paper rates are derived from data supplied by DTCC and await a rights decision, and the FRED copies are not cleared for republication\. Treasury's own three-month yield is served, but a premium needs both legs on one date\. Missing data is not zero\.$/);
   for (const id of ["funding-corridor", "funding-spreads", "treasury-cash", "overnight-repricing", "mmf-repo-allocation"])
     assert.equal(chartOf(specs, id).empty, undefined, id);
+});
+
+const treasury = {attribution:"Source: U.S. Department of the Treasury, Daily Treasury Par Yield Curve Rates",
+  terms_url:"https://home.treasury.gov/subfooter/site-policies-and-notices"};
+const par = (id, values) => ({id, unit:"%", availability:"AVAILABLE", redistribution_status:"allowed", source:"treasury_par_yields",
+  status:"FRESH", cadence:"P1D", asof:"2026-10-30", history:[["2026-10-29", values[0]], ["2026-10-30", values[1]]], ...treasury});
+const parRows = [par("US.TREASURY.PAR_YIELD_3M", [4.18, 4.16]), par("US.TREASURY.PAR_YIELD_2Y", [4.61, 4.56]),
+  par("US.TREASURY.PAR_YIELD_10Y", [4.98, 4.94]), par("US.TREASURY.PAR_YIELD_30Y", [5.32, 5.31])];
+const directAssets = {...directReserves, id:"US.FED.TOTAL_ASSETS_DIRECT", asof:"2026-10-28",
+  history:[["2026-10-21",6753604],["2026-10-28",6745635]]};
+
+test("Treasury's own par yields draw chart 07 on one common date, cited with Treasury's terms", () => {
+  const specs = fundingSpecs(atlasFundingModels(directAtlas(parRows)), null);
+  const curve = chartOf(specs, "treasury-curve");
+  assert.deepEqual(curve.series[0].points.map(p => [p.x, p.y]), [[.25, 4.16], [2, 4.56], [10, 4.94], [30, 5.31]]);
+  assert.equal(curve.series[0].name, "2026-10-30");
+  assert.match(curve.description, /all observed on 2026-10-30\./);
+  assert.match(curve.note, /Source: U\.S\. Department of the Treasury, Daily Treasury Par Yield Curve Rates\./);
+  assert.ok(curve.sources.some(s => s.url === "https://home.treasury.gov/subfooter/site-policies-and-notices" && /terms of use/.test(s.label)));
+  assert.ok(curve.sources.every(s => !/DGS/.test(s.label)), "no FRED constant-maturity key is listed");
+});
+test("Treasury's three-month yield is chart 06's bill leg, but no premium appears without a public commercial paper leg", () => {
+  const specs = fundingSpecs(atlasFundingModels(directAtlas(parRows)), null);
+  const premium = chartOf(specs, "commercial-paper-premium");
+  assert.ok(premium.series.every(row => row.points.length === 0), "nothing is reconstructed from one leg");
+  assert.match(premium.empty, /derived from data supplied by DTCC and await a rights decision/);
+  assert.ok(premium.sources.some(s => /^UST_3M · /.test(s.label)));
+  assert.match(premium.note, /Source: U\.S\. Department of the Treasury, Daily Treasury Par Yield Curve Rates\./);
+});
+test("the Board's own H.4.1 total assets draw chart 10 in billions with the H.4.1 citation", () => {
+  const balance = chartOf(fundingSpecs(atlasFundingModels(directAtlas([directAssets])), null), "fed-balance-sheet");
+  assert.deepEqual(balance.series[0].points.map(p => p.y), [6753.604, 6745.635]);
+  assert.match(balance.note, /Source: Board of Governors of the Federal Reserve System, H\.4\.1\./);
+  assert.ok(balance.sources.some(s => s.url === "https://www.federalreserve.gov/disclaimer.htm"));
+  // The direct series leads a published board copy of the same number.
+  const board = publishedFundingModels(published({}, {ok:true,series:[["2026-10-28",6000,1,2,3,4,5,6]]}));
+  assert.equal(board.get("WALCL").points.at(-1).value, 6000000);
+  const merged = mergeFundingModels(board, atlasFundingModels(directAtlas([directAssets])));
+  assert.equal(chartOf(fundingSpecs(merged, null), "fed-balance-sheet").series[0].points.at(-1).y, 6745.635);
+});
+test("FRED copies, restricted rows, wrong units and stale dates never feed charts 06, 07 or 10", () => {
+  const fredCopies = [{...par("US.TREASURY.TBILL_3M", [3.9, 3.95]), source:"fred_daily"}, {...par("US.TREASURY.DGS10", [4.9, 4.94]), source:"fred_daily"},
+    {...directAssets, id:"US.FED.TOTAL_ASSETS", source:"fred_weekly"}];
+  assert.equal(atlasFundingModels(directAtlas(fredCopies)).size, 0);
+  for (const row of [{...parRows[0], unit:"bp"}, {...parRows[0], redistribution_status:"metadata_only"},
+    {...parRows[0], availability:"RESTRICTED"}, {...parRows[0], asof:"2026-10-31"}])
+    assert.equal(atlasFundingModels(directAtlas([row])).has("UST_3M"), false);
+  for (const row of [{...directAssets, unit:"%"}, {...directAssets, redistribution_status:"derived_only"}])
+    assert.equal(atlasFundingModels(directAtlas([row])).has("TOTAL_ASSETS_DIRECT"), false);
+  assert.equal(atlasFundingModels(directAtlas([{...parRows[0], terms_url:"http://example.invalid/terms"}])).get("UST_3M").terms, undefined);
 });
