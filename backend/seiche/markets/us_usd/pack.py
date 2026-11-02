@@ -104,6 +104,15 @@ _FED_PRATES_CLOCK = PublicationClock(
     precision=PublicationClockPrecision.UNKNOWN,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
+# H.4.1 week averages end on Wednesday; the Board releases them on Thursday at
+# 16:30 New York, a day later when Thursday is a Fedwire holiday.
+_FED_H41_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(16, 30),
+    business_day_lag=1,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
 _FRED_WEEKLY_CLOCK = PublicationClock(
     timezone_name="America/New_York",
     local_time=None,
@@ -217,6 +226,14 @@ PACK = MarketPack(
         ),
         SourceAdapterSpec("fred_weekly", _OPEN, "P1W", _FRED_WEEKLY_CLOCK, RedistributionStatus.METADATA_ONLY),
         SourceAdapterSpec(
+            # The Board's own H.4.1 release package, not the FRED copy above.
+            # Board information is public domain unless otherwise indicated,
+            # citing the Board as the source (federalreserve.gov/disclaimer.htm).
+            # Daily polling picks up the weekly release without a week's lag.
+            "fed_h41", _OPEN, "P1W", _FED_H41_CLOCK, _ALLOW,
+            collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
             "nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW,
             collection_cadence="PT1H",
         ),
@@ -309,6 +326,16 @@ PACK = MarketPack(
             100,
             _SIMPLE,
             _ACT_360,
+        ),
+        # Declared before the FRED copy, as IORB_DIRECT is before IORB, so pack
+        # order prefers the Board's own release wherever a role is selected.
+        InstrumentSpec(
+            "US.FED.RESERVE_BALANCES_DIRECT",
+            "RESERVE_BALANCES_DIRECT",
+            SemanticRole.RESERVE_BALANCES,
+            "fed_h41",
+            "USD millions",
+            _LCY_M,
         ),
         InstrumentSpec(
             "US.FED.RESERVE_BALANCES",

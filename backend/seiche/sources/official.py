@@ -2257,9 +2257,9 @@ def build_official_adapters(
 
     from seiche.sources import fed_h41
 
-    # Direct Board H.4.1 reserve balances stay off until the US pack itself
-    # declares an allowed fed_h41 rights record. No existing record covers
-    # the H.4.1 release, so no request is made and nothing is stored or served.
+    # Direct Board H.4.1 reserve balances run only while the US pack itself
+    # declares the official-open fed_h41 adapter with redistribution allowed.
+    # Any other declaration makes no request and stores or serves nothing.
     if fed_h41.rights_gate_open(markets.get("US-USD")):
 
         def parse_fed_h41_window(document):
@@ -2826,6 +2826,7 @@ from seiche.sources.country_funding import PRODUCTION_KEYS as _COUNTRY_PRODUCTIO
 PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
+        ("US-USD", "fed_h41"),
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),
         ("US-USD", "nyfed_rates"),

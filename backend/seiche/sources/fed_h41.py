@@ -1,13 +1,17 @@
 """Federal Reserve Board H.4.1 reserve balances, distinct from the FRED copy.
 
-GATED, AND OFF TODAY. No existing allowed rights record covers the Board's
-H.4.1 release: the ``fed_prates`` record names only the PRATES file, and the
-source registry has no Board H.4.1 entry. This adapter is complete and tested,
-but ``build_official_adapters`` registers it only when the US pack itself
-declares an official-open ``fed_h41`` adapter with redistribution allowed and
-the direct instrument on that adapter (``rights_gate_open``). Until the owner
-adds that rights record, nothing is fetched, stored or served, and
-``US.FED.RESERVE_BALANCES`` (FRED ``WRESBAL``) stays withheld.
+Rights: the Board's notice (https://www.federalreserve.gov/disclaimer.htm,
+"Copyright/trademark") states: "Unless otherwise indicated, information on
+Board's website is in the public domain and may be copied and distributed
+without permission. Please cite to the Board as the source of the
+information." Every served value therefore carries ``ATTRIBUTION``. Board seals
+and logos and any identified non-Board material are outside that notice.
+
+Gate: ``build_official_adapters`` registers this adapter only while the US pack
+itself declares the official-open ``fed_h41`` adapter with redistribution
+allowed and the direct instrument on it (``rights_gate_open``). Any other
+declaration makes no request and stores or serves nothing. The FRED copy
+(``US.FED.RESERVE_BALANCES``, WRESBAL) keeps its own metadata-only policy.
 
 Source: the Board's own release package, not FRED and not the Data Download
 Program "Build Your Package" tool that the Board is retiring. Series
@@ -35,6 +39,7 @@ from seiche.sources.canonical import FetchedDocument, ParsedPoint
 SOURCE_URL = "https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip"
 RELEASE_URL = "https://www.federalreserve.gov/releases/h41/"
 TERMS_URL = "https://www.federalreserve.gov/disclaimer.htm"
+ATTRIBUTION = "Source: Board of Governors of the Federal Reserve System, H.4.1"
 ADAPTER_ID = "fed_h41"
 INSTRUMENT_ID = "US.FED.RESERVE_BALANCES_DIRECT"
 MEMBER = "H41_data.xml"

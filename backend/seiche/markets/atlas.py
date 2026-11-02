@@ -69,6 +69,7 @@ _REGIONS = {
 }
 _SOURCE_URLS = {
     "fed_prates": "https://www.federalreserve.gov/releases/prates/data/FRB_PRATES_xml.zip",
+    "fed_h41": "https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip",
     "fred_daily": "https://fred.stlouisfed.org/",
     "fred_weekly": "https://fred.stlouisfed.org/",
     "fiscaldata": "https://fiscaldata.treasury.gov/",
@@ -106,6 +107,7 @@ _SOURCE_URLS = {
     "rbnz_wholesale": "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates",
 }
 _SOURCE_PUBLISHERS = {
+    "fed_h41": "Board of Governors of the Federal Reserve System",
     "fred_daily": "Federal Reserve Bank of St. Louis",
     "fred_weekly": "Federal Reserve Bank of St. Louis",
     "fiscaldata": "U.S. Department of the Treasury, Bureau of the Fiscal Service",
@@ -146,6 +148,17 @@ _SOURCE_PUBLISHERS = {
 }
 
 
+# Sources whose terms ask for a citation wherever their values are shown. The
+# citation travels with every served value (atlas and country-desk metrics,
+# series instrument references) as well as in the atlas legal notices.
+_SOURCE_ATTRIBUTIONS: dict[str, dict[str, str]] = {
+    "fed_h41": {
+        "attribution": "Source: Board of Governors of the Federal Reserve System, H.4.1",
+        "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+}
+
+
 from seiche.markets.funding_reference import COUNTRIES, OTHER_EUROPE, SOURCE_REFERENCES as _FUNDING_SOURCES
 _SOURCE_URLS.update({key: value["source_url"] for key, value in _FUNDING_SOURCES.items()})
 _SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _FUNDING_SOURCES.items()})
@@ -161,6 +174,7 @@ def market_source_reference(adapter_id: str) -> dict[str, str | None]:
     return {
         "publisher": _SOURCE_PUBLISHERS.get(adapter_id),
         "source_url": _SOURCE_URLS.get(adapter_id),
+        **_SOURCE_ATTRIBUTIONS.get(adapter_id, {}),
     }
 
 # Markets outside the registered canonical packs remain visible.  This is a
@@ -1748,6 +1762,9 @@ def _metric(
             else []
         ),
     }
+    citation = _SOURCE_ATTRIBUTIONS.get(instrument.source_adapter_id)
+    if citation is not None:
+        metric.update(citation)
     return (
         _derived_context_projection(metric)
         if availability == "DERIVED_CONTEXT"
@@ -2504,6 +2521,19 @@ def build_global_money_market_atlas(
                     "are not official Board analysis or endorsement. The current "
                     "PRATES file supplies effective observation dates, not historical "
                     "publication receipts; its acquisition establishes knowledge time."
+                ),
+            },
+            {
+                "source": "Board of Governors of the Federal Reserve System, H.4.1 RESH4R_XAW_N.WW",
+                "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+                "notice": (
+                    "Source: Board of Governors of the Federal Reserve System, H.4.1. "
+                    "Board information is public domain unless otherwise indicated "
+                    "and the Board asks to be cited as the source. Reserve balances "
+                    "are the Board's week average ending each Wednesday, in USD "
+                    "millions; Seiche statistics are not official Board analysis or "
+                    "endorsement. The release package supplies observation dates, "
+                    "not publication receipts; its acquisition establishes knowledge time."
                 ),
             },
             {
