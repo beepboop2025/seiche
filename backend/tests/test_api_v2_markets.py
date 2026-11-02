@@ -250,12 +250,21 @@ def test_us_materializer_filters_unrelated_market_faults(tmp_path, monkeypatch) 
     assert store.load_latest_market_snapshot("US-USD", "gauge") is None
     store.promote_market_snapshots(binding["snapshot_id"] for binding in ids.values())
 
+    sealed = store.load_latest_market_snapshot("US-USD", "gauge")["payload"]
+    assert sealed["schema"] == "seiche.local-gauge.v2"
+    # The bridge copies the v1 board, whose inputs are not cleared for
+    # redistribution: it is sealed as restricted and its reading is never served.
+    assert sealed["visibility"] == "SOURCE_RIGHTS_RESTRICTED"
+    assert sealed["evidence_eligibility"]["eligible"] is False
+    assert [fault["source"] for fault in sealed["faults"]] == ["fred"]
     gauge = api.market_gauge_v2("US-USD", Response())
-    assert gauge["schema"] == "seiche.local-gauge.v2"
-    assert gauge["reading"]["index"] == 42.0
-    assert gauge["reading"]["p_event_5bd_members"] == {"model": 0.2}
-    assert gauge["evidence_eligibility"]["eligible"] is False
-    assert [fault["source"] for fault in gauge["faults"]] == ["fred"]
+    assert isinstance(gauge, JSONResponse) and gauge.status_code == 403
+    assert json.loads(gauge.body)["schema"] == "seiche.source-rights-restriction.v1"
+    assert "42.0" not in gauge.body.decode()
+    # The catalog keeps its metadata-only entry, with the same filtered faults.
+    catalog = {item["market_id"]: item for item in api.markets_v2(Response())["markets"]}
+    assert [fault["source"] for fault in catalog["US-USD"]["faults"]] == ["fred"]
+    assert catalog["US-USD"]["latest_snapshot"]["snapshot_id"] == ids["gauge"]["snapshot_id"]
     assert (
         ids["gauge"]["snapshot_id"]
         == store.load_latest_market_snapshot("US-USD", "gauge")["snapshot_id"]
@@ -390,11 +399,21 @@ def test_market_asof_reads_sealed_history_and_global_tide_stays_separate(
         binding["snapshot_id"] for binding in receipt.values()
     )
 
+    # The US reading is withheld at any knowledge time, whatever was sealed.
     historical = api.market_asof_v2("US-USD", "2026-08-09T10:00:00+00:00", Response())
+    assert isinstance(historical, JSONResponse) and historical.status_code == 403
+    assert json.loads(historical.body)["surface"] == "/api/v2/markets/US-USD"
+    # A kernel market still reads its sealed history by knowledge time.
+    cutoff = datetime(2026, 8, 9, 10, tzinfo=UTC)
+    sealed_id = store.seal_market_snapshot(
+        market_id="IN-INR", product="overview", event_cutoff=cutoff, knowledge_cutoff=cutoff,
+        calibration_id="test-public", evidence_eligible=False,
+        payload={"schema": "seiche.market-overview.v2", "visibility": api.PUBLIC_SNAPSHOT_VISIBILITY,
+                 "market_id": "IN-INR", "status": "DEGRADED"},
+    )
+    indian = api.market_asof_v2("IN-INR", "2026-08-09T10:00:00+00:00", Response())
+    assert indian["market_id"] == "IN-INR" and indian["sealed_snapshot_id"] == sealed_id
     tide = api.global_tide_v2(Response())
-
-    assert historical["market_id"] == "US-USD"
-    assert historical["sealed_snapshot_id"]
     assert tide["product"] == "GLOBAL_SEICHE_TIDE"
     assert tide["status"] == "UNAVAILABLE"
     assert tide["reading"]["value"] is None

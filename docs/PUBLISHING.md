@@ -10,7 +10,10 @@ for the series page and the atlas at each instrument's own cadence, the India,
 UK, Australia, Japan and Taiwan source corrections, and a generation-keyed
 cache for `/api/v2/money-markets`. The Board's commercial paper rates are
 parsed but stay off pending a rights decision on their DTCC provenance. The
-Funding Observatory charts read the direct rows. It also carries the desk
+Funding Observatory charts read the direct rows. The v2 US-USD gauge, overview
+and as-of routes now refuse with the source-rights restriction, as `/api/gauge`
+does; see `docs/BOARD-AVAILABILITY.md` for the fsn1 edge block that stays in
+place until those paths return the application's own 403. It also carries the desk
 bot's durable-state and no-dash changes. The package version is `0.16.12`.
 Version metadata is preparation only: require the exact signed runtime
 release, the normal full-suite and recovery gates, the immutable PyPI receipt

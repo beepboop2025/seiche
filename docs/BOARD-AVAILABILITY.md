@@ -1,5 +1,47 @@
 # Funding board availability
 
+## The v2 US-USD reading follows the same policy (0.16.12)
+
+Until 0.16.12, `/api/v2/markets/US-USD/gauge`, `/overview` and
+`/asof/{timestamp}` served the withheld v1 board through the US legacy parity
+bridge: the composite index and regime, Tell, the five-day event probability
+and its members, and the ICE BofA high-yield OAS in the overview headline. The
+bridge stamped its snapshots `PUBLIC_REDISTRIBUTION_FILTERED` without filtering
+anything, and the routes checked only that stamp.
+
+From 0.16.12 three things hold:
+
+- Each of the three routes first asks whether the pack's reading depends on an
+  input outside `ALLOWED` or `DERIVED_ONLY`
+  (`seiche.markets.reading_rights`). The legacy parity bridge
+  (`us-usd-legacy-parity-v1`) copies the v1 board, so it depends on the FRED
+  copies the pack declares `metadata_only` and on v1 inputs the pack does not
+  declare at all. The routes return the `seiche.source-rights-restriction.v1`
+  body that `/api/gauge` returns, with `surface` `/api/v2/markets/US-USD`,
+  status 403 and `Cache-Control: no-store`, before reading any snapshot, so a
+  snapshot sealed earlier under the wrong stamp cannot reopen the reading.
+- The materializers compute the stamp from the actual inputs: the kernel and
+  the global tide from the rights of the rows they read, the US bridge from
+  the board's provenance (`history_export_allowed`) and the pack's adapter
+  policy for each mapped input. The bridge now seals
+  `SOURCE_RIGHTS_RESTRICTED`, kept for forward evidence and catalog metadata.
+- `/api/v2/markets`, `/api/v2/coverage` and `/api/v2/markets/{id}/series` read
+  only catalog metadata (coverage, eligibility, cutoffs, faults and stale
+  inputs) from a public or restricted snapshot, so they behave as in 0.16.11.
+
+`tests/test_public_rights_sweep.py` seeds restricted sentinel values, calls
+every GET route in `app.routes` and every registered MCP tool with the network
+closed, and finds none of them; it fails on the 0.16.11 code at exactly these
+three routes.
+
+Operations: on 2 November the fsn1 edge started refusing
+`/api/v2/markets/US-USD/*` except `/series` with
+`/etc/caddy/seiche-withheld-us-board.caddy` (imported before `@public`; header
+`X-Seiche-Withheld-By: edge-2026-11-02`). Leave it in place until these paths
+return the application's own 403 from behind it. Do not install
+`ops/Caddyfile` from this repository for that change: it is stale against the
+box.
+
 ## Static files follow the API source-rights policy (0.16.11)
 
 From release 0.16.11 each static board file carries exactly what its API route
