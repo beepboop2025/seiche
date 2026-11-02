@@ -1181,9 +1181,12 @@ def test_manual_receipt_wait_leaves_time_before_download_credentials_expire() ->
         re.search(r"download_expires_at=.*?'\+(\d+) minutes'", manual)[1]
     )
     job_minutes = int(re.search(r"timeout-minutes: (\d+)", manual)[1])
-    assert 0 < receipt_seconds <= 75 * 60
+    # A 3.9 GB capture logged its receipt 85 minutes after the request, and growing.
+    assert 85 * 60 + 60 * 60 <= receipt_seconds <= 150 * 60
     assert download_minutes * 60 - receipt_seconds >= 30 * 60
-    assert download_minutes + 10 <= job_minutes <= 120
+    # The application admits the credential, and the job outlasts it.
+    assert timedelta(minutes=download_minutes) <= recovery.DOWNLOAD_MAX_AGE
+    assert download_minutes + 10 <= job_minutes <= 300
 
 
 def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:

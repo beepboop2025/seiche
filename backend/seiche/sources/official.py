@@ -32,6 +32,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from seiche.domain.observation import QualityState
 from seiche.markets.registry import MarketRegistry, default_registry
 from seiche.repository import MarketRepository
 from seiche.sources.base import SourcePolicyUnavailableError
@@ -388,6 +389,92 @@ def parse_boe_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     return tuple(points)
 
 
+# Bank of England series behind the declared boe_policy instruments other than
+# Bank Rate, with a phrase their database description must contain. The OSF
+# rates are reported per MPC maintenance period and labelled by the period's
+# start date; reserves are the monthly average of Wednesday balances.
+BOE_POLICY_XML_SERIES = {
+    "GB.BOE.OSF_DEPOSIT": ("YWMB83C", "Operational Standing Facility rate - deposit"),
+    "GB.BOE.OSF_LENDING": ("YWMB82C", "Operational Standing Facility rate - lending"),
+    "GB.BOE.RESERVE_BALANCES": ("LPMBL22", "sterling reserves balance liabilities"),
+}
+
+
+def parse_boe_xml(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    """Parse one Bank of England database series from its XML export.
+
+    The XML, unlike the CSV, carries each observation's LAST_UPDATED time.
+    That is the source's own release clock. The database states it without
+    a zone; it is read in the Bank's Europe/London time with estimated
+    quality, never replaced by the capture time.
+    """
+
+    import xml.etree.ElementTree as ElementTree
+
+    try:
+        code, description = BOE_POLICY_XML_SERIES[document.label]
+    except KeyError as exc:
+        raise ValueError(f"unknown Bank of England XML label {document.label!r}") from exc
+    # The export declares no document type. Refusing one also refuses any
+    # entity declaration, so no expansion or external fetch can occur.
+    if b"<!DOCTYPE" in document.payload.upper() or b"<!ENTITY" in document.payload.upper():
+        raise ValueError("Bank of England XML declares a document type")
+    root = ElementTree.fromstring(document.payload)
+    cubes = [element for element in root.iter() if element.tag.rsplit("}", 1)[-1] == "Cube"]
+    series = [element for element in cubes if element.get("SCODE") is not None]
+    if (len(series) != 1 or series[0].get("SCODE") != code
+            or description not in (series[0].get("DESC") or "")):
+        raise ValueError("Bank of England XML series identity changed")
+    points: list[ParsedPoint] = []
+    seen: set[date] = set()
+    for element in series[0].iter():
+        if element.tag.rsplit("}", 1)[-1] != "Cube" or element.get("TIME") is None:
+            continue
+        event_day = _date(element.get("TIME") or "", "%Y-%m-%d")
+        # The Database help: a value suppressed for confidentiality reads
+        # OBS_VALUE=".." with OBS_CONF="Y"; published values carry "N".
+        # A suppressed value stays withheld: a gap, never a zero or a fault.
+        if element.get("OBS_CONF") == "Y":
+            if (element.get("OBS_VALUE") or element.get("PROV_VALUE") or "..").strip() != "..":
+                raise ValueError("Bank of England XML confidentiality flag conflicts with its value")
+            continue
+        if element.get("OBS_CONF") != "N":
+            raise ValueError("Bank of England XML observation has an unknown confidentiality flag")
+        # With VPD=Y a provisional observation arrives as PROV_VALUE.
+        provisional = element.get("OBS_VALUE") is None and element.get("PROV_VALUE") is not None
+        value = _number(element.get("PROV_VALUE" if provisional else "OBS_VALUE") or "")
+        updated = _date_time(element.get("LAST_UPDATED") or "")
+        if event_day is None or value is None or updated is None:
+            raise ValueError("Bank of England XML observation is incomplete")
+        if event_day in seen:
+            raise ValueError("Bank of England XML observation date is duplicated")
+        seen.add(event_day)
+        published = updated.replace(tzinfo=ZoneInfo("Europe/London"))
+        evidence = {"series": code, "date": event_day.isoformat(), "value": str(value)}
+        if provisional:
+            # A later final value is then recorded as a revision, not hidden.
+            evidence["status"] = "provisional"
+        points.append(
+            ParsedPoint(
+                document.label,
+                event_day,
+                value,
+                json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+                source_publication_time=published,
+                quality=QualityState.PROVISIONAL if provisional else QualityState.ESTIMATED,
+            )
+        )
+    # An empty request window is not a fault; Bank Rate rides in the same capture.
+    return tuple(points)
+
+
+def _date_time(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 def parse_boj_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     text = document.payload.decode("utf-8-sig")
     lines = text.splitlines()
@@ -427,11 +514,13 @@ def parse_boj_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         if value is None:
             continue
         publication = None
+        # Only the month just before the file's "Last update" takes that date
+        # as its release date; month arithmetic keeps December -> January.
         if (
             monthly is not None
             and update_day is not None
-            and event_day.year == update_day.year
-            and event_day.month == update_day.month - 1
+            and (update_day.year * 12 + update_day.month)
+            - (event_day.year * 12 + event_day.month) == 1
         ):
             publication = datetime.combine(
                 update_day,
@@ -974,11 +1063,72 @@ def parse_nyfed_unsecured_rates(
     )
 
 
+NYFED_REPO_RESULTS_URI = "https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json"
+NYFED_REVERSE_REPO_RESULTS_URI = (
+    "https://markets.newyorkfed.org/api/rp/reverserepo/all/results/last/{count}.json"
+)
+_NYFED_REVERSE_REPO_PATH = "/api/rp/reverserepo/"
+
+
+def _parse_nyfed_overnight_reverse_repo(
+    operations: list[Any],
+) -> tuple[ParsedPoint, ...]:
+    """ON RRP take-up: accepted overnight reverse repos per operation date.
+
+    The reverse-repo endpoint uses the same ``repo.operations`` envelope as
+    the repo endpoint, so the operation type is checked rather than assumed.
+    All overnight reverse repos settled on a date are summed, including the
+    occasional small value exercise, which matches the published daily total
+    of overnight reverse repurchase agreements. A term operation is not ON RRP
+    and is never folded in. Missing is not zero: a date with any unreported
+    accepted amount is withheld, while an explicit zero is a valid no-take-up
+    observation because the official result reported it.
+    """
+
+    grouped: dict[date, list[dict[str, Any]]] = {}
+    for operation in operations:
+        if not isinstance(operation, dict):
+            continue
+        if (
+            str(operation.get("operationType") or "").strip() != "Reverse Repo"
+            or str(operation.get("term") or "").strip() != "Overnight"
+        ):
+            continue
+        event_day = _date(operation.get("operationDate"), "%Y-%m-%d")
+        if event_day is None:
+            continue
+        grouped.setdefault(event_day, []).append(operation)
+    points = []
+    for event_day, rows in sorted(grouped.items()):
+        amounts = [_number(row.get("totalAmtAccepted")) for row in rows]
+        if any(value is None or value < 0 for value in amounts):
+            continue
+        # API amounts are dollars; pack normalization expects USD billions.
+        value = sum(amounts, Decimal(0)) / Decimal(1_000_000_000)  # type: ignore[arg-type]
+        points.append(
+            ParsedPoint(
+                "US.NYFED.ON_RRP_TAKEUP",
+                event_day,
+                value,
+                _row_evidence("reverseRepo.totalAmtAccepted", rows),
+            )
+        )
+    if not points:
+        raise ValueError(
+            "NY Fed reverse repo response contains no explicit overnight results"
+        )
+    return tuple(points)
+
+
 def parse_nyfed_facilities(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     payload = json.loads(document.payload)
     operations = (payload.get("repo") or {}).get("operations")
     if not isinstance(operations, list):
         raise ValueError("NY Fed response has no repo operations")
+    if urllib.parse.urlsplit(document.source_uri).path.startswith(
+        _NYFED_REVERSE_REPO_PATH
+    ):
+        return _parse_nyfed_overnight_reverse_repo(operations)
     grouped: dict[date, list[dict[str, Any]]] = {}
     for operation in operations:
         if not isinstance(operation, dict):
@@ -2194,6 +2344,66 @@ def build_official_adapters(
     add("US-USD", "fed_prates", "fed_prates",
         fed_prates.fetch_document, parse_fed_prates_window, timeout=30.0)
 
+    from seiche.sources import fed_h41
+
+    # Direct Board H.4.1 reserve balances and total assets run only while the
+    # US pack itself declares the official-open fed_h41 adapter with
+    # redistribution allowed, and only for the instruments it declares there.
+    # Any other declaration makes no request and stores or serves nothing.
+    if fed_h41.rights_gate_open(markets.get("US-USD")):
+        fed_h41_declared = fed_h41.declared_instruments(markets.get("US-USD"))
+
+        def parse_fed_h41_window(document):
+            start, end = request_window(timezone_name="America/New_York")
+            return tuple(point for point in fed_h41.parse_document(document)
+                         if point.instrument_id in fed_h41_declared
+                         and start <= point.event_time <= end)
+
+        add("US-USD", fed_h41.ADAPTER_ID, fed_h41.ADAPTER_ID,
+            fed_h41.fetch_document, parse_fed_h41_window, timeout=150.0)
+
+    from seiche.sources import treasury_par_yields
+
+    # Treasury's own par yield curve runs only while the US pack itself
+    # declares the official-open treasury_par_yields adapter with
+    # redistribution allowed, and only for the tenors it declares there.
+    # Routine runs read the month documents of the window; a backfill reads
+    # whole years. Any other declaration makes no request and serves nothing.
+    if treasury_par_yields.rights_gate_open(markets.get("US-USD")):
+        treasury_declared = treasury_par_yields.declared_instruments(markets.get("US-USD"))
+
+        async def fetch_treasury_par_yields(client):
+            start, end = request_window(timezone_name="America/New_York")
+            return await treasury_par_yields.fetch_documents(
+                client, treasury_par_yields.document_urls(start, end, by_year=backfill))
+
+        def parse_treasury_par_window(document):
+            start, end = request_window(timezone_name="America/New_York")
+            return tuple(point for point in treasury_par_yields.parse_document(document)
+                         if point.instrument_id in treasury_declared
+                         and start <= point.event_time <= end)
+
+        add("US-USD", treasury_par_yields.ADAPTER_ID, treasury_par_yields.ADAPTER_ID,
+            fetch_treasury_par_yields, parse_treasury_par_window, timeout=120.0)
+
+    from seiche.sources import fed_cp
+
+    # Board commercial paper rates are implemented but stay off: the release is
+    # derived from data supplied by DTCC, and no allowed rights record covers
+    # it. Until the US pack itself declares one, no request is made and nothing
+    # is stored or served.
+    if fed_cp.rights_gate_open(markets.get("US-USD")):
+        fed_cp_declared = fed_cp.declared_instruments(markets.get("US-USD"))
+
+        def parse_fed_cp_window(document):
+            start, end = request_window(timezone_name="America/New_York")
+            return tuple(point for point in fed_cp.parse_document(document)
+                         if point.instrument_id in fed_cp_declared
+                         and start <= point.event_time <= end)
+
+        add("US-USD", fed_cp.ADAPTER_ID, fed_cp.ADAPTER_ID,
+            fed_cp.fetch_document, parse_fed_cp_window, timeout=150.0)
+
     fred_base = "https://fred.stlouisfed.org/graph/fredgraph.csv"
     fred_daily = {
         "US.FED.IORB": "IORB",
@@ -2265,13 +2475,21 @@ def build_official_adapters(
         # HTTP 400). This reaches roughly one year of standing-facility
         # operations at current cadence and fails neither the US pack nor its
         # siblings during the one-time canonical import.
+        # The overnight reverse repo (ON RRP) results come from the same
+        # publisher API, terms and adapter; one operation a day makes 500
+        # reach about two years and 120 about six months.
         count = 500 if backfill else 120
         return await get_documents(
             client,
             (
                 (
                     "nyfed_repo_operations",
-                    f"https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json",
+                    NYFED_REPO_RESULTS_URI.format(count=count),
+                    None,
+                ),
+                (
+                    "nyfed_reverse_repo_operations",
+                    NYFED_REVERSE_REPO_RESULTS_URI.format(count=count),
                     None,
                 ),
             ),
@@ -2420,13 +2638,51 @@ def build_official_adapters(
         boe_fetcher("GB.BOE.SONIA", "IUDSOIA"),
         parse_boe_csv,
     )
-    add(
-        "UK-GBP",
-        "boe_policy",
-        "boe_policy",
-        boe_fetcher("GB.BOE.BANK_RATE", "IUDBEDR"),
-        parse_boe_csv,
-    )
+    async def fetch_boe_policy(client):
+        start, end = request_window()
+        # Maintenance-period and monthly series appear weeks after their
+        # labels, so a 45-day window would often hold none of them.
+        periodic_start = start if backfill else end - timedelta(days=400)
+        bank_rate = {
+            "csv.x": "yes",
+            "Datefrom": start.strftime("%d/%b/%Y"),
+            "Dateto": "now",
+            "SeriesCodes": "IUDBEDR",
+            "CSVF": "TN",
+            "UsingCodes": "Y",
+            "VPD": "Y",
+            "VFD": "N",
+        }
+        return await get_documents(
+            client,
+            (
+                ("GB.BOE.BANK_RATE", boe_base, bank_rate),
+                *(
+                    (
+                        label,
+                        boe_base,
+                        {
+                            "CodeVer": "new",
+                            "xml.x": "yes",
+                            "Datefrom": periodic_start.strftime("%d/%b/%Y"),
+                            "Dateto": "now",
+                            "SeriesCodes": code,
+                            "UsingCodes": "Y",
+                            "VPD": "Y",
+                            "VFD": "N",
+                        },
+                    )
+                    for label, (code, _) in BOE_POLICY_XML_SERIES.items()
+                ),
+            ),
+        )
+
+    def parse_boe_policy(document):
+        if document.label == "GB.BOE.BANK_RATE":
+            return parse_boe_csv(document)
+        return parse_boe_xml(document)
+
+    add("UK-GBP", "boe_policy", "boe_policy", fetch_boe_policy, parse_boe_policy)
 
     rba_f1 = "https://www.rba.gov.au/statistics/tables/xls/f01d.xlsx"
     rba_a2 = "https://www.rba.gov.au/statistics/tables/xls/a02hist.xlsx"
@@ -2742,6 +2998,8 @@ from seiche.sources.country_funding import PRODUCTION_KEYS as _COUNTRY_PRODUCTIO
 PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
+        ("US-USD", "fed_h41"),
+        ("US-USD", "treasury_par_yields"),
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),
         ("US-USD", "nyfed_rates"),

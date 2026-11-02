@@ -169,11 +169,15 @@ def stage_budget(deadline, maximum):
 
 def export_job_seconds(policy):
     timing = policy.get("export_timing")
-    if not isinstance(timing, dict) or set(timing) != {"job_seconds", "readiness_seconds"}:
+    if not isinstance(timing, dict) or set(timing) != {"job_seconds", "readiness_seconds", "download_seconds"}:
         raise ValueError("reviewed export timing is missing")
-    job, readiness = timing["job_seconds"], timing["readiness_seconds"]
-    if (type(job) is not int or type(readiness) is not int
-            or not 0 < readiness <= 4500 or not readiness < job <= 7200):
+    job, readiness, download = timing["job_seconds"], timing["readiness_seconds"], timing["download_seconds"]
+    # Same finite ceilings as prepare.workflow_timing: 150 minutes of receipt
+    # readiness, and a credential that outlasts it by 30 minutes within the
+    # application's four-hour limit.
+    if (type(job) is not int or type(readiness) is not int or type(download) is not int
+            or not 0 < readiness <= 9000 or not readiness < job <= 18000
+            or not readiness + 1800 <= download <= 14400):
         raise ValueError("reviewed export timing is invalid")
     return job
 

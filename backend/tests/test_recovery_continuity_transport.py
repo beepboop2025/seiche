@@ -569,8 +569,8 @@ def test_workflow_qualifies_transport_before_export_and_keeps_final_failure_guar
     guard = workflow.index("test ! -e proof/api-continuity.failed", stop)
     minimum = workflow.index('test "$(wc -l <proof/api-continuity.tsv)" -ge 2', guard)
     assert preflight < monitor < recheck < export < stop < guard < minimum
-    assert "recovery_ready_deadline=$((SECONDS + 4500))" in workflow
-    assert "download_expires_at=$(date -u -d '+110 minutes'" in workflow
+    assert "recovery_ready_deadline=$((SECONDS + 9000))" in workflow
+    assert "download_expires_at=$(date -u -d '+200 minutes'" in workflow
 
 
 def test_failure_artifact_retains_exact_noncredential_transport_evidence():

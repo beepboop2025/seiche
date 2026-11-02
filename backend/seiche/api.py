@@ -39,6 +39,7 @@ from seiche import (
     accounts,
     agent_room,
     assemble,
+    atlas_cache,
     context_views,
     hetzner_runtime,
     mcp_server,
@@ -72,13 +73,23 @@ from seiche.domain.observation import (
     StalenessState,
 )
 from seiche.engines import money_market as money_market_engine
-from seiche.markets.base import CapabilityStatus, PackSupportStatus
+from seiche.markets.base import (
+    EVENT_CADENCE,
+    CalendarUnavailableError,
+    CapabilityStatus,
+    PackSupportStatus,
+)
 from seiche.markets.atlas import (
+    _instrument_clock,
     build_global_money_market_atlas,
     market_source_reference,
 )
 from seiche.markets.calibration import get_local_calibration
-from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
+from seiche.markets.materialize import (
+    PUBLIC_SNAPSHOT_VISIBILITY,
+    RESTRICTED_SNAPSHOT_VISIBILITY,
+)
+from seiche.markets.reading_rights import reading_restricted
 from seiche.markets.registry import UnknownMarketError, default_registry
 from seiche.markets.world import (
     WORLD_MARKETS_SELECTORS,
@@ -953,45 +964,61 @@ def _series_evidence_eligibility(
     }
 
 
-def _series_cadence_seconds(value: str) -> float:
-    if value.startswith("PT"):
-        amount = int(value[2:-1])
-        return amount * {"H": 3600, "M": 60, "S": 1}[value[-1]]
-    amount = int(value[1:-1])
-    return amount * {"D": 86400, "W": 7 * 86400}[value[-1]]
+def _series_dead_probe_span(cadence: str) -> timedelta:
+    """A span after an event by which nine missed releases are all but certain.
+
+    Only a performance bound: a wrong span changes speed, never a result.
+    """
+    amount = int(cadence[2:-1] if cadence.startswith("PT") else cadence[1:-1])
+    unit = (
+        {"H": timedelta(hours=1), "M": timedelta(minutes=1), "S": timedelta(seconds=1)}
+        if cadence.startswith("PT")
+        else {"D": timedelta(days=1), "W": timedelta(weeks=1), "M": timedelta(days=31)}
+    )[cadence[-1]]
+    return 20 * amount * unit + timedelta(days=10)
 
 
-_STALENESS_RANK = {
-    StalenessState.FRESH: 0,
-    StalenessState.AGING: 1,
-    StalenessState.UNKNOWN: 2,
-    StalenessState.STALE: 2,
-    StalenessState.DEAD: 3,
-    StalenessState.UNAVAILABLE: 4,
-}
+def _series_effective_staleness(
+    pack, observation, cutoff: datetime, latest_by_instrument=None
+) -> StalenessState:
+    """Age a row exactly as the money-market atlas ages its metrics.
 
-
-def _series_effective_staleness(pack, observation, cutoff: datetime) -> StalenessState:
-    """Age a row at read time against its adapter's declared native cadence."""
+    One rule for both surfaces: ``atlas._instrument_clock`` at the
+    instrument's own cadence. A scheduled series counts the pack-calendar
+    publication opportunities missed since the row under its declared
+    publication clock; an event-dated series is as current as a daily
+    observation from the same adapter's capture, which ``latest_by_instrument``
+    supplies, and otherwise UNKNOWN. Wall-clock age ignored weekends, holidays
+    and publication lags, so on a Monday morning it called Thursday's SOFR
+    stale before Friday's print was even due while the atlas called it fresh.
+    An unknown publication clock stays UNKNOWN, never fresh.
+    """
 
     instrument = pack.instrument_map[observation.instrument_id]
-    adapter = pack.adapter_map[instrument.source_adapter_id]
-    age_seconds = max((cutoff - observation.event_time).total_seconds(), 0.0)
-    cadence_seconds = _series_cadence_seconds(adapter.expected_cadence)
-    aged = (
-        StalenessState.FRESH
-        if age_seconds <= cadence_seconds * 2
-        else (
-            StalenessState.AGING
-            if age_seconds <= cadence_seconds * 4
-            else (
-                StalenessState.STALE
-                if age_seconds <= cadence_seconds * 8
-                else StalenessState.DEAD
-            )
-        )
-    )
-    return max((observation.staleness, aged), key=_STALENESS_RANK.__getitem__)
+    calendar = pack.settlement_calendar
+    companions = {
+        instrument_id: [row]
+        for instrument_id, row in (latest_by_instrument or {}).items()
+    }
+
+    def state_at(moment: datetime) -> StalenessState:
+        return _instrument_clock(pack, instrument, observation, companions, moment)[0]
+
+    cadence = pack.instrument_cadence(instrument)
+    # Missed opportunities never decrease as the cutoff advances, so a
+    # scheduled row already DEAD a bounded span after its event is DEAD now.
+    # This keeps deep history pages from walking years of calendar days per
+    # row; the cutoff's own calendar year is still validated, exactly as the
+    # full clock does. An event-dated row has no schedule of its own to age.
+    if cadence != EVENT_CADENCE:
+        probe = observation.event_time + _series_dead_probe_span(cadence)
+        if probe < cutoff and state_at(probe) is StalenessState.DEAD:
+            try:
+                calendar.is_business_day(cutoff.astimezone(calendar.timezone).date())
+            except (CalendarUnavailableError, ValueError):
+                return StalenessState.UNKNOWN
+            return StalenessState.DEAD
+    return state_at(cutoff)
 
 
 def _latest_public_series_observations(repository, pack, cutoff: datetime) -> dict:
@@ -1509,7 +1536,8 @@ def _public_openapi_document() -> dict[str, Any]:
                         "schema": {"type": "string"},
                     }
                 ],
-                "responses": {"200": object_response, "503": object_response},
+                "responses": {"200": object_response, "503": object_response,
+                              "403": {"description": "Reading withheld: an input is not cleared for redistribution (seiche.source-rights-restriction.v1)"}},
             },
         },
         "/api/v2/markets/{market_id}/gauge": {
@@ -1524,7 +1552,8 @@ def _public_openapi_document() -> dict[str, Any]:
                         "schema": {"type": "string"},
                     }
                 ],
-                "responses": {"200": object_response, "503": object_response},
+                "responses": {"200": object_response, "503": object_response,
+                              "403": {"description": "Reading withheld: an input is not cleared for redistribution (seiche.source-rights-restriction.v1)"}},
             },
         },
         "/api/v2/markets/{market_id}/asof/{timestamp}": {
@@ -1545,7 +1574,8 @@ def _public_openapi_document() -> dict[str, Any]:
                         "schema": {"type": "string", "format": "date-time"},
                     },
                 ],
-                "responses": {"200": object_response, "404": object_response},
+                "responses": {"200": object_response, "404": object_response,
+                              "403": {"description": "Reading withheld: an input is not cleared for redistribution (seiche.source-rights-restriction.v1)"}},
             },
         },
         "/api/v2/markets/{market_id}/series": {
@@ -2061,6 +2091,55 @@ def _public_snapshot_payload(record: dict | None) -> dict | None:
     return sanitize_public_fault_payload(payload)
 
 
+# Catalog fields of a sealed snapshot. They describe coverage, eligibility,
+# clocks, faults and stale inputs; none of them is a reading, component,
+# headline or data-quality value.
+_SNAPSHOT_METADATA_KEYS = (
+    "data_coverage",
+    "evidence_eligibility",
+    "event_cutoff",
+    "knowledge_cutoff",
+    "faults",
+    "stale_inputs",
+)
+
+
+def _snapshot_metadata(record: dict | None) -> dict | None:
+    """Catalog metadata of a public or source-rights restricted snapshot.
+
+    The catalog, coverage and series pages read only these fields, so a
+    restricted reading keeps the same catalog entry it had while its values
+    stay unserved.
+    """
+    if record is None:
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict) or payload.get("visibility") not in {
+        PUBLIC_SNAPSHOT_VISIBILITY,
+        RESTRICTED_SNAPSHOT_VISIBILITY,
+    }:
+        return None
+    sanitized = sanitize_public_fault_payload(payload)
+    return {key: sanitized[key] for key in _SNAPSHOT_METADATA_KEYS if key in sanitized}
+
+
+def _restricted_reading(pack) -> JSONResponse | None:
+    """The source-rights refusal for a pack whose reading has unqualified inputs.
+
+    Decided from the pack's declared rights before any snapshot is read, so a
+    snapshot sealed under an older visibility stamp cannot reopen the reading.
+    """
+    if not reading_restricted(pack):
+        return None
+    from seiche import public_rights
+
+    return JSONResponse(
+        public_rights.legacy_unavailable(f"/api/v2/markets/{pack.market_id}"),
+        status_code=403,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/v2/markets")
 def markets_v2(response: Response):
     response.headers["Cache-Control"] = "public, max-age=300"
@@ -2075,7 +2154,7 @@ def markets_v2(response: Response):
     collector_runs = (
         repository.latest_collector_runs()
         if latest_by_market is not None and any(
-            _public_snapshot_payload(latest_by_market.get(pack.market_id)) is None
+            _snapshot_metadata(latest_by_market.get(pack.market_id)) is None
             for pack in packs
         ) else None
     )
@@ -2085,7 +2164,8 @@ def markets_v2(response: Response):
             latest_by_market.get(pack.market_id) if latest_by_market is not None
             else repository.load_latest_market_snapshot(pack.market_id, "gauge")
         )
-        payload = _public_snapshot_payload(latest)
+        # Catalog metadata only: a restricted reading never enters the catalog.
+        payload = _snapshot_metadata(latest)
         latest = latest if payload is not None else None
         summary["latest_snapshot"] = (
             {
@@ -2128,6 +2208,8 @@ def markets_v2(response: Response):
 @app.get("/api/v2/markets/{market_id}/overview")
 def market_overview_v2(market_id: str, response: Response):
     pack = _market_pack(market_id)
+    if (restricted := _restricted_reading(pack)) is not None:
+        return restricted
     record = get_repository().load_latest_market_snapshot(pack.market_id, "overview")
     payload = _public_snapshot_payload(record)
     if payload is None:
@@ -2143,6 +2225,8 @@ def market_overview_v2(market_id: str, response: Response):
 @app.get("/api/v2/markets/{market_id}/gauge")
 def market_gauge_v2(market_id: str, response: Response):
     pack = _market_pack(market_id)
+    if (restricted := _restricted_reading(pack)) is not None:
+        return restricted
     record = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
     payload = _public_snapshot_payload(record)
     if payload is None:
@@ -2158,6 +2242,8 @@ def market_gauge_v2(market_id: str, response: Response):
 @app.get("/api/v2/markets/{market_id}/asof/{timestamp}")
 def market_asof_v2(market_id: str, timestamp: str, response: Response):
     pack = _market_pack(market_id)
+    if (restricted := _restricted_reading(pack)) is not None:
+        return restricted
     cutoff = _parse_v2_timestamp(timestamp)
     record = get_repository().load_market_snapshot_as_of(
         pack.market_id, "overview", cutoff
@@ -2213,7 +2299,9 @@ def market_series_v2(
     )
     latest_by_instrument = _latest_public_series_observations(repository, pack, now)
     current_staleness = {
-        instrument_id: _series_effective_staleness(pack, observation, now)
+        instrument_id: _series_effective_staleness(
+            pack, observation, now, latest_by_instrument
+        )
         for instrument_id, observation in latest_by_instrument.items()
     }
     instrument_availability: dict[str, str] = {}
@@ -2261,7 +2349,9 @@ def market_series_v2(
     # retain the endpoint's established chronological order within each page.
     for observation in reversed(observations):
         record = observation.to_record()
-        record["staleness"] = _series_effective_staleness(pack, observation, now).value
+        record["staleness"] = _series_effective_staleness(
+            pack, observation, now, latest_by_instrument
+        ).value
         if not _observation_value_is_public(pack, observation):
             record["value"] = None
             record["value_status"] = "REDACTED_BY_LICENCE"
@@ -2281,6 +2371,12 @@ def market_series_v2(
                 "source_adapter": adapter.adapter_id,
                 "publisher": source_reference["publisher"],
                 "source_url": source_reference["source_url"],
+                # A source that asks to be cited carries its citation here.
+                **{
+                    key: source_reference[key]
+                    for key in ("attribution", "terms_url")
+                    if key in source_reference
+                },
                 "connector_classification": adapter.classification.value,
                 "redistribution_status": adapter.redistribution_status.value,
                 "expected_cadence": adapter.expected_cadence,
@@ -2301,7 +2397,7 @@ def market_series_v2(
     ]
     capabilities, missing = _v2_capabilities(pack)
     latest_gauge = repository.load_latest_market_snapshot(pack.market_id, "gauge")
-    gauge_payload = _public_snapshot_payload(latest_gauge) or {}
+    gauge_payload = _snapshot_metadata(latest_gauge) or {}
     faults = [
         item
         for item in (gauge_payload.get("faults") or _v2_collector_faults(pack))
@@ -2392,17 +2488,13 @@ def global_tide_v2(response: Response):
     }
 
 
-@app.get("/api/v2/money-markets")
-def global_money_markets_v2(response: Response):
-    """Read a canonical, licence-aware atlas without collecting on request."""
+_MONEY_MARKET_EVENT_WINDOW = timedelta(days=1120)
+_MONEY_MARKET_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=240"
+_ATLAS_CACHE = atlas_cache.AtlasCache()
 
-    cutoff = datetime.now(UTC).replace(microsecond=0)
-    event_floor = cutoff - timedelta(days=1120)
-    repository = get_repository()
-    observations_by_market: dict[str, list] = {}
-    read_faults: list[dict[str, str]] = []
-    packs = default_registry().list()
-    instruments_by_market = {
+
+def _money_market_selection(packs) -> dict[str, list[str]]:
+    return {
         pack.market_id: [
             instrument.instrument_id
             for instrument in pack.instruments
@@ -2414,6 +2506,13 @@ def global_money_markets_v2(response: Response):
         ]
         for pack in packs
     }
+
+
+def _money_market_observations(repository, packs, selection, cutoff, event_floor):
+    """Read every market's selected canonical rows; one market cannot erase another."""
+
+    observations_by_market: dict[str, list] = {}
+    read_faults: list[dict[str, str]] = []
     # PostgreSQL can read these selected histories in one connection/query.
     # Keep compatibility with repositories exposing only the single-market
     # method, and retain per-market fault isolation if a batch read fails.
@@ -2422,7 +2521,7 @@ def global_money_markets_v2(response: Response):
     if callable(batch_loader):
         try:
             batched_rows = batch_loader(
-                instruments_by_market,
+                selection,
                 cutoff,
                 event_time=cutoff,
                 event_time_from=event_floor,
@@ -2441,7 +2540,7 @@ def global_money_markets_v2(response: Response):
                     cutoff,
                     event_time=cutoff,
                     event_time_from=event_floor,
-                    instrument_ids=instruments_by_market[pack.market_id],
+                    instrument_ids=selection[pack.market_id],
                 )
             )
         except Exception:  # one market cannot erase the atlas
@@ -2459,23 +2558,28 @@ def global_money_markets_v2(response: Response):
         observations_by_market[pack.market_id] = [
             row for row in rows if _observation_is_publicly_derivable(pack, row)
         ]
+    return observations_by_market, read_faults
 
+
+def _money_market_runs(repository) -> tuple[list[dict], list[dict[str, str]]]:
     try:
-        collector_runs = [
+        return [
             sanitize_fault_record(item) for item in repository.latest_collector_runs()
-        ]
+        ], []
     except Exception:
         logging.getLogger("seiche.api").error(
             "canonical atlas collector-run read failed"
         )
-        collector_runs = []
-        read_faults.append(
+        return [], [
             {
                 "market_id": "GLOBAL",
                 "source": "collector_run_repository",
                 "detail": "collector-run repository read failed",
             }
-        )
+        ]
+
+
+def _money_market_payload(packs, observations_by_market, collector_runs, read_faults, cutoff):
     payload = build_global_money_market_atlas(
         packs,
         observations_by_market,
@@ -2485,8 +2589,119 @@ def global_money_markets_v2(response: Response):
     payload["read_faults"] = read_faults
     if read_faults:
         payload["status"] = "PARTIAL"
-    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return sanitize_public_fault_payload(payload)
+
+
+def global_money_markets_v2(response: Response):
+    """Build the canonical, licence-aware atlas without collecting on request.
+
+    The uncached in-process builder; the HTTP route below serves the same
+    bytes through the generation-keyed atlas cache.
+    """
+
+    cutoff = datetime.now(UTC).replace(microsecond=0)
+    repository = get_repository()
+    packs = default_registry().list()
+    observations_by_market, read_faults = _money_market_observations(
+        repository,
+        packs,
+        _money_market_selection(packs),
+        cutoff,
+        cutoff - _MONEY_MARKET_EVENT_WINDOW,
+    )
+    collector_runs, run_faults = _money_market_runs(repository)
+    response.headers["Cache-Control"] = _MONEY_MARKET_CACHE_CONTROL
+    return _money_market_payload(
+        packs, observations_by_market, collector_runs, read_faults + run_faults, cutoff
+    )
+
+
+@app.get("/api/v2/money-markets")
+def global_money_markets_v2_http(request: Request):
+    """Serve the atlas, rebuilding only when its data, rights or states change.
+
+    See ``seiche.atlas_cache``: the key is the repository fingerprint of the
+    exact selected rows plus the rights declarations; an entry expires at the
+    first instant any freshness state could change; collector runs are
+    re-read and spliced on every request. ETag and If-None-Match are honoured.
+    A repository read fault, or a repository without a fingerprint, bypasses
+    the cache and returns exactly the uncached build.
+    """
+
+    cutoff = datetime.now(UTC).replace(microsecond=0)
+    event_floor = cutoff - _MONEY_MARKET_EVENT_WINDOW
+    repository = get_repository()
+    packs = default_registry().list()
+    selection = _money_market_selection(packs)
+    collector_runs, run_faults = _money_market_runs(repository)
+    fingerprint = None
+    fingerprinter = getattr(repository, "observation_fingerprint_batch_as_of", None)
+    if callable(fingerprinter) and not run_faults:
+        try:
+            fingerprint = tuple(
+                fingerprinter(
+                    selection, cutoff, event_time=cutoff, event_time_from=event_floor
+                )
+            )
+        except Exception:
+            logging.getLogger("seiche.api").warning(
+                "canonical atlas fingerprint failed; serving an uncached build"
+            )
+    read: dict[str, Any] = {}
+
+    def build_without_runs():
+        read["rows"] = _money_market_observations(
+            repository, packs, selection, cutoff, event_floor
+        )
+        observations_by_market, read_faults = read["rows"]
+        if read_faults:
+            return None
+        return _money_market_payload(packs, observations_by_market, (), [], cutoff)
+
+    delivery = None
+    if fingerprint is not None:
+        try:
+            delivery = _ATLAS_CACHE.deliver(
+                key=(atlas_cache.rights_identity(packs), fingerprint),
+                cutoff=cutoff,
+                packs=packs,
+                collector_runs=collector_runs,
+                build_without_runs=build_without_runs,
+            )
+        except Exception:
+            # The cache is an optimization; an unexpected cache fault must
+            # degrade to the uncached build, never to a failed atlas.
+            logging.getLogger("seiche.api").exception(
+                "canonical atlas cache failed; serving an uncached build"
+            )
+    if delivery is None:
+        observations_by_market, read_faults = read.get("rows") or _money_market_observations(
+            repository, packs, selection, cutoff, event_floor
+        )
+        body = atlas_cache.encode(
+            _money_market_payload(
+                packs, observations_by_market, collector_runs, read_faults + run_faults, cutoff
+            )
+        )
+        delivery = atlas_cache.Delivery(
+            body, b"", '"' + hashlib.sha256(body).hexdigest()[:32] + '"', "bypass"
+        )
+    headers = {
+        "ETag": delivery.etag,
+        "Cache-Control": _MONEY_MARKET_CACHE_CONTROL,
+        "Vary": "Accept-Encoding",
+        "X-Seiche-Atlas-Cache": delivery.state,
+    }
+    if atlas_cache.etag_matches(request.headers.get("if-none-match"), delivery.etag):
+        return Response(status_code=304, headers=headers)
+    if "gzip" in (request.headers.get("accept-encoding") or "").lower():
+        headers["Content-Encoding"] = "gzip"
+        return Response(
+            content=delivery.gzip or gzip.compress(delivery.body, 6),
+            media_type="application/json",
+            headers=headers,
+        )
+    return Response(content=delivery.body, media_type="application/json", headers=headers)
 
 
 def _completed_world_markets_snapshot() -> dict[str, Any] | None:
@@ -2881,8 +3096,9 @@ def coverage_v2(response: Response):
             latest_by_market.get(pack.market_id) if latest_by_market is not None
             else repository.load_latest_market_snapshot(pack.market_id, "gauge")
         )
-        payload = _public_snapshot_payload(latest) or {}
-        latest = latest if payload else None
+        metadata = _snapshot_metadata(latest)
+        payload = metadata or {}
+        latest = latest if metadata is not None else None
         public_adapters = _public_adapter_ids(pack)
         markets.append(
             {

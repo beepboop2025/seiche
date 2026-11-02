@@ -2,6 +2,7 @@
 
 from seiche.markets.funding_reference import extend_reference_pack
 
+from dataclasses import replace
 from datetime import time
 
 from seiche.domain.observation import (
@@ -11,6 +12,7 @@ from seiche.domain.observation import (
     SemanticRole,
 )
 from seiche.markets.base import (
+    EVENT_CADENCE,
     BusinessCalendar,
     EventSpec,
     MarketPack,
@@ -73,9 +75,15 @@ PACK = extend_reference_pack(MarketPack(
         ),
     ),
     instruments=(
-        rate_instrument("AU.RBA.ES_FLOOR", "RBA_ES_FLOOR", SemanticRole.POLICY_FLOOR, "rba_policy", DayCountConvention.ACT_365),
+        # The ES floor and standing-facility ceiling come from RBA table A2,
+        # which lists only policy changes by effective date: an unchanged
+        # setting adds no row. The daily F1 cash-rate target read in the
+        # same capture shows whether a newer change exists.
+        replace(rate_instrument("AU.RBA.ES_FLOOR", "RBA_ES_FLOOR", SemanticRole.POLICY_FLOOR, "rba_policy", DayCountConvention.ACT_365),
+                observation_cadence=EVENT_CADENCE),
         rate_instrument("AU.RBA.CASH_TARGET", "RBA_CASH_TARGET", SemanticRole.POLICY_TARGET, "rba_policy", DayCountConvention.ACT_365),
-        rate_instrument("AU.RBA.STANDING_CEILING", "RBA_STANDING_CEILING", SemanticRole.POLICY_CEILING, "rba_policy", DayCountConvention.ACT_365),
+        replace(rate_instrument("AU.RBA.STANDING_CEILING", "RBA_STANDING_CEILING", SemanticRole.POLICY_CEILING, "rba_policy", DayCountConvention.ACT_365),
+                observation_cadence=EVENT_CADENCE),
         rate_instrument("AU.RBA.AONIA", "AONIA", SemanticRole.UNSECURED_OVERNIGHT, "rba_cash", DayCountConvention.ACT_365),
         rate_instrument("AU.MARKET.SECURED_OVERNIGHT_BETA", "SOFIA_BETA", SemanticRole.SECURED_OVERNIGHT, "licensed_aud_market", DayCountConvention.ACT_365),
         rate_instrument("AU.MARKET.BBSW_3M", "BBSW_3M", SemanticRole.CD_3M, "licensed_aud_market", DayCountConvention.ACT_365),

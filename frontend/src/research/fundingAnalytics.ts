@@ -23,22 +23,26 @@ export function moneyFundBillions(model: EconomicSeries | undefined, cutoff = Da
   const divisor = model.points.some(p => Math.abs(p.value) > 1e6) ? 1e9 : 1;
   return fundingPoints(model, '$B', divisor, cutoff);
 }
+// Treasury's own par yields only: the FRED constant-maturity copies are never read for the curve.
+export const CURVE_KEYS = ['UST_3M', 'UST_2Y', 'UST_10Y', 'UST_30Y'];
 export function treasuryCurve(models: Map<string, EconomicSeries>, cutoff = Date.now()): {points: Point[]; date: string | null} {
-  const tenors: [string, number][] = [['DGS3M', .25], ['DGS2', 2], ['DGS10', 10], ['DGS30', 30]];
+  const tenors: [string, number][] = [['UST_3M', .25], ['UST_2Y', 2], ['UST_10Y', 10], ['UST_30Y', 30]];
   const series = tenors.map(([key]) => models.get(key));
   if (series.some(s => !s || s.unit !== '%')) return {points: [], date: null};
   const dates = series[0]!.points.map(p => p.date).filter(date => Date.parse(date + 'T00:00:00Z') <= cutoff && series.every(s => s!.points.some(p => p.date === date)));
   const date = dates.at(-1) || null;
   return {date, points: date ? tenors.map(([key, tenor], i) => ({x: tenor, y: series[i]!.points.find(p => p.date === date)!.value, label: key, note: `Observed ${date}`})) : []};
 }
-// Charts whose only history is a FRED copy say why they are empty, naming a direct source when one is due.
+// Charts without a public history say why they are empty: the FRED copy is withheld, and the
+// publisher's own series is absent from this atlas response or, for commercial paper, awaits a
+// rights decision.
 const NO_PUBLIC_HISTORY = 'Missing data is not zero.';
 export const WITHHELD_CHARTS = {
-  reserves: `Withheld: the FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release. ${NO_PUBLIC_HISTORY}`,
-  reverseRepo: `Withheld: the FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release. ${NO_PUBLIC_HISTORY}`,
-  commercialPaper: `Withheld: the FRED copies of the commercial paper and three-month Treasury rates are not cleared for republication, and no direct source is served yet. ${NO_PUBLIC_HISTORY}`,
-  treasuryCurve: `Withheld: the FRED copies of the Treasury constant-maturity yields are not cleared for republication, and no direct source is served yet. ${NO_PUBLIC_HISTORY}`,
-  balanceSheet: `Withheld: the FRED copy of H.4.1 total assets is not cleared for republication, and no direct source is served yet. ${NO_PUBLIC_HISTORY}`,
+  reserves: `Withheld: the FRED copy is not cleared for republication, and the current atlas response has no public value from the Federal Reserve's own H.4.1 series. ${NO_PUBLIC_HISTORY}`,
+  reverseRepo: `Withheld: the FRED copy is not cleared for republication, and the current atlas response has no public value from the New York Fed's own reverse repo series. ${NO_PUBLIC_HISTORY}`,
+  commercialPaper: `Withheld: the Federal Reserve Board's commercial paper rates are derived from data supplied by DTCC and await a rights decision, and the FRED copies are not cleared for republication. Treasury's own three-month yield is served, but a premium needs both legs on one date. ${NO_PUBLIC_HISTORY}`,
+  treasuryCurve: `Withheld: the FRED copies of the Treasury constant-maturity yields are not cleared for republication, and the current atlas response has no public value from Treasury's own par yields for all four maturities on one date. ${NO_PUBLIC_HISTORY}`,
+  balanceSheet: `Withheld: the FRED copy of H.4.1 total assets is not cleared for republication, and the current atlas response has no public value from the Federal Reserve's own H.4.1 total assets. ${NO_PUBLIC_HISTORY}`,
 } as const;
 export function fundingSpecs(models: Map<string, EconomicSeries>, days: number | null): ChartSpec[] {
   const cutoff = Date.now();
@@ -70,17 +74,23 @@ export function fundingSpecs(models: Map<string, EconomicSeries>, days: number |
   const reverseRepo = models.has('ON_RRP_DIRECT')
     ? {key: 'ON_RRP_DIRECT', series: named('ON_RRP_DIRECT', 'ON RRP', '$M', 1000)}
     : {key: 'RRPONTSYD', series: named('RRPONTSYD', 'ON RRP', '$B')};
+  const assets = models.has('TOTAL_ASSETS_DIRECT') ? 'TOTAL_ASSETS_DIRECT' : 'WALCL';
+  // Treasury's own three-month par yield is the bill leg. No commercial paper leg is public, so a
+  // premium appears only where a published premium already exists; nothing is reconstructed.
+  const premium = (cp: string): Series => models.has(cp + '_MINUS_DGS3M')
+    ? {name: `${cp} − DGS3M`, points: windowPoints(raw(cp + '_MINUS_DGS3M', 'bp'), days, end)}
+    : spread(cp, 'UST_3M');
   return [
     {...base('funding-corridor', 1, 'Inside the overnight funding corridor', 'Secured funding, general collateral and the policy anchor on the same rate axis.', '%', ['SOFR', 'TGCR', 'BGCR', 'EFFR', 'IORB'], 'Observed rates. IORB is administered; SOFR, TGCR, BGCR and EFFR measure different transaction populations. Dashed and solid lines distinguish series. Gaps longer than ten days are left open.'), series: ['SOFR', 'TGCR', 'BGCR', 'EFFR', 'IORB'].map(k => named(k))},
     {...base('funding-spreads', 2, 'Where funding departs from the anchors', 'Exact-date spreads isolate rate differences in basis points.', 'bp', ['SOFR', 'IORB', 'EFFR', 'TGCR'], 'Derived: (left rate − right rate) × 100. Only identical observation dates are joined. A positive spread means the left rate is higher; it is not a distress probability.'), series: [spread('SOFR', 'IORB'), spread('EFFR', 'IORB'), spread('SOFR', 'TGCR')], zero: true},
     {...base('reserve-balances', 3, 'The banking system’s reserve buffer', 'Reserve balances held at Federal Reserve Banks.', 'USD bn', [reserves], 'Weekly average reserve balances, expressed in billions. A system-wide stock, not a measure of how evenly reserves are distributed.'), series: [named(reserves, 'Reserve balances', '$M', 1000)], maxGapDays: 15, empty: WITHHELD_CHARTS.reserves},
     {...base('treasury-cash', 4, 'Treasury cash parked at the Fed', 'The Treasury General Account’s own reporting history.', 'USD bn', ['TGA_LONG'], 'Source dollars in millions divided by 1,000. This is a cash stock; a chart movement is not attributed to an individual auction, tax payment or spending event.'), series: [named('TGA_LONG', 'Treasury General Account', '$M', 1000)], maxGapDays: 15},
     {...base('reverse-repo', 5, 'Cash absorbed by overnight reverse repo', 'ON RRP take-up makes the size of this liquidity buffer visible.', 'USD bn', [reverseRepo.key], 'Federal Reserve overnight reverse-repurchase take-up. Zero is a valid observation; absent dates remain absent.'), series: [reverseRepo.series], zero: true, empty: WITHHELD_CHARTS.reverseRepo},
-    {...base('commercial-paper-premium', 6, 'Short-term corporate funding premiums', 'Three-month AA commercial paper against the three-month Treasury yield.', 'bp', ['CP_FIN_3M', 'CP_NONFIN_3M', 'DGS3M'], 'Derived from exact-date rate differences × 100. Commercial paper and Treasury yields have different market conventions; this is a reference spread, not a quoted arbitrage return.'), series: [spread('CP_FIN_3M', 'DGS3M'), spread('CP_NONFIN_3M', 'DGS3M')], zero: true, empty: WITHHELD_CHARTS.commercialPaper},
-    {...base('treasury-curve', 7, 'The Treasury term structure', `Four published maturities, all observed on ${curve.date || 'a common date that is currently unavailable'}.`, '%', ['DGS3M', 'DGS2', 'DGS10', 'DGS30'], 'Latest common observation date across all four maturities. Lines only connect the observed tenors; intervening maturities are not estimated. Independent of the history-window control.'), xType: 'linear', xLabel: 'Maturity · years', series: [{name: curve.date || 'Common date unavailable', points: curve.points}], empty: WITHHELD_CHARTS.treasuryCurve},
+    {...base('commercial-paper-premium', 6, 'Short-term corporate funding premiums', 'Three-month AA commercial paper against the three-month Treasury yield.', 'bp', ['CP_FIN_3M', 'CP_NONFIN_3M', 'UST_3M'], 'Derived from exact-date rate differences × 100. Commercial paper and Treasury yields have different market conventions; this is a reference spread, not a quoted arbitrage return.'), series: [premium('CP_FIN_3M'), premium('CP_NONFIN_3M')], zero: true, empty: WITHHELD_CHARTS.commercialPaper},
+    {...base('treasury-curve', 7, 'The Treasury term structure', `Four published maturities, all observed on ${curve.date || 'a common date that is currently unavailable'}.`, '%', CURVE_KEYS, 'Treasury par yields at fixed maturities. Latest common observation date across all four maturities. Lines only connect the observed tenors; intervening maturities are not estimated. Independent of the history-window control.'), xType: 'linear', xLabel: 'Maturity · years', series: [{name: curve.date || 'Common date unavailable', points: curve.points}], empty: WITHHELD_CHARTS.treasuryCurve},
     {...base('overnight-repricing', 8, 'SOFR repricing, fixing by fixing', 'Changes between consecutive available daily observations.', 'bp / observation', ['SOFR'], 'Derived: (current SOFR − previous available SOFR) × 100. Weekends and holidays are not fabricated. The series describes observed repricing, not expected volatility.'), series: [{name: 'SOFR change', points: daily}], zero: true},
     {...base('mmf-repo-allocation', 9, 'Who receives money-fund repo cash?', 'Total repo lending alongside the Fed and FICC components.', 'USD bn', ['MMF_REPO_TOT', 'MMF_REPO_FED', 'MMF_REPO_FICC'], 'OFR dollar balances are normalized to billions using Seiche’s existing series-wide unit rule. Fed and FICC are components of the total, so these lines must not be added together. Monthly observations retain their native cadence.'), series: [moneyFund('MMF_REPO_TOT', 'Total repo'), moneyFund('MMF_REPO_FED', 'With the Fed'), moneyFund('MMF_REPO_FICC', 'With FICC')], maxGapDays: 65, zero: true},
-    {...base('fed-balance-sheet', 10, 'The Federal Reserve balance sheet', 'Total assets provide the balance-sheet context around reserve conditions.', 'USD bn', ['WALCL'], 'H.4.1 total assets; source dollars in millions divided by 1,000. This series is not equated with reserves or combined into a synthetic net-liquidity score.'), series: [named('WALCL', 'Fed total assets', '$M', 1000)], maxGapDays: 15, empty: WITHHELD_CHARTS.balanceSheet},
+    {...base('fed-balance-sheet', 10, 'The Federal Reserve balance sheet', 'Total assets provide the balance-sheet context around reserve conditions.', 'USD bn', [assets], 'H.4.1 total assets; source dollars in millions divided by 1,000. This series is not equated with reserves or combined into a synthetic net-liquidity score.'), series: [named(assets, 'Fed total assets', '$M', 1000)], maxGapDays: 15, empty: WITHHELD_CHARTS.balanceSheet},
   ];
 }
 

@@ -82,13 +82,13 @@ type DirectStock = {label: string; id: string; publisher: string; attribution: s
 const RESERVES: DirectStock = {
   label: "Reserve balances", id: RESERVES_DIRECT_ID, publisher: "Federal Reserve H.4.1",
   attribution: "Source: Board of Governors of the Federal Reserve System, H.4.1",
-  coming: "The FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release.",
+  coming: "The FRED copy is not cleared for republication, and the current atlas response has no public value from the Federal Reserve's own H.4.1 series.",
   loading: "Checking the Federal Reserve's own H.4.1 series",
 };
 const ON_RRP: DirectStock = {
   label: "ON RRP", id: ON_RRP_DIRECT_ID, publisher: "New York Fed reverse repo",
   attribution: "Source: Federal Reserve Bank of New York, reverse repo operation results",
-  coming: "The FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release.",
+  coming: "The FRED copy is not cleared for republication, and the current atlas response has no public value from the New York Fed's own reverse repo series.",
   loading: "Checking the New York Fed's own reverse repo series",
 };
 

@@ -28,6 +28,11 @@ const NOT_CAUSE = "This is the published rule applied to this board. The public 
 const UNREADABLE = "Riptide's public paper update could not be read. Nothing is filled in.";
 const NOT_PAPER = "Riptide's public paper update is not shown because real orders are not confirmed off. Nothing is filled in.";
 const GAUGE_MISSING = "Seiche funding gauge could not be read. The money-market reading is not filled in from Riptide.";
+// A source-rights refusal is a stated withholding, not a failed read. Only a
+// small 403 JSON body with this schema and a policy name is kept as one.
+const RESTRICTION_SCHEMA = "seiche.source-rights-restriction.v1";
+const RESTRICTION_MAX_BYTES = 16384;
+const POLICY = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){0,15}$/;
 const BOARD_MISSING = "Undertow's published board could not be read. The paper rule is not filled in from a missing board.";
 
 function unavailable(line) {
@@ -119,6 +124,11 @@ export function riptidePaperView(payload) {
 
 export function seicheGaugeLine(gauge) {
   if (!gauge || typeof gauge !== "object" || Array.isArray(gauge)) return GAUGE_MISSING;
+  if (gauge.schema === RESTRICTION_SCHEMA) {
+    const { policy } = gauge;
+    if (typeof policy !== "string" || policy.length > 80 || !POLICY.test(policy)) return GAUGE_MISSING;
+    return `Seiche's funding gauge is withheld under its source-rights policy (${policy}). The money-market reading is not filled in from Riptide.`;
+  }
   const { index, regime, generated_at: generatedAt } = gauge;
   const clock = typeof generatedAt === "string"
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(generatedAt);
@@ -205,11 +215,47 @@ export function composePaperNote(payload, gauge, board, lead, options = {}) {
   return { state: paper.state, lines };
 }
 
+async function boundedText(response, limit) {
+  const declared = Number(response.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > limit) return null;
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const text = await response.text();
+    return typeof text === "string" && text.length <= limit ? text : null;
+  }
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 async function readJson(fetchImpl, url) {
   try {
     const response = await fetchImpl(url, { cache: "no-store", signal: AbortSignal.timeout(8000) });
-    if (!response?.ok) return null;
-    return await response.json();
+    if (response?.ok) return await response.json();
+    // Every other non-OK response stays null, including any other 403 body.
+    if (response?.status !== 403) return null;
+    const text = await boundedText(response, RESTRICTION_MAX_BYTES);
+    if (text === null) return null;
+    const body = JSON.parse(text);
+    return body && typeof body === "object" && !Array.isArray(body)
+      && body.schema === RESTRICTION_SCHEMA && typeof body.policy === "string"
+      ? body : null;
   } catch {
     return null;
   }

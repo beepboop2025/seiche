@@ -21,6 +21,7 @@ function Provenance({ prov }: { prov: Any[] }) {
             <td>{p.availability ?? "unknown"}</td>
             <td title={p.freshness_basis ?? p.unavailable_reason ?? ""}>
               <span className={`chip ${freshness}`}>{table ? "Fetch clock only" : freshness}</span>
+              {p.stale_reason && <div className="sub">{String(p.stale_reason)}</div>}
               {p.unavailable_reason && <div className="sub">{String(p.unavailable_reason).replaceAll("_", " ")}</div>}
             </td>
           </tr>;

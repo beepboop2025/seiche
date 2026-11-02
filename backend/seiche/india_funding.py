@@ -10,11 +10,14 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from seiche.domain.observation import Observation, RedistributionStatus
-from seiche.markets.india_inr.pack import PACK, BENCHMARK_TENORS, CURVE_TENORS
+from seiche.markets.india_inr.pack import PACK, AUCTION_TENORS, BENCHMARK_TENORS, CURVE_TENORS, MONTHLY_TENORS
 from seiche.repository import get_repository
 
 SCHEMA = "seiche.india-funding-curve.v1"
 SPREADS = ((2, 5), (2, 10), (5, 10), (10, 30))
+# The RBI homepage names 3/5/10/15/30Y benchmarks and nothing shorter, so the
+# daily short end is 3Y. 2s5s and 2s10s remain on the monthly report curve.
+DAILY_SPREADS = ((3, 5), (3, 10), (5, 10), (10, 30))
 CURRENT = {"FRESH", "AGING"}
 CAVEATS = [
     "Reference context only; IN-INR is not promoted to validated historical or predictive support.",
@@ -25,7 +28,8 @@ CAVEATS = [
     "Concurrent absorption and curve movement support a possible mechanism, not a causal finding or prediction.",
     "Missing operation amounts are unknown, not zero. Missing tenors are not interpolated or extrapolated.",
     "Monthly SGL maturity yields are a separate RBI report, not daily benchmark yields or a daily trading signal. Archive capture does not establish historical first-seen vintages.",
-    "Government-bond auction cut-off yields are primary-issuance references. The 40Y auction reference is not a daily secondary-market observation.",
+    "Government-bond auction cut-off yields are primary-issuance references in the issuance calendar's 3/5/7/10/15/30/40/50Y buckets, never daily secondary-market observations. Sovereign green bonds in a mixed auction are kept out of these conventional slots.",
+    "Policy decisions and RBI VRR/VRRR operations are event-dated: a row exists only when RBI acts, so an unchanged setting or a day without an operation is not a missed publication.",
 ]
 
 
@@ -180,7 +184,7 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
     for instrument in PACK.instruments:
         if instrument.source_adapter_id == "tenant_market_data":
             continue
-        metric = _metric(PACK, instrument, grouped.get(instrument.instrument_id, []), cutoff=now)
+        metric = _metric(PACK, instrument, grouped.get(instrument.instrument_id, []), cutoff=now, companions=grouped)
         if not include_history:
             metric.pop("history", None)
         elif isinstance(metric.get("history"), list):
@@ -212,7 +216,7 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
             if ":prid:" in identity and identity.rsplit(":prid:", 1)[-1].isdigit():
                 metric["source_url"] = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=" + identity.rsplit(":prid:", 1)[-1]
         metrics[instrument.instrument_id] = metric
-    spreads = [_spread(a, b, grouped, metrics, history=include_history) for a, b in SPREADS]
+    spreads = [_spread(a, b, grouped, metrics, history=include_history) for a, b in DAILY_SPREADS]
     monthly_spreads = [_spread(a, b, grouped, metrics, history=include_history, monthly=True) for a, b in SPREADS]
     liquidity = _liquidity_change(grouped, metrics)
     policy = _policy_comparison(grouped, metrics)
@@ -244,7 +248,7 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
         "money_market": ["IN.MARKET.CALL_WAR", "IN.RBI.TREPS_WAR", "IN.RBI.MARKET_REPO_WAR", *[f"IN.RBI.TBILL_{d}D_WEEKLY" for d in (91, 182, 364)],
                          *[f"IN.RBI.{k}_RATE_{b}" for k in ("CD", "CP") for b in ("LOW", "HIGH")]],
         "liquidity": [key for key, m in metrics.items() if m["unit"] == "INR crore"],
-        "bond_auctions": [f"IN.RBI.GSEC_AUCTION_{t}Y" for t in CURVE_TENORS],
+        "bond_auctions": [f"IN.RBI.GSEC_AUCTION_{t}Y" for t in AUCTION_TENORS],
     }
     return {"schema": SCHEMA, "market_id": "IN-INR", "generated_at": now.isoformat(),
             "asof": max(latest_dates, default=None), "status": "partial" if available else "unavailable",
@@ -254,9 +258,9 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
             "policy_comparison": policy, "liquidity_summary": liquidity,
             "curve": {"kind": "benchmark_ytm", "nodes": [{"tenor_years": t, **metrics[f"IN.RBI.GSEC_BENCHMARK_{t}Y"]} for t in BENCHMARK_TENORS],
                       "requested_tenors_years": list(CURVE_TENORS), "interpolated": False,
-                      "fixed_tenor_status": "unavailable", "fixed_tenor_reason": "A daily fixed-tenor curve is unavailable. The separate monthly maturity view provides RBI's dated 1–30Y report."},
+                      "fixed_tenor_status": "unavailable", "fixed_tenor_reason": "RBI publishes daily yields for five named benchmark bonds (about 3, 5, 10, 15 and 30 years); no redistributable daily fixed-tenor curve is available. The separate monthly maturity view provides RBI's dated 1 to 30Y report."},
             "monthly_curve": {"kind": "monthly_sgl_ytm", "cadence": "P1M", "historical_context_only": True,
-                              "nodes": [{"tenor_years": t, **metrics[f"IN.RBI.SGL_MONTHLY_{t}Y"]} for t in CURVE_TENORS],
+                              "nodes": [{"tenor_years": t, **metrics[f"IN.RBI.SGL_MONTHLY_{t}Y"]} for t in MONTHLY_TENORS],
                               "spreads": monthly_spreads,
                               "methodology": "RBI DBIE report 217: month-end SGL yields for labelled maturities. No mixing with daily benchmarks or interpolation by Seiche. The report stops at 30 years."},
             "spreads": spreads, "mechanism": mechanism, "caveats": CAVEATS,

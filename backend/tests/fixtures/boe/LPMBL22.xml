@@ -1,0 +1,44 @@
+<?xml version='1.0' encoding='ISO-8859-1'?>
+<Envelope xmlns="http://www.gesmes.org/xml/2002-08-01">
+
+ 				<Cube xmlns="https://web.prod.iadb.ext.az.cloud.bankofengland.co.uk/website/agg_series" SCODE="LPMBL22" DESC="Monthly average of amounts outstanding (on Wednesdays) of Bank of England Banking Department sterling reserves balance liabilities (in sterling millions) not seasonally adjusted" COUNTRY="" CONCAT="Average amount outstanding # Bank of England Banking Department # Sterling # Reserve balance # Bank of England counterparties # Sterling # Not seasonally adjusted ">
+						<Cube FREQ_NAME="Monthly" FREQ_CODE="M" FREQ_ORD="7"/><SERIES_COM>Average of amounts outstanding at close of business on Wednesdays within the calendar month.</SERIES_COM>
+						<Cube CAT_NAME="SEASONAL ADJUSTMENT" CAT_VAL="U" VAL_DESC="Not seasonally adjusted" CAT_ORD="1"/>
+						<Cube CAT_NAME="TYPE" CAT_VAL="A" VAL_DESC="Average amount outstanding" CAT_ORD="2"/>
+						<Cube CAT_NAME="OUTPUT IN" CAT_VAL="£" VAL_DESC="Sterling" CAT_ORD="3"/>
+						<Cube CAT_NAME="SECTOR" CAT_VAL="BOED" VAL_DESC="Bank of England Banking Department" CAT_ORD="4"/>
+						<Cube CAT_NAME="OF SECTOR" CAT_VAL="BA" VAL_DESC="Bank of England counterparties" CAT_ORD="5"/>
+						<Cube CAT_NAME="INSTRUMENT CURRENCY" CAT_VAL="£" VAL_DESC="Sterling" CAT_ORD="6"/>
+						<Cube CAT_NAME="INSTRUMENTS" CAT_VAL="RSBAL" VAL_DESC="Reserve balance" CAT_ORD="7"/>
+					<Cube FIRST_OBS="2006-05-31" LAST_OBS="2026-09-30"/>
+									<Cube TIME="2025-07-31" OBS_VALUE="676474" OBS_CONF="N"  LAST_UPDATED="2025-08-06 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-08-31" OBS_VALUE="671099" OBS_CONF="N"  LAST_UPDATED="2025-09-03 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-09-30" OBS_VALUE="659537" OBS_CONF="N"  LAST_UPDATED="2025-10-01 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-10-31" OBS_VALUE="651499" OBS_CONF="N"  LAST_UPDATED="2025-11-05 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-11-30" OBS_VALUE="652094" OBS_CONF="N"  LAST_UPDATED="2025-12-03 09:30:00" >
+									</Cube>
+									<Cube TIME="2025-12-31" OBS_VALUE="657627" OBS_CONF="N"  LAST_UPDATED="2026-01-13 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-01-31" OBS_VALUE="657494" OBS_CONF="N"  LAST_UPDATED="2026-02-04 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-02-28" OBS_VALUE="641802" OBS_CONF="N"  LAST_UPDATED="2026-03-04 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-03-31" OBS_VALUE="644005" OBS_CONF="N"  LAST_UPDATED="2026-04-01 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-04-30" OBS_VALUE="641804" OBS_CONF="N"  LAST_UPDATED="2026-05-07 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-05-31" OBS_VALUE="640743" OBS_CONF="N"  LAST_UPDATED="2026-06-03 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-06-30" OBS_VALUE="650684" OBS_CONF="N"  LAST_UPDATED="2026-07-01 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-07-31" OBS_VALUE="657600" OBS_CONF="N"  LAST_UPDATED="2026-08-05 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-08-31" OBS_VALUE="640661" OBS_CONF="N"  LAST_UPDATED="2026-09-03 09:30:00" >
+									</Cube>
+									<Cube TIME="2026-09-30" OBS_VALUE="642235" OBS_CONF="N"  LAST_UPDATED="2026-10-07 09:30:00" >
+									</Cube></Cube>
+</Envelope>

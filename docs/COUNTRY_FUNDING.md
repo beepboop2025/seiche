@@ -73,7 +73,25 @@ the same projection embedded in the completed global atlas.
   scheduled release time is not substituted for an actual publication receipt.
 - A monthly CBC discount or bank rate is an end-of-period reference; overnight
   call, commercial-paper and government-bond rates are source-defined monthly
-  market averages. The current CBC discount indicator keeps its decision date.
+  market averages. The current CBC discount indicator keeps its decision date
+  and is an `EVENT` series.
+- When no candidate for a benchmark role has a known-current clock, the newest
+  dated observation of that role is chosen; declaration order only breaks ties.
+  Taiwan's daily CBC overnight call rate therefore leads its monthly average.
+  Its publication time is still unknown, so it stays out of the current global
+  ranking and is described as unknown rather than stale.
+- Policy settings that change only on decision dates (RBA ES floor and
+  standing-facility ceiling, CBC discount decision) are `EVENT` series: an
+  unchanged setting is current while a daily observation from the same capture
+  is, and never `DEAD` by age. BoJ current-account balances are a monthly
+  average and age on a `P1M` clock.
+- The BoE `boe_policy` adapter reads Bank Rate (`IUDBEDR`) and, from the
+  Database XML export with each observation's `LAST_UPDATED` time, the OSF
+  deposit and lending rates per MPC maintenance period (`YWMB83C`, `YWMB82C`,
+  labelled by the period's start date; `P7W`) and the monthly average of
+  Wednesday reserve balances (`LPMBL22`, `P1M`). These fill instruments the
+  pack already declared under that adapter; no adapter or row rights changed,
+  and SONIA is unchanged.
 - Curve changes require matching latest and previous observation dates within
   one curve family. Missing maturities are not interpolated. Unknown freshness
   yields historical-reference movement, not a claim about today's market.

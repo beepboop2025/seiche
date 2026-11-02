@@ -104,6 +104,24 @@ _FED_PRATES_CLOCK = PublicationClock(
     precision=PublicationClockPrecision.UNKNOWN,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
+# H.4.1 week averages end on Wednesday; the Board releases them on Thursday at
+# 16:30 New York, a day later when Thursday is a Fedwire holiday.
+_FED_H41_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(16, 30),
+    business_day_lag=1,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
+# Treasury: "Yield curve rates are usually available at Treasury's interest
+# rate website by 6:00 PM Eastern Time each trading day" (methodology page).
+_TREASURY_PAR_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(18, 0),
+    business_day_lag=0,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
 _FRED_WEEKLY_CLOCK = PublicationClock(
     timezone_name="America/New_York",
     local_time=None,
@@ -141,6 +159,35 @@ _ACT_360 = DayCountConvention.ACT_360
 _BP = CanonicalUnit.BASIS_POINTS
 _INDEX = CanonicalUnit.INDEX_POINTS
 _LCY_M = CanonicalUnit.LOCAL_CURRENCY_MILLIONS
+_NATIVE_COMPOUNDING = RateCompounding.SOURCE_NATIVE
+_NATIVE_DAY_COUNT = DayCountConvention.SOURCE_NATIVE
+
+# Treasury par yield tenors read from Treasury's own feed. The source module
+# maps each to its feed field; a test keeps the two lists identical.
+_TREASURY_PAR_TENORS = ("1M", "3M", "6M", "1Y", "2Y", "5Y", "10Y", "30Y")
+
+
+def _treasury_par_yields() -> tuple[InstrumentSpec, ...]:
+    """Treasury's par yield curve at fixed maturities, bond-equivalent percent.
+
+    Each tenor is a sovereign yield, not the DTB3 discount-basis bill rate that
+    ``US.TREASURY.TBILL_3M`` carries, so no existing role binding moves.
+    """
+
+    return tuple(
+        InstrumentSpec(
+            f"US.TREASURY.PAR_YIELD_{suffix}",
+            f"UST_PAR_{suffix}",
+            SemanticRole.SOVEREIGN_YIELD,
+            "treasury_par_yields",
+            "percent",
+            _BP,
+            100,
+            _NATIVE_COMPOUNDING,
+            _NATIVE_DAY_COUNT,
+        )
+        for suffix in _TREASURY_PAR_TENORS
+    )
 
 
 def _nyfed_distribution(
@@ -216,6 +263,21 @@ PACK = MarketPack(
             collection_cadence="PT1H",
         ),
         SourceAdapterSpec("fred_weekly", _OPEN, "P1W", _FRED_WEEKLY_CLOCK, RedistributionStatus.METADATA_ONLY),
+        SourceAdapterSpec(
+            # The Board's own H.4.1 release package, not the FRED copy above.
+            # Board information is public domain unless otherwise indicated,
+            # citing the Board as the source (federalreserve.gov/disclaimer.htm).
+            # Daily polling picks up the weekly release without a week's lag.
+            "fed_h41", _OPEN, "P1W", _FED_H41_CLOCK, _ALLOW,
+            collection_cadence="P1D",
+        ),
+        SourceAdapterSpec(
+            # Treasury's own Daily Treasury Par Yield Curve Rates, not FRED's
+            # DGS copies. A work of the US Government (17 U.S.C. 105), cited
+            # to Treasury wherever shown. Polled hourly for the 18:00 posting.
+            "treasury_par_yields", _OPEN, "P1D", _TREASURY_PAR_CLOCK, _ALLOW,
+            collection_cadence="PT1H",
+        ),
         SourceAdapterSpec(
             "nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW,
             collection_cadence="PT1H",
@@ -310,11 +372,32 @@ PACK = MarketPack(
             _SIMPLE,
             _ACT_360,
         ),
+        # Declared before the FRED copy, as IORB_DIRECT is before IORB, so pack
+        # order prefers the Board's own release wherever a role is selected.
+        InstrumentSpec(
+            "US.FED.RESERVE_BALANCES_DIRECT",
+            "RESERVE_BALANCES_DIRECT",
+            SemanticRole.RESERVE_BALANCES,
+            "fed_h41",
+            "USD millions",
+            _LCY_M,
+        ),
         InstrumentSpec(
             "US.FED.RESERVE_BALANCES",
             "WRESBAL",
             SemanticRole.RESERVE_BALANCES,
             "fred_weekly",
+            "USD millions",
+            _LCY_M,
+        ),
+        # The Board's own H.4.1 total assets (Wednesday level, RESPPMA_N.WW),
+        # from the same package and rights record as the reserves above. The
+        # FRED WALCL copy is a legacy series only and stays metadata-only.
+        InstrumentSpec(
+            "US.FED.TOTAL_ASSETS_DIRECT",
+            "TOTAL_ASSETS_DIRECT",
+            SemanticRole.CENTRAL_BANK_TOTAL_ASSETS,
+            "fed_h41",
             "USD millions",
             _LCY_M,
         ),
@@ -336,6 +419,19 @@ PACK = MarketPack(
             _LCY_M,
             1000,
         ),
+        # Declared after SRF on purpose: pack order is the kernel's role
+        # priority, so facility_usage keeps reading SRF take-up. ON RRP comes
+        # from the same NY Fed Markets API adapter, rights and clock.
+        InstrumentSpec(
+            "US.NYFED.ON_RRP_TAKEUP",
+            "ON_RRP_ACCEPTED",
+            SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP,
+            "nyfed_facilities",
+            "USD billions",
+            _LCY_M,
+            1000,
+        ),
+        *_treasury_par_yields(),
         *_nyfed_distribution("SOFR"),
         InstrumentSpec(
             "US.NYFED.SOFR_AVERAGE_30D",

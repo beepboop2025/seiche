@@ -21,11 +21,14 @@ diagnostics identify the endpoint, timings and curl status without credentials.
 The assembler requires the exact original probe commands before substituting
 this transport; upstream workflow drift is rejected.
 
-Recurring assembly reads receipt-readiness and total-job timing from the signed
-current recovery workflow and pins that workflow in runtime source admission.
-The reviewed limits are 75 minutes for receipt readiness and 120 minutes for the
-whole export job. The original export adapter receives that readiness value;
-its former 45-minute parent-process cutoff is removed. Preflight, download,
+Recurring assembly reads receipt-readiness, download-credential and total-job
+timing from the signed current recovery workflow and pins that workflow in
+runtime source admission. The reviewed limits are 150 minutes for receipt
+readiness, a 200-minute download credential (at least 30 minutes beyond
+readiness, at most the application's four hours) and 300 minutes for the whole
+export job; the container's outer limit is 305 minutes. The original export
+adapter receives the readiness and credential values; its former 45-minute
+parent-process cutoff is removed. Preflight, download,
 restore and sealing share one decreasing job budget. A new stage never resets
 that deadline, and no integrity, continuity or freshness check is skipped.
 The recurring service must retain its explicit 7,200-second outer command;

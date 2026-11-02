@@ -101,8 +101,9 @@ def test_latest_mmo_report_stays_current_across_holiday_without_changing_row_clo
     assert metric["expected_next_update"].startswith("2026-10-05")
     assert metric["published_at"] == row.source_publication_time.isoformat()
     assert metric["knowledge_time"] == row.knowledge_time.isoformat()
-    assert PACK.instrument_map["IN.RBI.POLICY_REPO"].freshness_clock is None
-    assert PACK.instrument_map["IN.RBI.TBILL_3M"].freshness_clock is None
+    # The undated homepage policy-repo and bill series are retired, not aged.
+    assert "IN.RBI.POLICY_REPO" not in PACK.instrument_map
+    assert "IN.RBI.TBILL_3M" not in PACK.instrument_map
     assert PACK.adapter_map["rbi_official"].publication_clock.business_day_lag == 0
 
 

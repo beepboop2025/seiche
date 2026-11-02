@@ -8,11 +8,11 @@ export type FundingCard = {
   /** Why a card without an observation is empty, when that is known. */
   gap: string | null;
 };
-// Until the direct series are served, these cards say why they are empty: the FRED copies
-// are not cleared for republication and are never shown.
+// When a direct series is absent from the atlas, these cards say why they are empty: the FRED
+// copies are not cleared for republication and are never shown.
 const PENDING_DIRECT: Record<string, string> = {
-  "liquidity.reserves": "The FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release.",
-  "liquidity.on_rrp": "The FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release.",
+  "liquidity.reserves": "The FRED copy is not cleared for republication, and the current atlas response has no public value from the Federal Reserve's own H.4.1 series.",
+  "liquidity.on_rrp": "The FRED copy is not cleared for republication, and the current atlas response has no public value from the New York Fed's own reverse repo series.",
 };
 const definitions = [
   ["policy.sofr", "SOFR", "%", "Daily", "US.NYFED.SOFR_MEDIAN"],

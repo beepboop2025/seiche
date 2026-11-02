@@ -13,7 +13,9 @@ import calendar as civil_calendar
 import re
 import statistics
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -30,7 +32,7 @@ from seiche.domain.observation import (
     SemanticRole,
     StalenessState,
 )
-from seiche.markets.base import MarketPack, PublicationClock
+from seiche.markets.base import EVENT_CADENCE, MarketPack, PublicationClock
 from seiche.markets.base import CalendarUnavailableError
 
 ATLAS_SCHEMA = "seiche.global-money-markets.v1"
@@ -67,6 +69,11 @@ _REGIONS = {
 }
 _SOURCE_URLS = {
     "fed_prates": "https://www.federalreserve.gov/releases/prates/data/FRB_PRATES_xml.zip",
+    "fed_h41": "https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip",
+    "treasury_par_yields": (
+        "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+        "TextView?type=daily_treasury_yield_curve"
+    ),
     "fred_daily": "https://fred.stlouisfed.org/",
     "fred_weekly": "https://fred.stlouisfed.org/",
     "fiscaldata": "https://fiscaldata.treasury.gov/",
@@ -104,6 +111,8 @@ _SOURCE_URLS = {
     "rbnz_wholesale": "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates",
 }
 _SOURCE_PUBLISHERS = {
+    "fed_h41": "Board of Governors of the Federal Reserve System",
+    "treasury_par_yields": "U.S. Department of the Treasury",
     "fred_daily": "Federal Reserve Bank of St. Louis",
     "fred_weekly": "Federal Reserve Bank of St. Louis",
     "fiscaldata": "U.S. Department of the Treasury, Bureau of the Fiscal Service",
@@ -144,6 +153,22 @@ _SOURCE_PUBLISHERS = {
 }
 
 
+# Sources cited wherever their values are shown, because their terms ask for it
+# or the source registry records it as the basis of use. The citation travels
+# with every served value (atlas and country-desk metrics, series instrument
+# references) as well as in the atlas legal notices.
+_SOURCE_ATTRIBUTIONS: dict[str, dict[str, str]] = {
+    "fed_h41": {
+        "attribution": "Source: Board of Governors of the Federal Reserve System, H.4.1",
+        "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+    "treasury_par_yields": {
+        "attribution": "Source: U.S. Department of the Treasury, Daily Treasury Par Yield Curve Rates",
+        "terms_url": "https://home.treasury.gov/subfooter/site-policies-and-notices",
+    },
+}
+
+
 from seiche.markets.funding_reference import COUNTRIES, OTHER_EUROPE, SOURCE_REFERENCES as _FUNDING_SOURCES
 _SOURCE_URLS.update({key: value["source_url"] for key, value in _FUNDING_SOURCES.items()})
 _SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _FUNDING_SOURCES.items()})
@@ -159,6 +184,7 @@ def market_source_reference(adapter_id: str) -> dict[str, str | None]:
     return {
         "publisher": _SOURCE_PUBLISHERS.get(adapter_id),
         "source_url": _SOURCE_URLS.get(adapter_id),
+        **_SOURCE_ATTRIBUTIONS.get(adapter_id, {}),
     }
 
 # Markets outside the registered canonical packs remain visible.  This is a
@@ -1269,6 +1295,33 @@ def _next_event_day(event_day: date, cadence: str, calendar) -> date:
     return calendar.roll_forward(event_day + timedelta(weeks=amount))
 
 
+# Freshness states change only when an evaluation instant crosses a publication
+# opportunity. A caller that reuses a built payload records, while building,
+# the earliest such instant for every state it computed.
+_FRESHNESS_TRANSITIONS: ContextVar[list[datetime] | None] = ContextVar(
+    "seiche_atlas_freshness_transitions", default=None
+)
+
+
+@contextmanager
+def freshness_transitions() -> Iterator[list[datetime]]:
+    """Collect the instants at which any freshness state computed inside may change.
+
+    Every publication-opportunity clock evaluated in the block appends the
+    first instant at which its missed-opportunity count can grow, plus the
+    next local new year (calendar coverage is reviewed by year). Before the
+    earliest recorded instant, every state computed in the block is exactly
+    what a fresh evaluation would return.
+    """
+
+    instants: list[datetime] = []
+    token = _FRESHNESS_TRANSITIONS.set(instants)
+    try:
+        yield instants
+    finally:
+        _FRESHNESS_TRANSITIONS.reset(token)
+
+
 def _publication_opportunity_clock(
     latest,
     adapter,
@@ -1320,12 +1373,17 @@ def _publication_opportunity_clock(
                 next_due.astimezone(local_zone).date()
             ):
                 next_due += interval
+            next_change = next_due
         elif cadence.endswith("W"):
             # Weekly/native files often have no validated weekday schedule.
             # Calendar-aware due resolution handles holidays and publication
             # lag; ceiling preserves the native interval clock between files.
             elapsed = max((cutoff - baseline_due).total_seconds(), 0.0)
             missed = math.ceil(elapsed / _cadence_seconds(cadence)) if elapsed else 0
+            # The ceiling grows once elapsed time passes the next whole interval.
+            next_change = baseline_due + timedelta(
+                seconds=_cadence_seconds(cadence) * missed
+            )
             next_event = _next_event_day(event_day, cadence, calendar)
             next_due = _publication_due(
                 next_event,
@@ -1359,6 +1417,7 @@ def _publication_opportunity_clock(
                     calendar,
                     latest.source_publication_time,
                 )
+            next_change = next_due
     except (CalendarUnavailableError, ValueError) as exc:
         return (
             StalenessState.UNKNOWN,
@@ -1366,6 +1425,11 @@ def _publication_opportunity_clock(
             None,
             f"calendar unavailable ({type(exc).__name__})",
         )
+    transitions = _FRESHNESS_TRANSITIONS.get()
+    if transitions is not None:
+        transitions.append(next_change)
+        local_year = cutoff.astimezone(local_zone).year
+        transitions.append(datetime(local_year + 1, 1, 1, tzinfo=local_zone).astimezone(UTC))
 
     # A missed daily release means the latest expected observation is absent,
     # regardless of currency. Collection success cannot grant extra fresh days.
@@ -1399,6 +1463,127 @@ def _publication_opportunity_clock(
             else "declared publication schedule, not a publication receipt; "
         )
         + "stored state is a lower bound",
+    )
+
+
+_STATE_RANK = {
+    StalenessState.FRESH: 0,
+    StalenessState.AGING: 1,
+    StalenessState.STALE: 2,
+    StalenessState.UNKNOWN: 2,
+    StalenessState.DEAD: 3,
+    StalenessState.UNAVAILABLE: 4,
+}
+
+
+def _clock_adapter(adapter, cadence: str):
+    """The adapter clock at an instrument's own observation cadence.
+
+    A mixed adapter can carry a monthly stock or a fortnightly estimate beside
+    daily rows. Only the cadence changes; the declared publication clock, lag
+    and calendar stay the adapter's (or the instrument's freshness clock).
+    """
+
+    if cadence == adapter.expected_cadence:
+        return adapter
+    return replace(
+        adapter,
+        expected_cadence=cadence,
+        collection_cadence=adapter.collection_cadence or adapter.expected_cadence,
+    )
+
+
+def _event_confirmation(
+    pack: MarketPack,
+    instrument,
+    companions: Mapping[str, list[Observation]],
+    cutoff: datetime,
+) -> tuple[Any, Observation, StalenessState, int | None, datetime | None] | None:
+    """Find the daily observation that shows an event series is still current.
+
+    An event-dated row has no publication schedule to miss: a setting stays in
+    force until the authority changes it, and an operation is recorded only on
+    the day it runs. Whether the latest event is still the latest is shown by
+    a scheduled daily observation that the same adapter parsed from the same
+    capture. That is observation evidence; collector health alone never
+    refreshes an event row. Without such a companion the clock stays UNKNOWN.
+    """
+
+    best = None
+    for spec in pack.instruments:
+        if (spec.source_adapter_id != instrument.source_adapter_id
+                or spec.instrument_id == instrument.instrument_id):
+            continue
+        cadence = pack.instrument_cadence(spec)
+        if cadence != "P1D" and not cadence.startswith("PT"):
+            continue
+        rows = [
+            row
+            for row in companions.get(spec.instrument_id, ())
+            if row.usable and row.redistribution_status in _DERIVABLE_REDISTRIBUTION
+            and row.event_time <= cutoff and row.knowledge_time <= cutoff
+        ]
+        if not rows:
+            continue
+        latest = max(rows, key=lambda row: row.event_time)
+        state, missed, next_due, _ = _publication_opportunity_clock(
+            latest,
+            _clock_adapter(pack.adapter_map[spec.source_adapter_id], cadence),
+            pack.settlement_calendar,
+            cutoff,
+            publication_clock=spec.freshness_clock,
+        )
+        key = (_STATE_RANK[state], -latest.event_time.timestamp(), spec.instrument_id)
+        if best is None or key < best[0]:
+            best = (key, (spec, latest, state, missed, next_due))
+    return best[1] if best is not None else None
+
+
+def _instrument_clock(
+    pack: MarketPack,
+    instrument,
+    latest: Observation,
+    companions: Mapping[str, list[Observation]] | None,
+    cutoff: datetime,
+) -> tuple[StalenessState, int | None, datetime | None, str, tuple | None]:
+    """Currentness of one instrument at its own native cadence."""
+
+    adapter = pack.adapter_map[instrument.source_adapter_id]
+    cadence = pack.instrument_cadence(instrument)
+    if cadence != EVENT_CADENCE:
+        return (
+            *_publication_opportunity_clock(
+                latest,
+                _clock_adapter(adapter, cadence),
+                pack.settlement_calendar,
+                cutoff,
+                publication_clock=instrument.freshness_clock,
+            ),
+            None,
+        )
+    confirmation = _event_confirmation(pack, instrument, companions or {}, cutoff)
+    if confirmation is None:
+        return (
+            StalenessState.UNKNOWN,
+            None,
+            None,
+            "event-dated series: a row exists only when the authority acts; no "
+            "daily observation from the same source capture shows whether a "
+            "newer event exists, so currentness is unknown",
+            None,
+        )
+    spec, companion, state, _, _ = confirmation
+    effective = max((latest.staleness, state), key=_STATE_RANK.__getitem__)
+    return (
+        effective,
+        None,
+        None,
+        "event-dated series: a row exists only when the authority acts, so "
+        f"there is no publication schedule to miss; currentness follows "
+        f"{spec.instrument_id} from the same {adapter.adapter_id} capture, "
+        f"observed through {companion.event_time.date().isoformat()}; "
+        "collector health alone never refreshes it",
+        confirmation,
     )
 
 
@@ -1496,6 +1681,7 @@ def _metric(
     rows: list[Observation],
     *,
     cutoff: datetime,
+    companions: Mapping[str, list[Observation]] | None = None,
 ) -> dict[str, Any]:
     if (instrument.semantic_role is SemanticRole.SOVEREIGN_YIELD and rows
             and rows[-1].revision_id.startswith("bond:")):
@@ -1507,6 +1693,8 @@ def _metric(
             start -= 1
         rows = rows[start:]
     adapter = pack.adapter_map[instrument.source_adapter_id]
+    cadence = pack.instrument_cadence(instrument)
+    event_dated = cadence == EVENT_CADENCE
     public = _instrument_is_public(pack, instrument)
     derivable = _instrument_is_derivable(pack, instrument)
     derivable_rows = [
@@ -1556,13 +1744,7 @@ def _metric(
     change_unit = "bp" if is_rate else instrument.canonical_unit.value
     clock_latest = raw_latest if raw_latest is not None else context_latest
     freshness = (
-        _publication_opportunity_clock(
-            clock_latest,
-            adapter,
-            pack.settlement_calendar,
-            cutoff,
-            publication_clock=instrument.freshness_clock,
-        )
+        _instrument_clock(pack, instrument, clock_latest, companions, cutoff)
         if clock_latest is not None
         else None
     )
@@ -1570,6 +1752,7 @@ def _metric(
     missed_opportunities = freshness[1] if freshness is not None else None
     next_publication = freshness[2] if freshness is not None else None
     freshness_basis = freshness[3] if freshness is not None else None
+    confirmation = freshness[4] if freshness is not None else None
 
     def change(periods: int) -> float | None:
         if len(raw_canonical_values) <= periods:
@@ -1617,11 +1800,13 @@ def _metric(
             else None
         ),
         "knowledge_time": raw_latest.knowledge_time.isoformat() if raw_latest else None,
-        "cadence": adapter.expected_cadence,
+        "cadence": cadence,
         "expected_next_update": (
             next_publication.isoformat()
             if next_publication is not None and raw_latest is not None
-            else f"native {adapter.expected_cadence} publication clock"
+            else "no publication schedule; a new row appears only when the authority acts"
+            if event_dated and raw_latest is not None
+            else f"native {cadence} publication clock"
             if raw_latest is not None
             else None
         ),
@@ -1657,10 +1842,11 @@ def _metric(
         "percentile_3y": _round(_percentile(three_year_values), 1),
         "change_vol_20_annualized": (
             _round(
-                _annualized_change_vol(canonical_values, adapter.expected_cadence),
+                _annualized_change_vol(canonical_values, cadence),
                 3,
             )
-            if raw_latest
+            # Event rows have no periods per year to annualize over.
+            if raw_latest and not event_dated
             else None
         ),
         "change_vol_unit": f"{change_unit}/year^0.5",
@@ -1678,7 +1864,11 @@ def _metric(
                 "observations": len(three_year_values),
                 "minimum_observations": 20,
             },
-            "basis": f"true elapsed calendar-time windows at native cadence {adapter.expected_cadence}; no upsampling",
+            "basis": (
+                "true elapsed calendar-time windows over event dates; no upsampling or carried-forward rows"
+                if event_dated
+                else f"true elapsed calendar-time windows at native cadence {cadence}; no upsampling"
+            ),
         },
         "day_count": instrument.day_count.value if instrument.day_count else None,
         "compounding": (
@@ -1708,6 +1898,16 @@ def _metric(
             else []
         ),
     }
+    if event_dated and raw_latest is not None:
+        # A public event row names the daily observation that shows it is
+        # still the latest event. The licensed projection never carries it.
+        metric["confirmed_through"] = (
+            confirmation[1].event_time.date().isoformat() if confirmation else None
+        )
+        metric["confirmed_by"] = confirmation[0].instrument_id if confirmation else None
+    citation = _SOURCE_ATTRIBUTIONS.get(instrument.source_adapter_id)
+    if citation is not None:
+        metric.update(citation)
     return (
         _derived_context_projection(metric)
         if availability == "DERIVED_CONTEXT"
@@ -1740,6 +1940,7 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.CP_3M: "Three-month corporate short-term borrowing cost.",
         SemanticRole.CD_3M: "Three-month bank certificate-of-deposit funding cost.",
         SemanticRole.RESERVE_BALANCES: "Settlement cash held by banks at the central bank.",
+        SemanticRole.CENTRAL_BANK_TOTAL_ASSETS: "The central bank's reported total assets: balance-sheet size, not reserves or a liquidity score.",
         SemanticRole.SYSTEM_LIQUIDITY: "A local stock or flow describing cash available to the banking system.",
         SemanticRole.CENTRAL_BANK_FACILITY_RATE: "The price of an explicit central-bank liquidity facility.",
         SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP: "Actual use of a central-bank liquidity facility.",
@@ -1757,18 +1958,27 @@ def _first_metric(metrics: list[dict], roles: tuple[SemanticRole, ...]) -> dict 
     # Prefer a current lower-priority role to a dead higher-priority role.  A
     # stale secured print, for example, must not displace a fresh unsecured
     # overnight benchmark merely because secured appears first in the tuple.
-    for current_only in (True, False):
-        for role in roles:
-            for metric in metrics:
-                if (
-                    metric["semantic_role"] == role.value
-                    and metric["availability"] == "AVAILABLE"
-                    and (
-                        metric.get("status") in {"FRESH", "AGING"}
-                    )
-                    is current_only
-                ):
-                    return metric
+    for role in roles:
+        for metric in metrics:
+            if (
+                metric["semantic_role"] == role.value
+                and metric["availability"] == "AVAILABLE"
+                and metric.get("status") in {"FRESH", "AGING"}
+            ):
+                return metric
+    # With no current candidate, the newest dated observation of a role wins.
+    # A month-old monthly aggregate must not displace a newer daily print of
+    # the same role merely because it is declared first, for example when
+    # neither has a known publication clock. Declaration order breaks ties.
+    for role in roles:
+        candidates = [
+            metric
+            for metric in metrics
+            if metric["semantic_role"] == role.value
+            and metric["availability"] == "AVAILABLE"
+        ]
+        if candidates:
+            return max(candidates, key=lambda metric: str(metric.get("asof") or ""))
     return None
 
 
@@ -1820,8 +2030,6 @@ def _spread_metric(
     *,
     cutoff: datetime,
 ) -> dict[str, Any] | None:
-    benchmark_adapter = pack.adapter_map[benchmark.source_adapter_id]
-    anchor_adapter = pack.adapter_map[anchor.source_adapter_id]
     benchmark_rows = {
         row.event_time: row
         for row in rows_by_instrument.get(benchmark.instrument_id, [])
@@ -1847,19 +2055,11 @@ def _spread_metric(
     latest_time, latest_value = points[-1]
     latest_benchmark = benchmark_rows[latest_time]
     latest_anchor = anchor_rows[latest_time]
-    benchmark_clock = _publication_opportunity_clock(
-        latest_benchmark,
-        benchmark_adapter,
-        pack.settlement_calendar,
-        cutoff,
-        publication_clock=benchmark.freshness_clock,
+    benchmark_clock = _instrument_clock(
+        pack, benchmark, latest_benchmark, rows_by_instrument, cutoff
     )
-    anchor_clock = _publication_opportunity_clock(
-        latest_anchor,
-        anchor_adapter,
-        pack.settlement_calendar,
-        cutoff,
-        publication_clock=anchor.freshness_clock,
+    anchor_clock = _instrument_clock(
+        pack, anchor, latest_anchor, rows_by_instrument, cutoff
     )
     states = (benchmark_clock[0], anchor_clock[0])
     state_rank = {
@@ -2050,6 +2250,9 @@ def _market_read(
         f"{level:.4f}%" if isinstance(level, (int, float)) else "an unavailable level"
     )
     benchmark_is_stale = benchmark.get("status") not in {"FRESH", "AGING"}
+    # UNKNOWN is not evidence of staleness: the observation may be current,
+    # but without a source publication clock its currentness cannot be shown.
+    currentness_unknown = benchmark.get("status") == "UNKNOWN"
     if (
         spread is not None
         and spread.get("current_for_prose") is True
@@ -2062,12 +2265,19 @@ def _market_read(
         )
     else:
         plain = f"{benchmark['label']} is {level_text} as of {benchmark['asof']}."
-    if benchmark_is_stale:
+    if currentness_unknown:
+        plain += (
+            " Its source publication time is unknown, so its currentness cannot be "
+            "established and it cannot enter the current global ranking."
+        )
+    elif benchmark_is_stale:
         plain += " This is a stale historical observation and cannot enter the current global ranking."
     percentile = benchmark.get("percentile_3y")
+    qualifier = "stale historical " if benchmark_is_stale and not currentness_unknown else ""
     quant = (
-        f"The {'stale historical ' if benchmark_is_stale else ''}benchmark is at the {percentile:.1f}th percentile of its own available history; "
+        f"The {qualifier}benchmark is at the {percentile:.1f}th percentile of its own available history; "
         f"robust z={benchmark.get('robust_z_1y')}."
+        + (" Its currentness is unknown." if currentness_unknown else "")
         if isinstance(percentile, (int, float))
         else "History is still too short for a stable own-market percentile; no cross-market level score is inferred."
     )
@@ -2078,18 +2288,12 @@ def _market_read(
     return plain, quant, countercase
 
 
-def build_global_money_market_atlas(
-    packs: Iterable[MarketPack],
-    observations_by_market: Mapping[str, Iterable[Observation]],
-    *,
-    collector_runs: Iterable[Mapping[str, Any]] = (),
-    as_of: datetime | None = None,
-) -> dict[str, Any]:
-    """Build a public, native-frequency atlas from already policy-filtered rows."""
+def collector_run_map(
+    collector_runs: Iterable[Mapping[str, Any]],
+    cutoff: datetime,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Select the latest finished run per market adapter at the cutoff."""
 
-    packs = tuple(packs)
-
-    cutoff = (as_of or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
     run_map: dict[tuple[str, str], dict[str, Any]] = {}
     run_order: dict[tuple[str, str], tuple[datetime, str]] = {}
     for run in collector_runs:
@@ -2107,6 +2311,81 @@ def build_global_money_market_atlas(
         if key not in run_order or order > run_order[key]:
             run_map[key] = dict(run)
             run_order[key] = order
+    return run_map
+
+
+def market_adapter_records(
+    pack: MarketPack,
+    run_map: Mapping[tuple[str, str], Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A market's public adapter rows and faults; the only run-derived fields."""
+
+    faults = []
+    adapters = []
+    for adapter in pack.source_adapters:
+        # A prohibited connector is outside the public projection entirely:
+        # even its identifier, classification, and schedule are source
+        # metadata that the pack contract forbids redistributing.
+        if adapter.redistribution_status is RedistributionStatus.PROHIBITED:
+            continue
+        run = run_map.get((pack.market_id, adapter.adapter_id))
+        run_metadata_public = (
+            adapter.classification.value == "official_open"
+            and adapter.redistribution_status is RedistributionStatus.ALLOWED
+        )
+        record = {
+            "adapter_id": adapter.adapter_id,
+            "classification": adapter.classification.value,
+            "redistribution_status": adapter.redistribution_status.value,
+            "expected_cadence": adapter.expected_cadence,
+            "collection_cadence": adapter.collection_cadence or adapter.expected_cadence,
+            "source_url": _SOURCE_URLS.get(adapter.adapter_id),
+            "last_run_status": (
+                run.get("status")
+                if run is not None and run_metadata_public
+                else "NO_RUN_RECORDED"
+                if run is None and run_metadata_public
+                else "WITHHELD_BY_POLICY"
+            ),
+            "last_finished_at": (
+                run.get("finished_at")
+                if run is not None and run_metadata_public
+                else None
+            ),
+            "next_due": (
+                run.get("next_due")
+                if run is not None and run_metadata_public
+                else None
+            ),
+            "fault": (
+                run.get("fault")
+                if run is not None and run_metadata_public
+                else None
+            ),
+        }
+        adapters.append(record)
+        if record["last_run_status"] not in {
+            "SUCCESS",
+            "NO_RUN_RECORDED",
+            "WITHHELD_BY_POLICY",
+        }:
+            faults.append(record)
+    return adapters, faults
+
+
+def build_global_money_market_atlas(
+    packs: Iterable[MarketPack],
+    observations_by_market: Mapping[str, Iterable[Observation]],
+    *,
+    collector_runs: Iterable[Mapping[str, Any]] = (),
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """Build a public, native-frequency atlas from already policy-filtered rows."""
+
+    packs = tuple(packs)
+
+    cutoff = (as_of or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    run_map = collector_run_map(collector_runs, cutoff)
     markets: list[dict[str, Any]] = []
     deviations: list[tuple[float, str, str, float]] = []
 
@@ -2136,6 +2415,7 @@ def build_global_money_market_atlas(
                 instrument,
                 rows_by_instrument.get(instrument.instrument_id, []),
                 cutoff=cutoff,
+                companions=rows_by_instrument,
             )
             for instrument in projected_instruments
         ]
@@ -2188,56 +2468,7 @@ def build_global_money_market_atlas(
             metric["availability"] == "DERIVED_CONTEXT" for metric in metrics
         )
         restricted = sum(metric["availability"] == "RESTRICTED" for metric in metrics)
-        faults = []
-        adapters = []
-        for adapter in pack.source_adapters:
-            # A prohibited connector is outside the public projection entirely:
-            # even its identifier, classification, and schedule are source
-            # metadata that the pack contract forbids redistributing.
-            if adapter.redistribution_status is RedistributionStatus.PROHIBITED:
-                continue
-            run = run_map.get((pack.market_id, adapter.adapter_id))
-            run_metadata_public = (
-                adapter.classification.value == "official_open"
-                and adapter.redistribution_status is RedistributionStatus.ALLOWED
-            )
-            record = {
-                "adapter_id": adapter.adapter_id,
-                "classification": adapter.classification.value,
-                "redistribution_status": adapter.redistribution_status.value,
-                "expected_cadence": adapter.expected_cadence,
-                "collection_cadence": adapter.collection_cadence or adapter.expected_cadence,
-                "source_url": _SOURCE_URLS.get(adapter.adapter_id),
-                "last_run_status": (
-                    run.get("status")
-                    if run is not None and run_metadata_public
-                    else "NO_RUN_RECORDED"
-                    if run is None and run_metadata_public
-                    else "WITHHELD_BY_POLICY"
-                ),
-                "last_finished_at": (
-                    run.get("finished_at")
-                    if run is not None and run_metadata_public
-                    else None
-                ),
-                "next_due": (
-                    run.get("next_due")
-                    if run is not None and run_metadata_public
-                    else None
-                ),
-                "fault": (
-                    run.get("fault")
-                    if run is not None and run_metadata_public
-                    else None
-                ),
-            }
-            adapters.append(record)
-            if record["last_run_status"] not in {
-                "SUCCESS",
-                "NO_RUN_RECORDED",
-                "WITHHELD_BY_POLICY",
-            }:
-                faults.append(record)
+        adapters, faults = market_adapter_records(pack, run_map)
         status = (
             "LIVE_REFERENCE"
             if benchmark is not None and benchmark.get("status") in {"FRESH", "AGING"}
@@ -2415,7 +2646,7 @@ def build_global_money_market_atlas(
             "percentile": "tie-aware empirical midrank over observations in the trailing three elapsed calendar years; minimum 20 observations",
             "policy_spread": "exact event-time intersection in canonical basis points, aged by the worse input publication clock",
             "frequency": "changes are observation-count based and retain each adapter's native cadence",
-            "freshness": "observation currentness counts missed pack-calendar publication opportunities using adapter lag/time; US daily FRESH 0, AGING 1, STALE 2-8; other native cadences FRESH <=2, AGING 3-4, STALE 5-8; DEAD >=9; invalid calendars are UNKNOWN and collector health never refreshes an old observation",
+            "freshness": "observation currentness counts missed pack-calendar publication opportunities at each instrument's native cadence (its own when declared, else its adapter's) using adapter lag/time; daily FRESH 0, AGING 1, STALE 2-8; other native cadences FRESH <=2, AGING 3-4, STALE 5-8; DEAD >=9; event-dated settings and operations (cadence EVENT) have no schedule to miss and take the clock of a daily observation parsed from the same capture, else UNKNOWN; invalid calendars and unknown publication times are UNKNOWN and collector health never refreshes an old observation",
             "publication_boundary": "already collected canonical observations; no collection on request",
             "role": "context-only; does not enter the Seiche composite or constitute investment advice",
         },
@@ -2444,6 +2675,35 @@ def build_global_money_market_atlas(
                     "are not official Board analysis or endorsement. The current "
                     "PRATES file supplies effective observation dates, not historical "
                     "publication receipts; its acquisition establishes knowledge time."
+                ),
+            },
+            {
+                "source": "Board of Governors of the Federal Reserve System, H.4.1 RESH4R_XAW_N.WW and RESPPMA_N.WW",
+                "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+                "notice": (
+                    "Source: Board of Governors of the Federal Reserve System, H.4.1. "
+                    "Board information is public domain unless otherwise indicated "
+                    "and the Board asks to be cited as the source. Reserve balances "
+                    "are the Board's week average ending each Wednesday and total "
+                    "assets its Wednesday level, both in USD millions; Seiche "
+                    "statistics are not official Board analysis or endorsement. The "
+                    "release package supplies observation dates, not publication "
+                    "receipts; its acquisition establishes knowledge time."
+                ),
+            },
+            {
+                "source": "U.S. Department of the Treasury, Daily Treasury Par Yield Curve Rates",
+                "terms_url": "https://home.treasury.gov/subfooter/site-policies-and-notices",
+                "notice": (
+                    "Source: U.S. Department of the Treasury, Daily Treasury Par Yield "
+                    "Curve Rates. The par yield curve is Treasury's own computation, a "
+                    "work of the United States Government not subject to US copyright "
+                    "(17 U.S.C. 105); Treasury's site policies state no reuse "
+                    "restriction. Values are bond-equivalent par yields at fixed "
+                    "maturities, dated by the trading day; they are not executable "
+                    "quotes, and Seiche statistics are not Treasury analysis or "
+                    "endorsement. The feed supplies observation dates, not publication "
+                    "receipts; its acquisition establishes knowledge time."
                 ),
             },
             {

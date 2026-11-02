@@ -11,6 +11,7 @@ from seiche.domain.observation import (
     SemanticRole,
 )
 from seiche.markets.base import (
+    EVENT_CADENCE,
     BusinessCalendar,
     EventSpec,
     InstrumentSpec,
@@ -51,9 +52,24 @@ _MMO_FRESHNESS_CLOCK = PublicationClock(
 )
 _ACT_365 = DayCountConvention.ACT_365
 
+# Requested reference slots; the licensed CCIL curve keeps this declaration.
 CURVE_TENORS = (1, 2, 3, 5, 7, 10, 14, 30, 40)
-BENCHMARK_TENORS = (1, 2, 3, 5, 7, 10, 14, 15, 30, 40)
+# The RBI homepage names exactly five benchmark bonds. No redistributable daily
+# source publishes other tenors, so no permanently empty daily slot is declared.
 RBI_HOME_TENORS = (3, 5, 10, 15, 30)
+BENCHMARK_TENORS = RBI_HOME_TENORS
+# DBIE report 217 labels maturities 1 to 30 years; it has no 40Y column.
+MONTHLY_TENORS = (1, 2, 3, 5, 7, 10, 14, 30)
+# Tenors of the RBI/GoI issuance calendar for October 2026 to March 2027
+# (press release 2026-2027/1190, prid=63668): 3, 5, 7, 10, 15, 30, 40 and
+# 50 years. Sovereign green bonds are a separate security type, not a slot.
+AUCTION_TENORS = (3, 5, 7, 10, 15, 30, 40, 50)
+# RBI conducts these operations only on some days. A blank MMO row means no
+# operation that day, so the latest row is the latest operation, not a gap.
+EVENT_OPERATIONS = ("VRR_TODAY", "VRRR_TODAY", "FIXED_REPO_TODAY", "FIXED_REVERSE_REPO_TODAY")
+# Net durable liquidity carries its own "as on" date for each fortnight
+# (mid-month and month end) and appears in the daily MMO about two weeks later.
+FORTNIGHTLY_SERIES = ("DURABLE_LIQUIDITY",)
 LIQUIDITY_SERIES = (
     "SDF_TODAY", "MSF_TODAY", "VRR_TODAY", "VRRR_TODAY",
     "FIXED_REPO_TODAY", "FIXED_REVERSE_REPO_TODAY",
@@ -80,6 +96,11 @@ def _amount(name: str, *, adapter: str = "rbi_official") -> InstrumentSpec:
         f"IN.RBI.{name}", f"RBI_{name}", role,
         adapter, "INR crore", CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
         freshness_clock=_MMO_FRESHNESS_CLOCK if adapter == "rbi_official" else None,
+        observation_cadence=(
+            EVENT_CADENCE if adapter == "rbi_official" and name in EVENT_OPERATIONS
+            else "P2W" if adapter == "rbi_official" and name in FORTNIGHTLY_SERIES
+            else None
+        ),
     )
 
 
@@ -163,14 +184,19 @@ PACK = MarketPack(
     ),
     instruments=(
         replace(rate_instrument("IN.RBI.SDF", "RBI_SDF", SemanticRole.POLICY_FLOOR, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
-        rate_instrument("IN.RBI.POLICY_REPO", "RBI_POLICY_REPO", SemanticRole.POLICY_TARGET, "rbi_official", _ACT_365),
+        # IN.RBI.POLICY_REPO and IN.RBI.TBILL_3M were read from the RBI
+        # homepage box, which has no observation date of its own (the old
+        # parser borrowed the FX "as on" date). That path stopped on
+        # 2026-10-05, so both were frozen at their 2026-10-01 values. The
+        # dated replacements are POLICY_REPO_DECISION (MPC resolutions),
+        # POLICY_REPO_WEEKLY and TBILL_91D_WEEKLY; retained history stays in
+        # the canonical store and is no longer projected as a live series.
         replace(rate_instrument("IN.RBI.MSF", "RBI_MSF", SemanticRole.POLICY_CEILING, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         replace(rate_instrument("IN.MARKET.CALL_WAR", "CALL_WAR", SemanticRole.UNSECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         rate_instrument("IN.FBIL.MIBOR", "MIBOR", SemanticRole.UNSECURED_OVERNIGHT, "licensed_inr_market", _ACT_365),
         rate_instrument("IN.CCIL.TREPS", "TREPS", SemanticRole.SECURED_OVERNIGHT, "ccil_market", _ACT_365),
         rate_instrument("IN.MARKET.CP_3M", "IN_CP_3M", SemanticRole.CP_3M, "licensed_inr_market", _ACT_365),
         rate_instrument("IN.MARKET.CD_3M", "IN_CD_3M", SemanticRole.CD_3M, "licensed_inr_market", _ACT_365),
-        rate_instrument("IN.RBI.TBILL_3M", "IN_TBILL_3M", SemanticRole.TBILL_3M, "rbi_official", _ACT_365),
         replace(rate_instrument("IN.RBI.TREPS_WAR", "RBI_TREPS_WAR", SemanticRole.SECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         replace(rate_instrument("IN.RBI.MARKET_REPO_WAR", "RBI_MARKET_REPO_WAR", SemanticRole.SECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         *(_amount(name) for name in LIQUIDITY_SERIES),
@@ -182,9 +208,13 @@ PACK = MarketPack(
           for kind in ("CD", "CP") for bound in ("LOW", "HIGH")),
         *(_amount(f"{kind}_{measure}", adapter="rbi_credit_fortnightly")
           for kind in ("CD", "CP") for measure in ("ISSUED", "OUTSTANDING")),
-        rate_instrument("IN.RBI.POLICY_REPO_DECISION", "RBI_POLICY_REPO_DECISION", SemanticRole.POLICY_TARGET, "rbi_policy", _ACT_365),
-        rate_instrument("IN.RBI.SDF_DECISION", "RBI_SDF_DECISION", SemanticRole.POLICY_FLOOR, "rbi_policy", _ACT_365),
-        rate_instrument("IN.RBI.MSF_DECISION", "RBI_MSF_DECISION", SemanticRole.POLICY_CEILING, "rbi_policy", _ACT_365),
+        # MPC decisions are event-dated settings: each row is a resolution
+        # date and the rate stays in force until the next decision.
+        *(replace(rate_instrument(f"IN.RBI.{name}", f"RBI_{name}", role, "rbi_policy", _ACT_365),
+                  observation_cadence=EVENT_CADENCE)
+          for name, role in (("POLICY_REPO_DECISION", SemanticRole.POLICY_TARGET),
+                             ("SDF_DECISION", SemanticRole.POLICY_FLOOR),
+                             ("MSF_DECISION", SemanticRole.POLICY_CEILING))),
         rate_instrument("IN.RBI.POLICY_REPO_WEEKLY", "RBI_POLICY_REPO_WEEKLY", SemanticRole.POLICY_TARGET, "rbi_rates_weekly", _ACT_365),
         InstrumentSpec("IN.RBI.CRR", "RBI_CRR", SemanticRole.RESERVE_REQUIREMENT_RATIO,
                        "rbi_rates_weekly", "percent", CanonicalUnit.BASIS_POINTS, 100),
@@ -194,9 +224,12 @@ PACK = MarketPack(
         *(_yield(f"IN.RBI.GSEC_BENCHMARK_{tenor}Y", f"RBI_GSEC_BENCHMARK_{tenor}Y", "rbi_sovereign")
           for tenor in BENCHMARK_TENORS),
         *(_yield(f"IN.RBI.SGL_MONTHLY_{tenor}Y", f"RBI_SGL_MONTHLY_{tenor}Y", "rbi_monthly_curve")
-          for tenor in CURVE_TENORS),
-        *(_yield(f"IN.RBI.GSEC_AUCTION_{tenor}Y", f"RBI_GSEC_AUCTION_{tenor}Y", "rbi_auctions")
-          for tenor in CURVE_TENORS),
+          for tenor in MONTHLY_TENORS),
+        # The calendar rotates each tenor through the weekly auctions once
+        # every four weeks, so one tenor's native cadence is four weeks.
+        *(replace(_yield(f"IN.RBI.GSEC_AUCTION_{tenor}Y", f"RBI_GSEC_AUCTION_{tenor}Y", "rbi_auctions"),
+                  observation_cadence="P4W")
+          for tenor in AUCTION_TENORS),
         *(_yield(f"IN.CCIL.ZERO_{tenor}Y", f"CCIL_ZERO_{tenor}Y", "ccil_curve")
           for tenor in CURVE_TENORS),
         rate_instrument("IN.MARKET.FX_FORWARD_BASIS", "INR_FX_BASIS", SemanticRole.FX_SWAP_BASIS, "licensed_inr_market", _ACT_365),

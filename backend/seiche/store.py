@@ -655,6 +655,46 @@ def load_observations_as_of(
     return [_row_to_observation(row) for row in rows]
 
 
+def observation_fingerprint_batch_as_of(
+    instruments_by_market,
+    knowledge_time: str | datetime,
+    *,
+    event_time: str | datetime,
+    event_time_from: str | datetime,
+) -> tuple:
+    """Identify the stored row set an as-of read of these selections would rank.
+
+    Canonical rows are append-only, so a new row or vintage, or a row leaving
+    the event window, changes the count or the sums of knowledge and event
+    instants (whole seconds; the stored canonical precision).
+    """
+
+    params: list[str] = [_canonical_utc(knowledge_time),
+                         _canonical_utc(event_time), _canonical_utc(event_time_from)]
+    predicates = []
+    for market_id, instrument_ids in instruments_by_market.items():
+        selected = tuple(dict.fromkeys(instrument_ids))
+        if not selected:
+            continue
+        predicates.append(
+            f"(market_id=? AND instrument_id IN ({','.join('?' for _ in selected)}))"
+        )
+        params.extend((market_id.upper(), *selected))
+    if not predicates:
+        return (0, None, "0", "0")
+    query = f"""
+        SELECT count(*), max(knowledge_time),
+               CAST(coalesce(sum(CAST(strftime('%s', knowledge_time) AS INTEGER)), 0) AS TEXT),
+               CAST(coalesce(sum(CAST(strftime('%s', event_time) AS INTEGER)), 0) AS TEXT)
+          FROM canonical_observations
+         WHERE knowledge_time<=? AND event_time<=? AND event_time>=?
+           AND ({' OR '.join(predicates)})
+    """
+    with _lock, _conn() as conn:
+        row = conn.execute(query, params).fetchone()
+    return tuple(row)
+
+
 def load_observation_revisions(
     market_id: str,
     knowledge_time: str | datetime,

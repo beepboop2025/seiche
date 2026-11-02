@@ -117,7 +117,7 @@ class NativeAdmissionTests(unittest.TestCase):
                   "RAILWAY_STATEFUL_SERVICE_ID": self.uuid, "RAILWAY_STATEFUL_VOLUME_ID": self.uuid,
                   "RAILWAY_STATEFUL_ORIGIN": attest.ORIGIN}
         self.policy = {"operation": "export-recurring", "controller_source": "c" * 40,
-                       "export_timing": {"job_seconds": 7200, "readiness_seconds": 4500},
+                       "export_timing": {"job_seconds": 18000, "readiness_seconds": 9000, "download_seconds": 12000},
                        "controller_project_id": self.uuid, "controller_environment_id": self.uuid,
                        "controller_service_id": self.uuid, "execution_public_key": "e" * 64,
                        "production_target": target, "trusted_source_sha256": {},
@@ -250,7 +250,7 @@ class NativeAdmissionTests(unittest.TestCase):
         with mock.patch.object(recurring.time, "monotonic", side_effect=[1000, 1005]), \
                 self.assertRaises(ExportReached):
             recurring.main()
-        self.assertEqual(self.stage.call_args.args[2], 7195)
+        self.assertEqual(self.stage.call_args.args[2], 17995)
 
     def test_source_health_expiry_after_preflight_cannot_request_export(self):
         admitted = {'source_health_admission': {'fixture': True},
@@ -271,10 +271,12 @@ class NativeAdmissionTests(unittest.TestCase):
         self.stage.assert_not_called()
 
     def test_invalid_timing_cannot_reach_signers_or_export(self):
-        for timing in (None, {}, {"job_seconds": True, "readiness_seconds": 4500},
-                       {"job_seconds": 7201, "readiness_seconds": 4500},
-                       {"job_seconds": 7200, "readiness_seconds": 4501},
-                       {"job_seconds": 4500, "readiness_seconds": 4500}):
+        valid = {"job_seconds": 18000, "readiness_seconds": 9000, "download_seconds": 12000}
+        for timing in (None, {}, {"job_seconds": 7200, "readiness_seconds": 4500},
+                       {**valid, "job_seconds": True}, {**valid, "download_seconds": 12000.0},
+                       {**valid, "job_seconds": 18001}, {**valid, "readiness_seconds": 9001},
+                       {**valid, "job_seconds": 9000}, {**valid, "download_seconds": 10799},
+                       {**valid, "download_seconds": 14401}, {**valid, "extra": 1}):
             with self.subTest(timing=timing):
                 self.policy["export_timing"] = timing
                 self.write_policy()

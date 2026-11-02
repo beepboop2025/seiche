@@ -1,5 +1,6 @@
 """Sterling reference pack; benchmark redistribution remains licence-aware."""
 
+from dataclasses import replace
 from datetime import time
 
 from seiche.domain.observation import (
@@ -42,6 +43,9 @@ _POLICY_CLOCK = PublicationClock(
     "Europe/London", None, 0, PublicationClockPrecision.UPSTREAM_NATIVE,
     CALENDAR.calendar_id,
 )
+# The MPC meets eight times a year; its maintenance periods last six to seven
+# weeks, so the longer interval is the native period of a per-period series.
+_MAINTENANCE_PERIOD = "P7W"
 
 
 PACK = extend_reference_pack(MarketPack(
@@ -77,14 +81,20 @@ PACK = extend_reference_pack(MarketPack(
         ),
     ),
     instruments=(
-        rate_instrument("GB.BOE.OSF_DEPOSIT", "BOE_OSF_DEPOSIT", SemanticRole.POLICY_FLOOR, "boe_policy", DayCountConvention.ACT_365),
+        # BoE database YWMB83C/YWMB82C report the OSF rates per MPC
+        # maintenance period (six to seven weeks), labelled by its start date.
+        replace(rate_instrument("GB.BOE.OSF_DEPOSIT", "BOE_OSF_DEPOSIT", SemanticRole.POLICY_FLOOR, "boe_policy", DayCountConvention.ACT_365),
+                observation_cadence=_MAINTENANCE_PERIOD),
         rate_instrument("GB.BOE.BANK_RATE", "BOE_BANK_RATE", SemanticRole.POLICY_TARGET, "boe_policy", DayCountConvention.ACT_365),
-        rate_instrument("GB.BOE.OSF_LENDING", "BOE_OSF_LENDING", SemanticRole.POLICY_CEILING, "boe_policy", DayCountConvention.ACT_365),
+        replace(rate_instrument("GB.BOE.OSF_LENDING", "BOE_OSF_LENDING", SemanticRole.POLICY_CEILING, "boe_policy", DayCountConvention.ACT_365),
+                observation_cadence=_MAINTENANCE_PERIOD),
         rate_instrument("GB.BOE.SONIA", "SONIA", SemanticRole.UNSECURED_OVERNIGHT, "boe_sonia", DayCountConvention.ACT_365),
         rate_instrument("GB.MARKET.RONIA", "RONIA", SemanticRole.SECURED_OVERNIGHT, "licensed_sterling_market", DayCountConvention.ACT_365),
+        # BoE database LPMBL22: monthly average of Wednesday reserve balances.
         InstrumentSpec(
             "GB.BOE.RESERVE_BALANCES", "BOE_RESERVES", SemanticRole.RESERVE_BALANCES,
             "boe_policy", "GBP millions", CanonicalUnit.LOCAL_CURRENCY_MILLIONS,
+            observation_cadence="P1M",
         ),
     ),
     capabilities=pre_support_capabilities(

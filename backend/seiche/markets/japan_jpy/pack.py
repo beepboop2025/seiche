@@ -62,9 +62,12 @@ PACK = extend_reference_pack(MarketPack(
             "boj_rates", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
             RedistributionStatus.ALLOWED,
         ),
+        # md01_m_1_en.csv is BoJ's monthly monetary base: current-account
+        # balances are a monthly average labelled at month end. Polling stays
+        # daily; the observation cadence is the calendar month.
         SourceAdapterSpec(
-            "boj_accounts", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
-            RedistributionStatus.ALLOWED,
+            "boj_accounts", ConnectorClassification.OFFICIAL_OPEN, "P1M", _CLOCK,
+            RedistributionStatus.ALLOWED, collection_cadence="P1D",
         ),
         SourceAdapterSpec(
             "tenant_market_data", ConnectorClassification.TENANT_PROVIDED, "P1D", _CLOCK,

@@ -98,6 +98,8 @@ CANDIDATE_ADAPTER_KEYS = {
         ("US-USD", "nyfed_facilities"),
     ),
     "treasury_fiscaldata": (("US-USD", "fiscaldata"),),
+    "frb_h41_release": (("US-USD", "fed_h41"),),
+    "treasury_par_yield_curve": (("US-USD", "treasury_par_yields"),),
 }
 
 

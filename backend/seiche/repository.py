@@ -16,6 +16,7 @@ import threading
 from itertools import islice
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Protocol
 
@@ -193,6 +194,9 @@ class SQLiteMarketRepository:
     save_observations = staticmethod(store.save_observations)
     save_missing_observations = staticmethod(store.save_missing_observations)
     load_observations_as_of = staticmethod(store.load_observations_as_of)
+    observation_fingerprint_batch_as_of = staticmethod(
+        store.observation_fingerprint_batch_as_of
+    )
     load_observation_revisions = staticmethod(store.load_observation_revisions)
     load_observation_revisions_as_of = staticmethod(
         store.load_observation_revisions_as_of
@@ -912,6 +916,66 @@ class PostgresMarketRepository:
             observation = Observation.from_record(record)
             observations[observation.market_id].append(observation)
         return observations
+
+    def observation_fingerprint_batch_as_of(
+        self,
+        instruments_by_market: Mapping[str, Iterable[str]],
+        knowledge_time: str | datetime,
+        *,
+        event_time: str | datetime,
+        event_time_from: str | datetime,
+    ) -> tuple[Any, ...]:
+        """Identify the row set ``load_observations_batch_as_of`` would rank.
+
+        Canonical rows are append-only, so a new row or vintage, or a row
+        leaving the event window, changes the count or the exact sums of the
+        knowledge and event instants (microseconds). It is one aggregate over
+        the same predicate as the batch read, located through the primary-key
+        index, and transfers a single row instead of every selected row.
+        """
+
+        knowledge_cutoff = _utc(knowledge_time)
+        event_cutoff = _utc(event_time)
+        event_floor = _utc(event_time_from)
+        if event_floor > event_cutoff:
+            raise ValueError("event_time_from must not exceed event_time")
+        params: list[Any] = [knowledge_cutoff, event_cutoff, event_floor]
+        market_predicates = []
+        seen: set[str] = set()
+        for market_id, instrument_ids in instruments_by_market.items():
+            normalized = market_id.upper()
+            if normalized in seen:
+                raise ValueError("duplicate normalized market selection")
+            seen.add(normalized)
+            selected = tuple(dict.fromkeys(instrument_ids))
+            if not selected:
+                continue
+            market_predicates.append(
+                "(market_id=%s AND instrument_id IN "
+                f"({','.join(['%s'] * len(selected))}))"
+            )
+            params.extend((normalized, *selected))
+        if not market_predicates:
+            return (0, None, "0", "0")
+        self._ensure_schema()
+        query = f"""
+            SELECT count(*), max(knowledge_time),
+                   coalesce(sum((extract(epoch FROM knowledge_time) * 1000000)::bigint), 0),
+                   coalesce(sum((extract(epoch FROM event_time) * 1000000)::bigint), 0)
+              FROM canonical_observations
+             WHERE knowledge_time<=%s AND event_time<=%s AND event_time>=%s
+               AND ({' OR '.join(market_predicates)})
+        """
+        with self._connect() as connection:
+            row = connection.execute(query, params).fetchone()
+        return tuple(
+            item.astimezone(UTC).isoformat()
+            if isinstance(item, datetime)
+            else str(item)
+            if isinstance(item, Decimal)
+            else item
+            for item in row
+        )
 
     def load_latest_observations_by_instrument(
         self,

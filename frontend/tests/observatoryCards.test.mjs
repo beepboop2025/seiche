@@ -20,8 +20,8 @@ const cards = market => Object.fromEntries(observatoryCards(ready(market)).map(c
 // Shaped like the next release's direct rows: USD millions, AVAILABLE, redistribution allowed.
 const direct = (id, value, asof, extra = {}) => ({id, label: id, availability: 'AVAILABLE', redistribution_status: 'allowed',
   unit: 'local_currency_millions', value, asof, cadence: id === RESERVES_DIRECT_ID ? 'P1W' : 'P1D', source: 'direct', ...extra});
-const COMING_RESERVES = "The FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release.";
-const COMING_RRP = "The FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release.";
+const COMING_RESERVES = "The FRED copy is not cleared for republication, and the current atlas response has no public value from the Federal Reserve's own H.4.1 series.";
+const COMING_RRP = "The FRED copy is not cleared for republication, and the current atlas response has no public value from the New York Fed's own reverse repo series.";
 
 test('before the first atlas read every card says it is loading, never unavailable', () => {
   const loading = observatoryCards({status: 'loading'});
@@ -37,7 +37,7 @@ test('the live atlas fills SOFR and the server same-date spread with their dates
   assert.deepEqual([spread.value, spread.note, spread.state], ['+4 bp', '2026-10-29 · same date, New York Fed and Federal Reserve Board', 'live']);
 });
 
-test('reserve balances and ON RRP name the coming direct source until it is served, never a FRED value', () => {
+test('reserve balances and ON RRP say the direct source is absent from the atlas, never a FRED value', () => {
   const market = us();
   // The atlas still lists the FRED reserves copy; even marked public it must not reach the card.
   Object.assign(market.metrics.find(row => row.id === 'US.FED.RESERVE_BALANCES'),

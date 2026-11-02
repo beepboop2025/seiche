@@ -38,7 +38,10 @@ WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml"
 CONFIRMATION = "EXPORT_WITHOUT_AUTHORITY_CHANGE"
 REQUEST_MAX_AGE = timedelta(minutes=30)
 REQUEST_FUTURE_SKEW = timedelta(minutes=5)
-DOWNLOAD_MAX_AGE = timedelta(hours=2)
+# Receipt readiness can take up to 150 minutes after the request (85 measured
+# on 2026-11-02 and growing); the governed workflow then downloads the bundle.
+# Finite and explicit.
+DOWNLOAD_MAX_AGE = timedelta(hours=4)
 MAX_SHADOW_RECEIPTS = 1024
 MAX_SHADOW_RECEIPT_BYTES = 64 * 1024 * 1024
 MAX_RECOVERY_EVIDENCE_DIRECTORIES = 4096

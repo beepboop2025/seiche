@@ -13,7 +13,7 @@ from seiche.domain.observation import (
     RedistributionStatus, SemanticRole,
 )
 from seiche.markets.base import (
-    BusinessCalendar, MarketPack, MinimumHistory, PackSupportStatus, PolicyRegime,
+    EVENT_CADENCE, BusinessCalendar, MarketPack, MinimumHistory, PackSupportStatus, PolicyRegime,
     PublicationClock, PublicationClockPrecision, SourceAdapterSpec,
 )
 from seiche.markets.calendars import target_holidays
@@ -222,9 +222,12 @@ def extend_reference_pack(pack: MarketPack) -> MarketPack:
             rate_instrument("TW.CBC.OVERNIGHT_CALL", "CBC_OVERNIGHT_CALL",
                             SemanticRole.UNSECURED_OVERNIGHT, "cbc_public_rates",
                             DayCountConvention.SOURCE_NATIVE, compounding=RateCompounding.SOURCE_NATIVE),
-            rate_instrument("TW.CBC.DISCOUNT_DECISION", "CBC_DISCOUNT_DECISION",
-                            SemanticRole.POLICY_TARGET, "cbc_public_rates",
-                            DayCountConvention.SOURCE_NATIVE, compounding=RateCompounding.SOURCE_NATIVE),
+            # The homepage indicator is dated by the latest decision (for
+            # example 2024-03-22), so it is an event-dated setting.
+            replace(rate_instrument("TW.CBC.DISCOUNT_DECISION", "CBC_DISCOUNT_DECISION",
+                                    SemanticRole.POLICY_TARGET, "cbc_public_rates",
+                                    DayCountConvention.SOURCE_NATIVE, compounding=RateCompounding.SOURCE_NATIVE),
+                    observation_cadence=EVENT_CADENCE),
         ))
     return replace(pack, instruments=tuple(instruments), source_adapters=tuple(adapters))
 

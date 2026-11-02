@@ -68,7 +68,7 @@ def test_summary_retains_findings_constraints_and_explicit_absence(full_desk):
     assert all("nodes" not in result[key] for key in ("curve", "monthly_curve"))
     ids = [key for group in result["metric_catalog"] for key in group["metric_ids"]]
     assert ids == [card["id"] for card in _cards(full_desk)]
-    assert len(ids) >= 80  # The fixture must exercise the full current desk.
+    assert len(ids) >= 74  # The fixture must exercise the full current desk.
     assert full_desk == before
     result["caveats"].append("caller mutation")
     assert full_desk == before

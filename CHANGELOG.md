@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.16.12: blank-data repairs, direct US sources and atlas delivery (2026-11-02)
+
+- Show the NY Fed's own SOFR and the Board's PRATES IORB on the GIFT City USD funding row instead of an unavailable benchmark.
+- Serve ON RRP take-up (`US.NYFED.ON_RRP_TAKEUP`) from the NY Fed's reverse repo results under the existing NY Fed Markets API record.
+- Serve reserve balances (`US.FED.RESERVE_BALANCES_DIRECT`) from the Board's own H.4.1 release, public domain with the Board cited as the source on every served value; the FRED copy stays withheld.
+- Serve Federal Reserve total assets (`US.FED.TOTAL_ASSETS_DIRECT`, H.4.1 `RESPPMA_N.WW`) from the same Board package and rights record, cited to the Board; the FRED `WALCL` copy stays withheld.
+- Serve Treasury's own Daily Treasury Par Yield Curve Rates at 1M, 3M, 6M, 1Y, 2Y, 5Y, 10Y and 30Y (`US.TREASURY.PAR_YIELD_*`), a US Government work cited to Treasury on every served value; the FRED `DGS` copies stay withheld.
+- Add a parser for the Board's commercial paper rates that stays off: the release is derived from DTCC data, so it waits for an owner rights decision and the FRED copies stay withheld.
+- Let a governed recovery export wait up to 150 minutes for its receipt (85 minutes measured for a 3.9 GB capture on 2 November, and growing) with a 200-minute download credential, a 300-minute export job and a four-hour application ceiling on the credential; the native controller reads the same bounds and needs a new signed install.
+- Show CBUAE DONIA as stale with a named reason, not as a source fault, while centralbank.ae refuses automated access (HTTP 403 or 429, including a Cloudflare challenge). The last good observation keeps its date; every other DONIA failure and every other source still fault (owner decision of 2 November).
+- Withhold the v2 US-USD reading: `/api/v2/markets/US-USD/gauge`, `/overview` and `/asof/{timestamp}` return the `seiche.source-rights-restriction.v1` refusal (403) because the legacy parity bridge copies the withheld v1 board; materializers compute the snapshot visibility stamp from their actual inputs; the markets catalog, coverage and series pages are unchanged. A sweep test calls every GET route and MCP tool against seeded restricted values.
+- Age series-page rows with the atlas clock at each instrument's own cadence, so the two surfaces agree on Mondays, for event-dated India operations and for monthly series; the page no longer fails on monthly markets.
+- Serve `/api/v2/money-markets` through a cache keyed on the canonical row set and the rights declarations, expiring at the next freshness transition, with current collector runs, ETag and 304 responses.
+- Age instruments at their own declared cadence; event-dated rows follow a daily observation from the same capture and are otherwise unknown.
+- Prefer the newest dated benchmark when none has a known-current clock; collect the BoE OSF rates and reserve balances the UK pack declares and keep suppressed BoE values withheld.
+- Retire the undated RBI homepage repo and bill series, parse mixed RBI auctions on the issuance calendar's tenors and declare only India curve tenors a source publishes.
+- Keep the Telegram desk bot polling through a failed state write, and remove em and en dashes from its shipped text.
+
 ## 0.16.11: static source-rights projection and source clocks (2026-11-01)
 
 - Publish `/data/overview.json`, `/data/public.json` and `/data/book_history.json` with the same source-rights restriction as their API routes; the full board is written only to an explicit private build path outside the public web roots.

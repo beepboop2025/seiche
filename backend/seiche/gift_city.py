@@ -38,6 +38,16 @@ SOURCES = [
     {"title": "CFTC disaggregated commitments of traders", "url": "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"},
     {"title": "CBUAE DONIA dated rate history", "url": "https://centralbank.ae/en/our-operations/monetary-policy-and-domestic-markets/"},
 ]
+# Pack mnemonics read for the corridor funding rows. The USD benchmark is the
+# NY Fed's own published SOFR (US.NYFED.SOFR_MEDIAN, Markets API percentRate)
+# and its policy anchor is the Board's PRATES IORB (US.FED.IORB_DIRECT); both
+# are original-publisher adapters with redistribution allowed. The FRED copies
+# (SOFR, IORB) stay listed so their current pack policy, not this list, decides
+# whether they may be shown; today the rights filter below drops them.
+FUNDING_MNEMONICS = frozenset({
+    "SOFR_MEDIAN", "IORB_DIRECT", "SOFR", "IORB",
+    "CALL_WAR", "RBI_POLICY_REPO", "RBI_SDF",
+})
 
 
 def _decimal(value: object, name: str) -> Decimal:
@@ -108,7 +118,7 @@ def _funding(now: datetime) -> list[dict]:
             loaded = repository.load_observations_as_of(
                 pack.market_id, now, event_time=now, event_time_from=now-timedelta(days=45),
                 instrument_ids=[i.instrument_id for i in pack.instruments
-                                if i.mnemonic in {"SOFR", "IORB", "CALL_WAR", "RBI_POLICY_REPO", "RBI_SDF"}])
+                                if i.mnemonic in FUNDING_MNEMONICS])
             observations[pack.market_id] = [r for r in loaded
                 if r.instrument_id in pack.instrument_map
                 and r.redistribution_status is RedistributionStatus.ALLOWED

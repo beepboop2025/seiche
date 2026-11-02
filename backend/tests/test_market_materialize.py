@@ -100,13 +100,13 @@ def test_observation_clock_is_independent_of_collector_health() -> None:
 
     stale_state = _source_state(
         INDIA_PACK,
-        "IN.RBI.POLICY_REPO",
+        "IN.MARKET.CALL_WAR",
         cutoff,
         cutoff - timedelta(days=120),
     )
     current_state = _source_state(
         INDIA_PACK,
-        "IN.RBI.POLICY_REPO",
+        "IN.MARKET.CALL_WAR",
         cutoff,
         cutoff,
     )
@@ -119,16 +119,16 @@ def test_rejected_latest_row_cannot_refresh_an_older_accepted_observation() -> N
     cutoff = datetime(2026, 8, 21, tzinfo=UTC)
     accepted = _rate(
         market_id="IN-INR",
-        instrument_id="IN.RBI.POLICY_REPO",
-        role=SemanticRole.POLICY_TARGET,
+        instrument_id="IN.MARKET.CALL_WAR",
+        role=SemanticRole.UNSECURED_OVERNIGHT,
         value=550,
         event_time=cutoff - timedelta(days=120),
     )
     rejected = replace(
         _rate(
             market_id="IN-INR",
-            instrument_id="IN.RBI.POLICY_REPO",
-            role=SemanticRole.POLICY_TARGET,
+            instrument_id="IN.MARKET.CALL_WAR",
+            role=SemanticRole.UNSECURED_OVERNIGHT,
             value=999,
             event_time=cutoff,
         ),
@@ -378,7 +378,6 @@ def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
         for event_time in (start, cutoff)
         for instrument_id, role, value in (
             ("IN.RBI.SDF", SemanticRole.POLICY_FLOOR, 525),
-            ("IN.RBI.POLICY_REPO", SemanticRole.POLICY_TARGET, 550),
             ("IN.RBI.MSF", SemanticRole.POLICY_CEILING, 575),
         )
     ]
@@ -888,8 +887,7 @@ def test_collection_cycle_materializes_after_new_rows_become_knowable(
                 )
                 for instrument, role, value in (
                     ("IN.RBI.SDF", SemanticRole.POLICY_FLOOR, 525),
-                    ("IN.RBI.POLICY_REPO", SemanticRole.POLICY_TARGET, 550),
-                    ("IN.RBI.MSF", SemanticRole.POLICY_CEILING, 575),
+                            ("IN.RBI.MSF", SemanticRole.POLICY_CEILING, 575),
                     ("IN.MARKET.CALL_WAR", SemanticRole.UNSECURED_OVERNIGHT, 548),
                 )
             ]
@@ -949,8 +947,7 @@ def test_slow_foreign_collector_cannot_delay_completed_local_snapshot(
                 )
                 for instrument, role, value in (
                     ("IN.RBI.SDF", SemanticRole.POLICY_FLOOR, 525),
-                    ("IN.RBI.POLICY_REPO", SemanticRole.POLICY_TARGET, 550),
-                    ("IN.RBI.MSF", SemanticRole.POLICY_CEILING, 575),
+                            ("IN.RBI.MSF", SemanticRole.POLICY_CEILING, 575),
                     ("IN.MARKET.CALL_WAR", SemanticRole.UNSECURED_OVERNIGHT, 548),
                 )
             )

@@ -27,4 +27,4 @@ RUN if test -d /controller/monitor; then \
     fi
 WORKDIR /controller
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["timeout", "--signal=TERM", "--kill-after=30", "5400", "python", "-u", "/controller/verify.py"]
+CMD ["timeout", "--signal=TERM", "--kill-after=30", "18300", "python", "-u", "/controller/verify.py"]
