@@ -132,6 +132,8 @@ def test_rbi_decisions_are_event_dated_and_unknown_without_a_daily_capture():
     _, by_id = metrics("IN-INR", [row("IN-INR", "IN.RBI.POLICY_REPO_DECISION", "2026-10-07", 550, published=False)])
     decision = by_id["IN.RBI.POLICY_REPO_DECISION"]
     assert (decision["cadence"], decision["status"], decision["value"]) == ("EVENT", "UNKNOWN", 5.5)
+    # The undated homepage series that froze at 5.25% on 2026-10-01 is retired.
+    assert "IN.RBI.POLICY_REPO" not in by_id and "IN.RBI.TBILL_3M" not in by_id
 
 
 def test_boj_current_accounts_age_by_calendar_month():

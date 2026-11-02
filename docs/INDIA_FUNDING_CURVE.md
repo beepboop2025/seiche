@@ -51,6 +51,13 @@ used. The pack's reviewed calendar begins in 2001; older rows are not imported.
   no VRRR after 15 October and no VRR after 26 October 2026 (through 30 October).
 - MPC decisions (repo, SDF, MSF) are `EVENT` series dated by resolution. The
   policy adapter has no daily companion, so their currentness stays `UNKNOWN`.
+- `IN.RBI.POLICY_REPO` and `IN.RBI.TBILL_3M` are retired. They were read
+  from the homepage box, which has no observation date of its own, and froze
+  at their 1 October 2026 values (repo 5.25%) when that path stopped on
+  5 October. The MPC raised the repo rate by 25 bps to 5.50% on 7 October
+  2026 ([resolution](https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63742);
+  the homepage now shows "Policy Repo Rate : 5.50%"). The dated series are
+  `POLICY_REPO_DECISION`, `POLICY_REPO_WEEKLY` and `TBILL_91D_WEEKLY`.
 - RBI RSS publication times lacking a timezone are interpreted in the pack's
   Asia/Kolkata timezone with **estimated** quality. Date-only release/weekly/
   monthly clocks remain explicitly unknown. An unknown publication instant is

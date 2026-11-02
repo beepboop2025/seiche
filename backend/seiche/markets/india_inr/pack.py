@@ -175,14 +175,19 @@ PACK = MarketPack(
     ),
     instruments=(
         replace(rate_instrument("IN.RBI.SDF", "RBI_SDF", SemanticRole.POLICY_FLOOR, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
-        rate_instrument("IN.RBI.POLICY_REPO", "RBI_POLICY_REPO", SemanticRole.POLICY_TARGET, "rbi_official", _ACT_365),
+        # IN.RBI.POLICY_REPO and IN.RBI.TBILL_3M were read from the RBI
+        # homepage box, which has no observation date of its own (the old
+        # parser borrowed the FX "as on" date). That path stopped on
+        # 2026-10-05, so both were frozen at their 2026-10-01 values. The
+        # dated replacements are POLICY_REPO_DECISION (MPC resolutions),
+        # POLICY_REPO_WEEKLY and TBILL_91D_WEEKLY; retained history stays in
+        # the canonical store and is no longer projected as a live series.
         replace(rate_instrument("IN.RBI.MSF", "RBI_MSF", SemanticRole.POLICY_CEILING, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         replace(rate_instrument("IN.MARKET.CALL_WAR", "CALL_WAR", SemanticRole.UNSECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         rate_instrument("IN.FBIL.MIBOR", "MIBOR", SemanticRole.UNSECURED_OVERNIGHT, "licensed_inr_market", _ACT_365),
         rate_instrument("IN.CCIL.TREPS", "TREPS", SemanticRole.SECURED_OVERNIGHT, "ccil_market", _ACT_365),
         rate_instrument("IN.MARKET.CP_3M", "IN_CP_3M", SemanticRole.CP_3M, "licensed_inr_market", _ACT_365),
         rate_instrument("IN.MARKET.CD_3M", "IN_CD_3M", SemanticRole.CD_3M, "licensed_inr_market", _ACT_365),
-        rate_instrument("IN.RBI.TBILL_3M", "IN_TBILL_3M", SemanticRole.TBILL_3M, "rbi_official", _ACT_365),
         replace(rate_instrument("IN.RBI.TREPS_WAR", "RBI_TREPS_WAR", SemanticRole.SECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         replace(rate_instrument("IN.RBI.MARKET_REPO_WAR", "RBI_MARKET_REPO_WAR", SemanticRole.SECURED_OVERNIGHT, "rbi_official", _ACT_365), freshness_clock=_MMO_FRESHNESS_CLOCK),
         *(_amount(name) for name in LIQUIDITY_SERIES),
