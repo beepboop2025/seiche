@@ -122,7 +122,8 @@ def test_no_mixed_frequency_spread_and_no_40_year_extrapolation():
     assert all(s["value_bp"] is None for s in result["spreads"])
     assert all(s["status"] == "historical_reference" for s in result["monthly_curve"]["spreads"])
     assert all(s["asof"] == "2026-08-31" for s in result["monthly_curve"]["spreads"])
-    assert next(n for n in result["monthly_curve"]["nodes"] if n["tenor_years"] == 40)["value"] is None
+    # DBIE report 217 stops at 30 years, so no 40Y node is declared or extrapolated.
+    assert max(n["tenor_years"] for n in result["monthly_curve"]["nodes"]) == 30
     assert '"history":' not in json.dumps(result)
 
 

@@ -17,7 +17,7 @@ All readers use canonical observations and never start collection.
 | `rbi_policy` | [Monetary policy index](https://www.rbi.org.in/Scripts/annualpolicy.aspx): bounded discovery of four recent full documents, admitting only dated MPC resolutions with repo/SDF/MSF rates | Event-driven; daily polling |
 | `rbi_liquidity_weekly` | RBI Weekly Statistical Supplement: “Liquidity Operations by RBI”, including OMO sales/purchases and facility amounts | Weekly / daily |
 | `rbi_credit_fortnightly` | RBI Weekly Statistical Supplement: “Certificates of Deposit” and “Commercial Paper”; issuance/outstanding and reported rate ranges | Fortnightly / daily |
-| `rbi_sovereign` | [RBI homepage](https://www.rbi.org.in/), Government Securities Market section only: named approximately 3/5/10/15/30Y bonds | Daily / daily |
+| `rbi_sovereign` | [RBI homepage](https://www.rbi.org.in/), Government Securities Market section only: the five named, approximately 3/5/10/15/30Y bonds, which are the only daily benchmark slots declared | Daily / daily |
 | `rbi_monthly_curve` | RBI DBIE report 217, “Month-end Yield of SGL Transactions in Government Dated Securities for Various Maturities”, from the [RBI Innovation Hub archive](https://github.com/Reserve-Bank-Innovation-Hub/dbie.rbihub.in) | Calendar month / weekly |
 | `rbi_auctions` | Full government-stock auction results from the RBI feed and from the dated [press-release listing](https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx) (about a week of titles; at most four new releases per capture), plus dated references for [4 September](https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63517), [9 October](https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63775) and [30 October 2026](https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63889) | Each tenor every four weeks under the issuance calendar (`P4W`) / daily polling |
 
@@ -29,6 +29,10 @@ at `https://dbie-common-scrapes.s3.ap-south-1.amazonaws.com/scrapes`, verifies
 the exact report path, byte length and SHA-256, and checks the 1–30Y column
 labels. The unlabelled SDMX export is unsuitable for this series and is not
 used. The pack's reviewed calendar begins in 2001; older rows are not imported.
+RBI updates report 217 with a lag: the archive version of 31 October 2026
+still ends at Aug-2026 in both report variants, with Sep-2026 shown as
+" -". The monthly curve therefore stops at 31 August 2026 until RBI
+publishes September; the connector is not at fault.
 
 ## Meaning and clocks
 
@@ -73,19 +77,24 @@ used. The pack's reviewed calendar begins in 2001; older rows are not imported.
 
 ## Curves and mechanism
 
-The requested 1/2/3/5/7/10/14/30/40Y slots remain visible. The monthly report
-provides the first eight through 30Y. Auction slots follow the RBI/GoI
+Only tenors that a declared, redistributable source publishes are declared,
+so no slot is permanently empty. The daily curve has RBI's five named
+benchmarks (about 3/5/10/15/30Y); no free daily source for 1, 2, 7, 14 or 40Y
+was found (see the alternatives below). The monthly report provides 1, 2, 3,
+5, 7, 10, 14 and 30Y; it has no 40Y column. Auction slots follow the RBI/GoI
 issuance calendar for October 2026 to March 2027 (3, 5, 7, 10, 15, 30, 40 and
 50 years; [prid=63668](https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63668)).
 A new issue sits at its calendar-year distance; a reissue after the year turns
 sits one year short and takes its bucket, and exact matches claim a slot
 first. Sovereign green bonds and floating rate bonds in a mixed auction are
 identified and kept out of the conventional slots; an unknown identity still
-fails the capture. An auction never fills a daily or monthly secondary-market node.
-The homepage's 15Y benchmark is not relabelled 14Y. No interpolation,
+fails the capture. An auction never fills a daily or monthly secondary-market
+node. The homepage's 15Y benchmark is not relabelled 14Y. No interpolation,
 extrapolation, forward filling or cross-source tenor splicing is performed.
 
-`2s5s`, `2s10s`, `5s10s`, `10s30s` are long minus short yield in basis points.
+Daily spreads are `3s5s`, `3s10s`, `5s10s` and `10s30s`; monthly spreads are
+`2s5s`, `2s10s`, `5s10s` and `10s30s`. Each is long minus short yield in basis
+points.
 Each curve family uses its own exact common dates. Both legs must have the
 same latest date. Daily movement requires current observations and the same
 named securities across dates. Benchmark changes reset own-history statistics

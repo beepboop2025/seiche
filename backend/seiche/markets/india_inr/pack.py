@@ -52,9 +52,14 @@ _MMO_FRESHNESS_CLOCK = PublicationClock(
 )
 _ACT_365 = DayCountConvention.ACT_365
 
+# Requested reference slots; the licensed CCIL curve keeps this declaration.
 CURVE_TENORS = (1, 2, 3, 5, 7, 10, 14, 30, 40)
-BENCHMARK_TENORS = (1, 2, 3, 5, 7, 10, 14, 15, 30, 40)
+# The RBI homepage names exactly five benchmark bonds. No redistributable daily
+# source publishes other tenors, so no permanently empty daily slot is declared.
 RBI_HOME_TENORS = (3, 5, 10, 15, 30)
+BENCHMARK_TENORS = RBI_HOME_TENORS
+# DBIE report 217 labels maturities 1 to 30 years; it has no 40Y column.
+MONTHLY_TENORS = (1, 2, 3, 5, 7, 10, 14, 30)
 # Tenors of the RBI/GoI issuance calendar for October 2026 to March 2027
 # (press release 2026-2027/1190, prid=63668): 3, 5, 7, 10, 15, 30, 40 and
 # 50 years. Sovereign green bonds are a separate security type, not a slot.
@@ -219,7 +224,7 @@ PACK = MarketPack(
         *(_yield(f"IN.RBI.GSEC_BENCHMARK_{tenor}Y", f"RBI_GSEC_BENCHMARK_{tenor}Y", "rbi_sovereign")
           for tenor in BENCHMARK_TENORS),
         *(_yield(f"IN.RBI.SGL_MONTHLY_{tenor}Y", f"RBI_SGL_MONTHLY_{tenor}Y", "rbi_monthly_curve")
-          for tenor in CURVE_TENORS),
+          for tenor in MONTHLY_TENORS),
         # The calendar rotates each tenor through the weekly auctions once
         # every four weeks, so one tenor's native cadence is four weeks.
         *(replace(_yield(f"IN.RBI.GSEC_AUCTION_{tenor}Y", f"RBI_GSEC_AUCTION_{tenor}Y", "rbi_auctions"),

@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from seiche.domain.observation import QualityState
-from seiche.markets.india_inr.pack import AUCTION_TENORS, CURVE_TENORS, RBI_HOME_TENORS
+from seiche.markets.india_inr.pack import AUCTION_TENORS, MONTHLY_TENORS, RBI_HOME_TENORS
 from seiche.sources.canonical import FetchedDocument, ParsedPoint, PublicationTimePolicy, get_documents
 
 MMO_URL = "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx/Statistics.aspx"
@@ -618,7 +618,7 @@ def parse_monthly_curve(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
             # The INR pack's reviewed calendar starts in 2001.
             continue
         for tenor, raw in zip(tenors, cells[1:]):
-            if tenor in CURVE_TENORS and (value := _number(raw)) is not None:
+            if tenor in MONTHLY_TENORS and (value := _number(raw)) is not None:
                 out.append(_point(f"IN.RBI.SGL_MONTHLY_{tenor}Y", day, value,
                                   ["DBIE report 217", cells[0], f"{tenor}Y", raw],
                                   publication_time_policy=PublicationTimePolicy.UNKNOWN,

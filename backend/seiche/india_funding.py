@@ -10,11 +10,14 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from seiche.domain.observation import Observation, RedistributionStatus
-from seiche.markets.india_inr.pack import PACK, AUCTION_TENORS, BENCHMARK_TENORS, CURVE_TENORS
+from seiche.markets.india_inr.pack import PACK, AUCTION_TENORS, BENCHMARK_TENORS, CURVE_TENORS, MONTHLY_TENORS
 from seiche.repository import get_repository
 
 SCHEMA = "seiche.india-funding-curve.v1"
 SPREADS = ((2, 5), (2, 10), (5, 10), (10, 30))
+# The RBI homepage names 3/5/10/15/30Y benchmarks and nothing shorter, so the
+# daily short end is 3Y. 2s5s and 2s10s remain on the monthly report curve.
+DAILY_SPREADS = ((3, 5), (3, 10), (5, 10), (10, 30))
 CURRENT = {"FRESH", "AGING"}
 CAVEATS = [
     "Reference context only; IN-INR is not promoted to validated historical or predictive support.",
@@ -213,7 +216,7 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
             if ":prid:" in identity and identity.rsplit(":prid:", 1)[-1].isdigit():
                 metric["source_url"] = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=" + identity.rsplit(":prid:", 1)[-1]
         metrics[instrument.instrument_id] = metric
-    spreads = [_spread(a, b, grouped, metrics, history=include_history) for a, b in SPREADS]
+    spreads = [_spread(a, b, grouped, metrics, history=include_history) for a, b in DAILY_SPREADS]
     monthly_spreads = [_spread(a, b, grouped, metrics, history=include_history, monthly=True) for a, b in SPREADS]
     liquidity = _liquidity_change(grouped, metrics)
     policy = _policy_comparison(grouped, metrics)
@@ -255,9 +258,9 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
             "policy_comparison": policy, "liquidity_summary": liquidity,
             "curve": {"kind": "benchmark_ytm", "nodes": [{"tenor_years": t, **metrics[f"IN.RBI.GSEC_BENCHMARK_{t}Y"]} for t in BENCHMARK_TENORS],
                       "requested_tenors_years": list(CURVE_TENORS), "interpolated": False,
-                      "fixed_tenor_status": "unavailable", "fixed_tenor_reason": "A daily fixed-tenor curve is unavailable. The separate monthly maturity view provides RBI's dated 1–30Y report."},
+                      "fixed_tenor_status": "unavailable", "fixed_tenor_reason": "RBI publishes daily yields for five named benchmark bonds (about 3, 5, 10, 15 and 30 years); no redistributable daily fixed-tenor curve is available. The separate monthly maturity view provides RBI's dated 1 to 30Y report."},
             "monthly_curve": {"kind": "monthly_sgl_ytm", "cadence": "P1M", "historical_context_only": True,
-                              "nodes": [{"tenor_years": t, **metrics[f"IN.RBI.SGL_MONTHLY_{t}Y"]} for t in CURVE_TENORS],
+                              "nodes": [{"tenor_years": t, **metrics[f"IN.RBI.SGL_MONTHLY_{t}Y"]} for t in MONTHLY_TENORS],
                               "spreads": monthly_spreads,
                               "methodology": "RBI DBIE report 217: month-end SGL yields for labelled maturities. No mixing with daily benchmarks or interpolation by Seiche. The report stops at 30 years."},
             "spreads": spreads, "mechanism": mechanism, "caveats": CAVEATS,
