@@ -10,6 +10,7 @@
 - Add a BLS Public Data API reader for core and energy CPI that stays off until the owner accepts the BLS.gov Terms of Service; the FRED copies stay withheld.
 - Serve U.S. nominal GDP (`US.BEA.GDP_NOMINAL_SAAR`, BEA `A191RC`) from BEA's own NIPA flat file with its series-register declaration pinned, cited to BEA; the FRED `GDP` copy stays withheld.
 - Serve Eurosystem total assets (`EA.ECB.EUROSYSTEM_TOTAL_ASSETS`) from the ECB Data API beside the existing direct deposit facility rate; the FRED `ECBASSETSW` copy stays withheld.
+- Record in the source registry that the Bank of England licenses its Database SONIA under the Open Government Licence v3.0 with a fixed attribution; SONIA stays derived-only until the owner approves serving it.
 
 ## 0.16.12: blank-data repairs, direct US sources and atlas delivery (2026-11-02)
 

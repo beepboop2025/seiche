@@ -666,14 +666,14 @@
       "access_format": ["CSV download", "official database query"],
       "cadence": "P1D",
       "rights_status": "mixed_allowed_and_derived_only",
-      "rights_evidence_url": "https://www.bankofengland.co.uk/legal/terms-and-conditions",
+      "rights_evidence_url": "https://www.bankofengland.co.uk/legal",
       "target_markets": ["UK-GBP"],
       "semantic_roles": ["POLICY_FLOOR", "POLICY_TARGET", "POLICY_CEILING", "UNSECURED_OVERNIGHT", "RESERVE_BALANCES"],
       "proposed_roles": ["SECURED_OVERNIGHT"],
       "target_engines": ["UK-GBP:local_gauge", "basins", "estuary"],
       "implementation_status": "implemented",
-      "blocker": "Policy rows are allowed and SONIA is derived-only; no production RONIA source exists.",
-      "next_action": "Verify canonical history and seek an entitled secured-overnight source without changing SONIA redistribution."
+      "blocker": "Policy rows are allowed and SONIA is served derived-only; no production RONIA source exists. The derived-only serving is a conservative pack choice, not what the Bank's terms say about the copy Seiche reads. The Bank's legal page (checked 2026-11-02, \"Bank of England Database\") reads: \"The information made available via the Database is the copyright of the Governor and Company of the Bank, unless otherwise stated. Reproduction of data in the Database is subject to the terms of the UK Open Government Licence, allowing and encouraging free and flexible data reuse.\" For SONIA it requires this attribution: \"SONIA and/or SONIA Compounded Index data licensed under the Open Government Licence v3.0 and copyright the Governor and Company of the Bank of England. The trade marks “Bank of England” and “SONIA” are registered trade marks of the Bank of England.\" It excludes \"selected exchange rate data and series\" reproduced under licence from third parties, and says SONIA is \"freely available on our Interactive Statistical Database by 10am on the business day after it is first published\". The boe_sonia adapter reads that database copy (IUDSOIA), so serving raw SONIA under OGL v3.0 is supportable, but the 2026-11-02 board re-sourcing plan lists this correction among the owner's approvals; until then the UK pack keeps boe_sonia LICENSED and DERIVED_ONLY.",
+      "next_action": "Owner approval of the SONIA correction. Then, in one reviewed change, declare boe_sonia official-open and allowed with the OGL attribution above on every served value, and move its clock from the 09:00 London first publication to the database copy (by 10:00 London on the following business day). Separately, seek an entitled secured-overnight source."
     },
     {
       "id": "nyfed_markets_api",
