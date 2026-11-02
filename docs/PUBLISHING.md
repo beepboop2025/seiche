@@ -1,5 +1,27 @@
 # Publishing Seiche release surfaces
 
+## 0.16.12 blank-data successor
+
+The 2 November candidate repairs blank and wrong funding data on the API: the
+GIFT City USD row, ON RRP take-up from the NY Fed's reverse repo results,
+reserve balances from the Board's own H.4.1 release with its citation, one
+freshness rule for the series page and the atlas at each instrument's own
+cadence, the India, UK, Australia, Japan and Taiwan source corrections, and a
+generation-keyed cache for `/api/v2/money-markets`. It also carries the desk
+bot's durable-state and no-dash changes. The package version is `0.16.12`.
+Version metadata is preparation only: require the exact signed runtime
+release, the normal full-suite and recovery gates, the immutable PyPI receipt
+and the registry receipt.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r46`, for this successor.
+Preserve r45 on the accepted 0.16.11 source. Corpus observations, counts,
+hashes and rights are unchanged. Sign r46 only after the exact new runtime and
+corpus evidence pass their ordinary checks; declaration is not publication.
+After release, run a one-off `seiche market-backfill --market US-USD` so ON
+RRP and H.4.1 carry history deeper than the routine collection window.
+
+
 ## 0.16.11 static source-rights successor
 
 The 1 November candidate makes every static board file carry exactly what its

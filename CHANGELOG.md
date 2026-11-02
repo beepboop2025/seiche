@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.12: blank-data repairs, direct US sources and atlas delivery (2026-11-02)
+
+- Show the NY Fed's own SOFR and the Board's PRATES IORB on the GIFT City USD funding row instead of an unavailable benchmark.
+- Serve ON RRP take-up (`US.NYFED.ON_RRP_TAKEUP`) from the NY Fed's reverse repo results under the existing NY Fed Markets API record.
+- Serve reserve balances (`US.FED.RESERVE_BALANCES_DIRECT`) from the Board's own H.4.1 release, public domain with the Board cited as the source on every served value; the FRED copy stays withheld.
+- Age series-page rows with the atlas clock at each instrument's own cadence, so the two surfaces agree on Mondays, for event-dated India operations and for monthly series; the page no longer fails on monthly markets.
+- Serve `/api/v2/money-markets` through a cache keyed on the canonical row set and the rights declarations, expiring at the next freshness transition, with current collector runs, ETag and 304 responses.
+- Age instruments at their own declared cadence; event-dated rows follow a daily observation from the same capture and are otherwise unknown.
+- Prefer the newest dated benchmark when none has a known-current clock; collect the BoE OSF rates and reserve balances the UK pack declares and keep suppressed BoE values withheld.
+- Retire the undated RBI homepage repo and bill series, parse mixed RBI auctions on the issuance calendar's tenors and declare only India curve tenors a source publishes.
+- Keep the Telegram desk bot polling through a failed state write, and remove em and en dashes from its shipped text.
+
 ## 0.16.11: static source-rights projection and source clocks (2026-11-01)
 
 - Publish `/data/overview.json`, `/data/public.json` and `/data/book_history.json` with the same source-rights restriction as their API routes; the full board is written only to an explicit private build path outside the public web roots.
