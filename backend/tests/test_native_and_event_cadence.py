@@ -162,10 +162,19 @@ def test_series_endpoint_ages_monthly_rows_without_failing():
     # 2026-11-02: its fixed-seconds clock had no calendar-month unit.
     from seiche.api import _series_effective_staleness
 
-    for market, instrument in (("IN-INR", "IN.RBI.SGL_MONTHLY_10Y"), ("TW-TWD", "TW.CBC.OVERNIGHT_CALL_MONTHLY"),
-                               ("AU-AUD", "AU.OECD.LONG_TERM_10Y_MONTHLY"), ("JP-JPY", "JP.BOJ.CURRENT_ACCOUNTS")):
+    # The series page now ages rows with the atlas clock itself, so each
+    # verdict equals the atlas metric's. Taiwan's reference calendar has no
+    # reviewed 2026 holiday set, so both surfaces say UNKNOWN there.
+    for market, instrument, expected in (
+        ("IN-INR", "IN.RBI.SGL_MONTHLY_10Y", StalenessState.FRESH),
+        ("TW-TWD", "TW.CBC.OVERNIGHT_CALL_MONTHLY", StalenessState.UNKNOWN),
+        ("AU-AUD", "AU.OECD.LONG_TERM_10Y_MONTHLY", StalenessState.FRESH),
+        ("JP-JPY", "JP.BOJ.CURRENT_ACCOUNTS", StalenessState.FRESH),
+    ):
         latest = row(market, instrument, "2026-09-30", 500)
-        assert _series_effective_staleness(REGISTRY.get(market), latest, AS_OF) is StalenessState.FRESH
+        state = _series_effective_staleness(REGISTRY.get(market), latest, AS_OF)
+        assert state is expected
+        assert metrics(market, [latest])[1][instrument]["status"] == state.value.upper()
     floor = row("AU-AUD", "AU.RBA.ES_FLOOR", "2026-09-30", 450)
     target = row("AU-AUD", "AU.RBA.CASH_TARGET", "2026-11-01", 460)
     latest = {"AU.RBA.ES_FLOOR": floor, "AU.RBA.CASH_TARGET": target}

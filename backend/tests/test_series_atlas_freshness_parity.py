@@ -171,3 +171,59 @@ def test_deep_history_shortcut_returns_exactly_the_full_clock(day):
     assert full is StalenessState.DEAD
     # Rights are untouched by the clock: a metadata-only copy stays restricted.
     assert pack.adapter_map["fred_daily"].redistribution_status is RedistributionStatus.METADATA_ONLY
+
+
+def series_statuses(market_id, moment, monkeypatch):
+    """Each instrument's current staleness on the series page (latest record)."""
+    frozen_now(monkeypatch, moment)
+    payload = api.market_series_v2(market_id, _request(), Response(), n=500)
+    latest = {}
+    for record in payload["observations"]:
+        if record["event_time"] >= latest.get(record["instrument_id"], {}).get("event_time", ""):
+            latest[record["instrument_id"]] = record
+    return {key: record["staleness"].upper() for key, record in latest.items()}
+
+
+def atlas_statuses(market_id, rows, moment):
+    """Each instrument's status in the atlas built from the same rows."""
+    from seiche.markets.atlas import build_global_money_market_atlas
+
+    pack = default_registry().get(market_id)
+    atlas = build_global_money_market_atlas([pack], {market_id: rows}, as_of=moment)
+    return {metric["id"]: metric["status"] for metric in atlas["markets"][0]["metrics"]}
+
+
+def test_india_event_dated_rows_agree_on_both_surfaces(tmp_path, monkeypatch):
+    """VRR/VRRR rows exist only on operation days; each follows the daily capture."""
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "india-events.sqlite")
+    rows = [
+        row("IN-INR", "IN.RBI.VRRR_TODAY", "2026-10-15", "95620", published="2026-10-16T03:30:00+00:00"),
+        row("IN-INR", "IN.RBI.VRR_TODAY", "2026-10-26", "1500070", published="2026-10-27T03:30:00+00:00"),
+        row("IN-INR", "IN.RBI.SDF_TODAY", "2026-11-01", "2058690", published="2026-11-02T06:40:00+00:00"),
+        row("IN-INR", "IN.RBI.DURABLE_LIQUIDITY", "2026-10-15", "7934090", published="2026-11-02T06:40:00+00:00"),
+        # A decision has no daily companion on its adapter: UNKNOWN, never calm.
+        row("IN-INR", "IN.RBI.POLICY_REPO_DECISION", "2026-10-07", "550"),
+    ]
+    store.save_observations(rows)
+    instruments = {item.instrument_id for item in rows}
+    for moment in (datetime(2026, 11, 2, 8, 18, 24, tzinfo=UTC), datetime(2026, 12, 20, tzinfo=UTC)):
+        series, atlas = series_statuses("IN-INR", moment, monkeypatch), atlas_statuses("IN-INR", rows, moment)
+        assert {key: series[key] for key in instruments} == {key: atlas[key] for key in instruments}, moment
+    assert series["IN.RBI.VRRR_TODAY"] == "DEAD"  # seven weeks on, with no newer capture
+    first = series_statuses("IN-INR", datetime(2026, 11, 2, 8, 18, 24, tzinfo=UTC), monkeypatch)
+    assert first["IN.RBI.VRRR_TODAY"] == first["IN.RBI.VRR_TODAY"] == "FRESH"
+    assert first["IN.RBI.POLICY_REPO_DECISION"] == "UNKNOWN"
+
+
+def test_monthly_markets_agree_on_both_surfaces(tmp_path, monkeypatch):
+    """BoJ current accounts age by calendar month on the page and in the atlas."""
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "japan-monthly.sqlite")
+    rows = [row("JP-JPY", "JP.BOJ.CURRENT_ACCOUNTS", "2026-09-30", "500",
+                published="2026-10-01T15:00:00+00:00")]
+    store.save_observations(rows)
+    verdicts = []
+    for moment in (datetime(2026, 11, 2, 8, 18, 24, tzinfo=UTC), datetime(2027, 2, 10, tzinfo=UTC)):
+        series = series_statuses("JP-JPY", moment, monkeypatch)["JP.BOJ.CURRENT_ACCOUNTS"]
+        assert series == atlas_statuses("JP-JPY", rows, moment)["JP.BOJ.CURRENT_ACCOUNTS"], moment
+        verdicts.append(series)
+    assert verdicts[0] == "FRESH" and verdicts[1] != "FRESH"
