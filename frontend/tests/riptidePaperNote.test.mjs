@@ -130,3 +130,81 @@ test("the LiquiLens lead puts the institution limit first and can skip a gauge",
   assert.equal(note.lines.some((line) => line.includes("funding gauge")), false);
   assert.match(note.lines.join("\n"), /not filled in from a missing board/);
 });
+
+// The 403 body /api/gauge has served since 2026-10-28.
+const RESTRICTION = {
+  schema: "seiche.source-rights-restriction.v1",
+  ok: false,
+  status: "FAILED",
+  category: "source_rights_restricted",
+  availability: "unavailable",
+  rights_status: "redistribution_review_required",
+  publication_allowed: false,
+  surface: "/api/gauge",
+  policy: "seiche.public-source-rights.2026-10-28",
+  reason: "This legacy feature is unavailable while its source reuse rights and replacement acquisitions are qualified.",
+  context_only: true,
+  values_reconstructed: false,
+  execution_authority: "none",
+};
+const WITHHELD = "Seiche's funding gauge is withheld under its source-rights policy (seiche.public-source-rights.2026-10-28). The money-market reading is not filled in from Riptide.";
+const GAUGE_MISSING = "Seiche funding gauge could not be read. The money-market reading is not filled in from Riptide.";
+
+function jsonResponse(body, status) {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+function feeds(gauge) {
+  return async (url) => {
+    if (url.endsWith("/api/gauge")) return gauge();
+    if (url.includes("allocation")) return jsonResponse(published, 200);
+    return new Response("unavailable", { status: 503 });
+  };
+}
+
+test("a source-rights refusal reads as withheld, not as a failed read", async () => {
+  assert.equal(seicheGaugeLine(RESTRICTION), WITHHELD);
+  for (const gauge of [
+    () => jsonResponse(RESTRICTION, 403),
+    // A response without a readable stream is bounded by its text length.
+    () => ({ ok: false, status: 403, headers: new Headers(), text: async () => JSON.stringify(RESTRICTION) }),
+  ]) {
+    const note = await loadPaperNote(feeds(gauge));
+    assert.equal(note.state, "ready");
+    assert.ok(note.lines.includes(WITHHELD));
+    assert.equal(note.lines.includes(GAUGE_MISSING), false);
+    assert.equal(note.lines.join("\n").includes("—"), false);
+  }
+});
+
+test("any other 403 body or refusal status stays a failed read", async () => {
+  const oversized = { ...RESTRICTION, reason: "x".repeat(20000) };
+  for (const gauge of [
+    () => jsonResponse({ detail: "Forbidden" }, 403),
+    // A refused response is never read as a gauge, whatever it carries.
+    () => jsonResponse({ index: 42.5, regime: "EROSION", generated_at: "2026-10-06T23:38:03+00:00" }, 403),
+    () => new Response("<html><body>Forbidden</body></html>", { status: 403 }),
+    () => jsonResponse({ ...RESTRICTION, schema: "seiche.source-rights-restriction.v2" }, 403),
+    () => jsonResponse({ ...RESTRICTION, policy: 7 }, 403),
+    () => jsonResponse([RESTRICTION], 403),
+    () => jsonResponse(oversized, 403),
+    () => ({ ok: false, status: 403, headers: new Headers({ "content-length": "999999" }),
+      text: async () => JSON.stringify(RESTRICTION) }),
+    () => jsonResponse(RESTRICTION, 401),
+    () => jsonResponse(RESTRICTION, 500),
+  ]) {
+    const note = await loadPaperNote(feeds(gauge));
+    assert.ok(note.lines.includes(GAUGE_MISSING));
+    assert.equal(note.lines.some((line) => line.includes("withheld")), false);
+  }
+});
+
+test("a malformed policy is never interpolated", async () => {
+  for (const policy of ["", "Seiche Public Rights", "seiche.public-source-rights.2026-10-28<script>",
+    "seiche..rights", "-seiche", "a".repeat(81), "seiche.public-source-rights.2026-10-28\n", 42, null]) {
+    assert.equal(seicheGaugeLine({ ...RESTRICTION, policy }), GAUGE_MISSING);
+  }
+  const note = await loadPaperNote(feeds(() => jsonResponse({ ...RESTRICTION, policy: "rights <b>held</b>" }, 403)));
+  assert.ok(note.lines.includes(GAUGE_MISSING));
+  assert.equal(note.lines.join("\n").includes("<b>"), false);
+});
