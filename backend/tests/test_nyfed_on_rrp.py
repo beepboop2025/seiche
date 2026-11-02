@@ -78,10 +78,11 @@ def test_reverse_repo_fixture_parses_daily_take_up_in_billions():
     assert evidence["row"][0]["operationId"] == "RP 103026 26"
 
 
-def test_repo_document_still_parses_only_srf_take_up():
+def test_repo_document_still_parses_only_srf_take_up_and_rate():
     points = parse_nyfed_facilities(repo_document())
-    assert {p.instrument_id for p in points} == {"US.NYFED.SRF_TAKEUP"}
-    by_day = {p.event_time: p.raw_value for p in points}
+    # The SRF rate comes from the same overnight repo results; nothing from ON RRP.
+    assert {p.instrument_id for p in points} == {"US.NYFED.SRF_TAKEUP", "US.NYFED.SRF_RATE"}
+    by_day = {p.event_time: p.raw_value for p in points if p.instrument_id == "US.NYFED.SRF_TAKEUP"}
     assert by_day[date(2026, 10, 29)] == Decimal("0.031")
     assert by_day[date(2026, 10, 30)] == Decimal("0")
 
@@ -171,7 +172,7 @@ async def test_collected_on_rrp_reaches_the_atlas_with_allowed_rights_and_native
     assert all(row.knowledge_time == captured for row in rows)
     assert batch.raw_capture.source_uri.startswith("bundle:")
     assert {row.instrument_id for row in batch.observations} == {
-        "US.NYFED.SRF_TAKEUP", "US.NYFED.ON_RRP_TAKEUP"}
+        "US.NYFED.SRF_TAKEUP", "US.NYFED.ON_RRP_TAKEUP", "US.NYFED.SRF_RATE"}
 
     pack = default_registry().get("US-USD")
     atlas = build_global_money_market_atlas([pack], {"US-USD": batch.observations}, as_of=captured)

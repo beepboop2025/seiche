@@ -686,12 +686,12 @@
       "rights_status": "allowed_in_current_pack",
       "rights_evidence_url": "https://www.newyorkfed.org/privacy/termsofuse.html",
       "target_markets": ["US-USD"],
-      "semantic_roles": ["SECURED_OVERNIGHT", "UNSECURED_OVERNIGHT", "CENTRAL_BANK_FACILITY_TAKEUP", "RATE_MEDIAN", "RATE_P99", "REPO_VOLUME"],
+      "semantic_roles": ["SECURED_OVERNIGHT", "UNSECURED_OVERNIGHT", "CENTRAL_BANK_FACILITY_TAKEUP", "RATE_MEDIAN", "RATE_P99", "REPO_VOLUME", "POLICY_RANGE_LOWER", "POLICY_RANGE_UPPER", "STANDING_REPO_RATE"],
       "proposed_roles": ["POLICY_FLOOR"],
       "target_engines": ["money_market", "tails", "stigma", "warehouse", "US-USD:local_gauge"],
       "implementation_status": "implemented",
-      "blocker": "Core rates and facilities are mapped; a defensible lower policy-floor mapping and per-row structured-table freshness remain.",
-      "next_action": "Evaluate the official ON RRP offering-rate series as POLICY_FLOOR and persist observation clocks for every table row."
+      "blocker": "Core rates and facilities are mapped; a defensible lower policy-floor mapping and per-row structured-table freshness remain. Since 2026-11-02 for 0.17.0 the same adapters and terms also serve, as context only, the FOMC federal funds target range that every EFFR row reports (targetRateFrom and targetRateTo, as US.NYFED.FFR_TARGET_RANGE_LOWER and US.NYFED.FFR_TARGET_RANGE_UPPER; FRED republishes the bounds as DFEDTARL and DFEDTARU) and the Standing Repo Facility rate from the overnight repo operation results (percentOfferingRate under full allotment, minimumBidRate in multiple-price operations, as US.NYFED.SRF_RATE; a date whose overnight operations disagree or omit it is withheld). Their roles (POLICY_RANGE_LOWER, POLICY_RANGE_UPPER, STANDING_REPO_RATE) are read by no capability or engine and never become the policy anchor, so the us_policy_floor gap stays open. The New York Fed's Terms of Use apply: \"The New York Fed grants you a non-exclusive license, subject to the Terms, to use, copy, and distribute Content for your personal or business purposes.\" The FRED copies stay metadata-only.",
+      "next_action": "Evaluate the official ON RRP offering-rate series as POLICY_FLOOR and persist observation clocks for every table row. Wiring the direct target range or SRF rate into the stigma or corridor engines is Stage 3 of the board re-sourcing plan."
     },
     {
       "id": "treasury_fiscaldata",
