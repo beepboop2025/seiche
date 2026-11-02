@@ -258,6 +258,28 @@ declared after SRF, so pack order keeps SRF as the kernel's facility take-up.
 A failed fetch of either feed faults the whole adapter run rather than leaving
 one series silently stale. The FRED copy (`RRPONTSYD`) remains withheld.
 
+### US direct reserve balances: built, off pending a rights record
+
+`seiche.sources.fed_h41` reads reserve balances from the Board's own H.4.1
+release package (`https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip`),
+not FRED and not the Data Download Program tool the Board is retiring. Series
+`RESH4R_XAW_N.WW` ("Reserve balances with Federal Reserve Banks: week average",
+USD millions, Wednesday dates) is the number FRED republishes as `WRESBAL`.
+The parser streams the package once, pins the series' declared frequency,
+unit, multiplier and currency, refuses XML declarations, rejects duplicate,
+non-Wednesday or invalid rows, and skips `NA` rows rather than zero-filling.
+
+No existing allowed rights record covers this release: the `fed_prates`
+record names only the PRATES file and the source registry has no Board H.4.1
+entry. The adapter is therefore registered only when the US pack itself
+declares an official-open `fed_h41` adapter with redistribution allowed and
+`US.FED.RESERVE_BALANCES_DIRECT` on it. Until the owner adds that record,
+no request is made, nothing is stored or served, and `US.FED.RESERVE_BALANCES`
+stays withheld. Activation is that pack declaration (weekly cadence, a
+Thursday 16:30 New York scheduled clock with one business day of lag on the
+US Fedwire calendar) plus a matching source-registry entry; no code change is
+needed.
+
 ## Deliberate trade-offs and validation boundary
 
 - v1 stays US-centred until parity migration completes. That preserves users but
