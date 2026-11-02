@@ -26,6 +26,7 @@ CAVEATS = [
     "Missing operation amounts are unknown, not zero. Missing tenors are not interpolated or extrapolated.",
     "Monthly SGL maturity yields are a separate RBI report, not daily benchmark yields or a daily trading signal. Archive capture does not establish historical first-seen vintages.",
     "Government-bond auction cut-off yields are primary-issuance references. The 40Y auction reference is not a daily secondary-market observation.",
+    "Policy decisions and RBI VRR/VRRR operations are event-dated: a row exists only when RBI acts, so an unchanged setting or a day without an operation is not a missed publication.",
 ]
 
 
@@ -180,7 +181,7 @@ def build(rows, *, now: datetime, include_history: bool = True) -> dict:
     for instrument in PACK.instruments:
         if instrument.source_adapter_id == "tenant_market_data":
             continue
-        metric = _metric(PACK, instrument, grouped.get(instrument.instrument_id, []), cutoff=now)
+        metric = _metric(PACK, instrument, grouped.get(instrument.instrument_id, []), cutoff=now, companions=grouped)
         if not include_history:
             metric.pop("history", None)
         elif isinstance(metric.get("history"), list):

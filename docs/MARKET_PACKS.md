@@ -54,6 +54,25 @@ at capture time, never retroactively at its reported or inferred publication
 time. An unchanged row preserves its first knowledge time, while a revision
 becomes knowable at the capture that discovered it.
 
+### Native cadence and event-dated series
+
+Currentness counts missed publication opportunities at each instrument's own
+observation cadence. An instrument inherits its adapter's `expected_cadence`
+unless it declares `observation_cadence`: a monthly stock in a daily file, a
+fortnightly estimate in a daily report, or `EVENT`. The atlas, the materializer
+and the public series endpoint use the same rule; calendar months age by
+calendar months.
+
+An `EVENT` row exists only when the authority acts: a policy setting on its
+effective date (RBA table A2, RBI MPC resolutions, the CBC discount rate) or an
+operation on the day it runs (RBI VRR/VRRR). There is no publication schedule
+to miss, so an unchanged setting or a day without an operation never becomes
+`DEAD` by age. An event row is exactly as current as a scheduled daily
+observation that the same adapter parsed from the same capture, which the
+metric names in `confirmed_by` with its date in `confirmed_through`. Without
+such a companion the status stays `UNKNOWN`; collector health alone never
+refreshes an event row, and statistics never annualize event changes.
+
 Rows are append-only across revisions. An as-of query first filters by knowledge
 cutoff, then selects the latest knowable revision for each instrument/event pair.
 Legacy `Series.fetched_at` remains for v1 compatibility but is not eligible for

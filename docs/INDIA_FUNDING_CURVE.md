@@ -41,6 +41,16 @@ used. The pack's reviewed calendar begins in 2001; older rows are not imported.
   positive for injection and negative for absorption. Durable liquidity has
   its own observation date and its source's surplus-positive convention.
   It is not added to the net-injection ledger. Missing amounts are not zero.
+- Durable liquidity is dated per fortnight (mid-month and month end) and
+  reaches the daily MMO about two weeks later, so it ages on a `P2W` clock.
+- VRR, VRRR and fixed-rate operation amounts are `EVENT` series. RBI runs
+  them only on some days; a blank MMO row is a day without that operation, not
+  a zero and not a missed publication. The latest row is the latest operation,
+  and it is current while a daily MMO observation from the same capture is
+  (`confirmed_by`, `confirmed_through`). RBI's DBIE daily LAF report confirms
+  no VRRR after 15 October and no VRR after 26 October 2026 (through 30 October).
+- MPC decisions (repo, SDF, MSF) are `EVENT` series dated by resolution. The
+  policy adapter has no daily companion, so their currentness stays `UNKNOWN`.
 - RBI RSS publication times lacking a timezone are interpreted in the pack's
   Asia/Kolkata timezone with **estimated** quality. Date-only release/weekly/
   monthly clocks remain explicitly unknown. An unknown publication instant is

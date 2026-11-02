@@ -74,12 +74,13 @@ from seiche.domain.observation import (
 )
 from seiche.engines import money_market as money_market_engine
 from seiche.markets.base import (
+    EVENT_CADENCE,
     CalendarUnavailableError,
     CapabilityStatus,
     PackSupportStatus,
 )
 from seiche.markets.atlas import (
-    _publication_opportunity_clock,
+    _instrument_clock,
     build_global_money_market_atlas,
     market_source_reference,
 )
@@ -973,41 +974,46 @@ def _series_dead_probe_span(cadence: str) -> timedelta:
     return 20 * amount * unit + timedelta(days=10)
 
 
-def _series_effective_staleness(pack, observation, cutoff: datetime) -> StalenessState:
+def _series_effective_staleness(
+    pack, observation, cutoff: datetime, latest_by_instrument=None
+) -> StalenessState:
     """Age a row exactly as the money-market atlas ages its metrics.
 
-    One rule for both surfaces: count the pack-calendar publication
-    opportunities missed since the row, under the instrument's (or adapter's)
-    declared publication clock. Wall-clock age ignored weekends, holidays and
-    publication lags, so on a Monday morning it called Thursday's SOFR stale
-    before Friday's print was even due, while the atlas called it fresh. An
-    unknown publication clock stays UNKNOWN, never fresh.
+    One rule for both surfaces: ``atlas._instrument_clock`` at the
+    instrument's own cadence. A scheduled series counts the pack-calendar
+    publication opportunities missed since the row under its declared
+    publication clock; an event-dated series is as current as a daily
+    observation from the same adapter's capture, which ``latest_by_instrument``
+    supplies, and otherwise UNKNOWN. Wall-clock age ignored weekends, holidays
+    and publication lags, so on a Monday morning it called Thursday's SOFR
+    stale before Friday's print was even due while the atlas called it fresh.
+    An unknown publication clock stays UNKNOWN, never fresh.
     """
 
     instrument = pack.instrument_map[observation.instrument_id]
-    adapter = pack.adapter_map[instrument.source_adapter_id]
     calendar = pack.settlement_calendar
+    companions = {
+        instrument_id: [row]
+        for instrument_id, row in (latest_by_instrument or {}).items()
+    }
 
     def state_at(moment: datetime) -> StalenessState:
-        return _publication_opportunity_clock(
-            observation,
-            adapter,
-            calendar,
-            moment,
-            publication_clock=instrument.freshness_clock,
-        )[0]
+        return _instrument_clock(pack, instrument, observation, companions, moment)[0]
 
-    # Missed opportunities never decrease as the cutoff advances, so a row
-    # already DEAD a bounded span after its event is DEAD now. This keeps deep
-    # history pages from walking years of calendar days per row. The cutoff's
-    # own calendar year is still validated, exactly as the full clock does.
-    probe = observation.event_time + _series_dead_probe_span(adapter.expected_cadence)
-    if probe < cutoff and state_at(probe) is StalenessState.DEAD:
-        try:
-            calendar.is_business_day(cutoff.astimezone(calendar.timezone).date())
-        except (CalendarUnavailableError, ValueError):
-            return StalenessState.UNKNOWN
-        return StalenessState.DEAD
+    cadence = pack.instrument_cadence(instrument)
+    # Missed opportunities never decrease as the cutoff advances, so a
+    # scheduled row already DEAD a bounded span after its event is DEAD now.
+    # This keeps deep history pages from walking years of calendar days per
+    # row; the cutoff's own calendar year is still validated, exactly as the
+    # full clock does. An event-dated row has no schedule of its own to age.
+    if cadence != EVENT_CADENCE:
+        probe = observation.event_time + _series_dead_probe_span(cadence)
+        if probe < cutoff and state_at(probe) is StalenessState.DEAD:
+            try:
+                calendar.is_business_day(cutoff.astimezone(calendar.timezone).date())
+            except (CalendarUnavailableError, ValueError):
+                return StalenessState.UNKNOWN
+            return StalenessState.DEAD
     return state_at(cutoff)
 
 
@@ -2230,7 +2236,9 @@ def market_series_v2(
     )
     latest_by_instrument = _latest_public_series_observations(repository, pack, now)
     current_staleness = {
-        instrument_id: _series_effective_staleness(pack, observation, now)
+        instrument_id: _series_effective_staleness(
+            pack, observation, now, latest_by_instrument
+        )
         for instrument_id, observation in latest_by_instrument.items()
     }
     instrument_availability: dict[str, str] = {}
@@ -2278,7 +2286,9 @@ def market_series_v2(
     # retain the endpoint's established chronological order within each page.
     for observation in reversed(observations):
         record = observation.to_record()
-        record["staleness"] = _series_effective_staleness(pack, observation, now).value
+        record["staleness"] = _series_effective_staleness(
+            pack, observation, now, latest_by_instrument
+        ).value
         if not _observation_value_is_public(pack, observation):
             record["value"] = None
             record["value_status"] = "REDACTED_BY_LICENCE"

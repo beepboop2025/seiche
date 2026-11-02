@@ -84,6 +84,13 @@ class PublicationClockUnavailableError(RuntimeError):
     pass
 
 
+# Rows of an event-dated instrument exist only when the authority acts: a
+# policy setting that changes on a decision date, or an operation recorded on
+# the day it runs. There is no scheduled publication to miss between events.
+EVENT_CADENCE = "EVENT"
+_SIMPLE_CADENCE = re.compile(r"P(?:T\d+[HMS]|\d+D|\d+W|[1-9]\d*M)")
+
+
 @dataclass(frozen=True, slots=True)
 class SourceSeriesSpec:
     """Compatibility shape for legacy collectors during pack extraction."""
@@ -261,7 +268,7 @@ class SourceAdapterSpec:
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", self.adapter_id):
             raise ValueError("adapter_id must be a lowercase path-safe identifier")
-        if not re.fullmatch(r"P(?:T\d+[HMS]|\d+D|\d+W|[1-9]\d*M)", self.expected_cadence):
+        if not _SIMPLE_CADENCE.fullmatch(self.expected_cadence):
             raise ValueError("expected_cadence must be a simple ISO-8601 duration")
         if self.expected_cadence.endswith("M") and not self.expected_cadence.startswith("PT") and self.collection_cadence is None:
             raise ValueError("calendar-month sources require a fixed collection_cadence")
@@ -296,10 +303,19 @@ class InstrumentSpec:
     # A mixed source adapter can carry benchmarks with distinct release times.
     # This schedule governs currentness only, never an observed publication time.
     freshness_clock: PublicationClock | None = None
+    # A mixed adapter can also carry series observed on a different clock from
+    # its file: a monthly stock in a daily feed, a fortnightly estimate in a
+    # daily report, or an EVENT_CADENCE policy setting or operation. ``None``
+    # keeps the adapter's expected cadence for freshness, statistics and labels.
+    observation_cadence: str | None = None
 
     def __post_init__(self) -> None:
         if not self.instrument_id.strip() or not self.mnemonic.strip():
             raise ValueError("instrument_id and mnemonic are required")
+        if (self.observation_cadence is not None
+                and self.observation_cadence != EVENT_CADENCE
+                and not _SIMPLE_CADENCE.fullmatch(self.observation_cadence)):
+            raise ValueError("observation_cadence must be EVENT or a simple ISO-8601 duration")
         multiplier = (
             self.value_multiplier
             if isinstance(self.value_multiplier, Decimal)
@@ -484,6 +500,14 @@ class MarketPack:
 
     def instruments_for_role(self, role: SemanticRole) -> tuple[InstrumentSpec, ...]:
         return tuple(item for item in self.instruments if item.semantic_role is role)
+
+    def instrument_cadence(self, instrument: InstrumentSpec) -> str:
+        """The instrument's own observation cadence, else its adapter's."""
+
+        return (
+            instrument.observation_cadence
+            or self.adapter_map[instrument.source_adapter_id].expected_cadence
+        )
 
     def summary(self) -> dict[str, object]:
         missing = [

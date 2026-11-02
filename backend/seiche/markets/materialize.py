@@ -40,7 +40,12 @@ from seiche.kernel.engines import (
     term_funding_slope,
     volume_dislocation,
 )
-from seiche.markets.base import CapabilityStatus, MarketPack, PackSupportStatus
+from seiche.markets.base import (
+    EVENT_CADENCE,
+    CapabilityStatus,
+    MarketPack,
+    PackSupportStatus,
+)
 from seiche.markets.calibration import (
     ComponentCalibration,
     EngineKind,
@@ -156,29 +161,64 @@ def _public_coverage(observations: list[Observation]) -> list[dict[str, Any]]:
     ]
 
 
+_SOURCE_STATE_RANK = {
+    StalenessState.FRESH: 0,
+    StalenessState.AGING: 1,
+    StalenessState.UNKNOWN: 2,
+    StalenessState.STALE: 2,
+    StalenessState.DEAD: 3,
+    StalenessState.UNAVAILABLE: 4,
+}
+
+
 def _source_state(
     pack: MarketPack,
     instrument_id: str,
     cutoff: datetime,
     latest_event_time: datetime,
     stored_state: StalenessState = StalenessState.FRESH,
+    *,
+    companions: dict[str, tuple[datetime, datetime, StalenessState]] | None = None,
 ) -> StalenessState:
     """Age an instrument from its observation clock, never its collector run.
 
     Collector runs describe connector health and remain separately visible in
     ``collector_runs``/``faults``. A recent successful run cannot make an old
-    observation current or evidence-eligible.
+    observation current or evidence-eligible. Each instrument ages at its own
+    observation cadence. An event-dated instrument has no schedule to age
+    against: it is only as current as a daily observation that the same
+    adapter captured (``companions`` maps instrument IDs to their latest
+    event time, knowledge time and stored state), and otherwise UNKNOWN.
     """
 
     instrument = pack.instrument_map[instrument_id]
-    adapter = pack.adapter_map[instrument.source_adapter_id]
+    observation_cadence = pack.instrument_cadence(instrument)
     age = max((cutoff - latest_event_time).total_seconds(), 0.0)
-    if adapter.expected_cadence.endswith("M") and not adapter.expected_cadence.startswith("PT"):
+    if observation_cadence == EVENT_CADENCE:
+        states = []
+        for spec in pack.instruments:
+            companion_cadence = pack.instrument_cadence(spec)
+            clock = (companions or {}).get(spec.instrument_id)
+            if (
+                clock is None
+                or spec.instrument_id == instrument_id
+                or spec.source_adapter_id != instrument.source_adapter_id
+                or (companion_cadence != "P1D" and not companion_cadence.startswith("PT"))
+            ):
+                continue
+            states.append(_source_state(pack, spec.instrument_id, cutoff, clock[0], clock[2]))
+        aged_state = (
+            min(states, key=_SOURCE_STATE_RANK.__getitem__)
+            if states
+            else StalenessState.UNKNOWN
+        )
+        return max((stored_state, aged_state), key=_SOURCE_STATE_RANK.__getitem__)
+    if observation_cadence.endswith("M") and not observation_cadence.startswith("PT"):
         # Match the atlas's calendar-month clock; fixed-day polling intervals
         # must not replace the source's monthly observation cadence.
         from seiche.markets.atlas import _next_event_day
 
-        months = int(adapter.expected_cadence[1:-1])
+        months = int(observation_cadence[1:-1])
         limits = []
         for periods in (2, 4, 8):
             day = _next_event_day(
@@ -187,7 +227,7 @@ def _source_state(
             deadline = latest_event_time.replace(year=day.year, month=day.month, day=day.day)
             limits.append((deadline - latest_event_time).total_seconds())
     else:
-        cadence = cadence_delta(adapter.expected_cadence).total_seconds()
+        cadence = cadence_delta(observation_cadence).total_seconds()
         limits = [cadence * periods for periods in (2, 4, 8)]
     aged_state = (
         StalenessState.FRESH
@@ -198,15 +238,7 @@ def _source_state(
         if age <= limits[2]
         else StalenessState.DEAD
     )
-    rank = {
-        StalenessState.FRESH: 0,
-        StalenessState.AGING: 1,
-        StalenessState.UNKNOWN: 2,
-        StalenessState.STALE: 2,
-        StalenessState.DEAD: 3,
-        StalenessState.UNAVAILABLE: 4,
-    }
-    return max((stored_state, aged_state), key=rank.__getitem__)
+    return max((stored_state, aged_state), key=_SOURCE_STATE_RANK.__getitem__)
 
 
 def _age_observations(
@@ -246,6 +278,7 @@ def _age_observations(
                     cutoff,
                     latest_clock[observation.instrument_id][0],
                     latest_clock[observation.instrument_id][2],
+                    companions=latest_clock,
                 )
                 if observation.instrument_id in latest_clock
                 else StalenessState.UNAVAILABLE

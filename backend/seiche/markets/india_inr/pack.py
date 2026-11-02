@@ -11,6 +11,7 @@ from seiche.domain.observation import (
     SemanticRole,
 )
 from seiche.markets.base import (
+    EVENT_CADENCE,
     BusinessCalendar,
     EventSpec,
     InstrumentSpec,
@@ -54,6 +55,12 @@ _ACT_365 = DayCountConvention.ACT_365
 CURVE_TENORS = (1, 2, 3, 5, 7, 10, 14, 30, 40)
 BENCHMARK_TENORS = (1, 2, 3, 5, 7, 10, 14, 15, 30, 40)
 RBI_HOME_TENORS = (3, 5, 10, 15, 30)
+# RBI conducts these operations only on some days. A blank MMO row means no
+# operation that day, so the latest row is the latest operation, not a gap.
+EVENT_OPERATIONS = ("VRR_TODAY", "VRRR_TODAY", "FIXED_REPO_TODAY", "FIXED_REVERSE_REPO_TODAY")
+# Net durable liquidity carries its own "as on" date for each fortnight
+# (mid-month and month end) and appears in the daily MMO about two weeks later.
+FORTNIGHTLY_SERIES = ("DURABLE_LIQUIDITY",)
 LIQUIDITY_SERIES = (
     "SDF_TODAY", "MSF_TODAY", "VRR_TODAY", "VRRR_TODAY",
     "FIXED_REPO_TODAY", "FIXED_REVERSE_REPO_TODAY",
@@ -80,6 +87,11 @@ def _amount(name: str, *, adapter: str = "rbi_official") -> InstrumentSpec:
         f"IN.RBI.{name}", f"RBI_{name}", role,
         adapter, "INR crore", CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
         freshness_clock=_MMO_FRESHNESS_CLOCK if adapter == "rbi_official" else None,
+        observation_cadence=(
+            EVENT_CADENCE if adapter == "rbi_official" and name in EVENT_OPERATIONS
+            else "P2W" if adapter == "rbi_official" and name in FORTNIGHTLY_SERIES
+            else None
+        ),
     )
 
 
@@ -182,9 +194,13 @@ PACK = MarketPack(
           for kind in ("CD", "CP") for bound in ("LOW", "HIGH")),
         *(_amount(f"{kind}_{measure}", adapter="rbi_credit_fortnightly")
           for kind in ("CD", "CP") for measure in ("ISSUED", "OUTSTANDING")),
-        rate_instrument("IN.RBI.POLICY_REPO_DECISION", "RBI_POLICY_REPO_DECISION", SemanticRole.POLICY_TARGET, "rbi_policy", _ACT_365),
-        rate_instrument("IN.RBI.SDF_DECISION", "RBI_SDF_DECISION", SemanticRole.POLICY_FLOOR, "rbi_policy", _ACT_365),
-        rate_instrument("IN.RBI.MSF_DECISION", "RBI_MSF_DECISION", SemanticRole.POLICY_CEILING, "rbi_policy", _ACT_365),
+        # MPC decisions are event-dated settings: each row is a resolution
+        # date and the rate stays in force until the next decision.
+        *(replace(rate_instrument(f"IN.RBI.{name}", f"RBI_{name}", role, "rbi_policy", _ACT_365),
+                  observation_cadence=EVENT_CADENCE)
+          for name, role in (("POLICY_REPO_DECISION", SemanticRole.POLICY_TARGET),
+                             ("SDF_DECISION", SemanticRole.POLICY_FLOOR),
+                             ("MSF_DECISION", SemanticRole.POLICY_CEILING))),
         rate_instrument("IN.RBI.POLICY_REPO_WEEKLY", "RBI_POLICY_REPO_WEEKLY", SemanticRole.POLICY_TARGET, "rbi_rates_weekly", _ACT_365),
         InstrumentSpec("IN.RBI.CRR", "RBI_CRR", SemanticRole.RESERVE_REQUIREMENT_RATIO,
                        "rbi_rates_weekly", "percent", CanonicalUnit.BASIS_POINTS, 100),

@@ -92,7 +92,7 @@ def _projection(pack, rows, cutoff, include_history):
     for spec in pack.instruments:
         if spec.source_adapter_id == "tenant_market_data":
             continue
-        metric = _metric(pack, spec, grouped.get(spec.instrument_id, []), cutoff=cutoff)
+        metric = _metric(pack, spec, grouped.get(spec.instrument_id, []), cutoff=cutoff, companions=grouped)
         if include_history:
             metric["history"] = metric.get("history", [])[-90:]
         else:

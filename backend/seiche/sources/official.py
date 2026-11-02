@@ -427,11 +427,13 @@ def parse_boj_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         if value is None:
             continue
         publication = None
+        # Only the month just before the file's "Last update" takes that date
+        # as its release date; month arithmetic keeps December -> January.
         if (
             monthly is not None
             and update_day is not None
-            and event_day.year == update_day.year
-            and event_day.month == update_day.month - 1
+            and (update_day.year * 12 + update_day.month)
+            - (event_day.year * 12 + event_day.month) == 1
         ):
             publication = datetime.combine(
                 update_day,

@@ -73,7 +73,13 @@ the same projection embedded in the completed global atlas.
   scheduled release time is not substituted for an actual publication receipt.
 - A monthly CBC discount or bank rate is an end-of-period reference; overnight
   call, commercial-paper and government-bond rates are source-defined monthly
-  market averages. The current CBC discount indicator keeps its decision date.
+  market averages. The current CBC discount indicator keeps its decision date
+  and is an `EVENT` series.
+- Policy settings that change only on decision dates (RBA ES floor and
+  standing-facility ceiling, CBC discount decision) are `EVENT` series: an
+  unchanged setting is current while a daily observation from the same capture
+  is, and never `DEAD` by age. BoJ current-account balances are a monthly
+  average and age on a `P1M` clock.
 - Curve changes require matching latest and previous observation dates within
   one curve family. Missing maturities are not interpolated. Unknown freshness
   yields historical-reference movement, not a claim about today's market.

@@ -32,7 +32,7 @@ from seiche.domain.observation import (
     SemanticRole,
     StalenessState,
 )
-from seiche.markets.base import MarketPack, PublicationClock
+from seiche.markets.base import EVENT_CADENCE, MarketPack, PublicationClock
 from seiche.markets.base import CalendarUnavailableError
 
 ATLAS_SCHEMA = "seiche.global-money-markets.v1"
@@ -1456,6 +1456,127 @@ def _publication_opportunity_clock(
     )
 
 
+_STATE_RANK = {
+    StalenessState.FRESH: 0,
+    StalenessState.AGING: 1,
+    StalenessState.STALE: 2,
+    StalenessState.UNKNOWN: 2,
+    StalenessState.DEAD: 3,
+    StalenessState.UNAVAILABLE: 4,
+}
+
+
+def _clock_adapter(adapter, cadence: str):
+    """The adapter clock at an instrument's own observation cadence.
+
+    A mixed adapter can carry a monthly stock or a fortnightly estimate beside
+    daily rows. Only the cadence changes; the declared publication clock, lag
+    and calendar stay the adapter's (or the instrument's freshness clock).
+    """
+
+    if cadence == adapter.expected_cadence:
+        return adapter
+    return replace(
+        adapter,
+        expected_cadence=cadence,
+        collection_cadence=adapter.collection_cadence or adapter.expected_cadence,
+    )
+
+
+def _event_confirmation(
+    pack: MarketPack,
+    instrument,
+    companions: Mapping[str, list[Observation]],
+    cutoff: datetime,
+) -> tuple[Any, Observation, StalenessState, int | None, datetime | None] | None:
+    """Find the daily observation that shows an event series is still current.
+
+    An event-dated row has no publication schedule to miss: a setting stays in
+    force until the authority changes it, and an operation is recorded only on
+    the day it runs. Whether the latest event is still the latest is shown by
+    a scheduled daily observation that the same adapter parsed from the same
+    capture. That is observation evidence; collector health alone never
+    refreshes an event row. Without such a companion the clock stays UNKNOWN.
+    """
+
+    best = None
+    for spec in pack.instruments:
+        if (spec.source_adapter_id != instrument.source_adapter_id
+                or spec.instrument_id == instrument.instrument_id):
+            continue
+        cadence = pack.instrument_cadence(spec)
+        if cadence != "P1D" and not cadence.startswith("PT"):
+            continue
+        rows = [
+            row
+            for row in companions.get(spec.instrument_id, ())
+            if row.usable and row.redistribution_status in _DERIVABLE_REDISTRIBUTION
+            and row.event_time <= cutoff and row.knowledge_time <= cutoff
+        ]
+        if not rows:
+            continue
+        latest = max(rows, key=lambda row: row.event_time)
+        state, missed, next_due, _ = _publication_opportunity_clock(
+            latest,
+            _clock_adapter(pack.adapter_map[spec.source_adapter_id], cadence),
+            pack.settlement_calendar,
+            cutoff,
+            publication_clock=spec.freshness_clock,
+        )
+        key = (_STATE_RANK[state], -latest.event_time.timestamp(), spec.instrument_id)
+        if best is None or key < best[0]:
+            best = (key, (spec, latest, state, missed, next_due))
+    return best[1] if best is not None else None
+
+
+def _instrument_clock(
+    pack: MarketPack,
+    instrument,
+    latest: Observation,
+    companions: Mapping[str, list[Observation]] | None,
+    cutoff: datetime,
+) -> tuple[StalenessState, int | None, datetime | None, str, tuple | None]:
+    """Currentness of one instrument at its own native cadence."""
+
+    adapter = pack.adapter_map[instrument.source_adapter_id]
+    cadence = pack.instrument_cadence(instrument)
+    if cadence != EVENT_CADENCE:
+        return (
+            *_publication_opportunity_clock(
+                latest,
+                _clock_adapter(adapter, cadence),
+                pack.settlement_calendar,
+                cutoff,
+                publication_clock=instrument.freshness_clock,
+            ),
+            None,
+        )
+    confirmation = _event_confirmation(pack, instrument, companions or {}, cutoff)
+    if confirmation is None:
+        return (
+            StalenessState.UNKNOWN,
+            None,
+            None,
+            "event-dated series: a row exists only when the authority acts; no "
+            "daily observation from the same source capture shows whether a "
+            "newer event exists, so currentness is unknown",
+            None,
+        )
+    spec, companion, state, _, _ = confirmation
+    effective = max((latest.staleness, state), key=_STATE_RANK.__getitem__)
+    return (
+        effective,
+        None,
+        None,
+        "event-dated series: a row exists only when the authority acts, so "
+        f"there is no publication schedule to miss; currentness follows "
+        f"{spec.instrument_id} from the same {adapter.adapter_id} capture, "
+        f"observed through {companion.event_time.date().isoformat()}; "
+        "collector health alone never refreshes it",
+        confirmation,
+    )
+
+
 def _latest_by_event(rows: Iterable[Observation]) -> list[Observation]:
     by_event: dict[datetime, Observation] = {}
     for row in rows:
@@ -1550,6 +1671,7 @@ def _metric(
     rows: list[Observation],
     *,
     cutoff: datetime,
+    companions: Mapping[str, list[Observation]] | None = None,
 ) -> dict[str, Any]:
     if (instrument.semantic_role is SemanticRole.SOVEREIGN_YIELD and rows
             and rows[-1].revision_id.startswith("bond:")):
@@ -1561,6 +1683,8 @@ def _metric(
             start -= 1
         rows = rows[start:]
     adapter = pack.adapter_map[instrument.source_adapter_id]
+    cadence = pack.instrument_cadence(instrument)
+    event_dated = cadence == EVENT_CADENCE
     public = _instrument_is_public(pack, instrument)
     derivable = _instrument_is_derivable(pack, instrument)
     derivable_rows = [
@@ -1610,13 +1734,7 @@ def _metric(
     change_unit = "bp" if is_rate else instrument.canonical_unit.value
     clock_latest = raw_latest if raw_latest is not None else context_latest
     freshness = (
-        _publication_opportunity_clock(
-            clock_latest,
-            adapter,
-            pack.settlement_calendar,
-            cutoff,
-            publication_clock=instrument.freshness_clock,
-        )
+        _instrument_clock(pack, instrument, clock_latest, companions, cutoff)
         if clock_latest is not None
         else None
     )
@@ -1624,6 +1742,7 @@ def _metric(
     missed_opportunities = freshness[1] if freshness is not None else None
     next_publication = freshness[2] if freshness is not None else None
     freshness_basis = freshness[3] if freshness is not None else None
+    confirmation = freshness[4] if freshness is not None else None
 
     def change(periods: int) -> float | None:
         if len(raw_canonical_values) <= periods:
@@ -1671,11 +1790,13 @@ def _metric(
             else None
         ),
         "knowledge_time": raw_latest.knowledge_time.isoformat() if raw_latest else None,
-        "cadence": adapter.expected_cadence,
+        "cadence": cadence,
         "expected_next_update": (
             next_publication.isoformat()
             if next_publication is not None and raw_latest is not None
-            else f"native {adapter.expected_cadence} publication clock"
+            else "no publication schedule; a new row appears only when the authority acts"
+            if event_dated and raw_latest is not None
+            else f"native {cadence} publication clock"
             if raw_latest is not None
             else None
         ),
@@ -1711,10 +1832,11 @@ def _metric(
         "percentile_3y": _round(_percentile(three_year_values), 1),
         "change_vol_20_annualized": (
             _round(
-                _annualized_change_vol(canonical_values, adapter.expected_cadence),
+                _annualized_change_vol(canonical_values, cadence),
                 3,
             )
-            if raw_latest
+            # Event rows have no periods per year to annualize over.
+            if raw_latest and not event_dated
             else None
         ),
         "change_vol_unit": f"{change_unit}/year^0.5",
@@ -1732,7 +1854,11 @@ def _metric(
                 "observations": len(three_year_values),
                 "minimum_observations": 20,
             },
-            "basis": f"true elapsed calendar-time windows at native cadence {adapter.expected_cadence}; no upsampling",
+            "basis": (
+                "true elapsed calendar-time windows over event dates; no upsampling or carried-forward rows"
+                if event_dated
+                else f"true elapsed calendar-time windows at native cadence {cadence}; no upsampling"
+            ),
         },
         "day_count": instrument.day_count.value if instrument.day_count else None,
         "compounding": (
@@ -1762,6 +1888,13 @@ def _metric(
             else []
         ),
     }
+    if event_dated and raw_latest is not None:
+        # A public event row names the daily observation that shows it is
+        # still the latest event. The licensed projection never carries it.
+        metric["confirmed_through"] = (
+            confirmation[1].event_time.date().isoformat() if confirmation else None
+        )
+        metric["confirmed_by"] = confirmation[0].instrument_id if confirmation else None
     citation = _SOURCE_ATTRIBUTIONS.get(instrument.source_adapter_id)
     if citation is not None:
         metric.update(citation)
@@ -1877,8 +2010,6 @@ def _spread_metric(
     *,
     cutoff: datetime,
 ) -> dict[str, Any] | None:
-    benchmark_adapter = pack.adapter_map[benchmark.source_adapter_id]
-    anchor_adapter = pack.adapter_map[anchor.source_adapter_id]
     benchmark_rows = {
         row.event_time: row
         for row in rows_by_instrument.get(benchmark.instrument_id, [])
@@ -1904,19 +2035,11 @@ def _spread_metric(
     latest_time, latest_value = points[-1]
     latest_benchmark = benchmark_rows[latest_time]
     latest_anchor = anchor_rows[latest_time]
-    benchmark_clock = _publication_opportunity_clock(
-        latest_benchmark,
-        benchmark_adapter,
-        pack.settlement_calendar,
-        cutoff,
-        publication_clock=benchmark.freshness_clock,
+    benchmark_clock = _instrument_clock(
+        pack, benchmark, latest_benchmark, rows_by_instrument, cutoff
     )
-    anchor_clock = _publication_opportunity_clock(
-        latest_anchor,
-        anchor_adapter,
-        pack.settlement_calendar,
-        cutoff,
-        publication_clock=anchor.freshness_clock,
+    anchor_clock = _instrument_clock(
+        pack, anchor, latest_anchor, rows_by_instrument, cutoff
     )
     states = (benchmark_clock[0], anchor_clock[0])
     state_rank = {
@@ -2262,6 +2385,7 @@ def build_global_money_market_atlas(
                 instrument,
                 rows_by_instrument.get(instrument.instrument_id, []),
                 cutoff=cutoff,
+                companions=rows_by_instrument,
             )
             for instrument in projected_instruments
         ]
@@ -2492,7 +2616,7 @@ def build_global_money_market_atlas(
             "percentile": "tie-aware empirical midrank over observations in the trailing three elapsed calendar years; minimum 20 observations",
             "policy_spread": "exact event-time intersection in canonical basis points, aged by the worse input publication clock",
             "frequency": "changes are observation-count based and retain each adapter's native cadence",
-            "freshness": "observation currentness counts missed pack-calendar publication opportunities using adapter lag/time; US daily FRESH 0, AGING 1, STALE 2-8; other native cadences FRESH <=2, AGING 3-4, STALE 5-8; DEAD >=9; invalid calendars are UNKNOWN and collector health never refreshes an old observation",
+            "freshness": "observation currentness counts missed pack-calendar publication opportunities at each instrument's native cadence (its own when declared, else its adapter's) using adapter lag/time; daily FRESH 0, AGING 1, STALE 2-8; other native cadences FRESH <=2, AGING 3-4, STALE 5-8; DEAD >=9; event-dated settings and operations (cadence EVENT) have no schedule to miss and take the clock of a daily observation parsed from the same capture, else UNKNOWN; invalid calendars and unknown publication times are UNKNOWN and collector health never refreshes an old observation",
             "publication_boundary": "already collected canonical observations; no collection on request",
             "role": "context-only; does not enter the Seiche composite or constitute investment advice",
         },
