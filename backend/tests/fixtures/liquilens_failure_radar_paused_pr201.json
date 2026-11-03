@@ -1,0 +1,138 @@
+{
+ "as_of": "2026-11-03",
+ "tier_publication": {
+  "state": "paused",
+  "since": "2026-11-03",
+  "decided_by": "founder",
+  "label": "tiers paused, research only",
+  "reason": "Re-dating three co-operative bank failures to their onset removed a mis-dated training event from the hazard panel. The refit model's out-of-time discrimination fell (current figures at /api/failure-radar/validation) and the refit alone would move institutions between tiers. Tiers stay unpublished until the model re-validates.",
+  "revalidation_condition": "the hazard model passes an out-of-time validation against thresholds the founder sets and records in this policy before any tier, colour, grade or tier count is published again"
+ },
+ "pd_note": "research only: a corpus-calibrated probability shown while review tiers are paused; not a tier, rating or grade",
+ "pd_interval": {
+  "available": false,
+  "reason": "the hazard model publishes point PDs only; its model-level uncertainty (an institution-clustered AUC interval) is at /api/failure-radar/validation"
+ },
+ "rows": [
+  {
+   "slug": "au-sfb-2025",
+   "name": "AU Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 80.9,
+   "hazard": {
+    "pd_12m": 0.0023,
+    "pd_24m": 0.0047,
+    "pd_36m": 0.007,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  },
+  {
+   "slug": "indusind-bank",
+   "name": "IndusInd Bank Ltd",
+   "inst_type": "bank",
+   "score": 81.9,
+   "hazard": {
+    "pd_12m": 0.0022,
+    "pd_24m": 0.0045,
+    "pd_36m": 0.0067,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  },
+  {
+   "slug": "utkarsh-sfb-2025",
+   "name": "Utkarsh Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 83.2,
+   "hazard": {
+    "pd_12m": 0.0021,
+    "pd_24m": 0.0042,
+    "pd_36m": 0.0063,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  },
+  {
+   "slug": "ujjivan-sfb",
+   "name": "Ujjivan Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 86.0,
+   "hazard": {
+    "pd_12m": 0.0019,
+    "pd_24m": 0.0038,
+    "pd_36m": 0.0057,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  },
+  {
+   "slug": "asirvad-micro-finance",
+   "name": "Asirvad Micro Finance Limited",
+   "inst_type": "mfi",
+   "score": 87.2,
+   "hazard": {
+    "pd_12m": 0.0018,
+    "pd_24m": 0.0036,
+    "pd_36m": 0.0055,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  },
+  {
+   "slug": "esaf-sfb",
+   "name": "ESAF Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 88.6,
+   "hazard": {
+    "pd_12m": 0.0017,
+    "pd_24m": 0.0033,
+    "pd_36m": 0.005,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  },
+  {
+   "slug": "muthoot-finance",
+   "name": "Muthoot Finance Ltd",
+   "inst_type": "nbfc",
+   "score": 89.7,
+   "hazard": {
+    "pd_12m": 0.0017,
+    "pd_24m": 0.0033,
+    "pd_36m": 0.005,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  },
+  {
+   "slug": "svc-ucb",
+   "name": "SVC Co-operative Bank",
+   "inst_type": "ucb",
+   "score": 88.2,
+   "hazard": {
+    "pd_12m": 0.0017,
+    "pd_24m": 0.0035,
+    "pd_36m": 0.0052,
+    "research_only": true,
+    "pd_interval": {
+     "available": false
+    }
+   }
+  }
+ ]
+}
