@@ -1,4 +1,4 @@
-> Current release scope: eight public research tools, beginning with `source_rights_status`. Legacy forecasts and backtests are unavailable. The dated directory receipts below remain historical and require a fresh directory refresh after deployment.
+> Current release scope: eight public research tools, beginning with `source_rights_status`, and the legacy board tools, shown for free research use while source permissions are sought. The dated directory receipts below remain historical and require a fresh directory refresh after deployment.
 
 # Connect Seiche to MCP clients
 

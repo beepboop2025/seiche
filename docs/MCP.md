@@ -1,17 +1,24 @@
 # Seiche as an agent tool (MCP)
 
-## Release scope: 28 October 2026
+## Release scope: 3 November 2026
 
-Eight public research tools are available: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
-Start with `source_rights_status`. Retired forecasts, backtests, editorial,
-composite and derived legacy tools are unavailable for every caller while their
-source reuse rights and replacements remain unqualified. A bearer token or
-payment does not unlock them. Do not reconstruct withheld observations from
-metadata, cached history or prior responses. Direct publisher observations keep
-their own dates; restricted inputs remain explicitly metadata-only.
-Authenticated callers can additionally discover five private, non-executable
-Agent Room tools. Earlier feature descriptions below are historical context
-where they conflict with this release scope; they do not advertise availability.
+The legacy funding board and the legacy tools are visible again for free research
+use while source permissions are sought (policy
+`seiche.public-source-rights.2026-11-03`). Source owners can request removal at
+any time.
+Anonymous public tools: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, and the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `trade_safety_risk_context`.
+Start with `source_rights_status`. The legacy `funding_stress_forecast`,
+`replay_asof`, `positioning_book`, `desk_brief` and `ask_desk` keep the bearer
+token requirement they had before 28 October; no payment unlocks a legacy tool.
+Legacy forecasts, analogs, backtests and replays are research diagnostics, not
+validated predictions. The Book (`/api/book` and its hash-chained ledger) stays
+withheld until its published chain is restored. Do not reconstruct withheld
+observations from metadata, cached history or prior responses. Direct publisher
+observations keep their own dates; restricted inputs remain explicitly
+metadata-only. Authenticated callers can additionally discover five private,
+non-executable Agent Room tools. Earlier feature descriptions below are
+historical context where they conflict with this release scope; they do not
+advertise availability.
 
 
 Seiche speaks the [Model Context Protocol](https://modelcontextprotocol.io), so
@@ -104,9 +111,12 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous**: the eight public tools `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
-- **Authenticated**: the same eight plus five private Agent Room preview tools.
-  Legacy analysis tools are unavailable, including to paid or authenticated callers.
+- **Anonymous**: the eight public research tools `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, plus, under the 3 November research release, the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage` and `trade_safety_risk_context`.
+- **Authenticated**: the same tools, the legacy `funding_stress_forecast`,
+  `replay_asof`, `positioning_book`, `desk_brief` and `ask_desk`, and five
+  private Agent Room preview tools. No payment unlocks a legacy tool. Under the
+  28 October policy every legacy tool is unavailable, including to paid or
+  authenticated callers.
 
 `tools/list` returns exactly what the caller can run, so an anonymous agent
 never sees a tool it would be refused on. The list applies both the public flag and the active source-rights release filter to `TOOLS` (`backend/seiche/mcp_server.py`).

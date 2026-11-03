@@ -58,13 +58,13 @@ def _forbid_rebuild(monkeypatch: pytest.MonkeyPatch, module) -> None:
 
 
 def _open_static_routes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Model a future release whose static routes are rights-qualified."""
-    monkeypatch.setattr(public_rights, "LEGACY_PATHS", public_rights.LEGACY_PATHS
-                        - set(public_rights.STATIC_SURFACES.values()))
+    """Model a future release whose static routes, the Book included, are open."""
+    monkeypatch.setattr(public_rights, "ACTIVE_POLICY", public_rights.RESEARCH_RELEASE_POLICY)
+    monkeypatch.setattr(public_rights, "RESEARCH_RELEASE_WITHHELD_PATHS", frozenset())
 
 
 def test_export_public_withholds_static_files_and_keeps_the_exact_private_board(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, withheld_policy
 ):
     module = _script("export_public.py")
     _forbid_rebuild(monkeypatch, module)
@@ -85,7 +85,7 @@ def test_export_public_withholds_static_files_and_keeps_the_exact_private_board(
     assert private_path.stat().st_mode & 0o777 == 0o600
 
 
-def test_export_public_writes_no_board_without_an_explicit_private_path(tmp_path, monkeypatch):
+def test_export_public_writes_no_board_without_an_explicit_private_path(tmp_path, monkeypatch, withheld_policy):
     module = _script("export_public.py")
     _forbid_rebuild(monkeypatch, module)
     snapshot_path = tmp_path / "captured.json"
@@ -139,6 +139,25 @@ def test_export_public_publishes_the_board_when_its_routes_are_open(tmp_path, mo
     public = json.loads(public_path.read_text())
     assert public["generated_at"] == snapshot["generated_at"]
     assert public["conclusion"]["regime"] == "WATCH"
+
+
+def test_research_release_exports_the_computed_board_unchanged(tmp_path, monkeypatch):
+    """The 3 November research release writes the board it computed; nothing
+    is recomputed, backfilled or relabelled on the way to the static files."""
+    assert public_rights.research_release()
+    module = _script("export_public.py")
+    _forbid_rebuild(monkeypatch, module)
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "captured.json"
+    public_path = tmp_path / "public.json"
+    overview_path = tmp_path / "overview.json"
+    snapshot_path.write_text(json.dumps(snapshot))
+
+    assert module.main(["--snapshot", str(snapshot_path), str(public_path), str(overview_path)]) == 0
+    assert json.loads(overview_path.read_text()) == snapshot
+    public = json.loads(public_path.read_text())
+    assert not public_rights.is_restriction(public)
+    assert public["generated_at"] == snapshot["generated_at"]
 
 
 def test_withheld_book_republishes_neither_today_nor_the_earlier_chain(tmp_path, monkeypatch):

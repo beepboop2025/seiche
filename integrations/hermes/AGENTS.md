@@ -7,11 +7,14 @@ memory or treat a successful request as validation.
 
 ## Tool map (Seiche MCP server)
 
-Public (eight anonymous tools): `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
+Public (anonymous tools): `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `trade_safety_risk_context`.
 
-Unavailable legacy tools: `latest_article`, `funding_stress_now`, `funding_stress_forecast`, `historical_analogs`, `replay_asof`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `positioning_book`, `desk_brief`, `ask_desk`, `trade_safety_risk_context`.
-A token, subscription or payment does not unlock them. Say unavailable and do
-not reconstruct denied observations from cached values or metadata.
+Legacy tools that need a bearer token: `funding_stress_forecast`, `replay_asof`, `positioning_book`, `desk_brief`, `ask_desk`.
+The legacy board and legacy tools are shown for free research use while source
+permissions are sought. Their forecasts, analogs, backtests and replays are
+research diagnostics, not validated predictions. No payment unlocks a legacy
+tool. If `source_rights_status` lists a tool as unavailable, say unavailable and
+do not reconstruct denied observations from cached values or metadata.
 
 Private Agent Room preview (five bearer-identity tools):
 `agent_room_register_key`, `agent_room_create`, `agent_room_append_event`,

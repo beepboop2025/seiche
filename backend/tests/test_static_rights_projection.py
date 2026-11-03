@@ -121,11 +121,15 @@ def _leaks(files: dict[str, str]) -> dict[str, list[str]]:
 
 
 def _open_routes(monkeypatch) -> None:
-    monkeypatch.setattr(public_rights, "LEGACY_PATHS", public_rights.LEGACY_PATHS
-                        - {public_rights.STATIC_SURFACES[path] for path in STATIC})
+    """Open every static route, the Book included."""
+    monkeypatch.setattr(public_rights, "ACTIVE_POLICY", public_rights.RESEARCH_RELEASE_POLICY)
+    monkeypatch.setattr(public_rights, "RESEARCH_RELEASE_WITHHELD_PATHS", frozenset())
 
 
-def test_every_static_board_file_is_its_routes_restriction():
+# The 28 October policy (0.16.11): every static board file is withheld.
+
+
+def test_every_static_board_file_is_its_routes_restriction(withheld_policy):
     for path in STATIC:
         api = public_rights.STATIC_SURFACES[path]
         assert public_rights.legacy_http_restricted(api)
@@ -133,7 +137,7 @@ def test_every_static_board_file_is_its_routes_restriction():
         assert public_rights.is_restriction(public_rights.legacy_unavailable(api))
 
 
-def test_no_withheld_value_reaches_any_public_file(tmp_path, fake_snap):
+def test_no_withheld_value_reaches_any_public_file(tmp_path, fake_snap, withheld_policy):
     board = _sentinel_board(fake_snap)
     site, private = _publish(tmp_path, board)
     files = _public_text(site)
@@ -154,7 +158,7 @@ def test_no_withheld_value_reaches_any_public_file(tmp_path, fake_snap):
     assert site not in private.parents
 
 
-def test_no_withheld_value_reaches_any_link_card(tmp_path, fake_snap):
+def test_no_withheld_value_reaches_any_link_card(tmp_path, fake_snap, withheld_policy):
     pytest.importorskip("PIL")
     from seiche import social_cards
 
@@ -185,3 +189,29 @@ def test_the_leak_search_detects_an_open_route(tmp_path, fake_snap, monkeypatch)
         assert name in leaks, name
     book = json.loads((site / "data" / "book_history.json").read_text())
     assert [row["date"] for row in book] == ["2031-12-23", "2031-12-24"]
+
+
+# The 3 November research release: the board is published, the Book is not.
+
+
+def test_research_release_publishes_the_board_and_keeps_the_book_withheld(tmp_path, fake_snap):
+    assert public_rights.research_release()
+    board = _sentinel_board(fake_snap)
+    site, private = _publish(tmp_path, board)
+    files = _public_text(site)
+
+    # The board files carry exactly the computed board; nothing is relabelled.
+    assert json.loads(files["data/overview.json"]) == board
+    assert not public_rights.is_restriction(json.loads(files["data/public.json"]))
+    leaks = _leaks(files)
+    assert "data/overview.json" in leaks and "index.html" in leaks
+    home = prerender.body_text(files["index.html"])
+    assert "The funding board is withheld pending source-rights qualification" not in home
+
+    # The Book keeps the 28 October restriction byte for byte. Neither today's
+    # record nor the earlier chain (dated 2031-12-23) is republished.
+    ledger = files["data/book_history.json"]
+    assert json.loads(ledger) == public_rights.legacy_unavailable("/data/book_history.json")
+    assert json.loads(ledger)["policy"] == "seiche.public-source-rights.2026-10-28"
+    assert "2031-12-23" not in ledger and "sentinelstance" not in ledger
+    assert json.loads(private.read_text()) == board

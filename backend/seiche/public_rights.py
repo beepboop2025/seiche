@@ -4,7 +4,15 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 
+# The 28 October restriction. Restriction payloads, the money desk projection
+# and field-level metadata keep this identity under every release policy.
 POLICY = "seiche.public-source-rights.2026-10-28"
+# Owner decision of 3 November 2026: the legacy funding board and legacy tools
+# are shown for free research use while source permissions are sought.
+RESEARCH_RELEASE_POLICY = "seiche.public-source-rights.2026-11-03"
+# The release policy in force. Setting it to POLICY withholds every legacy
+# surface again; any value other than RESEARCH_RELEASE_POLICY does the same.
+ACTIVE_POLICY = RESEARCH_RELEASE_POLICY
 REASON = (
     "Public redistribution permission for these FRED-sourced observations and "
     "dependent readings is not established. Values are withheld pending "
@@ -173,6 +181,9 @@ def money_desk(value: object) -> dict:
 # Explicit release scope approved on 2026-10-28. These paths mix legacy FRED
 # inputs into measurements, forecasts, diagnostics or prose. Authentication,
 # payment, an old snapshot, or a successful request cannot grant reuse rights.
+# Under POLICY all of them are withheld; under RESEARCH_RELEASE_POLICY only
+# RESEARCH_RELEASE_WITHHELD_PATHS are. No payment unlocks a legacy tool under
+# either policy (x402 never prices them).
 LEGACY_TOOLS = frozenset({
     "latest_article", "funding_stress_now", "funding_stress_forecast",
     "historical_analogs", "replay_asof", "proof_backtest", "crypto_stress_record",
@@ -194,10 +205,37 @@ STATIC_SURFACES = {
     "/data/public.json": "/api/public",
     "/data/book_history.json": "/api/book",
 }
+# The research release keeps the Book withheld. Its static file is the
+# hash-chained ledger, and the publisher extends the chain it reads back from
+# the live site, which now serves the restriction. The Book reopens only after
+# its last published chain is restored; no record is forged or rewritten here.
+RESEARCH_RELEASE_WITHHELD_PATHS = frozenset({"/api/book"})
+# Tools listed by source_rights_status. Legacy tools whose is_public flag is
+# false keep the bearer identity requirement they had before 28 October.
+RESEARCH_TOOLS = (
+    "source_rights_status", "money_market_context", "market_workbench",
+    "world_markets_context", "gift_city_context", "gold_inventory_carry",
+    "research_network", "data_health",
+)
+ACCOUNT_TOOLS = frozenset({
+    "funding_stress_forecast", "replay_asof", "positioning_book", "desk_brief", "ask_desk",
+})
+
+
+def research_release() -> bool:
+    """True while the 3 November research release is the active policy."""
+    return ACTIVE_POLICY == RESEARCH_RELEASE_POLICY
+
+
+def withheld_tools() -> frozenset[str]:
+    """Legacy MCP tools the active policy withholds from every caller."""
+    return frozenset() if research_release() else LEGACY_TOOLS
 
 
 def legacy_http_restricted(path: str) -> bool:
     normalized = path.rstrip("/")
+    if research_release():
+        return normalized in RESEARCH_RELEASE_WITHHELD_PATHS
     return normalized in LEGACY_PATHS or any(
         normalized.startswith(prefix) for prefix in LEGACY_PREFIXES
     )
@@ -229,13 +267,39 @@ def legacy_unavailable(surface: str) -> dict:
     }
 
 
+RESEARCH_RELEASE_BOUNDARY = (
+    "Legacy board values and legacy tools are shown for free research use while "
+    "source permissions are sought. Source owners can request removal at any time. "
+    "Showing a value is not a claim of publisher permission or a reuse license. "
+    "Legacy forecasts, analogs, backtests and replays are research diagnostics, not "
+    "validated predictions or investment advice. The Book route and its hash-chained "
+    "ledger keep the 28 October restriction until the published chain is restored. "
+    "money_market_context, world_markets_context, market_workbench and series "
+    "downloads keep their field-specific restrictions, and every tool still reports "
+    "missing values and source clocks. account_tools need a bearer identity; no "
+    "payment unlocks a legacy tool. Gold carry is arithmetic over caller-supplied "
+    "assumptions."
+)
+
+
 def rights_status() -> dict:
+    if research_release():
+        withheld = sorted(RESEARCH_RELEASE_WITHHELD_PATHS) + sorted(
+            path for path, route in STATIC_SURFACES.items() if legacy_http_restricted(route))
+        return {
+            "schema": "seiche.source-rights-status.v1", "status": "research_release",
+            "policy": ACTIVE_POLICY, "context_only": True,
+            "available_tools": [*RESEARCH_TOOLS, *sorted(LEGACY_TOOLS - ACCOUNT_TOOLS)],
+            "account_tools": sorted(ACCOUNT_TOOLS),
+            "legacy_tools": sorted(LEGACY_TOOLS),
+            "unavailable_tools": sorted(withheld_tools()),
+            "withheld_surfaces": withheld, "rights_urls": [TERMS],
+            "boundary": RESEARCH_RELEASE_BOUNDARY,
+        }
     return {
         "schema": "seiche.source-rights-status.v1", "status": "partial_release",
         "policy": POLICY, "context_only": True,
-        "available_tools": ["source_rights_status", "money_market_context", "market_workbench",
-                            "world_markets_context", "gift_city_context", "gold_inventory_carry",
-                            "research_network", "data_health"],
+        "available_tools": list(RESEARCH_TOOLS),
         "unavailable_tools": sorted(LEGACY_TOOLS), "rights_urls": [TERMS],
         "boundary": "Available tools still report field-specific restrictions, missing values and source clocks. Availability is not a blanket reuse license, freshness certification or investment advice. ECB FX is the default; legacy H.10/FRED values stay withheld. Gold carry is arithmetic over caller-supplied assumptions.",
     }

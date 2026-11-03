@@ -91,12 +91,13 @@ def test_money_market_discovery_separates_catalog_from_dated_evidence():
     assert access["usd_money_markets"].endswith("/api/money-markets")
     assert access["global_money_markets"].endswith("/api/v2/money-markets")
     assert access["public_money_market_mcp_tool"] == "money_market_context"
-    assert "Eight public MCP tools" in access["authentication"]
+    assert "Eight public research tools and nine legacy board tools" in access["authentication"]
     assert access["trade_safety_risk_context"].endswith(
         "/api/trade-safety/risk-context"
     )
-    assert access["public_trade_safety_mcp_tool"] is None
-    assert access["trade_safety_status"] == "unavailable_pending_source_rights"
+    # 3 November research release: the legacy guard context is public again.
+    assert access["public_trade_safety_mcp_tool"] == "trade_safety_risk_context"
+    assert access["trade_safety_status"] == "research_release"
     assert access["world_markets_api"].endswith("/api/v2/world-markets")
     assert access["public_world_markets_mcp_tool"] == "world_markets_context"
 

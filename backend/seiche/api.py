@@ -485,7 +485,11 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "url": "https://api.seiche.info/mcp",
                 "authentication": {
                     "type": "none",
-                    "scope": "eight anonymous public research tools",
+                    "scope": (
+                        "anonymous public research and legacy tools listed by source_rights_status"
+                        if mcp_server.public_rights.research_release()
+                        else "eight anonymous public research tools"
+                    ),
                 },
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
@@ -4328,10 +4332,12 @@ def mcp_http(
             )
             else None
         )
-        # Retired tools remain unavailable even if a caller offers payment.
+        # Withheld tools remain unavailable even if a caller offers payment.
         # Preserve the rights explanation before payment configuration/header
-        # checks, without reviving the tool in pricing or discovery.
-        if pay_header is not None and tool in mcp_server.public_rights.LEGACY_TOOLS:
+        # checks, without reviving the tool in pricing or discovery. A legacy
+        # tool open under the research release is never priced, so a payment
+        # header for it is refused below like any other unpriced call.
+        if pay_header is not None and tool in mcp_server.public_rights.withheld_tools():
             return JSONResponse(
                 mcp_server.preflight_tool_call(single, public=public), status_code=400
             )

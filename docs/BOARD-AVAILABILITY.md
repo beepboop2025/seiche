@@ -1,5 +1,60 @@
 # Funding board availability
 
+## Research visibility restored (3 November 2026)
+
+On 3 November 2026 the owner decided to show the legacy funding board and the
+legacy tools again for free research use while source permissions are sought.
+Seiche is free, research grade and not commercial. Source owners can request
+removal at any time.
+
+`seiche.public_rights.ACTIVE_POLICY` selects the release policy. It is now
+`seiche.public-source-rights.2026-11-03`, with this scope:
+
+- `/api/overview`, `/api/public` and the other legacy routes and prefixes in
+  `LEGACY_PATHS` and `LEGACY_PREFIXES` run their existing handlers again,
+  behind their existing authentication settings. The publisher writes the board
+  it computed to `/data/overview.json` and `/data/public.json` unchanged.
+- The fourteen legacy MCP tools return to discovery. Nine are anonymous.
+  `funding_stress_forecast`, `replay_asof`, `positioning_book`, `desk_brief`
+  and `ask_desk` keep the bearer identity requirement they had before
+  28 October. No legacy tool is priced: x402 never charges for one, and a
+  payment header offered for one is refused like any other unpriced call.
+- `source_rights_status` reports `status: research_release`, the new policy,
+  the anonymous `available_tools`, `account_tools`, `legacy_tools`, an empty
+  `unavailable_tools` and the `withheld_surfaces`.
+
+What does not change:
+
+- The board's honesty features. Source clocks, missing values, faults and the
+  rule that a value is never reconstructed stay as they are. Nothing is
+  recomputed, backfilled or relabelled; each route serves what the existing
+  pipelines compute.
+- The Book stays withheld. `/api/book` and `/data/book_history.json` keep the
+  28 October restriction payload byte for byte. That static file is the
+  hash-chained ledger, and `append_book_record.py` extends the chain it
+  downloads from the live site. The live file is now the restriction payload,
+  so an append would stop with "restore the published chain before appending".
+  Reopening the Book needs the last published chain restored from the site
+  mirror's history and verified first. That is an owner step, not a code
+  change, and no chain record is forged or rewritten here. The day's computed
+  Book remains part of the board's deep layer and of `positioning_book`.
+- Field-level restrictions outside the legacy board. The money desk projection
+  in `money_market_context` and `world_markets_context`, H.10 values in
+  `market_workbench`, and FRED series JSON and CSV downloads keep their
+  28 October rules.
+- The restriction machinery. Setting `ACTIVE_POLICY` back to
+  `seiche.public-source-rights.2026-10-28` withholds every legacy route, tool
+  and static file again with the 0.16.11 payloads, byte for byte. The website
+  still renders the withheld state whenever a published file carries the
+  restriction.
+
+The release identity files and the signed AI catalog still describe the
+published 0.16.11 package and its eight anonymous tools. They change with the
+next release candidate. This is a runtime, static publication and discovery
+change, so it follows the application release procedure in
+[PUBLISHING.md](PUBLISHING.md#release-prerequisites); a frontend-only
+publication is not enough.
+
 ## Static files follow the API source-rights policy (0.16.11)
 
 From release 0.16.11 each static board file carries exactly what its API route

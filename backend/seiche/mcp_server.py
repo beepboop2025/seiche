@@ -1,14 +1,18 @@
 """Source-dated research tools over MCP, with explicit source-rights limits.
 
-HTTP and stdio share dispatch and the same legacy-feature denylist. The eight
-public tools returned by ``_visible_tools`` expose rights status, money-market
-context, the market workbench, world markets, GIFT City, gold carry scenarios,
-connected research and data health. Restricted values are never reconstructed.
+HTTP and stdio share dispatch and the same legacy-feature policy,
+``public_rights.ACTIVE_POLICY``. The public tools returned by ``_visible_tools``
+expose rights status, money-market context, the market workbench, world markets,
+GIFT City, gold carry scenarios, connected research and data health. Under the
+3 November research release they also expose the legacy board tools whose
+``is_public`` flag is true. Restricted values are never reconstructed.
 
-Authenticated HTTP adds five identity-bound Agent Room discussion tools. Local
-stdio has no bearer principal and cannot expose Agent Room. Legacy stress,
-forecast, replay, backtest, positioning and derived prose tools are unavailable
-for every caller; historical ``is_public`` flags do not override this policy.
+Authenticated HTTP adds five identity-bound Agent Room discussion tools and,
+under the research release, the legacy tools whose ``is_public`` flag is false.
+Local stdio has no bearer principal and cannot expose Agent Room. Under the
+28 October policy every legacy stress, forecast, replay, backtest, positioning
+and derived prose tool is unavailable for every caller; historical
+``is_public`` flags do not override that policy.
 """
 
 from __future__ import annotations
@@ -1623,7 +1627,7 @@ _AGENT_ROOM_EVENT_INPUT_SCHEMA = {
 TOOLS: dict[str, tuple] = {
     "source_rights_status": (
         "Source rights and feature availability",
-        "List the research tools available in this release and legacy features withheld pending source qualification. Returns policy and source-rights metadata only; does not grant redistribution rights or certify freshness.",
+        "List the tools available in this release, the legacy tools shown for research and any surface still withheld. Returns policy and source-rights metadata only; does not grant redistribution rights or certify freshness.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         lambda args, public: public_rights.rights_status(),
         True,
@@ -3169,7 +3173,10 @@ OUTPUT_SCHEMAS["source_rights_status"] = _output_schema(
     {"schema": {"type": "string"}, "status": {"type": "string"},
      "policy": {"type": "string"}, "context_only": {"type": "boolean"},
      "available_tools": {"type": "array", "items": {"type": "string"}},
+     "account_tools": {"type": "array", "items": {"type": "string"}},
+     "legacy_tools": {"type": "array", "items": {"type": "string"}},
      "unavailable_tools": {"type": "array", "items": {"type": "string"}},
+     "withheld_surfaces": {"type": "array", "items": {"type": "string"}},
      "rights_urls": {"type": "array", "items": {"type": "string"}}, "boundary": {"type": "string"}},
     (("schema", "status", "policy", "context_only", "available_tools", "unavailable_tools", "rights_urls", "boundary"),
      {"schema": "seiche.source-rights-status.v1", "context_only": True}),
@@ -3342,14 +3349,15 @@ def _visible_tools(
     public: bool | None = None, identity: dict[str, Any] | None = None
 ) -> dict[str, tuple]:
     pub = _resolve_public(public)
+    withheld = public_rights.withheld_tools()
     if pub:
-        return {k: v for k, v in TOOLS.items() if v[4] and k not in public_rights.LEGACY_TOOLS}
+        return {k: v for k, v in TOOLS.items() if v[4] and k not in withheld}
     if identity is None:
         # Local stdio and paid-anonymous calls have no verified bearer identity.
         # They retain the established analysis surface but cannot discover or
         # invoke identity-bound Agent Room operations.
-        return {k: v for k, v in TOOLS.items() if k not in AGENT_ROOM_TOOLS and k not in public_rights.LEGACY_TOOLS}
-    return {k: v for k, v in TOOLS.items() if k not in public_rights.LEGACY_TOOLS}
+        return {k: v for k, v in TOOLS.items() if k not in AGENT_ROOM_TOOLS and k not in withheld}
+    return {k: v for k, v in TOOLS.items() if k not in withheld}
 
 
 def _visible_prompts(
@@ -3371,11 +3379,31 @@ AGENT_ROOM_SERVER_INSTRUCTIONS = (
 )
 
 
+_LEGACY_WITHHELD_INSTRUCTIONS = (
+    "Legacy forecasts, stress scores, backtests, replay and derived narratives are "
+    "unavailable pending source qualification; never reconstruct their values."
+)
+_LEGACY_RESEARCH_INSTRUCTIONS = (
+    "The legacy board and the legacy_tools listed by source_rights_status are shown "
+    "for free research use while source permissions are sought. funding_stress_now "
+    "reads the legacy board. Legacy forecasts, analogs, backtests and replays are "
+    "research diagnostics, not validated predictions; proof_backtest is a "
+    "construction-PIT diagnostic, not validated backtest evidence. Never reconstruct "
+    "a missing or withheld value."
+)
+
+
+def _legacy_instructions() -> str:
+    """The legacy-feature sentence for the active source-rights policy."""
+    if public_rights.research_release():
+        return _LEGACY_RESEARCH_INSTRUCTIONS
+    return _LEGACY_WITHHELD_INSTRUCTIONS
+
+
 SERVER_INSTRUCTIONS = (
     "Seiche provides source-dated funding, money-market and reference FX research. "
-    "Use source_rights_status for the current release boundary. Legacy forecasts, "
-    "stress scores, backtests, replay and derived narratives are unavailable pending "
-    "source qualification; never reconstruct their values. Use money_market_context "
+    "Use source_rights_status for the current release boundary. "
+    + _legacy_instructions() + " Use money_market_context "
     "for a bounded funding review, market_workbench with its default ECB provider "
     "for reference FX, world_markets_context for available cross-market evidence, "
     "and data_health for source clocks and faults. gift_city_context provides dated "
@@ -3549,7 +3577,7 @@ def preflight_tool_call(msg: Any, public: bool | None = None) -> dict | None:
     name = params.get("name")
     if not isinstance(name, str) or not name:
         return _error(msg_id, INVALID_PARAMS, "tools/call name must be a string")
-    if name in public_rights.LEGACY_TOOLS:
+    if name in public_rights.withheld_tools():
         return _error(msg_id, INVALID_PARAMS, "tool unavailable: source rights restricted", public_rights.legacy_unavailable(name))
     entry = _visible_tools(public).get(name)
     if entry is None:
@@ -3677,7 +3705,7 @@ def _handle_tools_call(
     name = (params or {}).get("name")
     if not isinstance(name, str) or not name:
         return _error(msg_id, INVALID_PARAMS, "tools/call name must be a string")
-    if name in public_rights.LEGACY_TOOLS:
+    if name in public_rights.withheld_tools():
         payload = public_rights.legacy_unavailable(name)
         return _result(msg_id, {"content": [{"type": "text", "text": payload["reason"]}],
                                "structuredContent": payload, "isError": True})

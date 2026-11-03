@@ -11,7 +11,12 @@ import pytest
 from seiche import mcp_server as mcp
 
 ROOT = Path(__file__).resolve().parents[2]
+# 3 November research release: the public legacy tools return with the same
+# witnesses they had before 28 October.
 PUBLIC_STRUCTURED_CALLS = {
+    "latest_article": {},
+    "funding_stress_now": {},
+    "trade_safety_risk_context": {},
     "source_rights_status": {},
     "money_market_context": {},
     "world_markets_context": {},
@@ -23,9 +28,20 @@ PUBLIC_STRUCTURED_CALLS = {
         "annual_rate_pct": "6", "fx_inr_per_usd": "85", "fees_usd": "100",
         "days": 30, "day_count": 360,
     },
+    "historical_analogs": {},
+    "proof_backtest": {},
     "data_health": {},
+    "crypto_stress_record": {},
+    "institutional_flows": {},
+    "oil_funding_context": {},
+    "fx_materials_passage": {},
 }
-PAID_STRUCTURED_CALLS = {
+# Legacy tools that keep their bearer identity requirement. None is priced.
+ACCOUNT_STRUCTURED_CALLS = {
+    "funding_stress_forecast": {},
+    "replay_asof": {"date": "2019-09-17"},
+    "positioning_book": {},
+    "ask_desk": {"question": "Is dollar funding tight?"},
 }
 
 
@@ -168,18 +184,21 @@ def test_tool_descriptors_publish_complete_openai_contracts():
     authenticated_by_name = {tool["name"]: tool for tool in authenticated}
     public_by_name = {tool["name"]: tool for tool in public}
 
-    assert len(analysis) == 8
-    assert len(authenticated) == 13
-    assert len(public) == 8
+    assert len(analysis) == 22
+    assert len(authenticated) == 27
+    assert len(public) == 17
     assert set(public_by_name) == set(PUBLIC_STRUCTURED_CALLS)
     assert set(mcp.STRUCTURED_OUTPUT_TOOLS) == set(mcp.TOOLS) - {"desk_brief"}
     assert {
         name for name, tool in analysis_by_name.items() if "outputSchema" in tool
-    } == set(PUBLIC_STRUCTURED_CALLS)
+    } == set(mcp.STRUCTURED_OUTPUT_TOOLS) - set(mcp.AGENT_ROOM_TOOLS)
+    assert {
+        name for name, tool in analysis_by_name.items() if "outputSchema" in tool
+    } == set(PUBLIC_STRUCTURED_CALLS) | set(ACCOUNT_STRUCTURED_CALLS)
     assert {
         name for name, tool in authenticated_by_name.items() if "outputSchema" in tool
-    } == set(PUBLIC_STRUCTURED_CALLS) | set(mcp.AGENT_ROOM_TOOLS)
-    assert "desk_brief" not in authenticated_by_name
+    } == set(mcp.STRUCTURED_OUTPUT_TOOLS)
+    assert "outputSchema" not in authenticated_by_name["desk_brief"]
 
     for tool in authenticated:
         assert tool["title"] and tool["description"]
@@ -203,6 +222,20 @@ def test_tool_descriptors_publish_complete_openai_contracts():
             json.dumps(schema)
 
 
+def test_withheld_policy_publishes_only_the_research_descriptors(withheld_policy):
+    analysis = mcp.dispatch(_rpc("tools/list"), public=False)["result"]["tools"]
+    authenticated = mcp.dispatch(
+        _rpc("tools/list"), public=False, identity={"username": "alice"}
+    )["result"]["tools"]
+    public = mcp.dispatch(_rpc("tools/list"), public=True)["result"]["tools"]
+    assert len(analysis) == 8
+    assert len(authenticated) == 13
+    assert len(public) == 8
+    assert {tool["name"] for tool in public} == (
+        set(PUBLIC_STRUCTURED_CALLS) - mcp.public_rights.LEGACY_TOOLS)
+    assert "desk_brief" not in {tool["name"] for tool in authenticated}
+
+
 def test_every_successful_structured_result_matches_its_descriptor(plugin_runtime):
     public_descriptors = {
         tool["name"]: tool
@@ -223,7 +256,7 @@ def test_every_successful_structured_result_matches_its_descriptor(plugin_runtim
         _assert_schema(payload, schema, f"$.{name}")
         witnesses.append((payload, schema))
 
-    for name, arguments in PAID_STRUCTURED_CALLS.items():
+    for name, arguments in ACCOUNT_STRUCTURED_CALLS.items():
         response = _tool_call(name, arguments, public=False)
         result = response["result"]
         assert result.get("isError") is not True, name
@@ -231,6 +264,20 @@ def test_every_successful_structured_result_matches_its_descriptor(plugin_runtim
         schema = full_descriptors[name]["outputSchema"]
         _assert_schema(payload, schema, f"$.{name}")
         witnesses.append((payload, schema))
+
+    # Exercise the alternate, richer funding_stress_now success envelope too.
+    full_stress = _tool_call("funding_stress_now", {}, public=False)["result"]
+    _assert_schema(
+        full_stress["structuredContent"],
+        full_descriptors["funding_stress_now"]["outputSchema"],
+        "$.funding_stress_now.full",
+    )
+    witnesses.append(
+        (
+            full_stress["structuredContent"],
+            full_descriptors["funding_stress_now"]["outputSchema"],
+        )
+    )
 
     # When the optional standards package is present, validate the same real
     # witnesses with the complete Draft 2020-12 implementation as well.
