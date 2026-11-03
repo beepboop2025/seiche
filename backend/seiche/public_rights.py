@@ -220,11 +220,17 @@ RESEARCH_TOOLS = (
 ACCOUNT_TOOLS = frozenset({
     "funding_stress_forecast", "replay_asof", "positioning_book", "desk_brief", "ask_desk",
 })
-# REST routes that serve the same content as an account-only tool. They need
-# the same bearer identity (api.require_account), whatever SEICHE_BOARD_AUTH
-# says. funding_stress_forecast reads deep.{swell, bathymetry, ml, markov,
-# oujump, montecarlo}; /api/engines/{name} serves only snapshot engines, which
-# hold none of them, so its sibling is /api/deep.
+# Legacy tools the research release opens to anonymous callers although their
+# historical is_public flag is false (owner decision, 3 November 2026): the
+# public board already shows their values. Their labels and honesty fields are
+# unchanged.
+RESEARCH_PUBLIC_TOOLS = frozenset({"funding_stress_forecast"})
+# REST routes that serve the same content as a legacy tool. A route needs the
+# same bearer identity as its tool while the tool is in account_tools()
+# (api.account_twin), whatever SEICHE_BOARD_AUTH says; otherwise it is gated
+# like the board. funding_stress_forecast reads deep.{swell, bathymetry, ml,
+# markov, oujump, montecarlo}; /api/engines/{name} serves only snapshot
+# engines, which hold none of them, so its twin is /api/deep.
 ACCOUNT_ROUTES = {
     "desk_brief": ("/api/brief",),
     "ask_desk": ("/api/ask",),
@@ -246,6 +252,16 @@ def withheld_tools() -> frozenset[str]:
     if not research_release():
         return LEGACY_TOOLS
     return BOOK_TOOLS if book_withheld() else frozenset()
+
+
+def research_public_tools() -> frozenset[str]:
+    """Account tools the active policy opens to anonymous callers."""
+    return RESEARCH_PUBLIC_TOOLS if research_release() else frozenset()
+
+
+def account_tools() -> frozenset[str]:
+    """Legacy tools that need a bearer identity under the active policy."""
+    return ACCOUNT_TOOLS - research_public_tools() - withheld_tools()
 
 
 def legacy_http_restricted(path: str) -> bool:
@@ -338,9 +354,9 @@ RESEARCH_RELEASE_BOUNDARY = (
     "that restriction instead of values. money_market_context, world_markets_context, "
     "market_workbench and series downloads keep their field-specific restrictions, "
     "and every tool still reports missing values and source clocks. account_tools "
-    "and their REST routes (/api/brief, /api/ask, /api/asof, /api/deep) need a "
-    "bearer identity; no payment unlocks a legacy tool. Gold carry is arithmetic "
-    "over caller-supplied assumptions."
+    "and the REST routes listed in account_routes need a bearer identity; no "
+    "payment unlocks a legacy tool. Gold carry is arithmetic over caller-supplied "
+    "assumptions."
 )
 # Book fields that carry the withheld state while the Book is withheld.
 BOOK_FIELDS = ("deep.book", "pit.records[].book", "alerts[rule=book_flip]")
@@ -351,12 +367,14 @@ def rights_status() -> dict:
         withheld = sorted(RESEARCH_RELEASE_WITHHELD_PATHS) + sorted(
             path for path, route in STATIC_SURFACES.items() if legacy_http_restricted(route))
         unavailable = withheld_tools()
+        account = account_tools()
         return {
             "schema": "seiche.source-rights-status.v1", "status": "research_release",
             "policy": ACTIVE_POLICY, "context_only": True,
             "available_tools": [*RESEARCH_TOOLS,
-                                *sorted(LEGACY_TOOLS - ACCOUNT_TOOLS - unavailable)],
-            "account_tools": sorted(ACCOUNT_TOOLS - unavailable),
+                                *sorted(LEGACY_TOOLS - account - unavailable)],
+            "account_tools": sorted(account),
+            "account_routes": sorted(route for tool in account for route in ACCOUNT_ROUTES[tool]),
             "legacy_tools": sorted(LEGACY_TOOLS),
             "unavailable_tools": sorted(unavailable),
             "withheld_surfaces": withheld,

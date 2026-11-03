@@ -21,7 +21,7 @@ ANONYMOUS_TOOLS = {
     "research_network", "data_health", "money_market_context", "world_markets_context",
     "latest_article", "funding_stress_now", "historical_analogs", "proof_backtest",
     "crypto_stress_record", "institutional_flows", "oil_funding_context",
-    "fx_materials_passage", "trade_safety_risk_context",
+    "fx_materials_passage", "trade_safety_risk_context", "funding_stress_forecast",
 }
 
 
@@ -584,10 +584,11 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
         "positioning_book",
         "desk_brief",
         "replay_asof",
-        "funding_stress_forecast",
         "ask_desk",
     )
-    public_good = ("source_rights_status", "data_health", "money_market_context", "world_markets_context")
+    # The research release opened the forecast; the board already shows it.
+    public_good = ("source_rights_status", "data_health", "money_market_context",
+                   "world_markets_context", "funding_stress_forecast")
 
     for gate in ("1", None):
         if gate is None:

@@ -6,11 +6,13 @@ The legacy funding board and the legacy tools are visible again for free researc
 use while source permissions are sought (policy
 `seiche.public-source-rights.2026-11-03`). Source owners can request removal at
 any time.
-Anonymous public tools: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, and the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `trade_safety_risk_context`.
-Start with `source_rights_status`. The legacy `funding_stress_forecast`,
-`replay_asof`, `desk_brief` and `ask_desk` keep the bearer token requirement
-they had before 28 October, and so do their REST routes (`/api/deep`,
-`/api/asof/{date}`, `/api/brief`, `/api/ask`); no payment unlocks a legacy tool.
+Anonymous public tools: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, and the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `trade_safety_risk_context`, `funding_stress_forecast`.
+Start with `source_rights_status`. The legacy `replay_asof`, `desk_brief` and
+`ask_desk` keep the bearer token requirement they had before 28 October, and so
+do their REST routes (`/api/asof/{date}`, `/api/brief`, `/api/ask`); no payment
+unlocks a legacy tool. `funding_stress_forecast` and its route `/api/deep` are
+public in this release, like the board that already shows the forecast
+probabilities.
 Legacy forecasts, analogs, backtests and replays are research diagnostics, not
 validated predictions. The Book stays withheld until its published chain is
 restored: `/api/book`, its hash-chained ledger, `positioning_book` and every Book
@@ -114,10 +116,10 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous**: the eight public research tools `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, plus, under the 3 November research release, the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage` and `trade_safety_risk_context`.
-- **Authenticated**: the same tools, the legacy `funding_stress_forecast`,
-  `replay_asof`, `desk_brief` and `ask_desk`, and five private Agent Room
-  preview tools. Their REST routes need the same bearer token.
+- **Anonymous**: the eight public research tools `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, plus, under the 3 November research release, the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `trade_safety_risk_context` and `funding_stress_forecast`.
+- **Authenticated**: the same tools, the legacy `replay_asof`, `desk_brief` and
+  `ask_desk`, and five private Agent Room preview tools. Their REST routes need
+  the same bearer token.
   `positioning_book` stays withheld with the Book. No payment unlocks a legacy
   tool. Under the
   28 October policy every legacy tool is unavailable, including to paid or

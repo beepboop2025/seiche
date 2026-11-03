@@ -98,7 +98,7 @@ def test_research_release_lists_legacy_tools_by_their_public_flag(public):
     anonymous = mcp._resolve_public(public)
     assert names & public_rights.LEGACY_TOOLS == {
         name for name in public_rights.LEGACY_TOOLS - public_rights.BOOK_TOOLS
-        if not anonymous or mcp.TOOLS[name][4]}
+        if not anonymous or mcp.TOOLS[name][4] or name in public_rights.RESEARCH_PUBLIC_TOOLS}
     status = mcp.dispatch(rpc("source_rights_status"), public=public)["result"]
     assert not status.get("isError")
     content = status["structuredContent"]
@@ -109,7 +109,10 @@ def test_research_release_lists_legacy_tools_by_their_public_flag(public):
     assert set(content["legacy_tools"]) == public_rights.LEGACY_TOOLS
     # The account list is the historical is_public flag, not a second policy.
     assert set(content["account_tools"]) == {
-        name for name in public_rights.LEGACY_TOOLS if not mcp.TOOLS[name][4]} - {"positioning_book"}
+        name for name in public_rights.LEGACY_TOOLS if not mcp.TOOLS[name][4]} - {
+        "positioning_book", "funding_stress_forecast"} == {"ask_desk", "desk_brief", "replay_asof"}
+    assert content["account_routes"] == ["/api/ask", "/api/asof/{date}", "/api/brief"]
+    assert "funding_stress_forecast" in content["available_tools"]
     assert content["withheld_surfaces"] == ["/api/book", "/data/book_history.json"]
     assert content["withheld_fields"] == ["deep.book", "pit.records[].book", "alerts[rule=book_flip]"]
     for text in (content["boundary"], mcp.SERVER_INSTRUCTIONS):
@@ -130,12 +133,29 @@ def test_research_release_runs_the_legacy_handler(monkeypatch, fake_snap):
 @pytest.mark.parametrize("name", sorted(public_rights.ACCOUNT_TOOLS))
 def test_account_legacy_tools_keep_identity_and_are_never_priced(name):
     preflight = mcp.preflight_tool_call(rpc(name), public=True)
-    assert preflight["error"]["code"] == mcp.INVALID_PARAMS
-    if name in public_rights.BOOK_TOOLS:
+    if name in public_rights.RESEARCH_PUBLIC_TOOLS:
+        assert preflight is None  # opened by the research release
+    elif name in public_rights.BOOK_TOOLS:
+        assert preflight["error"]["code"] == mcp.INVALID_PARAMS
         assert preflight["error"]["data"] == public_rights.legacy_unavailable(name)
     else:
+        assert preflight["error"]["code"] == mcp.INVALID_PARAMS
         assert "unknown tool" in preflight["error"]["message"]
     assert x402.price_usd(name) is None
+
+
+def test_the_forecast_is_public_only_under_the_research_release(fake_snap, monkeypatch):
+    monkeypatch.setattr(mcp, "_get_snapshot", lambda force=False: fake_snap)
+    result = mcp.dispatch(rpc("funding_stress_forecast"), public=True)["result"]
+    assert not result.get("isError")
+    assert "Levels are for ranking, not literal odds" in result["structuredContent"]["reading"]
+    assert "historical_evidence" in result["structuredContent"]
+    # Switching back restores the 28 October refusal exactly.
+    monkeypatch.setattr(public_rights, "ACTIVE_POLICY", public_rights.POLICY)
+    assert mcp.preflight_tool_call(rpc("funding_stress_forecast"), public=True)["error"]["data"][
+        "category"] == "source_rights_restricted"
+    with pytest.raises(mcp.ToolError, match="subscriber tool"):
+        mcp.tool_forecast({}, public=True)
 
 
 @pytest.mark.parametrize("path", sorted(public_rights.LEGACY_PATHS - {"/api/book"}) + ["/api/engines/composite", "/api/asof/2026-10-01", "/api/dispatch/latest", "/api/overview/"])

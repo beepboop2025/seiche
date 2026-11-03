@@ -1079,10 +1079,9 @@ def require_board(authorization: str | None = Header(default=None)) -> dict | No
 def require_account(authorization: str | None = Header(default=None)) -> dict:
     """Bearer identity for REST twins of account-only MCP tools.
 
-    desk_brief, ask_desk, replay_asof, positioning_book and
-    funding_stress_forecast need a verified bearer identity over MCP. Their REST
-    routes (public_rights.ACCOUNT_ROUTES) must not be an anonymous side door,
-    whatever SEICHE_BOARD_AUTH says.
+    Tools in public_rights.account_tools() need a verified bearer identity over
+    MCP. Their REST routes (public_rights.ACCOUNT_ROUTES) must not be an
+    anonymous side door, whatever SEICHE_BOARD_AUTH says.
     """
     ident = _bearer_identity(authorization)
     if ident is None:
@@ -1092,6 +1091,22 @@ def require_account(authorization: str | None = Header(default=None)) -> dict:
             headers={"WWW-Authenticate": 'Bearer realm="seiche"'},
         )
     return ident
+
+
+def account_twin(tool: str):
+    """The gate for a REST twin of the MCP tool ``tool`` under the active policy.
+
+    While the tool is account-only the route needs the same bearer identity
+    (require_account); otherwise it is gated like the board (require_board).
+    """
+    def dependency(authorization: str | None = Header(default=None)) -> dict | None:
+        if tool in mcp_server.public_rights.account_tools():
+            return require_account(authorization)
+        return require_board(authorization)
+
+    dependency.__name__ = f"account_twin_{tool}"
+    dependency.account_tool = tool
+    return dependency
 
 
 def require_agent_room_identity(
@@ -3285,10 +3300,10 @@ async def set_alert_prefs(
 
 @app.get("/api/asof/{date}")
 async def asof(
-    date: str, response: Response, _ident: dict = Depends(require_account)
+    date: str, response: Response, _ident: dict = Depends(account_twin("replay_asof"))
 ):
     """Time Machine: the whole light board replayed as of a historical date.
-    Needs a bearer identity, like its MCP twin replay_asof, whatever
+    Needs a bearer identity while its MCP twin replay_asof does, whatever
     SEICHE_ASOF_AUTH or SEICHE_BOARD_AUTH say (public_rights.ACCOUNT_ROUTES)."""
     if not _DATE_RE.match(date):
         raise HTTPException(422, "date must be YYYY-MM-DD")
@@ -3305,14 +3320,14 @@ async def asof(
 
 
 @app.get("/api/deep")
-async def deep(_ident: dict = Depends(require_account)):
+async def deep(_ident: dict | None = Depends(account_twin("funding_stress_forecast"))):
     """History reconstruction, Tell, Turn, Playbook, PROOF backtest."""
     snap = mcp_server.public_rights.project_book(await assemble.snapshot())
     return sanitize_public_fault_payload(snap.get("deep", {}))
 
 
 @app.get("/api/book")
-async def book(_ident: dict = Depends(require_account)):
+async def book(_ident: dict = Depends(account_twin("positioning_book"))):
     """The Book: today's positions, walk-forward P&L, live track record."""
     snap = await assemble.snapshot()
     return snap.get("deep", {}).get("book", {"ok": False, "reason": "unavailable"})
@@ -3415,7 +3430,7 @@ async def alerts(n: int = 50, _ident: dict | None = Depends(require_board)):
 
 
 @app.get("/api/brief", response_class=PlainTextResponse)
-async def brief_text(_ident: dict = Depends(require_account)):
+async def brief_text(_ident: dict = Depends(account_twin("desk_brief"))):
     """This morning's desk note, rendered as markdown."""
     from seiche import brief as brief_mod
 
@@ -3467,7 +3482,7 @@ async def event_analysis_method_not_allowed():
 
 
 @app.get("/api/ask")
-async def ask(q: str, request: Request, _ident: dict = Depends(require_account)):
+async def ask(q: str, request: Request, _ident: dict = Depends(account_twin("ask_desk"))):
     """Desk assistant: answers grounded strictly in the live board.
     Per-IP rate-limited (it calls the LLM)."""
     from seiche import ai

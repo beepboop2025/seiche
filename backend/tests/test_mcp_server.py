@@ -437,6 +437,7 @@ def test_public_surface_hides_prompts_whose_tools_are_hidden():
         "world_markets_briefing",
         "is_now_dangerous",
         "cross_market_cash_pressure",
+        "funding_stress_briefing",
     }
     for name in names:
         tools_used = set(mcp.PROMPTS[name][4])
@@ -548,10 +549,10 @@ PUBLIC_TOOLS = {"source_rights_status", "gift_city_context", "gold_inventory_car
                 "money_market_context", "world_markets_context",
                 "latest_article", "funding_stress_now", "historical_analogs",
                 "proof_backtest", "crypto_stress_record", "institutional_flows",
-                "oil_funding_context", "fx_materials_passage", "trade_safety_risk_context"}
+                "oil_funding_context", "fx_materials_passage", "trade_safety_risk_context",
+                "funding_stress_forecast"}
 
 TOKEN_TOOLS = {
-    "funding_stress_forecast",
     "replay_asof",
     "desk_brief",
     "positioning_book",

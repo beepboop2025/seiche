@@ -91,7 +91,7 @@ def test_money_market_discovery_separates_catalog_from_dated_evidence():
     assert access["usd_money_markets"].endswith("/api/money-markets")
     assert access["global_money_markets"].endswith("/api/v2/money-markets")
     assert access["public_money_market_mcp_tool"] == "money_market_context"
-    assert "Eight public research tools and nine legacy board tools" in access["authentication"]
+    assert "Eight public research tools and ten legacy board tools" in access["authentication"]
     assert access["trade_safety_risk_context"].endswith(
         "/api/trade-safety/risk-context"
     )

@@ -847,5 +847,7 @@ def test_research_release_wallet_catalog_lists_legacy_tools_only_as_free(client,
     tools = {tool["name"]: tool for tool in response.json()["result"]["tools"]}
     assert PAID_TOOL in tools
     listed_legacy = set(tools) & public_rights.LEGACY_TOOLS
-    assert listed_legacy == public_rights.LEGACY_TOOLS - public_rights.ACCOUNT_TOOLS
+    assert listed_legacy == (public_rights.LEGACY_TOOLS - public_rights.account_tools()
+                             - public_rights.withheld_tools())
+    assert "funding_stress_forecast" in listed_legacy
     assert all("paid tool" not in tools[name]["description"] for name in listed_legacy)

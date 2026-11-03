@@ -35,11 +35,11 @@ PUBLIC_STRUCTURED_CALLS = {
     "institutional_flows": {},
     "oil_funding_context": {},
     "fx_materials_passage": {},
+    "funding_stress_forecast": {},
 }
 # Legacy tools that keep their bearer identity requirement. None is priced.
-# positioning_book is withheld with the Book.
+# positioning_book is withheld with the Book; the forecast is public.
 ACCOUNT_STRUCTURED_CALLS = {
-    "funding_stress_forecast": {},
     "replay_asof": {"date": "2019-09-17"},
     "ask_desk": {"question": "Is dollar funding tight?"},
 }
@@ -186,7 +186,7 @@ def test_tool_descriptors_publish_complete_openai_contracts():
 
     assert len(analysis) == 21
     assert len(authenticated) == 26
-    assert len(public) == 17
+    assert len(public) == 18
     assert set(public_by_name) == set(PUBLIC_STRUCTURED_CALLS)
     assert set(mcp.STRUCTURED_OUTPUT_TOOLS) == set(mcp.TOOLS) - {"desk_brief"}
     assert {

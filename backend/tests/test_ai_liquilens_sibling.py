@@ -202,8 +202,8 @@ def test_ask_desk_does_not_proxy_liquilens_into_public_tools() -> None:
     public = set(mcp_server._visible_tools(True))
     assert "ask_desk" not in public
     assert not any("liquilens" in name for name in mcp_server.TOOLS)
-    # 3 November research release: eight research tools and nine legacy tools.
-    assert len(public) == 17
+    # 3 November research release: eight research tools and ten legacy tools.
+    assert len(public) == 18
     assert "research_network" in public
     assert "money_market_context" in public
     assert "world_markets_context" in public

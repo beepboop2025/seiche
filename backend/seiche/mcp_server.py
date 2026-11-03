@@ -5,11 +5,13 @@ HTTP and stdio share dispatch and the same legacy-feature policy,
 expose rights status, money-market context, the market workbench, world markets,
 GIFT City, gold carry scenarios, connected research and data health. Under the
 3 November research release they also expose the legacy board tools whose
-``is_public`` flag is true. Restricted values are never reconstructed.
+``is_public`` flag is true and ``funding_stress_forecast``
+(``public_rights.RESEARCH_PUBLIC_TOOLS``). Restricted values are never
+reconstructed.
 
 Authenticated HTTP adds five identity-bound Agent Room discussion tools and,
-under the research release, the legacy tools whose ``is_public`` flag is false,
-except ``positioning_book``, which is withheld with the Book.
+under the research release, the other legacy tools whose ``is_public`` flag is
+false, except ``positioning_book``, which is withheld with the Book.
 Local stdio has no bearer principal and cannot expose Agent Room. Under the
 28 October policy every legacy stress, forecast, replay, backtest, positioning
 and derived prose tool is unavailable for every caller; historical
@@ -756,7 +758,8 @@ def tool_stress_now(_args: dict, public: bool) -> Any:
 
 
 def tool_forecast(_args: dict, public: bool) -> Any:
-    if public:
+    # The research release opens the forecast to anonymous callers.
+    if public and "funding_stress_forecast" not in public_rights.research_public_tools():
         raise ToolError(
             "the forward forecast is a subscriber tool — sign in with a token"
         )
@@ -3176,6 +3179,7 @@ OUTPUT_SCHEMAS["source_rights_status"] = _output_schema(
      "policy": {"type": "string"}, "context_only": {"type": "boolean"},
      "available_tools": {"type": "array", "items": {"type": "string"}},
      "account_tools": {"type": "array", "items": {"type": "string"}},
+     "account_routes": {"type": "array", "items": {"type": "string"}},
      "legacy_tools": {"type": "array", "items": {"type": "string"}},
      "unavailable_tools": {"type": "array", "items": {"type": "string"}},
      "withheld_surfaces": {"type": "array", "items": {"type": "string"}},
@@ -3354,7 +3358,8 @@ def _visible_tools(
     pub = _resolve_public(public)
     withheld = public_rights.withheld_tools()
     if pub:
-        return {k: v for k, v in TOOLS.items() if v[4] and k not in withheld}
+        opened = public_rights.research_public_tools()
+        return {k: v for k, v in TOOLS.items() if (v[4] or k in opened) and k not in withheld}
     if identity is None:
         # Local stdio and paid-anonymous calls have no verified bearer identity.
         # They retain the established analysis surface but cannot discover or

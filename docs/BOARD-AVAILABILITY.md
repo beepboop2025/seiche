@@ -14,20 +14,25 @@ removal at any time.
   `LEGACY_PATHS` and `LEGACY_PREFIXES` run their existing handlers again,
   behind their existing authentication settings. The publisher writes the board
   it computed to `/data/overview.json` and `/data/public.json` unchanged.
-- Thirteen legacy MCP tools return to discovery. Nine are anonymous.
-  `funding_stress_forecast`, `replay_asof`, `desk_brief` and `ask_desk` keep
-  the bearer identity requirement they had before 28 October, and so do their
-  REST routes (`public_rights.ACCOUNT_ROUTES`: `/api/deep`, `/api/asof/{date}`,
-  `/api/brief`, `/api/ask`, and `/api/book` once the Book reopens), which
-  answer an anonymous caller with 401 whatever `SEICHE_BOARD_AUTH` says.
-  `/api/engines/{name}` serves only snapshot engines and none of the forecast
-  tool's deep blocks, so it stays open. `positioning_book` is withheld with
-  the Book. No legacy tool is priced: x402 never charges for one, and a
-  payment header offered for one is refused like any other unpriced call.
+- Thirteen legacy MCP tools return to discovery. Ten are anonymous, including
+  `funding_stress_forecast`, which the owner opened on 3 November because the
+  board already shows the forecast probabilities
+  (`public_rights.RESEARCH_PUBLIC_TOOLS`); its research labels and honesty
+  fields are unchanged, and its REST twin `/api/deep` is gated like the board
+  with the Book's fields still withheld. `replay_asof`, `desk_brief` and
+  `ask_desk` keep the bearer identity requirement they had before 28 October,
+  and so do their REST routes (`/api/asof/{date}`, `/api/brief`, `/api/ask`,
+  and `/api/book` with `positioning_book` once the Book reopens), which answer
+  an anonymous caller with 401 whatever `SEICHE_BOARD_AUTH` says
+  (`public_rights.ACCOUNT_ROUTES`, `api.account_twin`). `/api/engines/{name}`
+  serves only snapshot engines and none of the forecast tool's deep blocks.
+  `positioning_book` is withheld with the Book. No legacy tool is priced: x402
+  never charges for one, and a payment header offered for one is refused like
+  any other unpriced call.
 - `source_rights_status` reports `status: research_release`, the new policy,
-  the anonymous `available_tools`, `account_tools`, `legacy_tools`,
-  `unavailable_tools` (`positioning_book`), the `withheld_surfaces` and the
-  `withheld_fields`.
+  the anonymous `available_tools`, `account_tools`, `account_routes`,
+  `legacy_tools`, `unavailable_tools` (`positioning_book`), the
+  `withheld_surfaces` and the `withheld_fields`.
 
 What does not change:
 
