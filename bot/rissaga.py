@@ -1057,6 +1057,25 @@ def _watch_color(row: dict) -> str:
     return ""
 
 
+def _ll_tiers_paused(board: dict) -> bool:
+    """True when the LiquiLens board publishes no tier. LiquiLens can pause
+    tier publication (its backend/tier_publication.py): the board then
+    carries a tier_publication block whose state is not "published", no
+    tier, colour or tier count, and research-only PDs. A board without the
+    block counts as paused when it has rows but no tier counts or a row
+    without a watch colour. Zero counts read from such a board would be a
+    calm the lab never published."""
+    block = board.get("tier_publication")
+    if block is not None and not (isinstance(block, dict)
+                                  and block.get("state") == "published"):
+        return True
+    rows = board.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return False
+    return not (isinstance(board.get("tiers"), dict)
+                and all(isinstance(r, dict) and _watch_color(r) for r in rows))
+
+
 def read_boards() -> dict:
     """The lab's own surfaces, each independent, absence declared."""
     def grab(name, url, dig):
@@ -1080,6 +1099,14 @@ def read_boards() -> dict:
         # live shape 2026-08-19: top-level tiers counts, rows carry the
         # published watchlist `tier` (red/orange/yellow/green). `grade` is
         # the registry letter and must not hide a watch color.
+        if _ll_tiers_paused(d):
+            # Paused tiers: no counts, no colour, no watch name.
+            block = d.get("tier_publication")
+            since = block.get("since") if isinstance(block, dict) else None
+            rows = d.get("rows")
+            return {"paused": True,
+                    "since": since if isinstance(since, str) and since else None,
+                    "total": len(rows) if isinstance(rows, list) else 0}
         tiers = d.get("tiers") if isinstance(d.get("tiers"), dict) else {}
         counts = {str(k).lower(): int(v) for k, v in tiers.items()
                   if isinstance(v, (int, float))}
@@ -1301,6 +1328,11 @@ def board_line(beat: str, boards: dict) -> str:
             return line
     if beat in ("bank_stress", "india_watch"):
         b = boards.get("ll")
+        if b and b.get("paused"):
+            since = f" since {b['since']}" if b.get("since") else ""
+            return (f"LiquiLens review tiers paused{since}, failure PDs "
+                    f"research only ({b.get('total', 0)} institutions on the "
+                    "board)")
         if b:
             line = (f"LiquiLens board {b['red']} red, {b['orange']} orange "
                     f"of {b['total']}")
@@ -1438,7 +1470,10 @@ def board_events(boards: dict, now_ts: float,
            "https://seiche.info")
     cur_ll = boards.get("ll") or {}
     old_ll = prev.get("ll") or {}
-    if cur_ll and old_ll:
+    # Tier counts compare only between two reads that both published tiers:
+    # entering or leaving a pause is not an escalation.
+    if (cur_ll and old_ll and not cur_ll.get("paused")
+            and not old_ll.get("paused")):
         cur_hot = cur_ll.get("red", 0) + cur_ll.get("orange", 0)
         old_hot = old_ll.get("red", 0) + old_ll.get("orange", 0)
         if cur_hot > old_hot:

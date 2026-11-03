@@ -1,0 +1,123 @@
+{
+ "as_of": "2026-11-03",
+ "tiers": {
+  "red": 0,
+  "orange": 0,
+  "yellow": 0,
+  "green": 8
+ },
+ "rows": [
+  {
+   "slug": "au-sfb-2025",
+   "name": "AU Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 80.9,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0023,
+    "pd_24m": 0.0047,
+    "pd_36m": 0.007,
+    "grade": "AA"
+   }
+  },
+  {
+   "slug": "indusind-bank",
+   "name": "IndusInd Bank Ltd",
+   "inst_type": "bank",
+   "score": 81.9,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0022,
+    "pd_24m": 0.0045,
+    "pd_36m": 0.0067,
+    "grade": "AA"
+   }
+  },
+  {
+   "slug": "utkarsh-sfb-2025",
+   "name": "Utkarsh Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 83.2,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0021,
+    "pd_24m": 0.0042,
+    "pd_36m": 0.0063,
+    "grade": "AA"
+   }
+  },
+  {
+   "slug": "ujjivan-sfb",
+   "name": "Ujjivan Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 86.0,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0019,
+    "pd_24m": 0.0038,
+    "pd_36m": 0.0057,
+    "grade": "AA"
+   }
+  },
+  {
+   "slug": "asirvad-micro-finance",
+   "name": "Asirvad Micro Finance Limited",
+   "inst_type": "mfi",
+   "score": 87.2,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0018,
+    "pd_24m": 0.0036,
+    "pd_36m": 0.0055,
+    "grade": "AA"
+   }
+  },
+  {
+   "slug": "esaf-sfb",
+   "name": "ESAF Small Finance Bank",
+   "inst_type": "sfb",
+   "score": 88.6,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0017,
+    "pd_24m": 0.0033,
+    "pd_36m": 0.005,
+    "grade": "AA"
+   }
+  },
+  {
+   "slug": "muthoot-finance",
+   "name": "Muthoot Finance Ltd",
+   "inst_type": "nbfc",
+   "score": 89.7,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0017,
+    "pd_24m": 0.0033,
+    "pd_36m": 0.005,
+    "grade": "AA"
+   }
+  },
+  {
+   "slug": "svc-ucb",
+   "name": "SVC Co-operative Bank",
+   "inst_type": "ucb",
+   "score": 88.2,
+   "tier": "green",
+   "grade": "AA",
+   "hazard": {
+    "pd_12m": 0.0017,
+    "pd_24m": 0.0035,
+    "pd_36m": 0.0052,
+    "grade": "AA"
+   }
+  }
+ ]
+}
