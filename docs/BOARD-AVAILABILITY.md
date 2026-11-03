@@ -14,14 +14,20 @@ removal at any time.
   `LEGACY_PATHS` and `LEGACY_PREFIXES` run their existing handlers again,
   behind their existing authentication settings. The publisher writes the board
   it computed to `/data/overview.json` and `/data/public.json` unchanged.
-- The fourteen legacy MCP tools return to discovery. Nine are anonymous.
-  `funding_stress_forecast`, `replay_asof`, `positioning_book`, `desk_brief`
-  and `ask_desk` keep the bearer identity requirement they had before
-  28 October. No legacy tool is priced: x402 never charges for one, and a
+- Thirteen legacy MCP tools return to discovery. Nine are anonymous.
+  `funding_stress_forecast`, `replay_asof`, `desk_brief` and `ask_desk` keep
+  the bearer identity requirement they had before 28 October, and so do their
+  REST routes (`public_rights.ACCOUNT_ROUTES`: `/api/deep`, `/api/asof/{date}`,
+  `/api/brief`, `/api/ask`, and `/api/book` once the Book reopens), which
+  answer an anonymous caller with 401 whatever `SEICHE_BOARD_AUTH` says.
+  `/api/engines/{name}` serves only snapshot engines and none of the forecast
+  tool's deep blocks, so it stays open. `positioning_book` is withheld with
+  the Book. No legacy tool is priced: x402 never charges for one, and a
   payment header offered for one is refused like any other unpriced call.
 - `source_rights_status` reports `status: research_release`, the new policy,
-  the anonymous `available_tools`, `account_tools`, `legacy_tools`, an empty
-  `unavailable_tools` and the `withheld_surfaces`.
+  the anonymous `available_tools`, `account_tools`, `legacy_tools`,
+  `unavailable_tools` (`positioning_book`), the `withheld_surfaces` and the
+  `withheld_fields`.
 
 What does not change:
 
@@ -36,8 +42,16 @@ What does not change:
   so an append would stop with "restore the published chain before appending".
   Reopening the Book needs the last published chain restored from the site
   mirror's history and verified first. That is an owner step, not a code
-  change, and no chain record is forged or rewritten here. The day's computed
-  Book remains part of the board's deep layer and of `positioning_book`.
+  change, and no chain record is forged or rewritten here. While the Book is
+  withheld its content is withheld wherever it appears, as a field-level
+  projection (`public_rights.project_book`) carrying the same restriction
+  payload as `/api/book`: `deep.book` in `/api/overview`, `/api/deep`, the
+  desk assistant's context and the static `/data/overview.json`; the Book
+  positions in `/api/pit` records; Book alerts in `/api/alerts` and the board's
+  alert log; and `positioning_book`. No stale or partial Book value is served,
+  and no new Book alert is raised or emailed. The stored board, the
+  as-published record and the private build snapshot keep the Book, so the
+  chain and its inputs stay intact.
 - Field-level restrictions outside the legacy board. The money desk projection
   in `money_market_context` and `world_markets_context`, H.10 values in
   `market_workbench`, and FRED series JSON and CSV downloads keep their

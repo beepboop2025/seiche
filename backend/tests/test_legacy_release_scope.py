@@ -87,7 +87,8 @@ def test_an_unknown_policy_withholds_every_legacy_surface(monkeypatch):
 def test_the_research_release_is_the_active_policy():
     assert public_rights.ACTIVE_POLICY == "seiche.public-source-rights.2026-11-03"
     assert public_rights.research_release()
-    assert public_rights.withheld_tools() == frozenset()
+    # Only the Book's own tool stays withheld, with the Book.
+    assert public_rights.withheld_tools() == public_rights.BOOK_TOOLS == {"positioning_book"}
 
 
 @pytest.mark.parametrize("public", [None, True, False])
@@ -96,19 +97,21 @@ def test_research_release_lists_legacy_tools_by_their_public_flag(public):
     names = {t["name"] for t in tools}
     anonymous = mcp._resolve_public(public)
     assert names & public_rights.LEGACY_TOOLS == {
-        name for name in public_rights.LEGACY_TOOLS if not anonymous or mcp.TOOLS[name][4]}
+        name for name in public_rights.LEGACY_TOOLS - public_rights.BOOK_TOOLS
+        if not anonymous or mcp.TOOLS[name][4]}
     status = mcp.dispatch(rpc("source_rights_status"), public=public)["result"]
     assert not status.get("isError")
     content = status["structuredContent"]
     assert content["status"] == "research_release"
     assert content["policy"] == public_rights.RESEARCH_RELEASE_POLICY
-    assert content["unavailable_tools"] == []
+    assert content["unavailable_tools"] == ["positioning_book"]
     assert set(content["available_tools"]) <= names
     assert set(content["legacy_tools"]) == public_rights.LEGACY_TOOLS
     # The account list is the historical is_public flag, not a second policy.
     assert set(content["account_tools"]) == {
-        name for name in public_rights.LEGACY_TOOLS if not mcp.TOOLS[name][4]}
+        name for name in public_rights.LEGACY_TOOLS if not mcp.TOOLS[name][4]} - {"positioning_book"}
     assert content["withheld_surfaces"] == ["/api/book", "/data/book_history.json"]
+    assert content["withheld_fields"] == ["deep.book", "pit.records[].book", "alerts[rule=book_flip]"]
     for text in (content["boundary"], mcp.SERVER_INSTRUCTIONS):
         assert "\u2014" not in text and "\u2013" not in text
     assert "removal at any time" in content["boundary"]
@@ -128,7 +131,10 @@ def test_research_release_runs_the_legacy_handler(monkeypatch, fake_snap):
 def test_account_legacy_tools_keep_identity_and_are_never_priced(name):
     preflight = mcp.preflight_tool_call(rpc(name), public=True)
     assert preflight["error"]["code"] == mcp.INVALID_PARAMS
-    assert "unknown tool" in preflight["error"]["message"]
+    if name in public_rights.BOOK_TOOLS:
+        assert preflight["error"]["data"] == public_rights.legacy_unavailable(name)
+    else:
+        assert "unknown tool" in preflight["error"]["message"]
     assert x402.price_usd(name) is None
 
 

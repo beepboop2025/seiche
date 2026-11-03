@@ -8,11 +8,14 @@ use while source permissions are sought (policy
 any time.
 Anonymous public tools: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, and the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `trade_safety_risk_context`.
 Start with `source_rights_status`. The legacy `funding_stress_forecast`,
-`replay_asof`, `positioning_book`, `desk_brief` and `ask_desk` keep the bearer
-token requirement they had before 28 October; no payment unlocks a legacy tool.
+`replay_asof`, `desk_brief` and `ask_desk` keep the bearer token requirement
+they had before 28 October, and so do their REST routes (`/api/deep`,
+`/api/asof/{date}`, `/api/brief`, `/api/ask`); no payment unlocks a legacy tool.
 Legacy forecasts, analogs, backtests and replays are research diagnostics, not
-validated predictions. The Book (`/api/book` and its hash-chained ledger) stays
-withheld until its published chain is restored. Do not reconstruct withheld
+validated predictions. The Book stays withheld until its published chain is
+restored: `/api/book`, its hash-chained ledger, `positioning_book` and every Book
+field in the board, as-published records and alerts carry the restriction
+instead of values. Do not reconstruct withheld
 observations from metadata, cached history or prior responses. Direct publisher
 observations keep their own dates; restricted inputs remain explicitly
 metadata-only. Authenticated callers can additionally discover five private,

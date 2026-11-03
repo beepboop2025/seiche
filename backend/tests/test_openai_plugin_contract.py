@@ -37,10 +37,10 @@ PUBLIC_STRUCTURED_CALLS = {
     "fx_materials_passage": {},
 }
 # Legacy tools that keep their bearer identity requirement. None is priced.
+# positioning_book is withheld with the Book.
 ACCOUNT_STRUCTURED_CALLS = {
     "funding_stress_forecast": {},
     "replay_asof": {"date": "2019-09-17"},
-    "positioning_book": {},
     "ask_desk": {"question": "Is dollar funding tight?"},
 }
 
@@ -184,20 +184,20 @@ def test_tool_descriptors_publish_complete_openai_contracts():
     authenticated_by_name = {tool["name"]: tool for tool in authenticated}
     public_by_name = {tool["name"]: tool for tool in public}
 
-    assert len(analysis) == 22
-    assert len(authenticated) == 27
+    assert len(analysis) == 21
+    assert len(authenticated) == 26
     assert len(public) == 17
     assert set(public_by_name) == set(PUBLIC_STRUCTURED_CALLS)
     assert set(mcp.STRUCTURED_OUTPUT_TOOLS) == set(mcp.TOOLS) - {"desk_brief"}
     assert {
         name for name, tool in analysis_by_name.items() if "outputSchema" in tool
-    } == set(mcp.STRUCTURED_OUTPUT_TOOLS) - set(mcp.AGENT_ROOM_TOOLS)
+    } == set(mcp.STRUCTURED_OUTPUT_TOOLS) - set(mcp.AGENT_ROOM_TOOLS) - {"positioning_book"}
     assert {
         name for name, tool in analysis_by_name.items() if "outputSchema" in tool
     } == set(PUBLIC_STRUCTURED_CALLS) | set(ACCOUNT_STRUCTURED_CALLS)
     assert {
         name for name, tool in authenticated_by_name.items() if "outputSchema" in tool
-    } == set(mcp.STRUCTURED_OUTPUT_TOOLS)
+    } == set(mcp.STRUCTURED_OUTPUT_TOOLS) - {"positioning_book"}
     assert "outputSchema" not in authenticated_by_name["desk_brief"]
 
     for tool in authenticated:

@@ -254,7 +254,10 @@ def test_asof_replay_is_cacheable_for_a_day(client, monkeypatch):
         return {"ok": True, "asof": date, "engines": {}}
 
     monkeypatch.setattr(assemble, "snapshot_asof", fake_asof)
-    r = client.get("/api/asof/2025-03-14")
+    # The Time Machine needs a bearer identity, like replay_asof.
+    monkeypatch.setattr(api.accounts, "verify_current_token",
+                        lambda _token: {"username": "reader", "tier": "free"})
+    r = client.get("/api/asof/2025-03-14", headers={"Authorization": "Bearer test"})
     assert r.status_code == 200
     assert r.headers["cache-control"] == "public, max-age=86400"
 

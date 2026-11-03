@@ -154,7 +154,8 @@ def test_research_release_exports_the_computed_board_unchanged(tmp_path, monkeyp
     snapshot_path.write_text(json.dumps(snapshot))
 
     assert module.main(["--snapshot", str(snapshot_path), str(public_path), str(overview_path)]) == 0
-    assert json.loads(overview_path.read_text()) == snapshot
+    assert json.loads(overview_path.read_text()) == public_rights.project_book(snapshot)
+    assert json.loads(overview_path.read_text())["deep"]["book"] == public_rights.withheld_book()
     public = json.loads(public_path.read_text())
     assert not public_rights.is_restriction(public)
     assert public["generated_at"] == snapshot["generated_at"]

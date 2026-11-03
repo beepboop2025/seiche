@@ -1076,6 +1076,24 @@ def require_board(authorization: str | None = Header(default=None)) -> dict | No
     return ident
 
 
+def require_account(authorization: str | None = Header(default=None)) -> dict:
+    """Bearer identity for REST twins of account-only MCP tools.
+
+    desk_brief, ask_desk, replay_asof, positioning_book and
+    funding_stress_forecast need a verified bearer identity over MCP. Their REST
+    routes (public_rights.ACCOUNT_ROUTES) must not be an anonymous side door,
+    whatever SEICHE_BOARD_AUTH says.
+    """
+    ident = _bearer_identity(authorization)
+    if ident is None:
+        raise HTTPException(
+            status_code=401,
+            detail="this route needs a bearer token, like its account-only MCP tool",
+            headers={"WWW-Authenticate": 'Bearer realm="seiche"'},
+        )
+    return ident
+
+
 def require_agent_room_identity(
     authorization: str | None = Header(default=None),
 ) -> dict:
@@ -1198,13 +1216,16 @@ _OVERVIEW_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=240"
 
 def _overview_wire(payload: dict) -> dict[str, Any]:
     assemble._assert_snapshot_rights(payload)
-    if _OVERVIEW_WIRE["src"] is not payload:
-        public_payload = sanitize_public_fault_payload(payload)
+    book_withheld = mcp_server.public_rights.book_withheld()
+    if _OVERVIEW_WIRE["src"] is not payload or _OVERVIEW_WIRE.get("book_withheld") is not book_withheld:
+        public_payload = sanitize_public_fault_payload(
+            mcp_server.public_rights.project_book(payload))
         body = json.dumps(
             _json_safe(public_payload), separators=(",", ":"), allow_nan=False
         ).encode()
         _OVERVIEW_WIRE.update(
             src=payload,
+            book_withheld=book_withheld,
             body=body,
             gz=gzip.compress(body, 6),
             etag='"' + hashlib.sha256(body).hexdigest()[:20] + '"',
@@ -3264,14 +3285,11 @@ async def set_alert_prefs(
 
 @app.get("/api/asof/{date}")
 async def asof(
-    date: str, response: Response, ident: dict | None = Depends(require_board)
+    date: str, response: Response, _ident: dict = Depends(require_account)
 ):
     """Time Machine: the whole light board replayed as of a historical date.
-    Subscriber-gated when SEICHE_ASOF_AUTH=1 (the public box); open in dev."""
-    if accounts.asof_gate_enabled() and ident is None:
-        raise HTTPException(
-            401, "Time Machine replay is a subscriber feature — sign in"
-        )
+    Needs a bearer identity, like its MCP twin replay_asof, whatever
+    SEICHE_ASOF_AUTH or SEICHE_BOARD_AUTH say (public_rights.ACCOUNT_ROUTES)."""
     if not _DATE_RE.match(date):
         raise HTTPException(422, "date must be YYYY-MM-DD")
     payload = await assemble.snapshot_asof(date)
@@ -3287,14 +3305,14 @@ async def asof(
 
 
 @app.get("/api/deep")
-async def deep(_ident: dict | None = Depends(require_board)):
+async def deep(_ident: dict = Depends(require_account)):
     """History reconstruction, Tell, Turn, Playbook, PROOF backtest."""
-    snap = await assemble.snapshot()
+    snap = mcp_server.public_rights.project_book(await assemble.snapshot())
     return sanitize_public_fault_payload(snap.get("deep", {}))
 
 
 @app.get("/api/book")
-async def book(_ident: dict | None = Depends(require_board)):
+async def book(_ident: dict = Depends(require_account)):
     """The Book: today's positions, walk-forward P&L, live track record."""
     snap = await assemble.snapshot()
     return snap.get("deep", {}).get("book", {"ok": False, "reason": "unavailable"})
@@ -3389,18 +3407,19 @@ async def alerts(n: int = 50, _ident: dict | None = Depends(require_board)):
         conn.close()
     return {
         "alerts": [
-            {"fired_at": r[0], "rule": r[1], "state": r[2], "message": r[3]}
+            mcp_server.public_rights.project_alert(
+                {"fired_at": r[0], "rule": r[1], "state": r[2], "message": r[3]})
             for r in rows
         ]
     }
 
 
 @app.get("/api/brief", response_class=PlainTextResponse)
-async def brief_text(_ident: dict | None = Depends(require_board)):
+async def brief_text(_ident: dict = Depends(require_account)):
     """This morning's desk note, rendered as markdown."""
     from seiche import brief as brief_mod
 
-    snap = await assemble.snapshot()
+    snap = mcp_server.public_rights.project_book(await assemble.snapshot())
     return brief_mod.render_markdown(sanitize_public_fault_payload(snap))
 
 
@@ -3448,7 +3467,7 @@ async def event_analysis_method_not_allowed():
 
 
 @app.get("/api/ask")
-async def ask(q: str, request: Request):
+async def ask(q: str, request: Request, _ident: dict = Depends(require_account)):
     """Desk assistant: answers grounded strictly in the live board.
     Per-IP rate-limited (it calls the LLM)."""
     from seiche import ai
@@ -3459,7 +3478,7 @@ async def ask(q: str, request: Request):
         )
     if not q or len(q) > 600:
         raise HTTPException(422, "q must be 1-600 characters")
-    snap = await assemble.snapshot()
+    snap = mcp_server.public_rights.project_book(await assemble.snapshot())
     return await ai.ask(q, sanitize_public_fault_payload(snap))
 
 
@@ -3476,7 +3495,8 @@ async def pit(n: int = 400, _ident: dict | None = Depends(require_board)):
         conn.close()
     import json as _json
 
-    return {"records": [_json.loads(p) for _, p in reversed(rows)]}
+    return {"records": [mcp_server.public_rights.project_pit_record(_json.loads(p))
+                        for _, p in reversed(rows)]}
 
 
 def _railway_control_not_found() -> JSONResponse:

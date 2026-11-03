@@ -1109,7 +1109,12 @@ def test_proof(stubbed):
     assert p["historical_evidence"]["real_money_eligible"] is False
 
 
-def test_book(stubbed):
+def test_book(stubbed, monkeypatch):
+    # The Book tool is withheld with the Book; it serves the Book once reopened.
+    withheld = _call("positioning_book")["result"]
+    assert withheld["isError"] is True
+    assert withheld["structuredContent"]["category"] == "source_rights_restricted"
+    monkeypatch.setattr(mcp.public_rights, "RESEARCH_RELEASE_WITHHELD_PATHS", frozenset())
     p = _payload(_call("positioning_book"))
     assert p["today"]["stance"] == "risk_off"
     assert p["ensemble"]["p_event_5bd"] == 0.19

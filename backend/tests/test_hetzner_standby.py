@@ -401,7 +401,7 @@ def test_http_allowlist_and_identity(accepted, monkeypatch, policy):
         # The research release serves the sealed standby snapshot unchanged;
         # force never recomputes it.
         assert overview.status_code == 200
-        assert overview.json() == envelope["payload"]
+        assert overview.json() == public_rights.project_book(envelope["payload"])
     for method, path in (
         ("POST", "/mcp"), ("POST", "/api/overview"), ("GET", "/api/ask"),
         ("POST", "/api/internal/v1/railway-control/commands"),

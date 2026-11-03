@@ -48,11 +48,11 @@ def test_the_surface_is_the_research_release():
     the legacy tools for research on 3 November 2026."""
     assert public_rights.research_release()
     assert len(PUBLIC) == 17, sorted(PUBLIC)
-    assert len(GATED) == 5, sorted(GATED)
+    assert len(GATED) == 4, sorted(GATED)
     assert len(AGENT_ROOM) == 5, sorted(AGENT_ROOM)
     assert PUBLIC == {'source_rights_status', 'market_workbench', 'money_market_context', 'gift_city_context', 'gold_inventory_carry', 'world_markets_context', 'data_health', 'research_network',
                       'latest_article', 'funding_stress_now', 'historical_analogs', 'proof_backtest', 'crypto_stress_record', 'institutional_flows', 'oil_funding_context', 'fx_materials_passage', 'trade_safety_risk_context'}
-    assert GATED == public_rights.ACCOUNT_TOOLS
+    assert GATED == public_rights.ACCOUNT_TOOLS - public_rights.BOOK_TOOLS
 
 
 
@@ -142,8 +142,8 @@ def test_account_copy_matches_the_authenticated_mcp_surface():
     account = (REPO / "frontend" / "src" / "tabs" / "Account.tsx").read_text()
     support = (REPO / "frontend" / "public" / "support.html").read_text()
     assert "exists for exactly one thing" not in account
-    assert GATED == public_rights.ACCOUNT_TOOLS
-    assert "five token-only legacy tools" in account
+    assert GATED == public_rights.ACCOUNT_TOOLS - public_rights.BOOK_TOOLS
+    assert "four token-only legacy tools" in account
     assert "five private, non-executable Agent Room tools" in account
     assert "Five private Agent Room preview tools" in support
     agent_doc = (REPO / "docs" / "AGENT-ROOM.md").read_text()

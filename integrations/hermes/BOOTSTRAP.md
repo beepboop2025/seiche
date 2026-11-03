@@ -14,6 +14,6 @@ Paste the following into Hermes after wiring the MCP connection:
 
 Legacy tools are shown for free research use while source permissions are
 sought; their forecasts and backtests are research diagnostics, not validated
-predictions. Five legacy tools need bearer authentication, and no payment
-unlocks a legacy tool. Private Agent Room tools are separately identity-gated,
+predictions. Four legacy tools need bearer authentication, the Book and
+`positioning_book` stay withheld, and no payment unlocks a legacy tool. Private Agent Room tools are separately identity-gated,
 signed discussion only, and never execution authority.

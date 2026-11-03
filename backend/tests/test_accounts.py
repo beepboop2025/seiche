@@ -239,7 +239,10 @@ def test_login_endpoint_and_gate(accounts, monkeypatch):
     assert r.status_code == 200 and r.json()["username"] == "desk_01"
     assert client.get("/api/me").status_code == 401
 
-    # the gate is opt-in: off by default, 401 without a token when on
+    # The Time Machine needs a bearer token like replay_asof, with or without
+    # SEICHE_ASOF_AUTH (public_rights.ACCOUNT_ROUTES).
+    monkeypatch.delenv("SEICHE_ASOF_AUTH", raising=False)
+    assert client.get("/api/asof/2026-07-01").status_code == 401
     monkeypatch.setenv("SEICHE_ASOF_AUTH", "1")
     r = client.get("/api/asof/2026-07-01")
     assert r.status_code == 401

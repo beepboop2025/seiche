@@ -220,6 +220,20 @@ RESEARCH_TOOLS = (
 ACCOUNT_TOOLS = frozenset({
     "funding_stress_forecast", "replay_asof", "positioning_book", "desk_brief", "ask_desk",
 })
+# REST routes that serve the same content as an account-only tool. They need
+# the same bearer identity (api.require_account), whatever SEICHE_BOARD_AUTH
+# says. funding_stress_forecast reads deep.{swell, bathymetry, ml, markov,
+# oujump, montecarlo}; /api/engines/{name} serves only snapshot engines, which
+# hold none of them, so its sibling is /api/deep.
+ACCOUNT_ROUTES = {
+    "desk_brief": ("/api/brief",),
+    "ask_desk": ("/api/ask",),
+    "replay_asof": ("/api/asof/{date}",),
+    "positioning_book": ("/api/book",),
+    "funding_stress_forecast": ("/api/deep",),
+}
+# Legacy tools whose whole output is the Book. They are withheld with it.
+BOOK_TOOLS = frozenset({"positioning_book"})
 
 
 def research_release() -> bool:
@@ -229,7 +243,9 @@ def research_release() -> bool:
 
 def withheld_tools() -> frozenset[str]:
     """Legacy MCP tools the active policy withholds from every caller."""
-    return frozenset() if research_release() else LEGACY_TOOLS
+    if not research_release():
+        return LEGACY_TOOLS
+    return BOOK_TOOLS if book_withheld() else frozenset()
 
 
 def legacy_http_restricted(path: str) -> bool:
@@ -239,6 +255,50 @@ def legacy_http_restricted(path: str) -> bool:
     return normalized in LEGACY_PATHS or any(
         normalized.startswith(prefix) for prefix in LEGACY_PREFIXES
     )
+
+
+def book_withheld() -> bool:
+    """While /api/book is withheld, Book content is withheld wherever it appears."""
+    return legacy_http_restricted("/api/book")
+
+
+def withheld_book() -> dict:
+    """The explicit state that replaces Book content: the /api/book restriction."""
+    return legacy_unavailable("/api/book")
+
+
+def project_book(snapshot: object) -> object:
+    """A board copy whose Book content carries the withheld state.
+
+    deep.book and Book alerts in system.alert_log are replaced; nothing else
+    is copied deeply, recomputed or relabelled. The stored board is unchanged.
+    """
+    if not book_withheld() or not isinstance(snapshot, Mapping):
+        return snapshot
+    out = dict(snapshot)
+    deep = snapshot.get("deep")
+    if isinstance(deep, Mapping) and "book" in deep:
+        out["deep"] = {**deep, "book": withheld_book()}
+    system = snapshot.get("system")
+    log = system.get("alert_log") if isinstance(system, Mapping) else None
+    if isinstance(log, Mapping) and isinstance(log.get("alerts"), list):
+        out["system"] = {**system, "alert_log": {**log, "alerts": [
+            project_alert(row) for row in log["alerts"]]}}
+    return out
+
+
+def project_pit_record(record: object) -> object:
+    """An as-published record whose Book positions carry the withheld state."""
+    if not book_withheld() or not isinstance(record, Mapping) or "book" not in record:
+        return record
+    return {**record, "book": withheld_book()}
+
+
+def project_alert(row: object) -> object:
+    """An alert row whose Book state and message carry the withheld state."""
+    if not book_withheld() or not isinstance(row, Mapping) or row.get("rule") != "book_flip":
+        return row
+    return {**row, "state": None, "message": None, "withheld": withheld_book()}
 
 
 def static_restriction(path: str) -> dict | None:
@@ -272,28 +332,36 @@ RESEARCH_RELEASE_BOUNDARY = (
     "source permissions are sought. Source owners can request removal at any time. "
     "Showing a value is not a claim of publisher permission or a reuse license. "
     "Legacy forecasts, analogs, backtests and replays are research diagnostics, not "
-    "validated predictions or investment advice. The Book route and its hash-chained "
-    "ledger keep the 28 October restriction until the published chain is restored. "
-    "money_market_context, world_markets_context, market_workbench and series "
-    "downloads keep their field-specific restrictions, and every tool still reports "
-    "missing values and source clocks. account_tools need a bearer identity; no "
-    "payment unlocks a legacy tool. Gold carry is arithmetic over caller-supplied "
-    "assumptions."
+    "validated predictions or investment advice. The Book keeps the 28 October "
+    "restriction until its published chain is restored: /api/book, its hash-chained "
+    "ledger, positioning_book and every Book field listed in withheld_fields carry "
+    "that restriction instead of values. money_market_context, world_markets_context, "
+    "market_workbench and series downloads keep their field-specific restrictions, "
+    "and every tool still reports missing values and source clocks. account_tools "
+    "and their REST routes (/api/brief, /api/ask, /api/asof, /api/deep) need a "
+    "bearer identity; no payment unlocks a legacy tool. Gold carry is arithmetic "
+    "over caller-supplied assumptions."
 )
+# Book fields that carry the withheld state while the Book is withheld.
+BOOK_FIELDS = ("deep.book", "pit.records[].book", "alerts[rule=book_flip]")
 
 
 def rights_status() -> dict:
     if research_release():
         withheld = sorted(RESEARCH_RELEASE_WITHHELD_PATHS) + sorted(
             path for path, route in STATIC_SURFACES.items() if legacy_http_restricted(route))
+        unavailable = withheld_tools()
         return {
             "schema": "seiche.source-rights-status.v1", "status": "research_release",
             "policy": ACTIVE_POLICY, "context_only": True,
-            "available_tools": [*RESEARCH_TOOLS, *sorted(LEGACY_TOOLS - ACCOUNT_TOOLS)],
-            "account_tools": sorted(ACCOUNT_TOOLS),
+            "available_tools": [*RESEARCH_TOOLS,
+                                *sorted(LEGACY_TOOLS - ACCOUNT_TOOLS - unavailable)],
+            "account_tools": sorted(ACCOUNT_TOOLS - unavailable),
             "legacy_tools": sorted(LEGACY_TOOLS),
-            "unavailable_tools": sorted(withheld_tools()),
-            "withheld_surfaces": withheld, "rights_urls": [TERMS],
+            "unavailable_tools": sorted(unavailable),
+            "withheld_surfaces": withheld,
+            "withheld_fields": list(BOOK_FIELDS) if book_withheld() else [],
+            "rights_urls": [TERMS],
             "boundary": RESEARCH_RELEASE_BOUNDARY,
         }
     return {

@@ -8,7 +8,8 @@ GIFT City, gold carry scenarios, connected research and data health. Under the
 ``is_public`` flag is true. Restricted values are never reconstructed.
 
 Authenticated HTTP adds five identity-bound Agent Room discussion tools and,
-under the research release, the legacy tools whose ``is_public`` flag is false.
+under the research release, the legacy tools whose ``is_public`` flag is false,
+except ``positioning_book``, which is withheld with the Book.
 Local stdio has no bearer principal and cannot expose Agent Room. Under the
 28 October policy every legacy stress, forecast, replay, backtest, positioning
 and derived prose tool is unavailable for every caller; historical
@@ -941,7 +942,7 @@ def tool_brief(_args: dict, public: bool) -> Any:
         raise ToolError("the desk brief is a subscriber tool — sign in with a token")
     from seiche import brief
 
-    snap = _get_snapshot()
+    snap = public_rights.project_book(_get_snapshot())
     return brief.render_markdown(snap)
 
 
@@ -1555,7 +1556,8 @@ def tool_ask(args: dict, public: bool) -> Any:
         raise ToolError("`question` is required")
     if len(q) > 600:
         raise ToolError("`question` must be 1-600 characters")
-    snap = _get_snapshot()
+    # The answer may only see what the caller may see: no Book while withheld.
+    snap = public_rights.project_book(_get_snapshot())
     res = _run(ai.ask(q, snap))
     if not res.get("ok"):
         raise ToolError(
@@ -3177,6 +3179,7 @@ OUTPUT_SCHEMAS["source_rights_status"] = _output_schema(
      "legacy_tools": {"type": "array", "items": {"type": "string"}},
      "unavailable_tools": {"type": "array", "items": {"type": "string"}},
      "withheld_surfaces": {"type": "array", "items": {"type": "string"}},
+     "withheld_fields": {"type": "array", "items": {"type": "string"}},
      "rights_urls": {"type": "array", "items": {"type": "string"}}, "boundary": {"type": "string"}},
     (("schema", "status", "policy", "context_only", "available_tools", "unavailable_tools", "rights_urls", "boundary"),
      {"schema": "seiche.source-rights-status.v1", "context_only": True}),
@@ -3388,8 +3391,8 @@ _LEGACY_RESEARCH_INSTRUCTIONS = (
     "for free research use while source permissions are sought. funding_stress_now "
     "reads the legacy board. Legacy forecasts, analogs, backtests and replays are "
     "research diagnostics, not validated predictions; proof_backtest is a "
-    "construction-PIT diagnostic, not validated backtest evidence. Never reconstruct "
-    "a missing or withheld value."
+    "construction-PIT diagnostic, not validated backtest evidence. The Book and "
+    "positioning_book stay withheld. Never reconstruct a missing or withheld value."
 )
 
 

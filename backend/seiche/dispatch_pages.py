@@ -715,8 +715,8 @@ def _mcp_surface_sentence() -> str:
             "tools are shown for free research use while source permissions are sought; "
             "legacy forecasts and backtests are research diagnostics, not validated "
             "predictions. Legacy tools that need bearer identity: "
-            + ", ".join(status["account_tools"]) + ". The Book's hash-chained ledger "
-            "stays withheld.")
+            + ", ".join(status["account_tools"]) + ". The Book, its hash-chained "
+            "ledger and positioning_book stay withheld.")
 
 
 _LLMS_PREAMBLE = f"""# Seiche

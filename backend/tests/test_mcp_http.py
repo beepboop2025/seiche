@@ -765,7 +765,7 @@ def test_authorization_header_wins_during_query_transition(client, monkeypatch):
     assert r.status_code == 200
     names = {tool["name"] for tool in r.json()["result"]["tools"]}
     # The header identity, not the query credential, opens the account-only tool.
-    assert "positioning_book" in names
+    assert "desk_brief" in names
     assert "source_rights_status" in names
     assert r.headers["Warning"].startswith("299 Seiche")
 
@@ -815,7 +815,8 @@ def test_authenticated_sees_full_surface(client):
         headers={"Authorization": f"Bearer {_pro_token()}"},
     )
     names = {t["name"] for t in r.json()["result"]["tools"]}
-    assert ANONYMOUS_TOOLS | public_rights.ACCOUNT_TOOLS | mcp_server.AGENT_ROOM_TOOLS == names
+    assert (ANONYMOUS_TOOLS | public_rights.ACCOUNT_TOOLS | mcp_server.AGENT_ROOM_TOOLS) - {
+        "positioning_book"} == names
 
 
 def test_authenticated_sees_no_legacy_tool_under_the_withheld_policy(client, withheld_policy):

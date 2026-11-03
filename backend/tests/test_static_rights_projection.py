@@ -200,8 +200,10 @@ def test_research_release_publishes_the_board_and_keeps_the_book_withheld(tmp_pa
     site, private = _publish(tmp_path, board)
     files = _public_text(site)
 
-    # The board files carry exactly the computed board; nothing is relabelled.
-    assert json.loads(files["data/overview.json"]) == board
+    # The board files carry exactly the computed board, with the withheld
+    # Book's fields carrying its restriction; nothing else is relabelled.
+    assert json.loads(files["data/overview.json"]) == public_rights.project_book(board)
+    assert json.loads(files["data/overview.json"])["deep"]["book"] == public_rights.withheld_book()
     assert not public_rights.is_restriction(json.loads(files["data/public.json"]))
     leaks = _leaks(files)
     assert "data/overview.json" in leaks and "index.html" in leaks

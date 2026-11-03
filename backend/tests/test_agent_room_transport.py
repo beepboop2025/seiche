@@ -427,8 +427,8 @@ def test_agent_room_tools_are_identity_bound(room_client):
         "/mcp", json=_rpc("tools/list"), headers=_headers("alice")
     ).json()["result"]["tools"]
     by_name = {tool["name"]: tool for tool in authenticated}
-    # Plus five token-only legacy tools and five Agent Room tools.
-    assert len(authenticated) == 27
+    # Plus four token-only legacy tools and five Agent Room tools.
+    assert len(authenticated) == 26
     assert set(mcp_server.AGENT_ROOM_TOOLS) <= set(by_name)
     assert by_name["agent_room_append_event"]["annotations"]["readOnlyHint"] is False
     assert by_name["agent_room_list_events"]["annotations"]["readOnlyHint"] is True
