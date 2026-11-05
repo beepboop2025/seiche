@@ -35,6 +35,7 @@ const Today = lazy(() => import("./tabs/Today"));
 const Board = lazy(() => import("./tabs/Board"));
 const MoneyMarkets = lazy(() => import("./tabs/MoneyMarkets"));
 const MarketWorkbench = lazy(() => import("./tabs/MarketWorkbench"));
+const Geography = lazy(() => import("./tabs/Geography"));
 const GiftCity = lazy(() => import("./tabs/GiftCity"));
 const Corpus = lazy(() => import("./tabs/Corpus"));
 const Research = lazy(() => import("./tabs/Research"));
@@ -283,6 +284,10 @@ function AppInner() {
   // Accounts exist only for optional email alerts (ACCOUNT tab).
   // This desk owns its evidence request. Keep its form mounted when the
   // unrelated overview finishes loading or its background refresh changes.
+  if (tab === "GEOGRAPHY") {
+    return <main className="app research-app" id="main" data-tab={tab} data-share-disabled="true">
+      <Suspense fallback={<TabSkeleton />}><Geography /></Suspense></main>;
+  }
   if (tab === "GIFT CITY") {
     return <main className="app research-app" id="main" data-tab={tab} data-share-disabled="true">
       <Suspense fallback={<TabSkeleton />}><GiftCity /></Suspense></main>;

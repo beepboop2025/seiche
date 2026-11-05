@@ -19,6 +19,7 @@ export interface Entry {
 }
 
 export const ENTRIES: Entry[] = [
+  { code: "GEO", title: "INDIA GEOGRAPHY", hint: "satellite comparison · district rainfall · lender geography", keywords: "geography satellite imagery India district monsoon soil moisture vegetation Bhoonidhi LiquiLens", run: { type: "tab", tab: "GEOGRAPHY" } },
   { code: "TOD", title: "TODAY", hint: "the argument · evidence · countercase · live relay", keywords: "today thesis editorial front page live current", run: { type: "tab", tab: "TODAY" } },
   { code: "INV", title: "ARTICLES", hint: "daily analysis · investigations · charts · counter-cases", keywords: "investigative journalism stories analysis articles longform", run: { type: "href", url: "/articles/" } },
   { code: "DIS", title: "DISPATCHES", hint: "the daily letter", keywords: "letter desk note daily", run: { type: "tab", tab: "DISPATCHES" } },
@@ -52,6 +53,7 @@ export const ENTRIES: Entry[] = [
 
 // Engine-name codes: typing the engine gets you to the tab that owns it.
 const ALIAS_CODES: Record<string, string> = {
+  GEOGRAPHY: "GEO", SATELLITE: "GEO", BHOONIDHI: "GEO",
   HOME: "TOD", NOW: "TOD", THESIS: "TOD",
   ARTICLE: "INV", ARTICLES: "INV", STORIES: "INV",
   DIVE: "BRD", KINK: "BRD", WEATHER: "BRD", ASK: "BRD",

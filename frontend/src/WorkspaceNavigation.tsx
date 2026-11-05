@@ -19,7 +19,7 @@ export default function WorkspaceNavigation({ tab, goTab, openCommands, openHelp
     goTab(target);
   }}>{tabLabel(target)}</a>;
   return <nav className="workspace-tabs research-desk-tabs" aria-label="Funding desk tools">
-    {(["TODAY", "MONEY MARKETS", "GIFT CITY", "WORKBENCH", "CORPUS", "RESEARCH"] as TerminalTab[]).map(link)}
+    {(["TODAY", "MONEY MARKETS", "GIFT CITY", "GEOGRAPHY", "WORKBENCH", "CORPUS", "RESEARCH"] as TerminalTab[]).map(link)}
     <a href="https://liquilens.in/investors/">Company &amp; investors</a>
     <details className="workspace-tools" ref={menu} onKeyDown={(event) => { if (event.key === "Escape" && menu.current) { menu.current.open = false; menu.current.querySelector("summary")?.focus(); } }}>
       <summary>{groups.some((group) => group.tabs.includes(tab)) ? tabLabel(tab) : "All tools"}</summary>

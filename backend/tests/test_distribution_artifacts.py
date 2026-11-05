@@ -335,7 +335,7 @@ class ContainerContracts(unittest.TestCase):
         for forbidden in ("!.git", "!backend/data", "!backend/tests", "!node_modules"):
             self.assertNotIn(forbidden, self.dockerignore)
 
-    def test_ca_patch_preserves_the_pinned_runtime_and_package_inventory(self) -> None:
+    def test_security_patch_preserves_the_pinned_runtime_and_package_inventory(self) -> None:
         bases = dict(
             (stage, image)
             for image, stage in re.findall(
@@ -350,6 +350,15 @@ class ContainerContracts(unittest.TestCase):
             self.dockerfile,
         )
         self.assertIn("COPY --from=python-build /runtime-root/ /", self.dockerfile)
+        for package, old, fixed in (
+            ("libexpat1", "2.8.5-r0", "2.10.0-r0"),
+            ("py3-pip-wheel", "26.2.1-r2", "26.2.2-r2"),
+        ):
+            self.assertIn(f'"{package}={fixed}"', self.dockerfile)
+            self.assertIn(f'"{package}": ("{old}", "{fixed}")', self.dockerfile)
+            self.assertIn(f"('{package}', '{old}')", self.dockerfile)
+        self.assertIn('"unexpected pinned security inventory"', self.dockerfile)
+        self.assertIn('f"var/lib/db/sbom/{name}-{new}.spdx.json").is_file()', self.dockerfile)
         self.assertIn(
             "ca-certificates-bundle-20260909-r2.spdx.json').unlink()",
             self.dockerfile,
