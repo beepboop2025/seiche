@@ -4,7 +4,15 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 
+# The 28 October restriction. Restriction payloads, the money desk projection
+# and field-level metadata keep this identity under every release policy.
 POLICY = "seiche.public-source-rights.2026-10-28"
+# Owner decision of 3 November 2026: the legacy funding board and legacy tools
+# are shown for free research use while source permissions are sought.
+RESEARCH_RELEASE_POLICY = "seiche.public-source-rights.2026-11-03"
+# The release policy in force. Setting it to POLICY withholds every legacy
+# surface again; any value other than RESEARCH_RELEASE_POLICY does the same.
+ACTIVE_POLICY = RESEARCH_RELEASE_POLICY
 REASON = (
     "Public redistribution permission for these FRED-sourced observations and "
     "dependent readings is not established. Values are withheld pending "
@@ -173,6 +181,9 @@ def money_desk(value: object) -> dict:
 # Explicit release scope approved on 2026-10-28. These paths mix legacy FRED
 # inputs into measurements, forecasts, diagnostics or prose. Authentication,
 # payment, an old snapshot, or a successful request cannot grant reuse rights.
+# Under POLICY all of them are withheld; under RESEARCH_RELEASE_POLICY only
+# RESEARCH_RELEASE_WITHHELD_PATHS are. No payment unlocks a legacy tool under
+# either policy (x402 never prices them).
 LEGACY_TOOLS = frozenset({
     "latest_article", "funding_stress_now", "funding_stress_forecast",
     "historical_analogs", "replay_asof", "proof_backtest", "crypto_stress_record",
@@ -194,13 +205,116 @@ STATIC_SURFACES = {
     "/data/public.json": "/api/public",
     "/data/book_history.json": "/api/book",
 }
+# The research release keeps the Book withheld. Its static file is the
+# hash-chained ledger, and the publisher extends the chain it reads back from
+# the live site, which now serves the restriction. The Book reopens only after
+# its last published chain is restored; no record is forged or rewritten here.
+RESEARCH_RELEASE_WITHHELD_PATHS = frozenset({"/api/book"})
+# Tools listed by source_rights_status. Legacy tools whose is_public flag is
+# false keep the bearer identity requirement they had before 28 October.
+RESEARCH_TOOLS = (
+    "source_rights_status", "money_market_context", "market_workbench",
+    "world_markets_context", "gift_city_context", "gold_inventory_carry",
+    "research_network", "data_health",
+)
+ACCOUNT_TOOLS = frozenset({
+    "funding_stress_forecast", "replay_asof", "positioning_book", "desk_brief", "ask_desk",
+})
+# Legacy tools the research release opens to anonymous callers although their
+# historical is_public flag is false (owner decision, 3 November 2026): the
+# public board already shows their values. Their labels and honesty fields are
+# unchanged.
+RESEARCH_PUBLIC_TOOLS = frozenset({"funding_stress_forecast"})
+# REST routes that serve the same content as a legacy tool. A route needs the
+# same bearer identity as its tool while the tool is in account_tools()
+# (api.account_twin), whatever SEICHE_BOARD_AUTH says; otherwise it is gated
+# like the board. funding_stress_forecast reads deep.{swell, bathymetry, ml,
+# markov, oujump, montecarlo}; /api/engines/{name} serves only snapshot
+# engines, which hold none of them, so its twin is /api/deep.
+ACCOUNT_ROUTES = {
+    "desk_brief": ("/api/brief",),
+    "ask_desk": ("/api/ask",),
+    "replay_asof": ("/api/asof/{date}",),
+    "positioning_book": ("/api/book",),
+    "funding_stress_forecast": ("/api/deep",),
+}
+# Legacy tools whose whole output is the Book. They are withheld with it.
+BOOK_TOOLS = frozenset({"positioning_book"})
+
+
+def research_release() -> bool:
+    """True while the 3 November research release is the active policy."""
+    return ACTIVE_POLICY == RESEARCH_RELEASE_POLICY
+
+
+def withheld_tools() -> frozenset[str]:
+    """Legacy MCP tools the active policy withholds from every caller."""
+    if not research_release():
+        return LEGACY_TOOLS
+    return BOOK_TOOLS if book_withheld() else frozenset()
+
+
+def research_public_tools() -> frozenset[str]:
+    """Account tools the active policy opens to anonymous callers."""
+    return RESEARCH_PUBLIC_TOOLS if research_release() else frozenset()
+
+
+def account_tools() -> frozenset[str]:
+    """Legacy tools that need a bearer identity under the active policy."""
+    return ACCOUNT_TOOLS - research_public_tools() - withheld_tools()
 
 
 def legacy_http_restricted(path: str) -> bool:
     normalized = path.rstrip("/")
+    if research_release():
+        return normalized in RESEARCH_RELEASE_WITHHELD_PATHS
     return normalized in LEGACY_PATHS or any(
         normalized.startswith(prefix) for prefix in LEGACY_PREFIXES
     )
+
+
+def book_withheld() -> bool:
+    """While /api/book is withheld, Book content is withheld wherever it appears."""
+    return legacy_http_restricted("/api/book")
+
+
+def withheld_book() -> dict:
+    """The explicit state that replaces Book content: the /api/book restriction."""
+    return legacy_unavailable("/api/book")
+
+
+def project_book(snapshot: object) -> object:
+    """A board copy whose Book content carries the withheld state.
+
+    deep.book and Book alerts in system.alert_log are replaced; nothing else
+    is copied deeply, recomputed or relabelled. The stored board is unchanged.
+    """
+    if not book_withheld() or not isinstance(snapshot, Mapping):
+        return snapshot
+    out = dict(snapshot)
+    deep = snapshot.get("deep")
+    if isinstance(deep, Mapping) and "book" in deep:
+        out["deep"] = {**deep, "book": withheld_book()}
+    system = snapshot.get("system")
+    log = system.get("alert_log") if isinstance(system, Mapping) else None
+    if isinstance(log, Mapping) and isinstance(log.get("alerts"), list):
+        out["system"] = {**system, "alert_log": {**log, "alerts": [
+            project_alert(row) for row in log["alerts"]]}}
+    return out
+
+
+def project_pit_record(record: object) -> object:
+    """An as-published record whose Book positions carry the withheld state."""
+    if not book_withheld() or not isinstance(record, Mapping) or "book" not in record:
+        return record
+    return {**record, "book": withheld_book()}
+
+
+def project_alert(row: object) -> object:
+    """An alert row whose Book state and message carry the withheld state."""
+    if not book_withheld() or not isinstance(row, Mapping) or row.get("rule") != "book_flip":
+        return row
+    return {**row, "state": None, "message": None, "withheld": withheld_book()}
 
 
 def static_restriction(path: str) -> dict | None:
@@ -229,13 +343,49 @@ def legacy_unavailable(surface: str) -> dict:
     }
 
 
+RESEARCH_RELEASE_BOUNDARY = (
+    "Legacy board values and legacy tools are shown for free research use while "
+    "source permissions are sought. Source owners can request removal at any time. "
+    "Showing a value is not a claim of publisher permission or a reuse license. "
+    "Legacy forecasts, analogs, backtests and replays are research diagnostics, not "
+    "validated predictions or investment advice. The Book keeps the 28 October "
+    "restriction until its published chain is restored: /api/book, its hash-chained "
+    "ledger, positioning_book and every Book field listed in withheld_fields carry "
+    "that restriction instead of values. money_market_context, world_markets_context, "
+    "market_workbench and series downloads keep their field-specific restrictions, "
+    "and every tool still reports missing values and source clocks. account_tools "
+    "and the REST routes listed in account_routes need a bearer identity; no "
+    "payment unlocks a legacy tool. Gold carry is arithmetic over caller-supplied "
+    "assumptions."
+)
+# Book fields that carry the withheld state while the Book is withheld.
+BOOK_FIELDS = ("deep.book", "pit.records[].book", "alerts[rule=book_flip]")
+
+
 def rights_status() -> dict:
+    if research_release():
+        withheld = sorted(RESEARCH_RELEASE_WITHHELD_PATHS) + sorted(
+            path for path, route in STATIC_SURFACES.items() if legacy_http_restricted(route))
+        unavailable = withheld_tools()
+        account = account_tools()
+        return {
+            "schema": "seiche.source-rights-status.v1", "status": "research_release",
+            "policy": ACTIVE_POLICY, "context_only": True,
+            "available_tools": [*RESEARCH_TOOLS,
+                                *sorted(LEGACY_TOOLS - account - unavailable)],
+            "account_tools": sorted(account),
+            "account_routes": sorted(route for tool in account for route in ACCOUNT_ROUTES[tool]),
+            "legacy_tools": sorted(LEGACY_TOOLS),
+            "unavailable_tools": sorted(unavailable),
+            "withheld_surfaces": withheld,
+            "withheld_fields": list(BOOK_FIELDS) if book_withheld() else [],
+            "rights_urls": [TERMS],
+            "boundary": RESEARCH_RELEASE_BOUNDARY,
+        }
     return {
         "schema": "seiche.source-rights-status.v1", "status": "partial_release",
         "policy": POLICY, "context_only": True,
-        "available_tools": ["source_rights_status", "money_market_context", "market_workbench",
-                            "world_markets_context", "gift_city_context", "gold_inventory_carry",
-                            "research_network", "data_health"],
+        "available_tools": list(RESEARCH_TOOLS),
         "unavailable_tools": sorted(LEGACY_TOOLS), "rights_urls": [TERMS],
         "boundary": "Available tools still report field-specific restrictions, missing values and source clocks. Availability is not a blanket reuse license, freshness certification or investment advice. ECB FX is the default; legacy H.10/FRED values stay withheld. Gold carry is arithmetic over caller-supplied assumptions.",
     }

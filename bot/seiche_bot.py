@@ -56,7 +56,8 @@ Stdlib only (urllib) so deployment is: copy file, set env, start unit.
 Env: SEICHE_BOT_TOKEN (required) · SEICHE_API (default
 https://api.seiche.info) · LIQUILENS_API (default
 https://api.liquilens.in/api) · SEICHE_BOT_STATE (default
-/var/lib/seiche-bot). Honesty rules carried over from the terminal: an API
+/var/lib/seiche-bot) · SEICHE_BOT_DESK_TOKEN (optional Seiche account bearer
+token for /ask; without it /ask keeps its "did not answer" reply). Honesty rules carried over from the terminal: an API
 that does not answer is said out loud; absence is not calm.
 """
 
@@ -78,6 +79,10 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
 TOKEN = os.environ.get("SEICHE_BOT_TOKEN", "")
+# Seiche account bearer token for the account-only desk route /api/ask. It is
+# sent only in the Authorization header of that request: never in a URL, a
+# message or a log line.
+DESK_TOKEN = os.environ.get("SEICHE_BOT_DESK_TOKEN", "").strip()
 API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
 LL_API = os.environ.get("LIQUILENS_API", "https://api.liquilens.in/api").rstrip("/")
 UT_API = os.environ.get("UNDERTOW_API", "https://api.seiche.info/undertow").rstrip("/")
@@ -454,13 +459,28 @@ def set_channel_profile() -> None:
     print(f"channel profile updated; pinned message_id={message_id}")
 
 
-def _get_json(url: str, timeout: int = 25,
-              tries: int = 2) -> dict | list | object | None:
-    # Explicit User-Agent: some edges 403 Python's default one.
-    req = urllib.request.Request(url, headers={"User-Agent": "seiche-bot"})
+class _DeskNoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib forwards request headers on a redirect, so a request carrying the
+    desk bearer token never follows one: a 3xx is a failed request instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _urlopen(req: urllib.request.Request, timeout: int):
+    if req.has_header("Authorization"):
+        return urllib.request.build_opener(_DeskNoRedirect).open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def _get_json(url: str, timeout: int = 25, tries: int = 2,
+              headers: dict[str, str] | None = None) -> dict | list | object | None:
+    # Explicit User-Agent: some edges 403 Python's default one. Extra headers
+    # (the desk bearer token) are never printed: failures name only the URL.
+    req = urllib.request.Request(url, headers={"User-Agent": "seiche-bot", **(headers or {})})
     for attempt in range(tries):
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with _urlopen(req, timeout) as r:
                 return _read_json_response(r)
         except urllib.error.HTTPError as exc:
             # HTTPError subclasses URLError, so this arm has to come first or
@@ -500,6 +520,11 @@ def ask_desk(question: str):
     bucket the 429 is protecting.
     """
     url = f"{API}/api/ask?q={urllib.parse.quote(question[:600])}"
+    # /api/ask needs a Seiche bearer identity. Without SEICHE_BOT_DESK_TOKEN the
+    # request goes out exactly as before and a refusal reads "did not answer".
+    if DESK_TOKEN:
+        return _get_json(url, timeout=60, tries=1,
+                         headers={"Authorization": f"Bearer {DESK_TOKEN}"})
     return _get_json(url, timeout=60, tries=1)
 
 

@@ -12,7 +12,17 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from seiche import accounts, api, mcp_server, usage, world_model_delivery, x402
+from seiche import accounts, api, mcp_server, public_rights, usage, world_model_delivery, x402
+
+# The anonymous surface under the 3 November research release: the eight research
+# tools plus the legacy tools whose is_public flag is true.
+ANONYMOUS_TOOLS = {
+    "source_rights_status", "gift_city_context", "gold_inventory_carry", "market_workbench",
+    "research_network", "data_health", "money_market_context", "world_markets_context",
+    "latest_article", "funding_stress_now", "historical_analogs", "proof_backtest",
+    "crypto_stress_record", "institutional_flows", "oil_funding_context",
+    "fx_materials_passage", "trade_safety_risk_context", "funding_stress_forecast",
+}
 
 
 @pytest.fixture()
@@ -197,7 +207,7 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
     assert server["url"] == "https://api.seiche.info/mcp"
     assert server["authentication"] == {
         "type": "none",
-        "scope": "eight anonymous public research tools",
+        "scope": "anonymous public research and legacy tools listed by source_rights_status",
     }
     assert "tools" not in server
     corpus = document["servers"][1]
@@ -328,8 +338,8 @@ def test_public_openapi_is_curated_and_importable(client):
     assert "never starts or waits" in health["description"]
     for path in ("/api/oil-funding", "/api/estuary", "/api/gauge", "/api/public"):
         operation = spec["paths"][path]["get"]
-        assert operation["deprecated"] is True
-        assert set(operation["responses"]) == {"403"}
+        assert "deprecated" not in operation
+        assert "403" not in operation["responses"]
     assert "/undertow/live/quotes.json" in spec["paths"]
     assert "/api/auth/login" not in spec["paths"]
     assert "/api/deep" not in spec["paths"]
@@ -506,8 +516,16 @@ def test_activation_logger_emits_info_without_root_configuration(monkeypatch):
     assert records[0].getMessage().startswith("mcp_activation product=seiche ")
 
 
+def test_withheld_legacy_routes_are_deprecated_in_openapi(client, withheld_policy):
+    spec = client.get("/api/openapi.json").json()
+    for path in ("/api/oil-funding", "/api/estuary", "/api/gauge", "/api/public"):
+        operation = spec["paths"][path]["get"]
+        assert operation["deprecated"] is True
+        assert set(operation["responses"]) == {"403"}
+
+
 @pytest.mark.parametrize("configured", [True, False])
-def test_legacy_paid_request_never_verifies_or_settles(client, monkeypatch, configured):
+def test_legacy_paid_request_never_verifies_or_settles(client, monkeypatch, configured, withheld_policy):
     def forbidden(*args, **kwargs):
         pytest.fail("restricted request must not verify or settle a payment")
     monkeypatch.setenv("SEICHE_X402_PROFILE", "base-sepolia-testnet")
@@ -523,6 +541,29 @@ def test_legacy_paid_request_never_verifies_or_settles(client, monkeypatch, conf
     assert "PAYMENT-REQUIRED" not in response.headers
     assert response.json()["id"] == 1
     assert response.json()["error"]["data"]["category"] == "source_rights_restricted"
+
+
+@pytest.mark.parametrize("configured", [True, False])
+def test_research_release_never_charges_for_a_legacy_tool(client, monkeypatch, configured):
+    """An open legacy tool is unpriced: a payment header is refused like any
+    other unpriced call and is never verified or settled."""
+    def forbidden(*args, **kwargs):
+        pytest.fail("a legacy tool must never verify or settle a payment")
+    monkeypatch.setenv("SEICHE_X402_PROFILE", "base-sepolia-testnet")
+    if configured:
+        monkeypatch.setenv("SEICHE_X402_PAY_TO", "0x000000000000000000000000000000000000dEaD")
+    else:
+        monkeypatch.delenv("SEICHE_X402_PAY_TO", raising=False)
+    monkeypatch.setattr(x402, "verify", forbidden)
+    monkeypatch.setattr(x402, "settle", forbidden)
+    for name in ("funding_stress_forecast", "funding_stress_now"):
+        assert x402.price_usd(name) is None
+        response = client.post("/mcp", json=_rpc("tools/call", {"name": name, "arguments": {}}), headers={"PAYMENT-SIGNATURE": "test-only-marker"})
+        assert response.status_code == (400 if configured else 503)
+        assert "PAYMENT-RESPONSE" not in response.headers
+        assert "PAYMENT-REQUIRED" not in response.headers
+        if configured:
+            assert "priced analysis tool" in response.json()["error"]["message"]
 
 
 
@@ -543,10 +584,11 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
         "positioning_book",
         "desk_brief",
         "replay_asof",
-        "funding_stress_forecast",
         "ask_desk",
     )
-    public_good = ("source_rights_status", "data_health", "money_market_context", "world_markets_context")
+    # The research release opened the forecast; the board already shows it.
+    public_good = ("source_rights_status", "data_health", "money_market_context",
+                   "world_markets_context", "funding_stress_forecast")
 
     for gate in ("1", None):
         if gate is None:
@@ -569,7 +611,7 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
             ), f"{free} must stay free with SEICHE_BOARD_AUTH={gate!r}"
 
 
-def test_flows_are_withheld_for_anonymous_and_authenticated_clients(client, monkeypatch):
+def test_flows_are_withheld_for_anonymous_and_authenticated_clients(client, monkeypatch, withheld_policy):
     from seiche import wakeflows
     def forbidden(*args, **kwargs):
         pytest.fail("restricted flows must not load")
@@ -584,6 +626,12 @@ def test_flows_are_withheld_for_anonymous_and_authenticated_clients(client, monk
 def test_anonymous_sees_only_available_public_tools(client):
     response = client.post("/mcp", json=_rpc("tools/list"))
     names = {t["name"] for t in response.json()["result"]["tools"]}
+    assert names == ANONYMOUS_TOOLS
+
+
+def test_anonymous_sees_only_research_tools_under_the_withheld_policy(client, withheld_policy):
+    response = client.post("/mcp", json=_rpc("tools/list"))
+    names = {t["name"] for t in response.json()["result"]["tools"]}
     assert names == {"source_rights_status", "gift_city_context", "gold_inventory_carry", "market_workbench", "research_network", "data_health", "money_market_context", "world_markets_context"}
 
 
@@ -593,7 +641,7 @@ def test_anonymous_tool_descriptors_are_openai_plugin_ready(client):
     tools = response.json()["result"]["tools"]
 
     assert response.status_code == 200
-    assert len(tools) == 8
+    assert len(tools) == len(ANONYMOUS_TOOLS)
     for tool in tools:
         assert tool["outputSchema"]["type"] == "object"
         assert tool["annotations"] == {
@@ -717,7 +765,8 @@ def test_authorization_header_wins_during_query_transition(client, monkeypatch):
 
     assert r.status_code == 200
     names = {tool["name"] for tool in r.json()["result"]["tools"]}
-    assert "positioning_book" not in names
+    # The header identity, not the query credential, opens the account-only tool.
+    assert "desk_brief" in names
     assert "source_rights_status" in names
     assert r.headers["Warning"].startswith("299 Seiche")
 
@@ -731,10 +780,16 @@ def test_noncredential_query_does_not_emit_transition_headers(client):
     assert "Sunset" not in r.headers
 
 
-def test_anonymous_legacy_call_is_explicitly_unavailable(client):
+def test_anonymous_legacy_call_is_explicitly_unavailable(client, withheld_policy):
     result = client.post("/mcp", json=_rpc("tools/call", {"name": "replay_asof", "arguments": {"date": "2019-09-17"}})).json()["result"]
     assert result["isError"] is True
     assert result["structuredContent"]["availability"] == "unavailable"
+
+
+def test_research_release_keeps_account_tools_behind_identity(client):
+    error = client.post("/mcp", json=_rpc("tools/call", {"name": "replay_asof", "arguments": {"date": "2019-09-17"}})).json()["error"]
+    assert error["code"] == mcp_server.INVALID_PARAMS
+    assert "unknown tool" in error["message"]
 
 
 
@@ -761,6 +816,17 @@ def test_authenticated_sees_full_surface(client):
         headers={"Authorization": f"Bearer {_pro_token()}"},
     )
     names = {t["name"] for t in r.json()["result"]["tools"]}
+    assert (ANONYMOUS_TOOLS | public_rights.ACCOUNT_TOOLS | mcp_server.AGENT_ROOM_TOOLS) - {
+        "positioning_book"} == names
+
+
+def test_authenticated_sees_no_legacy_tool_under_the_withheld_policy(client, withheld_policy):
+    r = client.post(
+        "/mcp",
+        json=_rpc("tools/list"),
+        headers={"Authorization": f"Bearer {_pro_token()}"},
+    )
+    names = {t["name"] for t in r.json()["result"]["tools"]}
     assert "positioning_book" not in names
     assert "source_rights_status" in names
 
@@ -771,7 +837,7 @@ def test_authenticated_sees_full_surface(client):
 def test_available_tool_returns_content_and_meters(client):
     response = client.post("/mcp", json=_rpc("tools/call", {"name": "source_rights_status", "arguments": {}}))
     assert response.status_code == 200
-    assert response.json()["result"]["structuredContent"]["status"] == "partial_release"
+    assert response.json()["result"]["structuredContent"]["status"] == "research_release"
     assert response.headers["X-MCP-Usage-Used"] == "1"
     assert response.headers["X-MCP-Usage-Limit"] == str(usage.MCP_ANON_DAILY)
 
@@ -843,12 +909,18 @@ def test_usage_report_storage_fault_does_not_report_zero(client, monkeypatch):
     assert "private database path" not in response.text
 
 
-def test_context_routes_expose_their_current_rights_boundary(client):
+@pytest.mark.parametrize("policy", [public_rights.POLICY, public_rights.RESEARCH_RELEASE_POLICY])
+def test_context_routes_expose_their_current_rights_boundary(client, monkeypatch, policy):
+    monkeypatch.setattr(public_rights, "ACTIVE_POLICY", policy)
     for path in ("/api/oil-funding", "/api/estuary"):
         response = client.get(path)
-        assert response.status_code == 403
-        assert response.json()["availability"] == "unavailable"
-        assert response.headers["cache-control"] == "no-store"
+        if policy == public_rights.POLICY:
+            assert response.status_code == 403
+            assert response.json()["availability"] == "unavailable"
+            assert response.headers["cache-control"] == "no-store"
+        else:
+            assert response.status_code != 403
+            assert not public_rights.is_restriction(response.json())
     money = client.get("/api/money-markets")
     assert money.status_code == 200
     assert money.json()["schema"] == "seiche.money-market-desk.v1"
@@ -1023,3 +1095,88 @@ def test_usage_report_reflects_calls(client):
     )
     r = client.get("/mcp/usage")
     assert r.json()["used_today"] == 1
+
+
+# ---- 3 November research release: legacy tool behaviour over HTTP ---------
+# These tests existed before 28 October and return with the tools they cover.
+
+
+def test_anonymous_flows_carries_the_reading_but_not_the_engine(client, monkeypatch):
+    """institutional_flows is free on purpose; its method versions are not.
+
+    The handler took `_public` and never read it, so it had no gate of its
+    own — a sibling of the book and the brief. The literature-level method
+    prose stays public by design; the versioned engine identifiers do not.
+
+    The pack is STUBBED on purpose: without it the tool errors out, every
+    assertion below passes vacuously, and removing the trim still goes
+    green. Verified by reverting the trim and watching this go red.
+    """
+    from seiche import wakeflows
+
+    monkeypatch.setattr(wakeflows, "load", lambda *a, **k: {"stub": True})
+    monkeypatch.setattr(
+        wakeflows,
+        "readings",
+        lambda pack: {
+            "as_of": "2026-08-03",
+            "method_versions": {
+                "basis_nowcast": "1.0.0",
+                "kalman_fusion": "1.0.0",
+                "hawkes": "1.0.0",
+            },
+            "basis_trade": {"size_usd_bn": 904.5},
+        },
+    )
+    monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
+
+    anon = json.dumps(
+        client.post(
+            "/mcp",
+            json=_rpc("tools/call", {"name": "institutional_flows", "arguments": {}}),
+        ).json()
+    )
+    # the tool really ran (guards against a vacuous pass on an error result)
+    assert "904.5" in anon and "isError" not in anon
+    assert "method_versions" not in anon
+    assert "kalman_fusion" not in anon
+
+    # ...and a signed-in caller still receives the engine metadata.
+    full = json.dumps(
+        client.post(
+            "/mcp",
+            json=_rpc("tools/call", {"name": "institutional_flows", "arguments": {}}),
+            headers={"Authorization": f"Bearer {_pro_token()}"},
+        ).json()
+    )
+    assert "method_versions" in full and "kalman_fusion" in full
+
+
+def test_tool_call_returns_content_and_meters(client):
+    r = client.post(
+        "/mcp", json=_rpc("tools/call", {"name": "funding_stress_now", "arguments": {}})
+    )
+    assert r.status_code == 200
+    assert "EROSION" in r.json()["result"]["content"][0]["text"]
+    delivery = r.json()["result"]["structuredContent"]["delivery"]
+    assert delivery["url"].endswith("?start=agent_mcp")
+    # the billable call was metered
+    assert r.headers["X-MCP-Usage-Used"] == "1"
+    assert r.headers["X-MCP-Usage-Limit"] == str(usage.MCP_ANON_DAILY)
+
+
+def test_public_context_routes_share_the_mcp_contract(client):
+    oil = client.get("/api/oil-funding")
+    estuary = client.get("/api/estuary")
+    money = client.get("/api/money-markets")
+
+    assert oil.status_code == 200
+    assert oil.json()["schema"] == "seiche.oil-funding.v1"
+    assert oil.json()["scenario"]["status"] == "scenario_only"
+    assert estuary.status_code == 200
+    assert estuary.json()["schema"] == "seiche.estuary.v1"
+    assert estuary.json()["passage"]["earned"] == 1
+    assert money.status_code == 200
+    assert money.json()["schema"] == "seiche.money-market-desk.v1"
+    assert money.json()["regime"]["state"] == "CANNOT_ASSESS"
+    assert "public" in oil.headers["cache-control"]

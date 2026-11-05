@@ -787,7 +787,7 @@ def test_post_settlement_tool_failure_keeps_receipt_for_reconciliation(
 
 
 @pytest.mark.parametrize("tool", sorted(public_rights.LEGACY_TOOLS))
-def test_retired_tools_are_never_priced_or_charged(client, monkeypatch, tool):
+def test_retired_tools_are_never_priced_or_charged(client, monkeypatch, tool, withheld_policy):
     _enable_testnet(monkeypatch)
     calls = []
     monkeypatch.setattr(
@@ -806,7 +806,7 @@ def test_retired_tools_are_never_priced_or_charged(client, monkeypatch, tool):
     assert calls == []
 
 
-def test_wallet_catalog_never_readvertises_retired_tools(client, monkeypatch):
+def test_wallet_catalog_never_readvertises_retired_tools(client, monkeypatch, withheld_policy):
     _enable_testnet(monkeypatch)
     response = client.post("/mcp", json={
         "jsonrpc": "2.0", "id": 1, "method": "tools/list",
@@ -815,3 +815,39 @@ def test_wallet_catalog_never_readvertises_retired_tools(client, monkeypatch):
     names = {tool["name"] for tool in response.json()["result"]["tools"]}
     assert names.isdisjoint(public_rights.LEGACY_TOOLS)
     assert PAID_TOOL in names
+
+
+@pytest.mark.parametrize("tool", sorted(public_rights.LEGACY_TOOLS))
+def test_research_release_never_prices_or_charges_a_legacy_tool(client, monkeypatch, tool):
+    """Seiche is free: an open legacy tool is never priced, and a payment
+    header for it is refused before any facilitator call."""
+    _enable_testnet(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        x402, "_facilitator_post",
+        lambda *args: calls.append(args) or {"isValid": True},
+    )
+    assert x402.price_usd(tool) is None
+    response = client.post(
+        "/mcp", json=_call(tool),
+        headers={"PAYMENT-SIGNATURE": "must-not-be-verified"},
+    )
+    assert response.status_code == 400
+    assert "PAYMENT-REQUIRED" not in response.headers
+    assert "PAYMENT-RESPONSE" not in response.headers
+    assert calls == []
+
+
+def test_research_release_wallet_catalog_lists_legacy_tools_only_as_free(client, monkeypatch):
+    _enable_testnet(monkeypatch)
+    response = client.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+    })
+    assert response.status_code == 200
+    tools = {tool["name"]: tool for tool in response.json()["result"]["tools"]}
+    assert PAID_TOOL in tools
+    listed_legacy = set(tools) & public_rights.LEGACY_TOOLS
+    assert listed_legacy == (public_rights.LEGACY_TOOLS - public_rights.account_tools()
+                             - public_rights.withheld_tools())
+    assert "funding_stress_forecast" in listed_legacy
+    assert all("paid tool" not in tools[name]["description"] for name in listed_legacy)

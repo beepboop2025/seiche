@@ -36,7 +36,7 @@ export default function Account() {
         <div className="card span6">
           <h2>No account needed</h2>
           <div className="sub">
-            Eight public research tools need no account. Legacy forecasts, backtests and dependent features remain unavailable pending source-rights qualification. Optional accounts can hold <b>email alerts</b> and,
+            The public research tools and the legacy funding board need no account; the legacy board and tools are shown for free research use while source permissions are sought. Optional accounts can hold <b>email alerts</b>, open three token-only legacy tools and,
             when separately provisioned, authenticate five private, non-executable Agent Room tools. If you want alerts,
             email <a href="mailto:desk@seiche.info?subject=Seiche%20alerts%20account">desk@seiche.info</a> and
             one is set up by hand, free, usually within a day.
@@ -97,9 +97,9 @@ export default function Account() {
       <div className="card span6">
         <h2>API access</h2>
         <div className="sub">
-          The eight public MCP research tools need no key. Your bearer token identifies you for
-          alert preferences and authenticated refreshes; when subscriber access is provisioned, it also
-          authenticates five private Agent Room preview tools. It does not unlock unavailable legacy tools. Keep it private; it lasts 30 days.
+          The public MCP tools need no key. Your bearer token identifies you for alert preferences and
+          authenticated refreshes and opens the three token-only legacy tools; when subscriber access is provisioned, it also
+          authenticates five private Agent Room preview tools. Keep it private; it lasts 30 days.
         </div>
         <div className="kv" style={{ flexDirection: "column", gap: 8 }}>
           <div className="item"><div className="k">account</div><div className="v">{me.username ?? "—"} · {me.tier ?? ""}</div></div>

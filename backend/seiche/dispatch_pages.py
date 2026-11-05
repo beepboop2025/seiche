@@ -699,6 +699,26 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
     )
 
 
+def _mcp_surface_sentence() -> str:
+    """The anonymous MCP surface under the active source-rights policy."""
+    from seiche import public_rights
+
+    if not public_rights.research_release():
+        return ("Eight public research tools answer without authentication: "
+                "source_rights_status, money_market_context, market_workbench, "
+                "world_markets_context, gift_city_context, gold_inventory_carry, "
+                "research_network, data_health. Legacy forecasts, backtests, composites "
+                "and dependent tools are unavailable for every caller.")
+    status = public_rights.rights_status()
+    return ("These public tools answer without authentication: "
+            + ", ".join(status["available_tools"]) + ". The legacy board and legacy "
+            "tools are shown for free research use while source permissions are sought; "
+            "legacy forecasts and backtests are research diagnostics, not validated "
+            "predictions. Legacy tools that need bearer identity: "
+            + ", ".join(status["account_tools"]) + ". The Book, its hash-chained "
+            "ledger and positioning_book stay withheld.")
+
+
 _LLMS_PREAMBLE = f"""# Seiche
 
 > Seiche is free open source software (AGPL-3.0-or-later): a financial-market evidence
@@ -731,7 +751,7 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Eight public research tools answer without authentication: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts, backtests, composites and dependent tools are unavailable for every caller. Restricted observations must not be reconstructed. Five private Agent Room tools require bearer identity and grant no execution authority. Only reuse-qualified series can be downloaded as CSV with provenance headers; the catalog is at
+over MCP at https://api.seiche.info/mcp. {_mcp_surface_sentence()} Restricted observations must not be reconstructed. Five private Agent Room tools require bearer identity and grant no execution authority. Only reuse-qualified series can be downloaded as CSV with provenance headers; the catalog is at
 https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
 a final/current-vintage construction-PIT diagnostic, hits and misses both, and
 the eligibility flags beside it. It is not validated-backtest evidence. Its

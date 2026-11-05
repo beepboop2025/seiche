@@ -9,9 +9,12 @@ withheld, both files carry the same source-rights restriction payload and no
 board values. Static readers (the prerendered home, social cards and the Book)
 render that state; they never fall back to a copy of the full board.
 
-The full board is written only to --private-snapshot, for internal steps that
-are allowed to read it. That path is refused inside the public web roots
-(frontend/public, frontend/dist) and refused if it names a public output.
+While the Book is withheld, the public files carry the Book's withheld state in
+place of its fields (public_rights.project_book); the board is otherwise the
+one assembled. The full board is written only to --private-snapshot, for
+internal steps that are allowed to read it. That path is refused inside the
+public web roots (frontend/public, frontend/dist) and refused if it names a
+public output.
 When a route's policy is open again, its file carries the board as before.
 """
 from __future__ import annotations
@@ -94,8 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         print("FATAL: zero engines produced output; refusing to publish", file=sys.stderr)
         return 1
 
+    public_board = public_rights.project_book(snap)
     withheld = public_rights.static_restriction("/data/public.json")
-    payload = withheld if withheld is not None else public_view.public_payload(snap)
+    payload = withheld if withheld is not None else public_view.public_payload(public_board)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, separators=(",", ":")))
     if withheld is not None:
@@ -104,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote public surface -> {out} (regime {payload['conclusion']['regime']})")
     if overview_out is not None:
         withheld = public_rights.static_restriction("/data/overview.json")
-        board = withheld if withheld is not None else _json_safe(snap)
+        board = withheld if withheld is not None else _json_safe(public_board)
         overview_out.parent.mkdir(parents=True, exist_ok=True)
         overview_out.write_text(json.dumps(board, separators=(",", ":"), allow_nan=False))
         state = f"withheld under {withheld['policy']}" if withheld is not None else "full board"

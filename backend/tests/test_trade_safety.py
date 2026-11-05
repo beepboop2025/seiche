@@ -587,7 +587,30 @@ def test_internal_rest_fails_closed_without_a_completed_snapshot(monkeypatch) ->
     assert response.json()["reason"] == "no_completed_snapshot"
 
 
-def test_legacy_risk_context_is_unavailable_in_public_discovery() -> None:
+def test_risk_context_is_in_public_rest_and_mcp_discovery() -> None:
+    """3 November research release: the guard context is public again."""
+    discovery = api.api_index()
+    openapi = api._public_openapi_document()
+    tools = mcp_server.dispatch(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, public=True
+    )["result"]["tools"]
+
+    assert discovery["rest"]["trade_safety_risk_context"] == (
+        "/api/trade-safety/risk-context"
+    )
+    route = openapi["paths"]["/api/trade-safety/risk-context"]["get"]
+    assert set(route["responses"]) == {"200", "503"}
+    schema = route["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema is mcp_server.OUTPUT_SCHEMAS["trade_safety_risk_context"]
+    descriptor = next(
+        tool for tool in tools if tool["name"] == "trade_safety_risk_context"
+    )
+    assert descriptor["inputSchema"]["additionalProperties"] is False
+    assert descriptor["annotations"]["readOnlyHint"] is True
+    assert "not evaluate stream attestations" in descriptor["description"]
+
+
+def test_legacy_risk_context_is_unavailable_in_public_discovery(withheld_policy) -> None:
     discovery = api.api_index()
     openapi = api._public_openapi_document()
     tools = mcp_server.dispatch(

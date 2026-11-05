@@ -18,6 +18,7 @@ from contextlib import closing
 
 import httpx
 
+from seiche import public_rights
 from seiche.config import ALERT_RULES, ALERT_WEBHOOK_ENV, DB_PATH
 
 logger = logging.getLogger("seiche.alerts")
@@ -254,7 +255,9 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
                            f"conditions ({bw.get('reading', '')})"))
 
     book_today = ((deep.get("book") or {}).get("today") or {}) if (deep.get("book") or {}).get("ok") else {}
-    if ALERT_RULES.get("book_flip") and book_today.get("stance"):
+    # While the Book is withheld its stance and positions reach no alert,
+    # email or public alert history (public_rights.book_withheld).
+    if ALERT_RULES.get("book_flip") and book_today.get("stance") and not public_rights.book_withheld():
         sig = ",".join(
             f"{p.get('sleeve')}{p.get('weight'):+.1f}"
             for p in book_today.get("positions", []) if p.get("weight")

@@ -1,17 +1,29 @@
 # SEICHE
 
-## Release scope: 28 October 2026
+## Release scope: 3 November 2026
 
-Eight public research tools are available: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`.
-Start with `source_rights_status`. Retired forecasts, backtests, editorial,
-composite and derived legacy tools are unavailable for every caller while their
-source reuse rights and replacements remain unqualified. A bearer token or
-payment does not unlock them. Do not reconstruct withheld observations from
-metadata, cached history or prior responses. Direct publisher observations keep
-their own dates; restricted inputs remain explicitly metadata-only.
-Authenticated callers can additionally discover five private, non-executable
-Agent Room tools. Earlier feature descriptions below are historical context
-where they conflict with this release scope; they do not advertise availability.
+The legacy funding board and the legacy tools are visible again for free research
+use while source permissions are sought (policy
+`seiche.public-source-rights.2026-11-03`). Source owners can request removal at
+any time.
+Anonymous public tools: `source_rights_status`, `money_market_context`, `market_workbench`, `world_markets_context`, `gift_city_context`, `gold_inventory_carry`, `research_network`, `data_health`, and the legacy `latest_article`, `funding_stress_now`, `historical_analogs`, `proof_backtest`, `crypto_stress_record`, `institutional_flows`, `oil_funding_context`, `fx_materials_passage`, `trade_safety_risk_context`, `funding_stress_forecast`.
+Start with `source_rights_status`. The legacy `replay_asof`, `desk_brief` and
+`ask_desk` keep the bearer token requirement they had before 28 October, and so
+do their REST routes (`/api/asof/{date}`, `/api/brief`, `/api/ask`); no payment
+unlocks a legacy tool. `funding_stress_forecast` and its route `/api/deep` are
+public in this release, like the board that already shows the forecast
+probabilities.
+Legacy forecasts, analogs, backtests and replays are research diagnostics, not
+validated predictions. The Book stays withheld until its published chain is
+restored: `/api/book`, its hash-chained ledger, `positioning_book` and every Book
+field in the board, as-published records and alerts carry the restriction
+instead of values. Do not reconstruct withheld
+observations from metadata, cached history or prior responses. Direct publisher
+observations keep their own dates; restricted inputs remain explicitly
+metadata-only. Authenticated callers can additionally discover five private,
+non-executable Agent Room tools. Earlier feature descriptions below are
+historical context where they conflict with this release scope; they do not
+advertise availability.
 
 
 ## Connect and ask one question
@@ -152,7 +164,7 @@ capture evidence and missing states. Numerical China context requires its
 independent signed acceptance. Verify deployment and package availability from
 the release receipts and linked registries.
 
-Eight research tools remain anonymous and free. Legacy derived tools are unavailable; client and catalog copy must preserve that boundary. See the
+Eight research tools remain anonymous and free. Since 3 November the legacy board tools are shown again for free research use while source permissions are sought; client and catalog copy must keep them labelled as research diagnostics. See the
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.
 
@@ -554,9 +566,9 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-The eight-tool public evidence surface needs no account and does not depend on
+The public evidence surface needs no account and does not depend on
 paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
-Legacy forecast, replay, positioning, prose and LLM tools are unavailable. Seiche does not claim intraday-tick coverage: daily cadence plus
+Legacy forecast, replay, positioning, prose and LLM tools are research diagnostics shown while source permissions are sought, never validated predictions. Seiche does not claim intraday-tick coverage: daily cadence plus
 operation results is the honest granularity of the public stack. Historical
 reconstruction uses final/current-vintage inputs and is therefore
 **construction-PIT, not validated-backtest evidence**. The engine blocks the

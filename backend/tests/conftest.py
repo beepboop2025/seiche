@@ -274,6 +274,19 @@ _ASOF_SNAP = {
 
 
 @pytest.fixture()
+def withheld_policy(monkeypatch):
+    """Switch back to the 28 October source-rights policy for one test.
+
+    The 3 November research release is the active policy; tests of the
+    withholding machinery pin the earlier policy so switching back stays a
+    one-constant change.
+    """
+    from seiche import public_rights
+
+    monkeypatch.setattr(public_rights, "ACTIVE_POLICY", public_rights.POLICY)
+
+
+@pytest.fixture()
 def fake_snap():
     return _FAKE_SNAP
 

@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 import pytest
 from psycopg.conninfo import make_conninfo
 
-from seiche import api, assemble, mcp_server, repository, standby, store
+from seiche import api, assemble, mcp_server, public_rights, repository, standby, store
 from seiche.stateful_migration import absent_agent_room_audit
 from test_api_caching import _release_receipt
 
@@ -367,7 +367,9 @@ async def test_lifespan_initializes_standby_without_background_owner(accepted, m
         assert assemble._cache["source"] == "standby_parent"
 
 
-def test_http_allowlist_and_identity(accepted):
+@pytest.mark.parametrize("policy", [public_rights.RESEARCH_RELEASE_POLICY, public_rights.POLICY])
+def test_http_allowlist_and_identity(accepted, monkeypatch, policy):
+    monkeypatch.setattr(public_rights, "ACTIVE_POLICY", policy)
     receipt, envelope, _, _ = accepted
     assemble.restore_cached_snapshot()
     headers = {"x-seiche-standby-token": os.environ["SEICHE_STANDBY_EDGE_TOKEN"]}
@@ -391,9 +393,15 @@ def test_http_allowlist_and_identity(accepted):
     assert strict.status_code == 503
     assert strict.json()["status"] == "standby_not_production_ready"
     overview = client.get("/api/overview?force=true", headers=headers)
-    assert overview.status_code == 403
-    assert overview.json()["availability"] == "unavailable"
-    assert overview.headers["cache-control"] == "no-store"
+    if policy == public_rights.POLICY:
+        assert overview.status_code == 403
+        assert overview.json()["availability"] == "unavailable"
+        assert overview.headers["cache-control"] == "no-store"
+    else:
+        # The research release serves the sealed standby snapshot unchanged;
+        # force never recomputes it.
+        assert overview.status_code == 200
+        assert overview.json() == public_rights.project_book(envelope["payload"])
     for method, path in (
         ("POST", "/mcp"), ("POST", "/api/overview"), ("GET", "/api/ask"),
         ("POST", "/api/internal/v1/railway-control/commands"),
