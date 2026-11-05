@@ -3,7 +3,10 @@ export type Box = [number, number, number, number];
 export type Metric = { label: string; value: string; date: string; detail: string };
 export type Month = { month: string; mm: number | null; normal: number | null; departure: number | null; lowNormal: boolean };
 export type District = { id: string; name: string; state: string; metrics: Metric[]; months: Month[]; drought: string[] | null; droughtSource: string };
-export type Evidence = { id: string; name: string; generated: string; status: string; reason: string; districts: District[]; offset: number; nextOffset: number | null; total: number; institutions: { id: string; basis: string }[]; sources: { label: string; detail: string; url: string | null }[]; limits: string[] };
+export type Evidence = { id: string; name: string; generated: string; status: string; reason: string; districts: District[]; offset: number; nextOffset: number | null; total: number; institutions: { id: string; basis: string }[]; sources: { label: string; detail: string; url: string | null }[]; limits: string[]; raw: Record<string, unknown> };
+export type GeographyPlace = { id: string; name: string; state: string; bbox?: Box; gb_shape_id?: string; boundary_vintage?: string };
+export type GeographyView = { before: string; after: string; box: Box; evidence: string | null; offset: number };
+export type DisplayedImagery = { before: string; after: string; box: Box };
 export const GEO_API = 'https://api.liquilens.in/api/experimental/v1/banking/lending-geography/';
 export const PRESETS: Record<string, { name: string; bbox: Box }> = {
   india: { name: 'India overview', bbox: [66, 5, 99, 38] }, north: { name: 'North India', bbox: [71, 24, 83, 36] },
@@ -63,7 +66,7 @@ function districtModel(value: unknown, sources: Record<string, unknown>): Distri
 export function evidenceModel(value: unknown, expectedId: string, expectedOffset = 0): Evidence {
   const d = record(value);
   if (d.schema !== 'liquilens.lending-geography.v1' || d.scope !== 'research' || d.score_authority !== false || d.scoring_eligible !== false || d.training_corpus_changed !== false || !validPlace(d.id) || d.id !== expectedId || !day(d.as_of) || !['observed', 'mapped', 'unmapped', 'not_covered', 'unavailable'].includes(String(d.status))) return fail();
-  const model: Evidence = { id: d.id, name: text(d.name) || text(d.state) || d.id, generated: d.as_of, status: String(d.status), reason: text(d.reason), districts: [], offset: 0, nextOffset: null, total: 0, institutions: [], sources: [], limits: [] };
+  const model: Evidence = { id: d.id, name: text(d.name) || text(d.state) || d.id, generated: d.as_of, status: String(d.status), reason: text(d.reason), districts: [], offset: 0, nextOffset: null, total: 0, institutions: [], sources: [], limits: [], raw: d };
   if (['unmapped', 'not_covered', 'unavailable'].includes(model.status)) return model;
   if (!['district', 'institution', 'state'].includes(String(d.kind))) return fail();
   const sources = record(d.sources), rows = d.kind === 'district' ? [d.district] : d.districts;
@@ -115,4 +118,60 @@ export function imageURL(date: string, box: Box): string {
 export function imageryState(query: string): { before: string; after: string; box: Box } {
   const q = new URLSearchParams(query), box = q.get('view')?.split(',').map(Number), before = q.get('before'), after = q.get('after');
   return { before: validDate(before) ? before : '2025-11-02', after: validDate(after) ? after : '2026-11-02', box: validBox(box) ? box : [...PRESETS.india.bbox] };
+}
+
+/** The same explicit place + imagery parameters are understood by the public explorer. */
+export function geographyState(query: string): GeographyView {
+  const q = new URLSearchParams(query), evidence = q.get('evidence'), offset = q.get('offset');
+  const image = imageryState(query);
+  if (image.before >= image.after) { image.before = '2025-11-02'; image.after = '2026-11-02'; }
+  return { ...image, evidence: validPlace(evidence) ? evidence : null,
+    offset: validPlace(evidence) && !evidence.startsWith('in-dist-') && /^\d{1,4}$/.test(offset || '') && Number(offset) <= 1000 ? Number(offset) : 0 };
+}
+export function geographyQuery(view: GeographyView): string {
+  if (!validBox(view.box) || !validDate(view.before) || !validDate(view.after) || view.before >= view.after) throw new Error('Choose a valid dated view before sharing.');
+  const q = new URLSearchParams({ view: view.box.join(','), before: view.before, after: view.after });
+  if (validPlace(view.evidence)) { q.set('evidence', view.evidence); q.set('offset', String(Number.isInteger(view.offset) && view.offset >= 0 && view.offset <= 1000 ? view.offset : 0)); }
+  return q.toString();
+}
+export function extentBox(raw: unknown): Box | null {
+  if (!Array.isArray(raw) || raw.length !== 4 || !raw.every(finite) || raw[0] < -180 || raw[2] > 180 || raw[1] < -85 || raw[3] > 85 || raw[0] >= raw[2] || raw[1] >= raw[3]) return null;
+  const w = Math.max(.25, (raw[2] - raw[0]) * 1.12), h = Math.max(.25, (raw[3] - raw[1]) * 1.12), x = (raw[0] + raw[2]) / 2, y = (raw[1] + raw[3]) / 2;
+  const box = [x - w / 2, y - h / 2, x + w / 2, y + h / 2].map(n => Number(n.toFixed(6)));
+  return validBox(box) ? box : null;
+}
+export function placeViewport(id: string, places: GeographyPlace[]): Box | null {
+  const district = places.find(p => p.id === id);
+  if (district) return extentBox(district.bbox);
+  if (!id.startsWith('in-state-')) return null;
+  const matching = places.filter(p => `in-state-${p.state.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}` === id);
+  if (!matching.length || matching.some(p => !extentBox(p.bbox))) return null;
+  const boxes = matching.map(p => p.bbox!);
+  return extentBox([Math.min(...boxes.map(b => b[0])), Math.min(...boxes.map(b => b[1])), Math.max(...boxes.map(b => b[2])), Math.max(...boxes.map(b => b[3]))]);
+}
+export function researchBrief(data: Evidence, view: GeographyView, displayed: DisplayedImagery | null, boundarySource: unknown, createdAt = new Date().toISOString()) {
+  if (data.id !== view.evidence || data.offset !== view.offset) throw new Error('Wait for the selected evidence before exporting.');
+  if (displayed && (displayed.before !== view.before || displayed.after !== view.after || displayed.box.join(',') !== view.box.join(','))) displayed = null;
+  return {
+    schema: 'liquilens.geography-research-brief.v1', exported_by: 'Seiche', scope: 'research', created_at: createdAt,
+    title: data.name, selection: { id: data.id, offset: data.offset, districts_included: data.districts.length, districts_total: data.total, next_offset: data.nextOffset, coverage: data.total > data.districts.length ? 'Current page only; additional districts are not included.' : 'Returned district observations.' },
+    view_url: `https://liquilens.in/banking/geography/?${geographyQuery(view)}`,
+    imagery: displayed ? { status: 'displayed', provider: 'NASA GIBS', layer: 'MODIS_Terra_CorrectedReflectance_TrueColor', source_resolution: '250 m source layer; display resolution varies', earlier_date: displayed.before, later_date: displayed.after, bbox_wgs84: displayed.box, earlier_request: imageURL(displayed.before, displayed.box), later_request: imageURL(displayed.after, displayed.box) } : { status: 'not_displayed', requested_earlier_date: view.before, requested_later_date: view.after, requested_bbox_wgs84: view.box },
+    boundary_source: boundarySource,
+    evidence: data.raw,
+    interpretation: ['Imagery dates and measurement dates are independent.', 'Image comparison is landscape context; it does not measure change or establish a land value.', 'District extents are not parcel boundaries, title records or planning permissions.', 'Bank area-of-operation links are not lending shares. Research requires human review.'],
+  };
+}
+const csvCell = (value: unknown): string => {
+  const valueText = value == null ? '' : String(value);
+  const safe = typeof value === 'string' && /^[=+@\t\r-]/.test(valueText) ? `'${valueText}` : valueText;
+  return `"${safe.replaceAll('"', '""')}"`;
+};
+/** Long-form monthly observations; blanks remain missing, and source clocks travel with every row. */
+export function rainfallCSV(data: Evidence): string {
+  const header = ['selection_id', 'page_offset', 'districts_included', 'districts_total', 'district_id', 'district_name', 'state', 'month', 'rainfall_mm', 'normal_mm', 'departure_pct', 'rainfall_missing', 'normal_missing', 'departure_missing', 'low_normal', 'response_date', 'sources', 'interpretation_limits'];
+  const sources = data.sources.map(s => `${s.label}; ${s.detail}; ${s.url || 'URL not supplied'}`).join(' | ');
+  const limits = ['Current evidence page only.', 'Missing measurements remain blank.', ...data.limits].join(' | ');
+  const rows = data.districts.flatMap(d => d.months.map(m => [data.id, data.offset, data.districts.length, data.total, d.id, d.name, d.state, m.month, m.mm, m.normal, m.departure, m.mm === null, m.normal === null, m.departure === null, m.lowNormal, data.generated, sources, limits]));
+  return [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
 }
