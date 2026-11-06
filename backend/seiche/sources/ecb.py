@@ -61,6 +61,10 @@ async def fetch_many(
     import asyncio
 
     out: dict[str, Series] = {}
+    from seiche.sources import original_publishers
+    direct = [m for m in mnemonics if m in original_publishers.CONTRACTS]
+    if direct:
+        out.update(await original_publishers.fetch_many(client, direct, faults))
 
     async def one(m: str):
         try:
@@ -69,5 +73,5 @@ async def fetch_many(
             if faults is not None:
                 faults.append({"source": e.source, "detail": e.detail})
 
-    await asyncio.gather(*(one(m) for m in mnemonics))
+    await asyncio.gather(*(one(m) for m in mnemonics if m not in original_publishers.CONTRACTS))
     return out
