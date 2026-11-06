@@ -72,6 +72,10 @@ class FedSeries(Series):
     def provenance(self) -> dict:
         return {**super().provenance(), **self.evidence}
 
+    def tail_records(self, n: int = 500) -> list[list]:
+        return [[idx.date().isoformat(), None if pd.isna(value) else round(float(value), 6)]
+                for idx, value in self.points.tail(n).items()]
+
 
 def _series(m: str, record: dict, capture: dict) -> FedSeries:
     expected = contract(m)

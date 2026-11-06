@@ -3320,9 +3320,9 @@ async def series_csv(mnemonic: str):
     restricted = methodology.csv_restriction(mnemonic)
     if restricted:
         raise HTTPException(403, restricted)
-    from seiche.sources import fed_releases
-    if mnemonic in fed_releases.CONTRACTS:
-        s = fed_releases.load_series(mnemonic)
+    from seiche.sources import original_publishers
+    if mnemonic in original_publishers.CONTRACTS:
+        s = original_publishers.load_series(mnemonic)
     else:
         await assemble.snapshot()  # ensure fetched
         s = store.load_series(mnemonic)
@@ -3355,9 +3355,9 @@ async def series(
     restricted = methodology.csv_restriction(mnemonic)
     if restricted:
         raise HTTPException(403, restricted)
-    from seiche.sources import fed_releases
-    if mnemonic in fed_releases.CONTRACTS:
-        s = fed_releases.load_series(mnemonic)
+    from seiche.sources import original_publishers
+    if mnemonic in original_publishers.CONTRACTS:
+        s = original_publishers.load_series(mnemonic)
     else:
         await assemble.snapshot()  # ensure fetched
         s = store.load_series(mnemonic)

@@ -171,10 +171,10 @@ async def fetch_many(
 
     # Same-measure migrations have their own source-bound captures. A failed
     # direct refresh must not silently re-enter the restricted FRED cache.
-    from seiche.sources import fed_releases
-    direct = [m for m in mnemonics if m in fed_releases.CONTRACTS]
+    from seiche.sources import original_publishers
+    direct = [m for m in mnemonics if m in original_publishers.CONTRACTS]
     if direct:
-        out.update(await fed_releases.fetch_many(client, direct, faults))
+        out.update(await original_publishers.fetch_many(client, direct, faults))
 
     async def one(m: str):
         try:
@@ -193,7 +193,7 @@ async def fetch_many(
                     ALL_SERIES[m], exc, cache_used=False, retry_deferred=False,
                 ))
 
-    await asyncio.gather(*(one(m) for m in mnemonics if m not in fed_releases.CONTRACTS))
+    await asyncio.gather(*(one(m) for m in mnemonics if m not in original_publishers.CONTRACTS))
     return out
 
 

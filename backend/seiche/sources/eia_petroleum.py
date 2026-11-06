@@ -142,7 +142,13 @@ async def fetch_many(
     client: httpx.AsyncClient, mnemonics: list[str], faults: list[dict] | None = None
 ) -> dict[str, Series]:
     out: dict[str, Series] = {}
+    from seiche.sources import original_publishers
+    direct = [m for m in mnemonics if m in original_publishers.CONTRACTS]
+    if direct:
+        out.update(await original_publishers.fetch_many(client, direct, faults))
     for mnemonic in mnemonics:
+        if mnemonic in original_publishers.CONTRACTS:
+            continue
         try:
             out[mnemonic] = await fetch_series(client, ALL_SERIES[mnemonic], faults)
         except SourceFault as exc:

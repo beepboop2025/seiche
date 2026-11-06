@@ -114,8 +114,8 @@ def csv_restriction(mnemonic: str) -> str | None:
     spec = ALL_SERIES.get(mnemonic)
     label = spec.label if spec else mnemonic
     source = getattr(spec, "source", None)
-    from seiche.sources import fed_releases
-    if mnemonic in fed_releases.CONTRACTS and fed_releases.load_series(mnemonic) is not None:
+    from seiche.sources import original_publishers
+    if mnemonic in original_publishers.CONTRACTS and original_publishers.load_series(mnemonic) is not None:
         return None
     if source == "fred":
         from seiche.public_rights import REASON
@@ -158,16 +158,18 @@ def render_series_csv(s) -> str:
         f"to the source above",
         "date,value",
     ]
-    from seiche.sources.fed_releases import FedSeries
-    if isinstance(s, FedSeries):
+    from seiche.sources.original_publishers import QUALIFIED_TYPES
+    if isinstance(s, QUALIFIED_TYPES):
         p = s.provenance()
         lines[-1:-1] = [
             f"# {p['attribution']} {p['source_url']}",
             f"# reuse: {p['rights_basis']}; {p['terms_url']}; reviewed {p['terms_reviewed_at']}",
-            f"# raw_capture_sha256: {p['raw_capture_sha256']}; contract_sha256: {p['contract_sha256']}",
+            f"# raw_capture_sha256: {p.get('raw_capture_sha256') or ','.join(p['raw_capture_sha256s'])}; contract_sha256: {p['contract_sha256']}",
             f"# knowledge_time: {p['knowledge_time']}; source_publication_time: unknown; historical_point_in_time: false",
             f"# date_normalization: {p['observation_date_normalization']}; missing_observations: {p['missing_observations']}",
         ]
+        if p.get("free_source_notice"):
+            lines.insert(-1, f"# {p['free_source_notice']} Modifications: {p['modification_notice']}")
         if p.get("unit_note"):
             lines.insert(-1, f"# unit_note: {p['unit_note']} {p['unit_definition_url']}")
     if spec in ECB_FX_SERIES:
@@ -176,8 +178,10 @@ def render_series_csv(s) -> str:
         lines.insert(-1, "# Source: Central Bank of the UAE. VAT valuation references, not executable quotes. https://centralbank.ae/en/forex-eibor/exchange-rates/ ; reuse: https://centralbank.ae/en/open-data-landing/open-data-policy/")
     if spec in CBUAE_DONIA_SERIES:
         lines.insert(-1, "# Source: Central Bank of the UAE. DONIA mixed secured/unsecured overnight funding, ACT/360; publisher chart dates, actual publication times unknown. https://centralbank.ae/en/our-operations/monetary-policy-and-domestic-markets/ ; reuse: https://centralbank.ae/en/open-data-landing/open-data-policy/")
-    for idx, v in s.points.dropna().items():
-        lines.append(f"{idx.date().isoformat()},{_plain(v)}")
+    points = s.points if isinstance(s, QUALIFIED_TYPES) else s.points.dropna()
+    for idx, v in points.items():
+        value = "" if v != v else _plain(v)
+        lines.append(f"{idx.date().isoformat()},{value}")
     return "\n".join(lines) + "\n"
 
 
@@ -199,8 +203,8 @@ def series_index() -> dict:
     """The citable-series catalog: every registry mnemonic with its config
     metadata, export URLs, and whether the store holds it right now."""
     have = _fetched_mnemonics()
-    from seiche.sources import fed_releases
-    direct = fed_releases.load_many(list(fed_releases.CONTRACTS))
+    from seiche.sources import original_publishers
+    direct = original_publishers.load_many(list(original_publishers.CONTRACTS))
     rows = []
     for m, spec in sorted(ALL_SERIES.items()):
         qualified = direct.get(m)

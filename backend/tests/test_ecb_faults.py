@@ -57,10 +57,12 @@ async def test_cold_failure_survives_snapshot_and_public_projections(
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         assert await ecb.fetch_many(client, ["ESTR"], faults) == {}
 
-    assert faults == [{"source": "ecb", "detail": f"{category}: {detail}"}]
+    assert faults == [{"source": "ecb_original", "group": "ESTR",
+                       "reason": "original_publisher_refresh_failed", "refresh_status": "failed",
+                       "cache_used": False, "detail": f"{category}: {detail}"}]
     stored = json.loads(json.dumps([sanitize_fault_record(row) for row in faults]))
     projected = [project_public_fault(row) for row in stored]
-    expected = {"source": "ecb", "status": "FAILED", "category": category, "detail": detail}
+    expected = {"source": "ecb_original", "status": "FAILED", "category": category, "detail": detail}
     assert projected == [expected]
     assert sanitize_public_fault_payload({"faults": projected}) == {"faults": [expected]}
     summary = ingest_runtime._completed_summary(
@@ -100,7 +102,7 @@ def cached_series(fetched_at):
 
 
 @pytest.mark.asyncio
-async def test_failed_refresh_preserves_cached_values_and_fetch_clock(isolated_store):
+async def test_failed_refresh_does_not_admit_unqualified_legacy_cache(isolated_store):
     original = cached_series(CACHED_AT)
     store.save_series(original)
     requests = []
@@ -111,14 +113,15 @@ async def test_failed_refresh_preserves_cached_values_and_fetch_clock(isolated_s
 
     faults = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = (await ecb.fetch_many(client, ["ESTR"], faults))["ESTR"]
+        result = await ecb.fetch_many(client, ["ESTR"], faults)
 
     assert len(requests) == 1
-    assert faults == []  # Preserve the existing cached fallback policy.
-    for value in (result, store.load_series("ESTR")):
-        assert value.fetched_at == CACHED_AT
-        assert value.asof == original.asof
-        pd.testing.assert_series_equal(value.points, original.points)
+    assert result == {}
+    assert len(faults) == 1 and faults[0]["cache_used"] is False
+    value = store.load_series("ESTR")
+    assert value.fetched_at == CACHED_AT
+    assert value.asof == original.asof
+    pd.testing.assert_series_equal(value.points, original.points)
 
 
 @pytest.mark.asyncio
