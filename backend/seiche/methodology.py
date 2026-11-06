@@ -59,30 +59,21 @@ FREQ_DESC = {
 def _source_cadence(source: str, remote_id: str, freq: str) -> tuple[str, str]:
     from seiche.sources.publication import H10_DAILY_REMOTE_IDS, H41_WEEKLY_REMOTE_IDS
 
-    if source == "fred" and freq == "D" and remote_id in H10_DAILY_REMOTE_IDS:
+    if source == "fed_h10" or (source == "fred" and freq == "D" and remote_id in H10_DAILY_REMOTE_IDS):
         return ("daily observations, weekly publication",
                 "H.10 publishes the previous week's observations Monday at 16:15 New York time; federal holidays delay publication")
-    if source == "fred" and freq == "W" and remote_id in H41_WEEKLY_REMOTE_IDS:
-        return ("weekly", "H.4.1 is scheduled Thursday at 16:30 New York time for Wednesday observations; federal holidays may delay publication")
+    if source == "fed_h41" or (source == "fred" and freq == "W" and remote_id in H41_WEEKLY_REMOTE_IDS):
+        return ("weekly", "H.4.1 is scheduled Thursday at 16:30 New York time for Wednesday levels or weeks ending Wednesday; federal holidays may delay publication")
     if source == "cbuae_donia" and freq == "D" and remote_id == "UAE_INTEREST_RATES/DONIA":
         return ("UAE business-day publication", "CBUAE aims for 09:30 Dubai time; chart dates are retained and actual publication timestamps are unknown")
     return FREQ_DESC.get(freq, (freq, "cadence unlisted"))
 
 # Bulk export is opt-IN by upstream, not opt-out by exception.
 #
-# The board reads from eight upstreams and only some of them let us hand their
-# raw history to a third party. US government and US public-agency data (FRED's
-# own Federal Reserve and Treasury series, OFR, Treasury FiscalData) is public
-# domain and exports freely. Everything else is somebody's licensed product:
-# CFETS asserts rights over its China fixings, BIS restricts redistribution of
-# its statistics, exchange market data carries redistribution terms, and FRED
-# itself mirrors copyrighted index data from CBOE, ICE BofA and S&P DJI.
-#
-# For those the board publishes DERIVED readings, which is a different act from
-# republishing the series, and points the reader upstream for the raw history.
-# A deny-list would silently start exporting the next licensed source somebody
-# adds; an allow-list fails closed instead, which is the right direction for a
-# question nobody wants to answer to a lawyer after the fact.
+# Direct publisher permissions are scoped to exact series and stored captures.
+# FRED transport does not confer downstream rights; neither does derivation.
+# Mixed-source products keep their existing gates until every dependency is
+# qualified. A new direct capture never changes old FRED observation rights.
 CSV_ALLOWED_SOURCES = {"ofr", "fiscaldata"}
 
 # Licensed series that ride in on an otherwise-exportable upstream: FRED hosts
@@ -123,6 +114,9 @@ def csv_restriction(mnemonic: str) -> str | None:
     spec = ALL_SERIES.get(mnemonic)
     label = spec.label if spec else mnemonic
     source = getattr(spec, "source", None)
+    from seiche.sources import fed_releases
+    if mnemonic in fed_releases.CONTRACTS and fed_releases.load_series(mnemonic) is not None:
+        return None
     if source == "fred":
         from seiche.public_rights import REASON
         return REASON
@@ -164,6 +158,18 @@ def render_series_csv(s) -> str:
         f"to the source above",
         "date,value",
     ]
+    from seiche.sources.fed_releases import FedSeries
+    if isinstance(s, FedSeries):
+        p = s.provenance()
+        lines[-1:-1] = [
+            f"# {p['attribution']} {p['source_url']}",
+            f"# reuse: {p['rights_basis']}; {p['terms_url']}; reviewed {p['terms_reviewed_at']}",
+            f"# raw_capture_sha256: {p['raw_capture_sha256']}; contract_sha256: {p['contract_sha256']}",
+            f"# knowledge_time: {p['knowledge_time']}; source_publication_time: unknown; historical_point_in_time: false",
+            f"# date_normalization: {p['observation_date_normalization']}; missing_observations: {p['missing_observations']}",
+        ]
+        if p.get("unit_note"):
+            lines.insert(-1, f"# unit_note: {p['unit_note']} {p['unit_definition_url']}")
     if spec in ECB_FX_SERIES:
         lines.insert(-1, "# Source: European Central Bank. Reference data is freely available from the ECB; not executable quotes. https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html")
     if spec in CBUAE_FX_SERIES:
@@ -193,26 +199,32 @@ def series_index() -> dict:
     """The citable-series catalog: every registry mnemonic with its config
     metadata, export URLs, and whether the store holds it right now."""
     have = _fetched_mnemonics()
+    from seiche.sources import fed_releases
+    direct = fed_releases.load_many(list(fed_releases.CONTRACTS))
     rows = []
     for m, spec in sorted(ALL_SERIES.items()):
-        cadence, lag = _source_cadence(spec.source, spec.remote_id, spec.freq)
+        qualified = direct.get(m)
+        source = qualified.source if qualified else spec.source
+        remote_id = qualified.remote_id if qualified else spec.remote_id
+        cadence, lag = _source_cadence(source, remote_id, spec.freq)
         # One licence answer for both formats: the CSV export and the JSON
         # twin enforce csv_restriction, so the catalog must not advertise a
         # link either route will 403. This also covers source-restricted
         # upstreams (BIS, CFETS, exchanges), which the old CSV field missed.
-        restricted = csv_restriction(m) is not None
+        restricted = False if qualified else csv_restriction(m) is not None
         rows.append({
             "mnemonic": m,
             "label": spec.label,
-            "source": spec.source,
-            "remote_id": spec.remote_id,
+            "source": source,
+            "remote_id": remote_id,
             "unit": spec.unit,
             "cadence": cadence,
             "native_lag": lag,
             "csv": None if restricted else f"/api/series/{m}.csv",
             "csv_restricted": restricted or None,
             "json": None if restricted else f"/api/series/{m}",
-            "available": m in have,
+            "available": bool(qualified) or m in have,
+            **({"provenance": qualified.provenance()} if qualified else {}),
         })
     return {
         "schema": "seiche.series-index.v1",
