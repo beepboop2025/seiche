@@ -453,6 +453,16 @@ def publication_freshness(
     one is aging, two through five are stale, and six or more are dead. A fresh
     week does not attest completeness of daily prints or their publication time.
     """
+    if source in {"fed_h10", "fed_h41", "fed_cp"}:
+        from seiche.sources.fed_releases import CONTRACTS
+        from seiche.config import ALL_SERIES
+        matches = [m for m, c in CONTRACTS.items()
+                   if "fed_" + c["release"] == source and c["dimensions"]["SERIES_NAME"] == remote_id]
+        if matches:
+            policy = publication_freshness("fred", ALL_SERIES[matches[0]].remote_id, freq, asof, now=now)
+            if policy is not None:
+                return {**policy, "freshness_policy": policy["freshness_policy"].replace("fred-", "fed-direct-")}
+        return None
     if source == "cbuae_fx" and freq == "D" and isinstance(remote_id, str) and remote_id in CBUAE_FX_REMOTE_IDS:
         return cbuae_fx_freshness(asof, now=now)
     if source == "cbuae_donia" and freq == "D" and remote_id == "UAE_INTEREST_RATES/DONIA":

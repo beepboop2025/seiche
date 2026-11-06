@@ -3320,8 +3320,12 @@ async def series_csv(mnemonic: str):
     restricted = methodology.csv_restriction(mnemonic)
     if restricted:
         raise HTTPException(403, restricted)
-    await assemble.snapshot()  # ensure fetched
-    s = store.load_series(mnemonic)
+    from seiche.sources import fed_releases
+    if mnemonic in fed_releases.CONTRACTS:
+        s = fed_releases.load_series(mnemonic)
+    else:
+        await assemble.snapshot()  # ensure fetched
+        s = store.load_series(mnemonic)
     if s is None:
         raise HTTPException(503, f"series '{mnemonic}' not yet available")
     return Response(
@@ -3351,8 +3355,12 @@ async def series(
     restricted = methodology.csv_restriction(mnemonic)
     if restricted:
         raise HTTPException(403, restricted)
-    await assemble.snapshot()  # ensure fetched
-    s = store.load_series(mnemonic)
+    from seiche.sources import fed_releases
+    if mnemonic in fed_releases.CONTRACTS:
+        s = fed_releases.load_series(mnemonic)
+    else:
+        await assemble.snapshot()  # ensure fetched
+        s = store.load_series(mnemonic)
     if s is None:
         raise HTTPException(503, f"series '{mnemonic}' not yet available")
     return {"provenance": s.provenance(), "points": s.tail_records(n)}

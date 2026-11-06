@@ -1,0 +1,692 @@
+{
+  "AUD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "AUD",
+      "FREQ": "9",
+      "FX": "AUD",
+      "SERIES_NAME": "RXI$US_N.B.AL",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "BRL": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "BRL",
+      "FREQ": "9",
+      "FX": "BRL",
+      "SERIES_NAME": "RXI_N.B.BZ",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "CAD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "CAD",
+      "FREQ": "9",
+      "FX": "CAD",
+      "SERIES_NAME": "RXI_N.B.CA",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "CHF": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "CHF",
+      "FREQ": "9",
+      "FX": "CHF",
+      "SERIES_NAME": "RXI_N.B.SZ",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "CNY": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "CNY",
+      "FREQ": "9",
+      "FX": "CNY",
+      "SERIES_NAME": "RXI_N.B.CH",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "CP_FIN_3M": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CP_TERM": "90",
+      "CP_TYPE": "FAA",
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "SERIES_NAME": "RIFSPPFAAD90_N.B",
+      "UNIT": "Percent",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "cp"
+  },
+  "CP_NONFIN_3M": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CP_TERM": "90",
+      "CP_TYPE": "NAA",
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "SERIES_NAME": "RIFSPPNAAD90_N.B",
+      "UNIT": "Percent",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "cp"
+  },
+  "CUSTODY_TSY": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "MEMO",
+      "COMPONENT": "USTSN",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "L",
+      "SERIES_NAME": "RESH4FG_N.WW",
+      "SUBCATEGORY": "CH",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "DGS10": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "INSTRUMENT": "TCMNOM",
+      "MATURITY": "Y10",
+      "SERIES_NAME": "RIFLGFCY10_N.B",
+      "UNIT": "Percent:_Per_Year",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h15"
+  },
+  "DGS2": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "INSTRUMENT": "TCMNOM",
+      "MATURITY": "Y2",
+      "SERIES_NAME": "RIFLGFCY02_N.B",
+      "UNIT": "Percent:_Per_Year",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h15"
+  },
+  "DGS30": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "INSTRUMENT": "TCMNOM",
+      "MATURITY": "Y30",
+      "SERIES_NAME": "RIFLGFCY30_N.B",
+      "UNIT": "Percent:_Per_Year",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h15"
+  },
+  "DGS3M": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "INSTRUMENT": "TCMNOM",
+      "MATURITY": "M3",
+      "SERIES_NAME": "RIFLGFCM03_N.B",
+      "UNIT": "Percent:_Per_Year",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h15"
+  },
+  "DISCOUNT_WINDOW": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "ASSET",
+      "COMPONENT": "LNPC",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "L",
+      "SERIES_NAME": "RESPPALDP_N.WW",
+      "SUBCATEGORY": "LCF",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "DKK": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "DKK",
+      "FREQ": "9",
+      "FX": "DKK",
+      "SERIES_NAME": "RXI_N.B.DN",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "DXY_AFE": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "FX": "AFE",
+      "SERIES_NAME": "JRXWTFN_N.B",
+      "UNIT": "Index:_1997_Jan_100",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "DXY_BROAD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "FX": "BRD",
+      "SERIES_NAME": "JRXWTFB_N.B",
+      "UNIT": "Index:_1997_Jan_100",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "DXY_EME": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "FX": "EME",
+      "SERIES_NAME": "JRXWTFO_N.B",
+      "UNIT": "Index:_1997_Jan_100",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "EURUSD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "EUR",
+      "FREQ": "9",
+      "FX": "EUR",
+      "SERIES_NAME": "RXI$US_N.B.EU",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "EURUSD_LONG": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "EUR",
+      "FREQ": "9",
+      "FX": "EUR",
+      "SERIES_NAME": "RXI$US_N.B.EU",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "FED_ASSETS_LONG": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "ASSET",
+      "COMPONENT": "TA",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOTC",
+      "FREQ": "19",
+      "SERIESTYPE": "L",
+      "SERIES_NAME": "RESPPMA_N.WW",
+      "SUBCATEGORY": "TA",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "FIMA_REPO": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "ASSET",
+      "COMPONENT": "RPF",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "L",
+      "SERIES_NAME": "RESPPALGTRF_N.WW",
+      "SUBCATEGORY": "ZZZZ",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "FOREIGN_RRP": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "LIABCAP",
+      "COMPONENT": "RRPF",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "L",
+      "SERIES_NAME": "RESPPLLRF_N.WW",
+      "SUBCATEGORY": "LIAB",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "GBP": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "GBP",
+      "FREQ": "9",
+      "FX": "GBP",
+      "SERIES_NAME": "RXI$US_N.B.UK",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "HKD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "HKD",
+      "FREQ": "9",
+      "FX": "HKD",
+      "SERIES_NAME": "RXI_N.B.HK",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "INDPRO": {
+    "date_normalization": "month_start",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "129",
+      "SA": "SA",
+      "SERIES_CODE": "B50001",
+      "SERIES_NAME": "IP.B50001.S",
+      "UNIT": "Index:_2017_100",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "identical_only",
+    "release": "g17"
+  },
+  "INR": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "INR",
+      "FREQ": "9",
+      "FX": "INR",
+      "SERIES_NAME": "RXI_N.B.IN",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "IOER": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "8",
+      "INT_RATES_PAID": "IOR",
+      "SERIES_NAME": "RESBME_N.D",
+      "UNIT": "Percent",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "prates"
+  },
+  "IORB": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "8",
+      "INT_RATES_PAID": "IOR",
+      "SERIES_NAME": "RESBM_N.D",
+      "UNIT": "Percent",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "prates"
+  },
+  "JPY": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "JPY",
+      "FREQ": "9",
+      "FX": "JPY",
+      "SERIES_NAME": "RXI_N.B.JA",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "JPY_LONG": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "JPY",
+      "FREQ": "9",
+      "FX": "JPY",
+      "SERIES_NAME": "RXI_N.B.JA",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "KRW": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "KRW",
+      "FREQ": "9",
+      "FX": "KRW",
+      "SERIES_NAME": "RXI_N.B.KO",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "LKR": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "LKR",
+      "FREQ": "9",
+      "FX": "LKR",
+      "SERIES_NAME": "RXI_N.B.SL",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "MXN": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "MXN",
+      "FREQ": "9",
+      "FX": "MXN",
+      "SERIES_NAME": "RXI_N.B.MX",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "MYR": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "MYR",
+      "FREQ": "9",
+      "FX": "MYR",
+      "SERIES_NAME": "RXI_N.B.MA",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "NOK": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NOK",
+      "FREQ": "9",
+      "FX": "NOK",
+      "SERIES_NAME": "RXI_N.B.NO",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "NZD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NZD",
+      "FREQ": "9",
+      "FX": "NZD",
+      "SERIES_NAME": "RXI$US_N.B.NZ",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "SEK": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "SEK",
+      "FREQ": "9",
+      "FX": "SEK",
+      "SERIES_NAME": "RXI_N.B.SD",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "SGD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "SGD",
+      "FREQ": "9",
+      "FX": "SGD",
+      "SERIES_NAME": "RXI_N.B.SI",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "SWAP_LINES": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "ASSET",
+      "COMPONENT": "CBL",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "L",
+      "SERIES_NAME": "RESH4SCS_N.WW",
+      "SUBCATEGORY": "SWAP",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "TB3M": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "INSTRUMENT": "TB",
+      "MATURITY": "M3",
+      "SERIES_NAME": "RIFSGFSM03_N.B",
+      "UNIT": "Percent:_Per_Year",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h15"
+  },
+  "TB4W": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "NA",
+      "FREQ": "9",
+      "INSTRUMENT": "TB",
+      "MATURITY": "WK4",
+      "SERIES_NAME": "RIFSGFSW04_N.B",
+      "UNIT": "Percent:_Per_Year",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h15"
+  },
+  "TGA_LONG": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "LIABCAP",
+      "COMPONENT": "DEPUSTG",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "A",
+      "SERIES_NAME": "RESPPLLDT_XAW_N.WW",
+      "SUBCATEGORY": "LIAB",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "THB": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "THB",
+      "FREQ": "9",
+      "FX": "THB",
+      "SERIES_NAME": "RXI_N.B.TH",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "TWD": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "TWD",
+      "FREQ": "9",
+      "FX": "TWD",
+      "SERIES_NAME": "RXI_N.B.TA",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  },
+  "WALCL": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "ASSET",
+      "COMPONENT": "TA",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOTC",
+      "FREQ": "19",
+      "SERIESTYPE": "L",
+      "SERIES_NAME": "RESPPMA_N.WW",
+      "SUBCATEGORY": "TA",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "WCURCIR": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "LIABCAP",
+      "COMPONENT": "CIC",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "A",
+      "SERIES_NAME": "RESTBC_XAW_N.WW",
+      "SUBCATEGORY": "OFDRB",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "WRESBAL": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "LIABCAP",
+      "COMPONENT": "RBFRB",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "A",
+      "SERIES_NAME": "RESH4R_XAW_N.WW",
+      "SUBCATEGORY": "OFDRB",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "WTREGEN": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CATEGORY": "LIABCAP",
+      "COMPONENT": "DEPUSTG",
+      "CURRENCY": "USD",
+      "DISTRIBUTION": "TOT",
+      "FREQ": "19",
+      "SERIESTYPE": "A",
+      "SERIES_NAME": "RESPPLLDT_XAW_N.WW",
+      "SUBCATEGORY": "LIAB",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1000000"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h41"
+  },
+  "ZAR": {
+    "date_normalization": "publisher_date",
+    "dimensions": {
+      "CURRENCY": "ZAR",
+      "FREQ": "9",
+      "FX": "ZAL",
+      "SERIES_NAME": "RXI_N.B.SF",
+      "UNIT": "Currency",
+      "UNIT_MULT": "1"
+    },
+    "duplicate_series_policy": "reject",
+    "release": "h10"
+  }
+}
