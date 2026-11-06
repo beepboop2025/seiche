@@ -45,10 +45,42 @@
         "dateModified": "2026-08-22",
         "provider": {"@id": "https://seiche.info/#organization"},
         "dataset": [
-          {"@id": "https://seiche.info/money-markets/#dataset"},
-          {"@id": "https://seiche.info/markets/forex/#dataset"},
-          {"@id": "https://seiche.info/markets/capital-markets/#dataset"},
-          {"@id": "https://seiche.info/markets/china-macro/#dataset"}
+          {
+            "@type": "Dataset",
+            "@id": "https://seiche.info/money-markets/#dataset",
+            "name": "Seiche registered money-market coverage and rights map",
+            "description": "A source-linked map of which Seiche monetary-area packs had a redistributable public benchmark, derived-only context, only a policy anchor, or no eligible public benchmark in the 21 August 2026 receipt. Registration and discovery are not claims of live, supported, or evidence-eligible coverage.",
+            "url": "https://seiche.info/money-markets/",
+            "sameAs": "https://seiche.info/money-markets/",
+            "creator": {"@id": "https://seiche.info/#organization"}
+          },
+          {
+            "@type": "Dataset",
+            "@id": "https://seiche.info/markets/forex/#dataset",
+            "name": "Seiche public foreign-exchange reference ledger",
+            "description": "A registered panel of twenty-two daily Federal Reserve H.10 bilateral reference-rate series and three trade-weighted US dollar indexes. Current observations, when present, carry explicit quote conventions, source-native dates, retrieval clocks and evidence limits.",
+            "url": "https://seiche.info/markets/forex/",
+            "sameAs": "https://seiche.info/markets/forex/",
+            "creator": {"@id": "https://seiche.info/#organization"}
+          },
+          {
+            "@type": "Dataset",
+            "@id": "https://seiche.info/markets/capital-markets/#dataset",
+            "name": "Seiche bounded capital-markets transmission projection",
+            "description": "A bounded derived macro-capital transmission projection spanning registered US Treasury, credit, volatility, dealer, official-custody, positioning and energy evidence. It is not a consolidated raw capital-market dataset; raw numerical claims must use an exact series or publisher URL.",
+            "url": "https://seiche.info/markets/capital-markets/",
+            "sameAs": "https://seiche.info/markets/capital-markets/",
+            "creator": {"@id": "https://seiche.info/#organization"}
+          },
+          {
+            "@type": "Dataset",
+            "@id": "https://seiche.info/markets/china-macro/#dataset",
+            "name": "Seiche China macro evidence catalog",
+            "description": "A release-reviewed, metadata-only public catalog binding four National Bureau of Statistics of China monthly series to exact browser identifiers, human labels, semantic contracts and official release references. A separately verified Seiche owner-attested revision may add capture provenance. Numeric observations, raw exports and history are withheld pending redistribution review.",
+            "url": "https://seiche.info/markets/china-macro/",
+            "sameAs": "https://seiche.info/markets/china-macro/",
+            "creator": {"@id": "https://seiche.info/#organization"}
+          }
         ]
       },
       {
@@ -56,6 +88,7 @@
         "@id": "https://seiche.info/markets/#world-context",
         "identifier": "seiche.world-markets.v1",
         "name": "Seiche unified world-markets context",
+        "description": "A bounded public financial-market evidence layer combining an 11-pack money-market atlas, 22 registered daily bilateral FX reference-rate series and three dollar indexes, a derived macro-capital transmission projection, and four release-reviewed NBS China macro identities. Evidence status, rights and source-native clocks remain attached; executable prices and restricted raw observations are excluded.",
         "url": "https://seiche.info/markets/",
         "mainEntityOfPage": "https://seiche.info/markets/",
         "includedInDataCatalog": {"@id": "https://seiche.info/markets/#catalog"},
