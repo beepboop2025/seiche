@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import html
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -172,6 +173,10 @@ def render_series_csv(s) -> str:
             lines.insert(-1, f"# {p['free_source_notice']} Modifications: {p['modification_notice']}")
         if p.get("unit_note"):
             lines.insert(-1, f"# unit_note: {p['unit_note']} {p['unit_definition_url']}")
+        for notice in p.get("required_notices", []):
+            lines.insert(-1, "# " + notice)
+        if p.get("measure_kind"):
+            lines.insert(-1, f"# measure_kind: {p['measure_kind']}; publisher_dimensions: {json.dumps(p['publisher_dimensions'], sort_keys=True)}")
     if spec in ECB_FX_SERIES:
         lines.insert(-1, "# Source: European Central Bank. Reference data is freely available from the ECB; not executable quotes. https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html")
     if spec in CBUAE_FX_SERIES:

@@ -1,4 +1,4 @@
-"""Eight exact original BLS/BEA/ECB/EIA series with isolated capture rights.
+"""Exact original statistical series with isolated capture rights.
 
 Permissions are specific to these statistics. Source inventory is not a grant
 for unrelated ECB feeds, EIA vendor prices, publisher logos or old FRED rows.
@@ -41,9 +41,12 @@ TERMS = {
     "bea": "https://www.bea.gov/help/faq/147",
     "ecb": "https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html",
     "eia": "https://www.eia.gov/about/copyrights_reuse.php",
+    "nyfed": "https://www.newyorkfed.org/privacy/termsofuse",
+    "boe": "https://www.bankofengland.co.uk/legal",
 }
 NAMES = {"bls": "U.S. Bureau of Labor Statistics", "bea": "U.S. Bureau of Economic Analysis",
-         "ecb": "European Central Bank", "eia": "U.S. Energy Information Administration"}
+         "ecb": "European Central Bank", "eia": "U.S. Energy Information Administration",
+         "nyfed": "Federal Reserve Bank of New York", "boe": "Bank of England"}
 CONTRACTS = {
     "CORE_CPI": {"provider": "bls", "group": "bls", "remote_id": "CUSR0000SA0L1E", "unit": "index 1982-84=100", "normalization": "monthly reference period to month-start"},
     "ENERGY_CPI": {"provider": "bls", "group": "bls", "remote_id": "CUSR0000SA0E", "unit": "index 1982-84=100", "normalization": "monthly reference period to month-start"},
@@ -53,7 +56,20 @@ CONTRACTS = {
     "ECB_ASSETS": {"provider": "ecb", "group": "ECB_ASSETS", "remote_id": "ILM/W.U2.C.T000000.Z5.Z01", "unit": "EUR M", "normalization": "ISO reference week to Friday; millions EUR unchanged; Eurosystem changing composition", "dimensions": {"KEY": "ILM.W.U2.C.T000000.Z5.Z01", "FREQ": "W", "REF_AREA": "U2", "BS_REP_SECTOR": "C", "BS_ITEM": "T000000", "COUNT_AREA": "Z5", "CURRENCY_TRANS": "Z01", "UNIT": "EUR", "UNIT_MULT": "6"}},
     "CUSHING_STOCKS": {"provider": "eia", "group": "CUSHING_STOCKS", "remote_id": "W_EPC0_SAX_YCUOK_MBBL", "unit": "thousand barrels", "normalization": "publisher weekly ending date; values unchanged", "title": "Weekly Cushing, OK Ending Stocks excluding SPR of Crude Oil (Thousand Barrels)"},
     "CRUDE_STOCKS_EX_SPR": {"provider": "eia", "group": "CRUDE_STOCKS_EX_SPR", "remote_id": "WCESTUS1", "unit": "thousand barrels", "normalization": "publisher weekly ending date; values unchanged", "title": "Weekly U.S. Ending Stocks excluding SPR of Crude Oil (Thousand Barrels)"},
+    "SOFR": {"provider": "nyfed", "group": "SOFR", "remote_id": "SOFR", "unit": "%", "normalization": "effectiveDate, percentRate unchanged; overnight rate, not Term SOFR"},
+    "EFFR": {"provider": "nyfed", "group": "EFFR", "remote_id": "EFFR", "unit": "%", "normalization": "effectiveDate, percentRate unchanged; not the target range"},
+    "RRPONTSYD": {"provider": "nyfed", "group": "rrp", "remote_id": "ON_RRP_TREASURY", "unit": "$B", "normalization": "daily sum of overnight fixed-rate Treasury reverse-repo accepted USD / 1e9, including small-value exercises; operation date; no calendar filling"},
+    "RRP_LONG": {"provider": "nyfed", "group": "rrp", "remote_id": "ON_RRP_TREASURY", "unit": "$B", "normalization": "daily sum of overnight fixed-rate Treasury reverse-repo accepted USD / 1e9, including small-value exercises; operation date; no calendar filling"},
+    "SONIA": {"provider": "boe", "group": "SONIA", "remote_id": "IUDSOIA", "unit": "%", "normalization": "publisher daily reference date and percent rate unchanged; delayed Database release"},
 }
+for _mnemonic in ("RRPONTSYD", "RRP_LONG"):
+    CONTRACTS[_mnemonic]["dimensions"] = {
+        "operationType": "Reverse Repo", "term": "Overnight", "operationMethod": "Fixed Rate",
+        "auctionStatus": "Results", "settlementType": "Same Day", "securityType": "Treasury",
+        "source_amount_unit": "USD", "daily_group": "operationDate; settlementDate must equal operationDate",
+        "deduplication": "reject repeated operationId; sum distinct operations, including exercises",
+        "maturity": "1-5 calendar days after settlement, accounting for weekends/holidays",
+    }
 _locks = {c["group"]: asyncio.Lock() for c in CONTRACTS.values()}
 _network = asyncio.Semaphore(2)
 
@@ -71,6 +87,17 @@ def source_url(m: str) -> str:
     if c["provider"] == "ecb":
         start = "2019-10-01" if m == "ESTR" else ALL_SERIES[m].start
         return ECB_BASE + c["remote_id"] + "?" + urlencode({"format": "csvdata", "startPeriod": start})
+    if c["provider"] == "nyfed":
+        if c["group"] == "rrp":
+            return "https://markets.newyorkfed.org/api/rp/results/search.json?" + urlencode({
+                "startDate": min(ALL_SERIES[n].start for n, v in CONTRACTS.items() if v["group"] == "rrp"),
+                "operationTypes": "Reverse Repo", "method": "fixed", "securityType": "tsy", "term": "overnight"})
+        family = "secured" if m == "SOFR" else "unsecured"
+        return f"https://markets.newyorkfed.org/api/rates/{family}/{m.lower()}/search.json?" + urlencode({"startDate": ALL_SERIES[m].start})
+    if c["provider"] == "boe":
+        return "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?" + urlencode({
+            "csv.x": "yes", "Datefrom": date.fromisoformat(ALL_SERIES[m].start).strftime("%d/%b/%Y"),
+            "Dateto": "now", "SeriesCodes": c["remote_id"], "CSVF": "TN", "UsingCodes": "Y", "VPD": "Y", "VFD": "N"})
     return EIA_BASE + "?" + urlencode({"n": "PET", "s": c["remote_id"], "f": "W"})
 
 
@@ -79,10 +106,14 @@ def contract(m: str) -> dict:
     spec = ALL_SERIES[m]
     if c["unit"] != spec.unit:
         raise ValueError("registry unit changed; publisher contract needs review")
+    if c["provider"] in {"nyfed", "boe"} and spec.freq != "D":
+        raise ValueError("registry frequency changed; daily publisher contract needs review")
     return {**c, "mnemonic": m, "source": c["provider"] + "_original", "source_url": source_url(m),
             "freq": spec.freq, "start": spec.start, "legacy_remote_id": spec.remote_id,
             "terms_url": TERMS[c["provider"]], "terms_reviewed_at": "2026-11-06",
-            "rights": "reuse_with_attribution_and_free_source_notice" if c["provider"] == "ecb" else "public_domain_with_attribution",
+            "rights": {"ecb": "reuse_with_attribution_and_free_source_notice",
+                       "nyfed": "business_reuse_with_notices_and_same_downstream_terms",
+                       "boe": "OGL_v3_with_SONIA_attribution"}.get(c["provider"], "public_domain_with_attribution"),
             "scope": "Only the explicitly identified publisher-produced statistical series."}
 
 
@@ -194,6 +225,7 @@ def decode(group: str, capture: object) -> dict[str, StatisticsSeries]:
                 "source_url": c["source_url"], "terms_url": c["terms_url"], "terms_reviewed_at": c["terms_reviewed_at"],
                 "attribution": attribution, "redistribution_status": "allowed", "rights_basis": c["rights"], "rights_scope": c["scope"],
                 "raw_capture_sha256s": [d["sha256"] for d in docs], "contract_sha256": record["contract_sha256"],
+                "source_retrieval_times": [d.get("retrieved_at") for d in docs],
                 "normalized_points_sha256": record["points_sha256"], "publisher_dimensions": c.get("dimensions", {"series_id": c["remote_id"]}),
                 "observation_date_normalization": c["normalization"], "knowledge_time": capture["fetched_at"],
                 "source_publication_time": None, "publication_time_policy": "unknown", "historical_point_in_time": False,
@@ -204,6 +236,34 @@ def decode(group: str, capture: object) -> dict[str, StatisticsSeries]:
             if provider == "ecb":
                 evidence["free_source_notice"] = "This information is available free of charge from the European Central Bank."
                 evidence["modification_notice"] = c["normalization"]
+            if provider == "nyfed":
+                evidence["attribution"] = "© " + str(stamp.year) + " Federal Reserve Bank of New York. Content from the New York Fed subject to the Terms of Use at newyorkfed.org."
+                evidence["required_notices"] = [
+                    "The source data are available without charge from " + c["source_url"],
+                    "Redistribution must retain the same permissions, conditions and restrictions in the New York Fed Terms of Use; no more restrictive downstream terms may be imposed.",
+                    "Modifications by Seiche: " + c["normalization"],
+                ]
+                if m in {"SOFR", "EFFR"}:
+                    evidence["required_notices"].extend([
+                        f"The {m} data is subject to the Terms of Use posted at newyorkfed.org. The New York Fed is not responsible for publication of the {m} data by LiquiLens Private Limited, does not sanction or endorse any particular republication, and has no liability for your use.",
+                        "LiquiLens Private Limited is not affiliated with the New York Fed. The New York Fed does not sanction, endorse, or recommend any products or services offered by LiquiLens Private Limited.",
+                    ])
+                if m == "SOFR":
+                    evidence["required_notices"].append("SOFR Data is calculated using data provided under a license granted to the New York Fed by DTCC Solutions LLC, an affiliate of The Depository Trust & Clearing Corporation. DTCC Solutions LLC, its affiliates, and third parties from which they obtained data have no liability for the content of this material.")
+                evidence["source_revision_times"] = extra.get("source_revision_times", {})
+                evidence["source_revision_time_policy"] = extra.get("source_revision_time_policy", "not supplied")
+                evidence["revision_indicators"] = extra.get("revision_indicators", {})
+                evidence["source_operation_ids"] = extra.get("source_operation_ids", {})
+                if c["group"] == "rrp":
+                    evidence["measure_kind"] = "derived_daily_total_of_original_publisher_operations"
+                    evidence["legacy_definition_url"] = "https://fred.stlouisfed.org/series/RRPONTSYD"
+                    evidence["legacy_definition_equivalence"] = "Same daily aggregate Treasury overnight RRP measure, rebuilt from original reported operations; individual historical mirror values may differ."
+                evidence["publication_time_policy"] = "unknown; effective dates and operation revision clocks are not first-publication receipts"
+            if provider == "boe":
+                evidence["attribution"] = "SONIA and/or SONIA Compounded Index data licensed under the Open Government Licence v3.0 and copyright the Governor and Company of the Bank of England. The trade marks “Bank of England” and “SONIA” are registered trade marks of the Bank of England."
+                evidence["required_notices"] = ["Open Government Licence v3.0: https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+                                                "Database SONIA is freely available by 10am on the business day after first publication; this capture grants no real-time benchmark feed entitlement."]
+                evidence["publication_time_policy"] = "unknown; reference date is not the delayed Database release timestamp"
             spec = ALL_SERIES[m]
             points = pd.Series([r[1] for r in rows], index=pd.DatetimeIndex([r[0] for r in rows]), dtype=float)
             out[m] = StatisticsSeries(m, c["source"], c["remote_id"], spec.label, c["unit"], spec.freq,
@@ -239,6 +299,71 @@ def parse_ecb(m: str, payload: bytes) -> tuple[list, dict]:
             day = period
         points.append([day, float(row["OBS_VALUE"])])
     return _rows(m, points), {}
+
+
+def parse_nyfed_rates(m: str, payload: bytes) -> tuple[list, dict]:
+    entries = json.loads(payload)["refRates"]
+    if m not in {"SOFR", "EFFR"} or not isinstance(entries, list):
+        raise ValueError("NYFed reference-rate identity changed")
+    points, revisions = [], {}
+    for row in entries:
+        if row.get("type") != m or type(row.get("percentRate")) not in (int, float):
+            raise ValueError("NYFed rate identity or percent unit changed")
+        day = row["effectiveDate"]
+        points.append([day, row["percentRate"]])
+        # The indicator is not a timestamp or a reconstructed historical vintage.
+        if row.get("revisionIndicator"):
+            revisions[day] = row["revisionIndicator"]
+    return _rows(m, points), {"revision_indicators": revisions}
+
+
+def parse_nyfed_rrp(payload: bytes) -> dict[str, tuple[list, dict]]:
+    entries = json.loads(payload)["repo"]["operations"]
+    if not isinstance(entries, list):
+        raise ValueError("NYFed operations shape changed")
+    totals, revisions, operation_ids, seen_ids = {}, {}, {}, set()
+    for row in entries:
+        if (row.get("operationType") != "Reverse Repo" or row.get("term") != "Overnight"
+                or row.get("operationMethod") != "Fixed Rate" or row.get("auctionStatus") != "Results"
+                or row.get("settlementType") != "Same Day"):
+            raise ValueError("NYFed RRP definition changed")
+        if not row.get("operationId") or row["operationId"] in seen_ids:
+            raise ValueError("duplicate NYFed operation identity")
+        seen_ids.add(row["operationId"])
+        day = row["operationDate"]
+        settlement, maturity = date.fromisoformat(row["settlementDate"]), date.fromisoformat(row["maturityDate"])
+        if settlement.isoformat() != day or not 1 <= (maturity - settlement).days <= 5:
+            raise ValueError("NYFed overnight settlement changed")
+        treasury = [x for x in row["details"] if x.get("securityType") == "Treasury"]
+        if len(treasury) != 1 or type(treasury[0].get("amtAccepted")) not in (int, float):
+            raise ValueError("NYFed Treasury amount or USD unit changed")
+        amount = treasury[0]["amtAccepted"]
+        if amount < 0:
+            raise ValueError("negative RRP amount")
+        totals[day] = totals.get(day, 0) + amount
+        operation_ids.setdefault(day, []).append(row["operationId"])
+        revised = row.get("lastUpdated")
+        if revised:
+            datetime.strptime(revised, "%Y-%m-%d %H:%M:%S")
+            revisions[row["operationId"]] = revised
+    points = [[day, amount / 1_000_000_000] for day, amount in totals.items()]
+    return {m: (_rows(m, points), {"source_revision_times": revisions,
+                                  "source_operation_ids": operation_ids,
+                                  "source_revision_time_policy": "lastUpdated verbatim; response does not supply timezone; not first-publication time"})
+            for m in ("RRPONTSYD", "RRP_LONG")}
+
+
+def parse_boe_sonia(payload: bytes) -> tuple[list, dict]:
+    reader = csv.DictReader(io.StringIO(payload.decode("utf-8-sig")))
+    if reader.fieldnames != ["DATE", "IUDSOIA"]:
+        raise ValueError("BoE SONIA daily rate identity changed")
+    points = []
+    for row in reader:
+        if None in row or not row["IUDSOIA"]:
+            raise ValueError("BoE SONIA missing or malformed observation")
+        day = datetime.strptime(row["DATE"], "%d %b %Y").date().isoformat()
+        points.append([day, float(row["IUDSOIA"])])
+    return _rows("SONIA", points), {}
 
 
 def parse_bls(payload: bytes, first: int, last: int) -> dict[str, tuple[list, dict]]:
@@ -367,7 +492,7 @@ async def _download(client, url: str, request: dict | None = None) -> tuple[byte
                 if len(payload) > MAX_BYTES:
                     raise ValueError("publisher response size exceeded")
     body = bytes(payload)
-    return body, {"source_url": url, "request": request, "sha256": hashlib.sha256(body).hexdigest(), "bytes": len(body)}
+    return body, {"source_url": url, "request": request, "sha256": hashlib.sha256(body).hexdigest(), "bytes": len(body), "retrieved_at": utcnow_iso()}
 
 
 async def fetch_many(client, mnemonics: list[str], faults: list[dict] | None = None) -> dict[str, StatisticsSeries]:
@@ -403,6 +528,13 @@ async def fetch_many(client, mnemonics: list[str], faults: list[dict] | None = N
                             parsed[m] = parse_ecb(m, body)
                         elif provider == "eia":
                             parsed[m] = parse_eia(m, body)
+                        elif provider == "nyfed":
+                            if group == "rrp":
+                                parsed = parse_nyfed_rrp(body)
+                            else:
+                                parsed[m] = parse_nyfed_rates(m, body)
+                        elif provider == "boe":
+                            parsed[m] = parse_boe_sonia(body)
                         else:
                             parsed[m] = await asyncio.to_thread(parse_bea, body)
                     capture = make_capture(group, parsed, documents, utcnow_iso())
