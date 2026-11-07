@@ -778,8 +778,32 @@ def verify_signed_release(
     return tag
 
 
+def _native_history_admission(root: Path, source: str, package: dict[str, Any]) -> dict[str, Any]:
+    """Only a fully validated native chain may bridge exact publication history."""
+    if (not isinstance(package, dict)
+            or package.get("schema") != "seiche.native-migration-catalog-source-health.v1"
+            or package.get("body_b64") is not None or package.get("signature_b64") is not None):
+        raise PublicationGateError("native history admission requires its healthy explicit package")
+    evidence = package.get("runtime_evidence", {})
+    if not isinstance(evidence, dict) or not evidence.get("source_equivalence") or not evidence.get("source_acceptance"):
+        raise PublicationGateError("native history admission requires a signed accepted exact-tree bridge")
+    path = root / "ops/release/hetzner_release.py"
+    source_bytes = _run_git_bytes(root, "show", source + ":ops/release/hetzner_release.py").stdout
+    if path.is_symlink() or path.read_bytes() != source_bytes:
+        raise PublicationGateError("native history verifier differs from exact publication source")
+    recovery = _hetzner_release_gate(verified_source=source_bytes)
+    try:
+        accepted = recovery.validate_evidence(evidence, source=source, now=datetime.now(timezone.utc))
+    except (ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        raise PublicationGateError("native authority and exact source bridge are not qualified") from None
+    if accepted.get("publication_source") != source or accepted.get("health") != package.get("health_pair"):
+        raise PublicationGateError("native history source or health package differs")
+    return accepted
+
+
 def verify_market_corpus_release(
-    root: Path, *, expected_sha: str, signer_fingerprint: str
+    root: Path, *, expected_sha: str, signer_fingerprint: str,
+    native_source_health_package: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     catalog = _read_json(root / AI_CATALOG_PATH)
     entry = _market_corpus_catalog_entry(catalog)
@@ -831,12 +855,19 @@ def verify_market_corpus_release(
         # An independently signed corpus refresh may follow the application.
         # Every intervening commit still needs the original exact path, signer
         # and linear-history checks; the new receipt is not a history bypass.
-        _verify_generated_content_descendants(
-            root,
-            release=release_target,
-            head=expected_sha,
-            signer_fingerprint=signer_fingerprint,
-        )
+        if native_source_health_package is None:
+            _verify_generated_content_descendants(
+                root, release=release_target, head=expected_sha,
+                signer_fingerprint=signer_fingerprint,
+            )
+        else:
+            # This is not an unsigned history flag. Revalidate the actual
+            # signed runtime, final transfer/restore, cold restart, Drive
+            # readback and accepted exact-tree bridge before admission.
+            admitted = _native_history_admission(root, expected_sha, native_source_health_package)
+            if _run_git(root, "merge-base", "--is-ancestor", release_target,
+                        admitted["source"], check=False).returncode:
+                raise PublicationGateError("native runtime is not descended from the signed release")
     receipt_catalog = _read_tagged_json(root, receipt_tag, AI_CATALOG_PATH)
     _verify_market_corpus_tagged_identity(catalog, receipt_catalog)
     return receipt_tag, entry
@@ -1151,21 +1182,26 @@ def verify_catalog_source_health(
         if (
             not isinstance(package, dict)
             or set(package) != keys
-            or package["schema"]
-            != (
-                "seiche.hetzner-catalog-source-health.v1"
-                if hetzner
-                else "seiche.catalog-source-health.v1"
+            or package["schema"] not in (
+                {"seiche.hetzner-catalog-source-health.v1", "seiche.native-migration-catalog-source-health.v1"}
+                if hetzner else {"seiche.catalog-source-health.v1"}
             )
         ):
             raise PublicationGateError("catalog source health package shape differs")
         if hetzner:
             recovery = _hetzner_release_gate()
+            native = package["schema"] == "seiche.native-migration-catalog-source-health.v1"
+            if native != (package["runtime_evidence"].get("schema") == recovery.NATIVE_EVIDENCE_SCHEMA):
+                raise PublicationGateError("native migration evidence requires its explicit package mode")
             accepted = recovery.validate_evidence(
                 package["runtime_evidence"],
-                source=expected_context["runtime_source_sha"],
+                source=expected_context["controller_source_sha"] if native else expected_context["runtime_source_sha"],
                 now=now,
             )
+            if native and (expected_context.get("publication_mode") != "native_migration"
+                    or expected_context.get("source_equivalence_sha256") != accepted["source_equivalence_sha256"]
+                    or expected_context["runtime_source_sha"] != accepted["source"]):
+                raise PublicationGateError("native publication source bridge context differs")
             if (
                 accepted["target"] != expected_context["target"]
                 or accepted["runtime_id"] != expected_context["runtime_id"]
@@ -1645,7 +1681,7 @@ def verify_public_receipts(
     if (
         isinstance(source_health_package, dict)
         and source_health_package.get("schema")
-        == "seiche.hetzner-catalog-source-health.v1"
+        in {"seiche.hetzner-catalog-source-health.v1", "seiche.native-migration-catalog-source-health.v1"}
     ):
         health_url += "&require_rebuilt=true"
     assessment = None
@@ -1735,10 +1771,14 @@ def main(argv: list[str] | None = None) -> int:
             expected_sha=args.expected_sha,
             signer_fingerprint=args.signer_fingerprint,
         )
+        native_history = {}
+        if args.source_health_package is not None:
+            proposed = _read_json(args.source_health_package)
+            if isinstance(proposed, dict) and proposed.get("schema") == "seiche.native-migration-catalog-source-health.v1":
+                native_history["native_source_health_package"] = proposed
         corpus_tag, corpus_entry = verify_market_corpus_release(
-            root,
-            expected_sha=args.expected_sha,
-            signer_fingerprint=args.signer_fingerprint,
+            root, expected_sha=args.expected_sha,
+            signer_fingerprint=args.signer_fingerprint, **native_history,
         )
         source_package = source_context = None
         current_public = None
@@ -1769,7 +1809,7 @@ def main(argv: list[str] | None = None) -> int:
             health_url = f"https://api.seiche.info/api/health?release={urllib.parse.quote(version, safe='')}"
             if (
                 source_package.get("schema")
-                == "seiche.hetzner-catalog-source-health.v1"
+                in {"seiche.hetzner-catalog-source-health.v1", "seiche.native-migration-catalog-source-health.v1"}
             ):
                 health_url += "&require_rebuilt=true"
             current_public = _fetch_health_observation(health_url)
@@ -1798,7 +1838,7 @@ def main(argv: list[str] | None = None) -> int:
             }
             if (
                 source_package.get("schema")
-                == "seiche.hetzner-catalog-source-health.v1"
+                in {"seiche.hetzner-catalog-source-health.v1", "seiche.native-migration-catalog-source-health.v1"}
             ):
                 release_path = Path(__file__).with_name("hetzner_release.py")
                 if release_path.is_symlink() or not release_path.is_file():
@@ -1829,6 +1869,9 @@ def main(argv: list[str] | None = None) -> int:
                     runtime_id=accepted["runtime_id"],
                     target=accepted["target"],
                 )
+                if source_package["schema"] == "seiche.native-migration-catalog-source-health.v1":
+                    source_context.update(runtime_source_sha=accepted["source"], publication_mode="native_migration",
+                                          source_equivalence_sha256=accepted["source_equivalence_sha256"])
             if args.recheck_source_health_only:
                 assessment = verify_catalog_source_health(
                     source_package,

@@ -31,6 +31,7 @@ GATES = (
     "ops/release/frontend_site_proof.py",
     "ops/release/verify_public_dataset.py",
     "ops/release/hetzner_release.py",
+    "ops/release/native_publication_source.py",
     "ops/release/source_degradation.py",
 )
 
@@ -727,7 +728,7 @@ def healthy_hetzner_package(path):
     if not 0 < len(raw) <= 1024 * 1024:
         raise RuntimeError("Hetzner FULL evidence exceeds bound")
     value = json.loads(raw)
-    if (not isinstance(value, dict) or value.get("schema") != "seiche.hetzner-catalog-source-health.v1"
+    if (not isinstance(value, dict) or value.get("schema") not in {"seiche.hetzner-catalog-source-health.v1", "seiche.native-migration-catalog-source-health.v1"}
             or value.get("body_b64") is not None or value.get("signature_b64") is not None
             or set(value.get("health_pair", {})) != {"origin", "public"}
             or any(item.get("body", {}).get("faults") != [] for item in value["health_pair"].values())):
