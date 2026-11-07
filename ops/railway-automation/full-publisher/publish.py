@@ -755,6 +755,46 @@ def hetzner_gate(trusted, source, signer, package, *, catalog=None, recheck=Fals
     return value
 
 
+def refresh_native_observation(path, previous, destination, *, trusted, source, signer, catalog):
+    """Refresh one healthy observation after build, before any public write.
+
+    The protected observer may atomically replace its package while FULL builds.
+    Only monitor/health observations can change; the exact request, authority,
+    source bridge, recovery and independently read-back backup stay immutable.
+    The fully validated replacement is then pinned for every publication claim.
+    """
+    selected = Path(path)
+    if not selected.is_absolute():
+        raise RuntimeError("Native observation path must be absolute")
+    assert_plain_path(selected.parent, Path(selected.anchor))
+    for parent in selected.parents:
+        info = parent.stat()
+        if info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+            raise RuntimeError("Native observation ancestry is not owner controlled")
+    current = healthy_hetzner_package(path)
+    values = [json.loads(raw) for raw in (previous, current)]
+    for value in values:
+        if value.get("schema") != "seiche.native-migration-catalog-source-health.v1":
+            raise RuntimeError("Observation refresh requires explicit native publication")
+        value.pop("health_pair", None)
+        runtime = value.get("runtime_evidence")
+        if not isinstance(runtime, dict) or not isinstance(runtime.pop("monitor", None), dict):
+            raise RuntimeError("Native observation refresh requires its monitor")
+    if values[0] != values[1]:
+        raise RuntimeError("Native observation refresh changed immutable publication bindings")
+    with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as stream:
+        stream.write(current)
+    # Full validation includes signature, exact source, runtime, backup, current
+    # public health and freshness; no refreshed bytes are an admission by itself.
+    hetzner_gate(trusted, source, signer, destination, catalog=catalog)
+    print("NATIVE_FULL_OBSERVATION_REFRESH " + json.dumps({
+        "previous_sha256": hashlib.sha256(previous).hexdigest(),
+        "accepted_sha256": hashlib.sha256(current).hexdigest(),
+        "immutable_bindings_unchanged": True,
+    }, sort_keys=True), flush=True)
+    return current
+
+
 def claim_healthy_hetzner(evidence, assessment):
     value = assessment["claim_document"]
     if value.get("schema") != "seiche.hetzner-healthy-publication-claim.v1":
@@ -979,7 +1019,15 @@ def main():
                 root, controller_checkout, trusted, candidate, source_admission, signer)
             identity["frontendSourceSha"] = source_admission["sourceEquivalence"]["controllerSourceSha"]
         if hetzner_package:
-            hetzner_gate(trusted, engine_sha, signer, hetzner_package, catalog=candidate / ".well-known/ai-catalog.json")
+            if json.loads(hetzner_bytes).get("schema") == "seiche.native-migration-catalog-source-health.v1":
+                refreshed_package = temp / "hetzner-health-refreshed.json"
+                hetzner_bytes = refresh_native_observation(
+                    os.environ["HETZNER_HEALTH_PACKAGE_FILE"], hetzner_bytes, refreshed_package,
+                    trusted=trusted, source=engine_sha, signer=signer,
+                    catalog=candidate / ".well-known/ai-catalog.json")
+                hetzner_package = refreshed_package
+            else:
+                hetzner_gate(trusted, engine_sha, signer, hetzner_package, catalog=candidate / ".well-known/ai-catalog.json")
         else:
             run(["python", "-I", "-S", str(trusted / GATES[0]), "--root", str(trusted),
                  "--expected-sha", engine_sha, "--signer-fingerprint", signer,

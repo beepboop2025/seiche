@@ -60,6 +60,16 @@ publication intent and request IDs. FULL still revalidates its package before
 public writes and uses durable request claims; a static file cannot refresh
 health observations. No timer or publisher is activated by these changes.
 
+FULL takes one new observation after the sealed frontend build and before its
+first public write. The operator must mount a protected observer directory
+read-only and atomically refresh the package there; a bind mount of one old
+file inode cannot supply an updated observation. Only the monitor and paired
+health observations may change. Intent, request, signed source approval,
+accepted runtime, transfer, restore, restart and backup documents must remain
+exactly equal. FULL runs the complete gate again and pins that replacement for
+all later claims. Missing, changed-authority or stale packages fail closed;
+neither a long build nor a scheduled refresh extends the freshness deadline.
+
 Production gates still open during preparation: root review of the exact
 combined source/tree and five-path manifest; actual accepted runtime and cold
 restart receipts; encrypted Drive artifact/manifest readback; fresh immutable
