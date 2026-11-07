@@ -126,6 +126,55 @@ def test_native_drive_semantics_are_explicit(admitted):
         "online_backup_disposable_restore_verified":False,"final_migration_restore_verified":True}
 
 
+def refreshed_restart(evidence):
+    restart=evidence["restart"]
+    restart.update(schema="seiche.hetzner-restart-release.v2",active_handoff_preserved=False,
+                   release_authority_preserved=True,before_active_handoff=deepcopy(restart["active_handoff"]))
+    restart["active_handoff"]={"producer_sha":SOURCE,"activation_token":"e"*64}
+    proof={"schema":"seiche.same-release-refresh-proof.v1","status":"PASS","producer_sha":SOURCE,
+           "transaction_read_only":True,"repeatable_read":True,"operator_promotion_performed":False}
+    for side,identity,generated in (("before",restart["before_active_handoff"],at(-179)),
+                                     ("after",restart["active_handoff"],at(-175))):
+        proof[side]={"identity":deepcopy(identity),"generated_at":generated,"envelope_sha256":"c"*64,
+                     "payload_sha256":"d"*64,"full_forward_chain_verified":True,
+                     "canonical_rows_match_validated_staging":True,
+                     "products":{name:{"forward_record_id":"a"*64,"snapshot_id":"b"*64,"snapshot_row_sha256":"c"*64}
+                                 for name in ("gauge","overview")}}
+    restart["same_release_refresh"]=proof
+    return restart
+
+
+def test_native_same_release_refresh_keeps_runtime_and_authority_checks(admitted):
+    refreshed_restart(admitted)
+    assert r.validate_evidence(admitted,source=SOURCE,now=NOW)["source"]==SOURCE
+    admitted["restart"]["container_id"]="f"*64
+    with pytest.raises(ValueError,match="restart_binding"):
+        r.validate_evidence(admitted,source=SOURCE,now=NOW)
+
+
+@pytest.mark.parametrize("section,field,value",[
+    (None,"active_handoff_preserved",True),(None,"release_authority_preserved",False),
+    ("proof","producer_sha","f"*40),("proof","transaction_read_only",False),
+    ("proof","repeatable_read",False),("proof","operator_promotion_performed",True),
+    ("before","full_forward_chain_verified",False),("after","canonical_rows_match_validated_staging",False),
+    ("after","generated_at",at(-180)),("after","generated_at",at(-160)),
+    ("before","identity",{"producer_sha":SOURCE,"activation_token":"0"*64}),
+    ("after","products",{}),
+])
+def test_native_refresh_missing_binding_never_passes(admitted,section,field,value):
+    restart=refreshed_restart(admitted)
+    target=restart if section is None else restart["same_release_refresh"] if section=="proof" else restart["same_release_refresh"][section]
+    target[field]=value
+    with pytest.raises(ValueError):r.validate_evidence(admitted,source=SOURCE,now=NOW)
+
+
+def test_refresh_cannot_be_relabelled_as_legacy_restart(admitted):
+    restart=refreshed_restart(admitted)
+    restart["schema"]="seiche.hetzner-restart-release.v1"
+    with pytest.raises(ValueError,match="restart_handoff_binding"):
+        r.validate_evidence(admitted,source=SOURCE,now=NOW)
+
+
 @pytest.mark.parametrize("document,field,value",[
     ("transfer","fixture_only",True),("transfer","authority_transferred",True),
     ("final_restore","status","FAIL"),("final_restore","image_digest","sha256:"+"0"*64),

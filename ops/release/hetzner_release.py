@@ -284,6 +284,41 @@ def validate_postgres(release, boot, restart, grant, *, native=False):
             "postgres_restart_order")
 
 
+def validate_restart_handoff(restart, release, *, source, native=False):
+    """An accepted release may refresh its snapshot after the service restarts."""
+    if restart.get("schema") == "seiche.hetzner-restart-release.v1":
+        require(restart.get("active_handoff") == release["active_handoff"], "restart_handoff_binding")
+        return
+    require(native and restart.get("schema") == "seiche.hetzner-restart-release.v2",
+            "restart_refresh_requires_native_v2")
+    require(restart.get("active_handoff_preserved") is False
+            and restart.get("release_authority_preserved") is True
+            and restart.get("before_active_handoff") == release["active_handoff"]
+            and restart.get("active_handoff") != restart["before_active_handoff"], "restart_refresh_transition")
+    proof = closed(restart.get("same_release_refresh"), {"schema", "status", "producer_sha",
+        "transaction_read_only", "repeatable_read", "operator_promotion_performed", "before", "after"},
+        "restart_refresh_proof_shape")
+    require(proof["schema"] == "seiche.same-release-refresh-proof.v1" and proof["status"] == "PASS"
+            and proof["producer_sha"] == source and proof["transaction_read_only"] is True
+            and proof["repeatable_read"] is True and proof["operator_promotion_performed"] is False,
+            "restart_refresh_observer")
+    for side, expected in (("before", restart["before_active_handoff"]), ("after", restart["active_handoff"])):
+        record = closed(proof[side], {"identity", "generated_at", "envelope_sha256", "payload_sha256",
+            "products", "full_forward_chain_verified", "canonical_rows_match_validated_staging"},
+            "restart_refresh_record_shape")
+        handoff = closed(record["identity"], {"producer_sha", "activation_token"}, "restart_refresh_handoff_shape")
+        require(handoff == expected and handoff["producer_sha"] == source and hexadecimal(handoff["activation_token"])
+                and hexadecimal(record["envelope_sha256"]) and hexadecimal(record["payload_sha256"])
+                and record["full_forward_chain_verified"] is True
+                and record["canonical_rows_match_validated_staging"] is True, "restart_refresh_chain")
+        products = closed(record["products"], {"gauge", "overview"}, "restart_refresh_product_set")
+        for value in products.values():
+            closed(value, {"forward_record_id", "snapshot_id", "snapshot_row_sha256"}, "restart_refresh_product_shape")
+            require(all(hexadecimal(v) for v in value.values()), "restart_refresh_product_hash")
+    require(clock(proof["before"]["generated_at"]) < clock(restart["after_started_at"])
+            <= clock(proof["after"]["generated_at"]) <= clock(restart["observed_at"]), "restart_refresh_clock")
+
+
 def validate_runtime_chain(evidence, *, source, now, native=False):
     grant = validate_grant(evidence["grant"], source=source)
     grant_sha = digest(evidence["grant"])
@@ -324,9 +359,12 @@ def validate_runtime_chain(evidence, *, source, now, native=False):
             and boot.get("runtime_id") == grant["runtime_id"] and boot.get("container_id") == release["container_id"]
             and boot.get("release_accepted_sha256") == digest(release)
             and boot.get("unit_sha256") == service["unit_sha256"] and boot.get("unit") == service["unit"], "boot_binding")
-    identity(restart, "seiche.hetzner-restart-release.v1", grant, grant_sha)
+    restart_schema = restart.get("schema")
+    require(restart_schema == "seiche.hetzner-restart-release.v1" or
+            (native and restart_schema == "seiche.hetzner-restart-release.v2"), "restart_schema")
+    identity(restart, restart_schema, grant, grant_sha)
+    validate_restart_handoff(restart, release, source=source, native=native)
     require(restart.get("container_id") == release["container_id"]
-            and restart.get("active_handoff") == release["active_handoff"]
             and restart.get("release_accepted_sha256") == digest(release)
             and restart.get("boot_enabled_sha256") == digest(boot)
             and restart.get("restart_rehearsal_proven") is True
