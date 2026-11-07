@@ -461,7 +461,8 @@ def restore_snapshot(envelope: object) -> tuple[dict, dict, str, str]:
     grant = require_authority()
     require(isinstance(envelope, dict), "Hetzner active handoff is absent")
     parent = _context["restore"]["postgres"]["parent"]
-    if envelope.get("producer_sha") == parent["commit"]:
+    if (envelope.get("producer_sha") == parent["commit"]
+            and envelope.get("handoff_id") == parent["handoff_id"]):
         return standby.validate_parent(envelope, {"parent": parent})
     require(envelope.get("producer_sha") == grant["code"]["commit"],
             "Hetzner active handoff belongs to an unrelated release")
