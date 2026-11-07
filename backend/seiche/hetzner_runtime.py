@@ -574,12 +574,16 @@ def supervise() -> int:
 
 
 if __name__ == "__main__":
+    # Collectors import this canonical module when checking writer authority.
+    # Running their initializer in __main__ would create a separate context.
+    from seiche import hetzner_runtime as runtime
+
     try:
         if len(sys.argv) == 1:
-            raise SystemExit(supervise())
-        require(len(sys.argv) == 3 and sys.argv[1] == "--worker",
-                "Hetzner runtime command differs")
-        raise SystemExit(run_worker(sys.argv[2]))
+            raise SystemExit(runtime.supervise())
+        runtime.require(len(sys.argv) == 3 and sys.argv[1] == "--worker",
+                        "Hetzner runtime command differs")
+        raise SystemExit(runtime.run_worker(sys.argv[2]))
     except Exception:
         # Child tracebacks belong in private bounded service logs, never in a
         # response or source receipt. No automatic child restart is attempted.
