@@ -119,6 +119,7 @@ def _now(now: datetime) -> None:
 def validate_context(context: dict[str, Any]) -> None:
     _require(isinstance(context, dict), "operation context has an invalid shape")
     hetzner = context.get("provider") == "hetzner"
+    native_migration = hetzner and context.get("publication_mode") == "native_migration"
     fields = {
         "purpose", "intent_id", "controller_source_sha", "runtime_source_sha",
         "target", "deployment_id", "expected_version", "expected_authority",
@@ -126,6 +127,10 @@ def validate_context(context: dict[str, Any]) -> None:
     }
     if hetzner:
         fields = (fields - {"deployment_id"}) | {"provider", "runtime_id"}
+        if native_migration:
+            fields |= {"publication_mode", "source_equivalence_sha256"}
+            _require(_matches(context.get("source_equivalence_sha256"), _DIGEST),
+                     "native publication source bridge binding is malformed")
     _require(set(context) == fields, "operation context has an invalid shape")
     purpose = context["purpose"]
     _require(isinstance(purpose, str) and purpose in PURPOSES,
@@ -137,7 +142,7 @@ def validate_context(context: dict[str, Any]) -> None:
     target = context["target"]
     if hetzner:
         _require(purpose == "catalog_metadata" and context["expected_authority"] == "production"
-                 and context["controller_source_sha"] == context["runtime_source_sha"]
+                 and (context["controller_source_sha"] == context["runtime_source_sha"] or native_migration)
                  and _matches(context["runtime_id"], _DIGEST),
                  "Hetzner catalog runtime identity is malformed")
         _require(isinstance(target, dict) and set(target) == {

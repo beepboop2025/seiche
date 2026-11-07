@@ -9,13 +9,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 PACKAGE_SCHEMA = "seiche.hetzner-catalog-source-health.v1"
+NATIVE_PACKAGE_SCHEMA = "seiche.native-migration-catalog-source-health.v1"
+NATIVE_EVIDENCE_SCHEMA = "seiche.native-migration-publication-evidence.v1"
 CAPTURE_SCHEMA = "seiche.hetzner-successor-capture.v1"
 OFFSITE_SCHEMA = "seiche.hetzner-successor-offsite.v1"
 RESTORE_SCHEMA = "seiche.hetzner-successor-restore.v1"
@@ -240,7 +244,7 @@ def validate_restore(value, capture, offsite, grant, grant_sha, *, now):
             <= now + timedelta(minutes=5), "restore_timing_invalid")
 
 
-def validate_postgres(release, boot, restart, grant):
+def validate_postgres(release, boot, restart, grant, *, native=False):
     database = closed(release.get("postgres"), {"container_id", "image_id", "application_admin_login_denied",
         "memory_bytes", "nano_cpus", "docker_restart", "database_identity", "started_at", "host_pid",
         "postmaster_started_at", "systemd"}, "release_postgres_shape")
@@ -257,7 +261,8 @@ def validate_postgres(release, boot, restart, grant):
             and type(identity["server_version_num"]) is int and 180000 <= identity["server_version_num"] < 190000,
             "postgres_cluster_identity")
     service = database["systemd"]
-    require(service.get("unit") == "seiche-hetzner-" + grant["runtime_id"][:16] + "-postgres.service"
+    require(service.get("unit") == ("seiche-native-postgres.service" if native else
+            "seiche-hetzner-" + grant["runtime_id"][:16] + "-postgres.service")
             and hexadecimal(service.get("unit_sha256")) and service.get("active") is True
             and service.get("docker_restart") == "no", "postgres_single_supervisor")
     expected_boot = {key: database[key] for key in ("container_id", "image_id", "database_identity", "docker_restart")}
@@ -279,11 +284,7 @@ def validate_postgres(release, boot, restart, grant):
             "postgres_restart_order")
 
 
-def validate_evidence(evidence, *, source, now):
-    """Check one complete actual authority/recovery chain before publication."""
-    closed(evidence, {"grant", "acceptance", "release", "boot", "restart", "capture", "offsite", "restore", "monitor"},
-           "recovery_chain_not_closed")
-    require(now.tzinfo is not None and len(canonical(evidence)) <= 1024 * 1024, "recovery_chain_bound")
+def validate_runtime_chain(evidence, *, source, now, native=False):
     grant = validate_grant(evidence["grant"], source=source)
     grant_sha = digest(evidence["grant"])
     acceptance = closed(evidence["acceptance"], {"schema", "runtime_id", "grant_sha256", "transfer_sha256",
@@ -303,12 +304,20 @@ def validate_evidence(evidence, *, source, now):
             and release.get("active_handoff", {}).get("producer_sha") == source
             and hexadecimal(release["active_handoff"].get("activation_token")), "release_handoff_invalid")
     socket = release.get("socket", {})
-    require(isinstance(socket.get("path"), str) and socket["path"].startswith("/run/seiche-hetzner-")
-            and socket["path"].endswith(grant["runtime_id"][:12] + "/api.sock")
-            and socket.get("uid") == 10001 and type(socket.get("gid")) is int
-            and socket["gid"] not in {0, 10001} and socket.get("mode") == "0660", "release_socket_identity")
+    if native:
+        require(socket == {"path": "/run/seiche-native/http.sock", "uid": 10001, "gid": 10001,
+            "mode": "0666", "directory_acl": "user::rwx,user:999:--x,group::---,mask::--x,other::---",
+            "socket_acl": "user::rw-,user:999:rw-,group::---,mask::rw-,other::rw-",
+            "caddy_uid": 999, "caddy_connect_verified": True, "unrelated_uid_denied": True},
+            "native_release_socket_acl_identity")
+    else:
+        require(isinstance(socket.get("path"), str) and socket["path"].startswith("/run/seiche-hetzner-")
+                and socket["path"].endswith(grant["runtime_id"][:12] + "/api.sock")
+                and socket.get("uid") == 10001 and type(socket.get("gid")) is int
+                and socket["gid"] not in {0, 10001} and socket.get("mode") == "0660", "release_socket_identity")
     service = release.get("systemd", {})
-    require(service.get("unit") == "seiche-hetzner-" + grant["runtime_id"][:16] + ".service"
+    require(service.get("unit") == ("seiche-native.service" if native else
+            "seiche-hetzner-" + grant["runtime_id"][:16] + ".service")
             and hexadecimal(service.get("unit_sha256")) and service.get("active") is True
             and service.get("docker_restart") == "no", "release_supervisor_identity")
     require(boot.get("schema") == "seiche.hetzner-boot-enabled.v1" and boot.get("status") == "PASS"
@@ -327,10 +336,18 @@ def validate_evidence(evidence, *, source, now):
             and restart.get("socket") == socket and restart.get("systemd") == service,
             "restart_binding")
     roles = restart["processes"].get("roles", {})
-    require(set(roles) == {"supervisor", "api", "market", "source"}
-            and roles["supervisor"] == [{"pid": 1, "parent": 0}]
-            and all(len(roles[key]) == 1 and roles[key][0]["parent"] == 1 for key in ("api", "market", "source")),
-            "restart_process_tree")
+    if native:
+        require(set(roles) == {"supervisor", "api", "market", "source"}
+                and all(isinstance(row, dict) and type(row.get("pid")) is int and row["pid"] > 0
+                        for row in roles.values())
+                and all(roles[key].get("ppid") == roles["supervisor"]["pid"]
+                        for key in ("api", "market", "source"))
+                and len({row["pid"] for row in roles.values()}) == 4, "native_restart_process_tree")
+    else:
+        require(set(roles) == {"supervisor", "api", "market", "source"}
+                and roles["supervisor"] == [{"pid": 1, "parent": 0}]
+                and all(len(roles[key]) == 1 and roles[key][0]["parent"] == 1 for key in ("api", "market", "source")),
+                "restart_process_tree")
     heartbeat = restart["processes"].get("heartbeats", {})
     require(set(heartbeat) == {"official-market-collector", "legacy-source-worker"}, "restart_heartbeat_set")
     restart_at = clock(restart.get("observed_at"))
@@ -339,7 +356,19 @@ def validate_evidence(evidence, *, source, now):
     for item in heartbeat.values():
         require(clock(restart["after_started_at"]) <= clock(item["heartbeat_at"]) <= restart_at
                 <= clock(item["expected_by"]), "restart_heartbeat_clock")
-    validate_postgres(release, boot, restart, grant)
+    validate_postgres(release, boot, restart, grant, native=native)
+    return grant, grant_sha, release, boot, restart
+
+
+def validate_evidence(evidence, *, source, now):
+    """Check explicit provider evidence; legacy protected retention is unchanged."""
+    if isinstance(evidence, dict) and evidence.get("schema") == NATIVE_EVIDENCE_SCHEMA:
+        return validate_native_evidence(evidence, source=source, now=now)
+    closed(evidence, {"grant", "acceptance", "release", "boot", "restart", "capture", "offsite", "restore", "monitor"},
+           "recovery_chain_not_closed")
+    require(now.tzinfo is not None and len(canonical(evidence)) <= 1024 * 1024, "recovery_chain_bound")
+    grant, grant_sha, release, boot, restart = validate_runtime_chain(evidence, source=source, now=now)
+    restart_at = clock(restart["observed_at"])
     capture, offsite, restore, monitor = (evidence[key] for key in ("capture", "offsite", "restore", "monitor"))
     validate_capture(capture, grant, release, grant_sha, now=now)
     require(restart_at <= clock(capture["timing"]["writers_stopped_at"]), "capture_precedes_restart_qualification")
@@ -372,6 +401,198 @@ def validate_evidence(evidence, *, source, now):
             "target": {"host_identity": grant["host"]["identity"], "volume_uuid": grant["host"]["volume_uuid"],
                        "image_digest": grant["host"]["image_digest"], "grant_sha256": grant_sha,
                        "recovery_sha256": digest(evidence)}, "health": monitor["health"]}
+
+
+def native_runtime_validator(source):
+    """Import only the actual exact-source authority/data validators."""
+    root = Path(__file__).resolve().parents[2]
+    backend = root / "backend"
+    result = subprocess.run(["git", "-C", str(root), "diff", "--quiet", source, "--", "backend/seiche"],
+                            timeout=30, capture_output=True)
+    require(result.returncode == 0, "native_runtime_validator_source_differs")
+    tracked = subprocess.check_output(["git", "-C", str(root), "ls-files", "backend/seiche"], timeout=30).decode().splitlines()
+    require({str(p.relative_to(root)) for p in (backend / "seiche").rglob("*.py")} ==
+            {p for p in tracked if p.endswith(".py")}, "native_runtime_untracked_python")
+    sys.path.insert(0, str(backend))
+    from seiche import hetzner_runtime
+    require(Path(hetzner_runtime.__file__).resolve() == backend / "seiche/hetzner_runtime.py",
+            "native_runtime_validator_import_differs")
+    return hetzner_runtime
+
+
+def validate_native_backup(backup, readback, grant, grant_sha, *, postgres_container, now):
+    """Preserve real online/Drive semantics; never manufacture WORM or PITR."""
+    require(backup.get("schema") == "seiche.native-backup.v1" and backup.get("kind") == "data"
+            and backup.get("status") == "local_readback_verified_cloud_pending"
+            and backup.get("runtime_id") == grant["runtime_id"] and backup.get("source") == grant["code"]
+            and backup.get("host") == grant["host"] and backup.get("grant_sha256") == grant_sha
+            and backup.get("transfer_sha256") == grant["transfer_sha256"]
+            and backup.get("restore_sha256") == grant["restore_sha256"], "native_backup_runtime_binding")
+    require(timedelta(0) <= now - clock(backup.get("captured_at")) <= timedelta(hours=26), "native_backup_not_fresh")
+    require(all(backup.get(k) is False for k in ("cross_store_point_in_time", "final_fenced_capture",
+                "source_writers_stopped", "automatic_restore_or_writer_authority", "source_deleted")),
+            "native_backup_scope_or_authority")
+    database = backup.get("database_snapshot", {})
+    require(database.get("database_name") == grant["data"]["database_name"]
+            and database.get("container_id") == postgres_container
+            and database.get("archive_table_of_contents_verified") is True
+            and database.get("disposable_restore_verified") is False,
+            "native_backup_restore_claim_must_remain_unqualified")
+    require(set(backup.get("components", {})) == {"api", "market", "nbs", "palimpsest-china"},
+            "native_backup_component_coverage")
+    for component in backup["components"].values():
+        require(type(component.get("files")) is int and component["files"] >= 0
+                and isinstance(component.get("sqlite_online_snapshots"), list)
+                and len(component["sqlite_online_snapshots"]) <= component["files"]
+                and component.get("consistency") ==
+                "per-file stable reads and per-database SQLite transactions; not a global point in time"
+                and clock(component.get("started_at")) <= clock(component.get("finished_at"))
+                <= clock(backup["captured_at"]), "native_component_readback_scope")
+    require(clock(database.get("started_at")) <= clock(database.get("finished_at"))
+            <= clock(backup["captured_at"]), "native_database_snapshot_clock")
+    native_runtime_validator(grant["code"]["commit"])
+    from seiche.stateful_migration import agent_room_expected_key_binding
+    require(set(backup.get("audits", {})) == {"agent_room", "nbs", "palimpsest_china"}
+            and hexadecimal(backup.get("scratch_proof_sha256")), "native_backup_full_audit_coverage")
+    require(agent_room_expected_key_binding(backup.get("audits", {}).get("agent_room")) ==
+            grant["agent_room"]["expected_key_id"], "native_backup_room_key")
+    require(readback.get("schema") == "seiche.native-backup-cloud.v1"
+            and readback.get("status") == "encrypted_remote_readback_verified"
+            and readback.get("runtime_id") == grant["runtime_id"] and readback.get("source") == grant["code"]
+            and readback.get("kind") == "data" and readback.get("source_deleted") is False
+            and readback.get("automatic_restore_or_writer_authority") is False,
+            "native_cloud_readback_binding")
+    require(clock(backup["captured_at"]) <= clock(readback.get("verified_at")) <= now, "native_cloud_readback_clock")
+    artifacts = backup.get("artifacts", [])
+    require(len(artifacts) == 2 and {Path(a.get("path", "")).name for a in artifacts} ==
+            {"postgres.dump", "filesystem.tar.gz"}, "native_backup_artifact_coverage")
+    observed = readback.get("artifacts", [])
+    require(len(observed) == 3 and len({a.get("path") for a in observed}) == 3, "native_cloud_artifact_coverage")
+    for item in artifacts:
+        require(type(item.get("bytes")) is int and 0 < item["bytes"] <= 18 * GIB
+                and hexadecimal(item.get("sha256")), "native_backup_artifact_identity")
+        rows = [a for a in observed if a.get("path") == item["path"]]
+        require(len(rows) == 1 and all(rows[0].get(k) == v for k, v in item.items()), "native_cloud_artifact_differs")
+    manifests = [a for a in observed if Path(a.get("path", "")).name == "manifest.json"]
+    require(len(manifests) == 1 and manifests[0].get("sha256") == digest(backup)
+            and manifests[0].get("bytes") == len(canonical(backup)), "native_cloud_manifest_binding")
+    for item in observed:
+        require(item.get("independent_decrypted_readback") is True
+                and isinstance(item.get("remote_object_id"), str) and bool(item["remote_object_id"])
+                and isinstance(item.get("remote"), str)
+                and item["remote"].startswith("gcrypt:railway-migration-20261106/configuration/seiche-native-")
+                and "/" not in item["remote"].removeprefix("gcrypt:railway-migration-20261106/configuration/"),
+                "native_cloud_independent_encrypted_readback")
+    return {"provider": "google-drive-rclone-crypt", "independent_decrypted_readback": True,
+            "object_lock": False, "compliance_retention": False, "cross_store_point_in_time": False,
+            "online_backup_disposable_restore_verified": False, "final_migration_restore_verified": True}
+
+
+def validate_native_evidence(evidence, *, source, now):
+    """Explicit migration mode: signed final restore plus current native proof.
+
+    The protected nine-document SSE-C/ObjectLock mode remains unchanged. This
+    mode has no retention claim and does not promote an online backup to a
+    globally consistent capture or a successful independent recovery.
+    """
+    closed(evidence, {"schema", "grant", "acceptance", "transfer", "final_restore", "release", "boot",
+                      "restart", "backup", "backup_readback", "monitor", "source_equivalence", "source_acceptance"}, "native_evidence_shape")
+    require(evidence["schema"] == NATIVE_EVIDENCE_SCHEMA and now.tzinfo is not None
+            and len(canonical(evidence)) <= 1024 * 1024, "native_evidence_bound")
+    publication_source = source
+    source = evidence.get("grant", {}).get("payload", {}).get("code", {}).get("commit")
+    grant, grant_sha, release, boot, restart = validate_runtime_chain(evidence, source=source, now=now, native=True)
+    if publication_source == source:
+        require(evidence["source_equivalence"] is None and evidence["source_acceptance"] is None,
+                "native_same_source_must_not_claim_bridge")
+    else:
+        require(isinstance(evidence["source_equivalence"], dict)
+                and isinstance(evidence["source_acceptance"], dict), "native_source_bridge_required")
+        root = Path(__file__).resolve().parents[2]
+        path = root / "ops/release/native_publication_source.py"
+        raw = subprocess.check_output(["git", "-C", str(root), "show",
+            publication_source + ":ops/release/native_publication_source.py"], timeout=30)
+        require(path.read_bytes() == raw and not path.is_symlink(), "native_source_bridge_verifier_differs")
+        spec = importlib.util.spec_from_file_location("native_publication_source_bridge", path)
+        bridge = importlib.util.module_from_spec(spec)
+        exec(compile(raw, str(path), "exec"), bridge.__dict__)
+        bridge.validate_acceptance(evidence["source_equivalence"], evidence["source_acceptance"], root=root,
+            publication_source=publication_source, runtime_source=source,
+            runtime_image_digest=grant["host"]["image_digest"], runtime_grant_sha256=grant_sha, now=now)
+    require(digest(evidence["transfer"]) == grant["transfer_sha256"]
+            and digest(evidence["final_restore"]) == grant["restore_sha256"], "native_final_receipt_hashes")
+    require(not any(item.get("fixture_only", False) for item in
+                    (evidence, grant, evidence["transfer"], evidence["final_restore"])), "native_fixture_not_authority")
+    runtime = native_runtime_validator(source)
+    require(runtime.validate_grant(evidence["grant"]) == grant, "native_actual_grant_validation")
+    runtime.validate_transfer(evidence["transfer"], evidence["final_restore"], grant)
+    runtime.validate_acceptance(evidence["acceptance"], grant, grant_sha, now=now)
+    retention = validate_native_backup(evidence["backup"], evidence["backup_readback"], grant, grant_sha,
+                                       postgres_container=release["postgres"]["container_id"], now=now)
+    require(clock(restart["observed_at"]) <= clock(evidence["backup"]["captured_at"]), "native_backup_precedes_restart")
+    monitor = evidence["monitor"]
+    identity(monitor, "seiche.native-monitor.v1", grant, grant_sha)
+    require(monitor.get("terminal_fence_receipt_validated") is True
+            and monitor.get("source_provider_observed_live") is False
+            and monitor.get("observer_mutated_runtime") is False and monitor.get("railway_credentials_used") is False
+            and monitor.get("strict_rebuilt") is True
+            and monitor.get("transfer_sha256") == grant["transfer_sha256"]
+            and monitor.get("restore_sha256") == grant["restore_sha256"], "native_monitor_controls")
+    require(monitor.get("app_container_id") == release["container_id"]
+            and monitor.get("postgres_container_id") == release["postgres"]["container_id"]
+            and monitor.get("docker_restart") == {"app": "no", "postgres": "no"}
+            and monitor.get("postgres_identity", {}).get("cluster_system_identifier") ==
+                release["postgres"]["database_identity"]["system_identifier"], "native_monitor_current_containers")
+    units = monitor.get("units", {})
+    require(set(units) == {"seiche-native.service", "seiche-native-postgres.service"}, "native_monitor_unit_set")
+    for unit, expected_unit in (("seiche-native.service", release["systemd"]),
+                               ("seiche-native-postgres.service", release["postgres"]["systemd"])):
+        require(units[unit].get("sha256") == expected_unit["unit_sha256"]
+                and units[unit].get("ActiveState") == "active" and units[unit].get("SubState") == "running"
+                and units[unit].get("UnitFileState") == "enabled", "native_monitor_unit_state")
+    observed = clock(monitor.get("observed_at"))
+    require(clock(evidence["backup_readback"]["verified_at"]) <= observed <= now
+            and now - observed <= timedelta(minutes=15), "native_monitor_not_fresh")
+    roles = monitor.get("processes", {}).get("roles", {})
+    require(set(roles) == {"supervisor", "api", "market", "source"}
+            and all(type(row.get("pid")) is int and row["pid"] > 0 for row in roles.values())
+            and len({row["pid"] for row in roles.values()}) == 4
+            and all(roles[k].get("ppid") == roles["supervisor"]["pid"] for k in ("api", "market", "source")),
+            "native_monitor_process_tree")
+    heartbeats = monitor.get("worker_heartbeats", [])
+    require(len(heartbeats) == 2 and {row.get("component_id") for row in heartbeats} ==
+            {"official-market-collector", "legacy-source-worker"}, "native_monitor_worker_set")
+    for row in heartbeats:
+        require(clock(roles["api"].get("started_at")) <= clock(row.get("heartbeat_at")) <= observed
+                <= clock(row.get("expected_by")), "native_monitor_worker_clock")
+    expected = {"provider": "hetzner", "source_sha": source, "runtime_id": grant["runtime_id"],
+                "authority": "production", "cache_control": "no-store"}
+    pair = {}
+    for kind, transport in (("origin", "private_unix_socket"), ("public", "public_https")):
+        observation = monitor.get(kind + "_health", {})
+        headers, body = observation.get("headers", {}), observation.get("body", {})
+        require(observation.get("http") == 200 and observation.get("transport") == transport
+                and observation.get("legacy_railway_headers_absent") is True
+                and hexadecimal(observation.get("body_sha256")) and type(observation.get("bytes")) is int
+                and 0 < observation["bytes"] <= 2 * 1024**2, "native_monitor_health_observation")
+        identity_fields = {"provider": headers.get("x-seiche-provider"), "source_sha": headers.get("x-seiche-release-sha"),
+                           "runtime_id": headers.get("x-seiche-runtime"), "authority": headers.get("x-seiche-authority"),
+                           "cache_control": headers.get("cache-control")}
+        require(not any(k.startswith("x-seiche-railway") or k in {"x-seiche-edge-token", "x-seiche-hetzner-token"}
+                        for k in headers), "native_health_ambiguous_provider_or_private_header")
+        require(identity_fields == expected and body.get("provider") == "hetzner"
+                and body.get("authority") == "production" and body.get("release_sha") == source
+                and body.get("snapshot_producer_sha") == source and body.get("faults") == []
+                and isinstance(body.get("provenance"), list) and bool(body["provenance"]), "native_health_identity_or_fault")
+        require(timedelta(0) <= now - clock(body.get("generated_at")) <= timedelta(minutes=15), "native_health_snapshot_stale")
+        pair[kind] = {"identity": identity_fields, "body": body}
+    require(canonical(pair["origin"]) == canonical(pair["public"]), "native_health_pair_differs")
+    return {"provider": "hetzner", "runtime_id": grant["runtime_id"], "source": source,
+            "target": {"host_identity": grant["host"]["identity"], "volume_uuid": grant["host"]["volume_uuid"],
+                       "image_digest": grant["host"]["image_digest"], "grant_sha256": grant_sha,
+                       "recovery_sha256": digest(evidence)}, "health": pair, "backup_guarantees": retention,
+            "publication_source": publication_source,
+            "source_equivalence_sha256": digest(evidence["source_equivalence"])}
 
 
 def capacity_plan(*, free_bytes, free_inodes, reserve_bytes, archive_bytes, filesystem_bytes,

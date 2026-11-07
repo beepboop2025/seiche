@@ -34,7 +34,7 @@ def seal(path, value):
 
 
 @pytest.fixture
-def accepted(tmp_path, monkeypatch, fake_snap):
+def accepted(tmp_path, monkeypatch, fake_snap, request):
     for key in tuple(os.environ):
         if key.startswith(("SEICHE_HETZNER_", "SEICHE_STANDBY_", "SEICHE_RAILWAY_",
                            "SEICHE_PALIMPSEST_CHINA_", "RAILWAY_", "PG")):
@@ -67,7 +67,8 @@ def accepted(tmp_path, monkeypatch, fake_snap):
         "schema": runtime.GRANT_SCHEMA, "provider": "hetzner", "authority": "production",
         "runtime_id": "1" * 64, "issued_at": "2026-10-20T16:00:00Z",
         "expires_at": "2026-10-20T17:00:00Z",
-        "code": {"commit": "b" * 40, "tree": "c" * 40},
+        "code": {"commit": ("a" if getattr(request, "param", False) else "b") * 40,
+                 "tree": "c" * 40},
         "transfer_sha256": "", "restore_sha256": "",
         "host": {"identity": hashlib.sha256(("a" * 32).encode()).hexdigest(),
                  "volume_uuid": "12345678-1234-1234-1234-123456789012",
@@ -392,6 +393,36 @@ def test_same_release_restart_still_requires_new_build(accepted, monkeypatch):
     assemble.restore_cached_snapshot()
     assert assemble._cache["producer_sha"] == "b" * 40
     assert not assemble.cached_snapshot_was_rebuilt()
+
+
+@pytest.mark.parametrize("accepted", [True], indirect=True)
+def test_same_commit_migration_restores_new_handoff_after_activation(accepted, monkeypatch):
+    payload = deepcopy(accepted.envelope["payload"])
+    payload["generated_at"] = "2026-07-10T00:01:00Z"
+    envelope = assemble._build_handoff(payload, _release_receipt(payload), "a" * 40)
+    assert envelope["handoff_id"] != accepted.envelope["handoff_id"]
+    monkeypatch.setattr(accepted.pg, "load_active_release_handoff_read_only", lambda: envelope)
+    assert assemble.restore_cached_snapshot() == "hetzner_retained"
+    assert assemble.cached_snapshot()["generated_at"] == payload["generated_at"]
+    assert assemble._cache["producer_sha"] == accepted.grant["code"]["commit"]
+    assert not assemble.cached_snapshot_was_rebuilt()
+
+
+@pytest.mark.parametrize("accepted", [True], indirect=True)
+def test_same_commit_migration_keeps_exact_parent_and_tamper_checks(accepted):
+    assert runtime.restore_snapshot(accepted.envelope)[0] == accepted.envelope["payload"]
+    tampered = deepcopy(accepted.envelope)
+    tampered["payload"]["generated_at"] = "2026-07-10T00:01:00Z"
+    with pytest.raises(ValueError):
+        runtime.restore_snapshot(tampered)
+
+
+def test_different_parent_handoff_cannot_bypass_approved_source(accepted):
+    payload = deepcopy(accepted.envelope["payload"])
+    payload["generated_at"] = "2026-07-10T00:01:00Z"
+    envelope = assemble._build_handoff(payload, _release_receipt(payload), "a" * 40)
+    with pytest.raises(runtime.HetznerRuntimeError, match="unrelated"):
+        runtime.restore_snapshot(envelope)
 
 
 def test_strict_health_requires_new_producer_and_both_fresh_worker_heartbeats(accepted, monkeypatch):

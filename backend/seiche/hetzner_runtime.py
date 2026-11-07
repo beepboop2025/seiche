@@ -461,7 +461,8 @@ def restore_snapshot(envelope: object) -> tuple[dict, dict, str, str]:
     grant = require_authority()
     require(isinstance(envelope, dict), "Hetzner active handoff is absent")
     parent = _context["restore"]["postgres"]["parent"]
-    if envelope.get("producer_sha") == parent["commit"]:
+    if (envelope.get("producer_sha") == parent["commit"]
+            and envelope.get("handoff_id") == parent["handoff_id"]):
         return standby.validate_parent(envelope, {"parent": parent})
     require(envelope.get("producer_sha") == grant["code"]["commit"],
             "Hetzner active handoff belongs to an unrelated release")
@@ -573,12 +574,16 @@ def supervise() -> int:
 
 
 if __name__ == "__main__":
+    # Collectors import this canonical module when checking writer authority.
+    # Running their initializer in __main__ would create a separate context.
+    from seiche import hetzner_runtime as runtime
+
     try:
         if len(sys.argv) == 1:
-            raise SystemExit(supervise())
-        require(len(sys.argv) == 3 and sys.argv[1] == "--worker",
-                "Hetzner runtime command differs")
-        raise SystemExit(run_worker(sys.argv[2]))
+            raise SystemExit(runtime.supervise())
+        runtime.require(len(sys.argv) == 3 and sys.argv[1] == "--worker",
+                        "Hetzner runtime command differs")
+        raise SystemExit(runtime.run_worker(sys.argv[2]))
     except Exception:
         # Child tracebacks belong in private bounded service logs, never in a
         # response or source receipt. No automatic child restart is attempted.
