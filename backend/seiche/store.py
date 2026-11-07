@@ -10,12 +10,15 @@ from __future__ import annotations
 import json
 import hashlib
 import hmac
+import logging
 import sqlite3
 import re
 import threading
+from dataclasses import dataclass
 from itertools import islice
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Iterable
 
 import pandas as pd
@@ -35,6 +38,7 @@ from seiche.sources.base import Series
 _lock = threading.Lock()
 _schema_lock = threading.Lock()
 _forward_child_index_state: dict[tuple[str, int, int], str] = {}
+_log = logging.getLogger(__name__)
 
 _FORWARD_CHILD_INDEX_SQL = """CREATE UNIQUE INDEX IF NOT EXISTS
              forward_records_one_child
@@ -389,19 +393,80 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
-def save_series(s: Series) -> None:
-    with _lock, _conn() as conn:
-        _save_series_in_transaction(conn, s)
+@dataclass(frozen=True, slots=True)
+class _PreparedSeries:
+    rows: tuple[tuple[str, str, float | None], ...]
+    vintages: tuple[tuple[str, str, str, float | None], ...]
+    fetch: tuple[str, ...]
 
 
-def _save_series_in_transaction(conn: sqlite3.Connection, s: Series) -> None:
+def _prepare_series(s: Series) -> _PreparedSeries:
+    """Freeze conversion and metadata before acquiring the writer transaction."""
     knowledge_time = _canonical_utc(s.fetched_at)
-    rows = [(s.mnemonic, idx.date().isoformat(), None if pd.isna(v) else float(v)) for idx, v in s.points.items()]
-    conn.executemany("INSERT OR REPLACE INTO observations VALUES (?,?,?)", rows)
+    rows = tuple(
+        (s.mnemonic, idx.date().isoformat(), None if pd.isna(v) else float(v))
+        for idx, v in s.points.items()
+    )
+    return _PreparedSeries(
+        rows,
+        tuple((mnemonic, day, knowledge_time, value) for mnemonic, day, value in rows),
+        (s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at),
+    )
+
+
+def _log_series_write(
+    operation: str, prepared: tuple[_PreparedSeries, ...],
+    clocks: dict[str, float], committed: bool,
+) -> None:
+    def elapsed(start: str, end: str) -> float | None:
+        return clocks[end] - clocks[start] if start in clocks and end in clocks else None
+
+    # No series identities, values or capture clocks enter operational logs.
+    _log.info("series_write %s", json.dumps({
+        "operation": operation,
+        "status": "committed" if committed else "failed",
+        "series_count": len(prepared),
+        "row_count": sum(len(item.rows) for item in prepared),
+        "preparation_seconds": elapsed("started", "prepared"),
+        "setup_and_local_wait_seconds": elapsed("prepared", "entered"),
+        "writer_wait_seconds": elapsed("writer_requested", "writer_wait_finished"),
+        "sql_seconds": elapsed("sql_started", "sql_finished"),
+        "sql_includes_writer_wait": operation == "single",
+        "commit_completion_seconds": elapsed("sql_finished", "finished") if committed else None,
+        "total_seconds": elapsed("started", "finished"),
+    }, sort_keys=True))
+
+
+def save_series(s: Series) -> None:
+    clocks = {"started": perf_counter()}
+    prepared = _prepare_series(s)
+    clocks["prepared"] = perf_counter()
+    committed = False
+    try:
+        with _lock, _conn() as conn:
+            clocks["entered"] = clocks["sql_started"] = perf_counter()
+            try:
+                # The first DML statement retains its implicit writer acquisition.
+                _save_series_in_transaction(conn, prepared)
+            finally:
+                clocks["sql_finished"] = perf_counter()
+        committed = True
+    finally:
+        clocks["finished"] = perf_counter()
+        _log_series_write("single", (prepared,), clocks, committed)
+
+
+def _save_series_in_transaction(conn: sqlite3.Connection, prepared: _PreparedSeries) -> None:
+    conn.executemany(
+        """INSERT INTO observations (mnemonic, obs_date, value) VALUES (?,?,?)
+           ON CONFLICT (mnemonic, obs_date) DO UPDATE SET value=excluded.value
+           WHERE observations.value IS NOT excluded.value""",
+        prepared.rows,
+    )
     conn.executemany("INSERT OR IGNORE INTO observation_vintages VALUES (?,?,?,?)",
-                     [(mnemonic, day, knowledge_time, value) for mnemonic, day, value in rows])
+                     prepared.vintages)
     conn.execute("INSERT OR REPLACE INTO fetches VALUES (?,?,?,?,?,?,?)",
-                 (s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at))
+                 prepared.fetch)
 
 
 class SeriesBatchConflictError(RuntimeError):
@@ -425,20 +490,37 @@ def save_series_batch(
         not 1 <= len(expected_blobs) <= 2 or not expected_blobs.keys() <= blobs.keys()
     ):
         raise ValueError("expected manifests require 1..2 keys from the capture manifests")
+    clocks = {"started": perf_counter()}
     timestamp = datetime.now(UTC).isoformat(timespec="seconds")
     manifests = [(key, timestamp, json.dumps(value, allow_nan=False)) for key, value in blobs.items()]
-    with _lock, _conn() as conn:
-        # Acquire the SQLite writer lock before reading the expected pointers.
-        # The process-local lock alone cannot exclude another collector process.
-        conn.execute("BEGIN IMMEDIATE")
-        for key, expected in (expected_blobs or {}).items():
-            row = conn.execute("SELECT payload FROM blobs WHERE key = ?", (key,)).fetchone()
-            matches = row is None if expected is None else row is not None and json.loads(row[0]) == expected
-            if not matches:
-                raise SeriesBatchConflictError(f"capture manifest changed before publication: {key}")
-        for item in selected:
-            _save_series_in_transaction(conn, item)
-        conn.executemany("INSERT OR REPLACE INTO blobs VALUES (?,?,?)", manifests)
+    prepared = tuple(_prepare_series(item) for item in selected)
+    clocks["prepared"] = perf_counter()
+    committed = False
+    try:
+        with _lock, _conn() as conn:
+            clocks["entered"] = clocks["writer_requested"] = perf_counter()
+            # Acquire the SQLite writer lock before reading the expected pointers.
+            # The process-local lock alone cannot exclude another collector process.
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+            finally:
+                clocks["writer_wait_finished"] = perf_counter()
+            clocks["sql_started"] = perf_counter()
+            try:
+                for key, expected in (expected_blobs or {}).items():
+                    row = conn.execute("SELECT payload FROM blobs WHERE key = ?", (key,)).fetchone()
+                    matches = row is None if expected is None else row is not None and json.loads(row[0]) == expected
+                    if not matches:
+                        raise SeriesBatchConflictError(f"capture manifest changed before publication: {key}")
+                for item in prepared:
+                    _save_series_in_transaction(conn, item)
+                conn.executemany("INSERT OR REPLACE INTO blobs VALUES (?,?,?)", manifests)
+            finally:
+                clocks["sql_finished"] = perf_counter()
+        committed = True
+    finally:
+        clocks["finished"] = perf_counter()
+        _log_series_write("batch", prepared, clocks, committed)
 
 
 def _canonical_utc(value: str | datetime) -> str:
