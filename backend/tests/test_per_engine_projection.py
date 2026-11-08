@@ -125,7 +125,7 @@ def test_four_decisions_are_dated_quote_the_owner_and_name_their_sources():
     doc = (ROOT / "docs" / "rights" / "owner-source-decisions-20261108.md").read_text()
     assert f'"{OWNER_WORDS}"' in doc
     assert all(decision_id in doc for decision_id in DECISIONS)
-    assert not re.search("[–—]", doc)
+    assert chr(0x2013) not in doc and chr(0x2014) not in doc  # no en or em dashes
 
 
 @pytest.mark.parametrize("decision_id", sorted(DECISIONS))
@@ -348,30 +348,44 @@ def test_board_routes_serve_only_the_projection(served):
         assert client.get(path).status_code == 403, path
 
 
-def test_projected_tools_answer_from_the_projection_and_refuse_when_withheld(served):
+def test_projection_ready_tools_stay_refused_over_mcp_and_their_handlers_project(served):
+    """The anonymous MCP surface stays at eight tools until the owner grows it.
+
+    The three projection-ready tools are still refused before any snapshot
+    loads, and their handlers already serve only the projection, so opening
+    one cannot expose a withheld reading.
+    """
     def call(name):
         return mcp_server.dispatch({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
                                     "params": {"name": name, "arguments": {}}}, public=True)["result"]
 
     listed = {tool["name"] for tool in mcp_server.dispatch(
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, public=True)["result"]["tools"]}
-    assert {"funding_stress_now", "historical_analogs", "trade_safety_risk_context"} <= listed
-    assert not listed & public_rights.LEGACY_TOOLS
-    now = call("funding_stress_now")
-    assert not now.get("isError")
-    assert now["structuredContent"]["composite"]["value"] == 777.123
-    assert now["structuredContent"]["tell"]["availability"] == "withheld"
+    assert len(listed) == 8 and not listed & public_rights.LEGACY_TOOLS
+    assert set(public_rights.PROJECTED_TOOLS) <= public_rights.LEGACY_TOOLS
+    for name in public_rights.PROJECTED_TOOLS:
+        refused = call(name)
+        assert refused["isError"] is True and refused["structuredContent"]["availability"] == "unavailable"
+
+    now = mcp_server.tool_stress_now({}, False)
+    assert now["composite"]["value"] == 777.123
+    assert now["tell"]["availability"] == "withheld"
     assert "777.123 sentinel thesis" not in json.dumps(now)
+    envelope = mcp_server.tool_stress_now({}, True)
+    assert envelope["schema"] == "seiche.public.v2"
+    assert "777.123 sentinel thesis" not in json.dumps(envelope)
+    assert mcp_server.tool_analogs({}, True)["as_of"] == served["snap"]["generated_at"]
+    assert mcp_server.tool_trade_safety_risk_context({}, True)["status"] in {"available", "unavailable"}
 
     served["snap"] = board(fred_copies=("SOFR",))
     public_rights._MEMO.update(src=None, board=None)
-    for name in ("funding_stress_now", "historical_analogs"):
-        refused = call(name)
-        assert refused["isError"] is True
-        assert refused["structuredContent"]["category"] == "source_rights_restricted"
-        assert "SOFR" in refused["structuredContent"]["restricted_inputs"]
-        assert "777.123" not in json.dumps(refused)
-    assert call("trade_safety_risk_context")["structuredContent"]["status"] == "unavailable"
+    for handler in (mcp_server.tool_stress_now, mcp_server.tool_analogs):
+        with pytest.raises(mcp_server.StructuredToolError) as refused:
+            handler({}, True)
+        assert refused.value.payload["category"] == "source_rights_restricted"
+        assert "SOFR" in refused.value.payload["restricted_inputs"]
+        assert "777.123" not in json.dumps(refused.value.payload)
+    assert mcp_server.tool_trade_safety_risk_context({}, True)["status"] == "unavailable"
 
 
 def test_rights_status_lists_the_projectable_scope_and_decisions():

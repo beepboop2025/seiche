@@ -391,9 +391,11 @@ def test_http_allowlist_and_identity(accepted):
     assert strict.status_code == 503
     assert strict.json()["status"] == "standby_not_production_ready"
     overview = client.get("/api/overview?force=true", headers=headers)
-    assert overview.status_code == 403
-    assert overview.json()["availability"] == "unavailable"
-    assert overview.headers["cache-control"] == "no-store"
+    # The standby serves the restored snapshot's per-engine public projection,
+    # read-only: force never rebuilds without an authenticated caller.
+    assert overview.status_code == 200
+    assert overview.json()["rights_projection"]["schema"] == "seiche.public-board-projection.v1"
+    assert overview.json()["generated_at"] == envelope["payload"]["generated_at"]
     for method, path in (
         ("POST", "/mcp"), ("POST", "/api/overview"), ("GET", "/api/ask"),
         ("POST", "/api/internal/v1/railway-control/commands"),

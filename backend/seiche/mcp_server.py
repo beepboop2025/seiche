@@ -733,9 +733,16 @@ def _projected_reading(name: str) -> tuple[dict, dict]:
 
 
 def tool_stress_now(_args: dict, public: bool) -> Any:
-    # The public conclusion envelope combines withheld narratives and the
-    # PROOF record, so every caller gets the projected composite read.
+    # Both branches read only the per-engine projection; a withheld composite
+    # refuses. The tool stays outside the anonymous surface (LEGACY_TOOLS).
     snap, comp = _projected_reading("funding_stress_now")
+    if public:
+        from seiche import public_view
+
+        return {
+            **public_view.public_payload(snap),
+            "delivery": telegram_delivery(),
+        }
     tell = snap.get("deep", {}).get("tell", {})
     one = (
         f"SEICHE {comp.get('value')} {comp.get('regime')} "
@@ -765,8 +772,6 @@ def tool_stress_now(_args: dict, public: bool) -> Any:
                       ((snap.get("rights_projection") or {}).get("sources") or {}).items()},
         },
     }
-    if public:
-        out["delivery"] = telegram_delivery()
     return out
 
 

@@ -801,12 +801,21 @@ def is_withheld_block(value: object) -> bool:
 # forecast records, replays or the Book, or read inputs this release cannot
 # qualify. Authentication, payment, an old snapshot, or a successful request
 # cannot grant reuse rights.
+#
+# The anonymous MCP surface stays at its eight reviewed tools: growing it is a
+# deliberate owner decision that moves the public tool docs, server.json and
+# the Hermes persona map together. PROJECTED_TOOLS therefore stay listed here,
+# but their handlers already serve only the per-engine projection, so opening
+# one is a one-line change that cannot expose a withheld reading.
 LEGACY_TOOLS = frozenset({
-    "latest_article", "funding_stress_forecast", "replay_asof", "proof_backtest",
-    "crypto_stress_record", "institutional_flows", "oil_funding_context",
-    "fx_materials_passage", "positioning_book", "desk_brief", "ask_desk",
+    "latest_article", "funding_stress_now", "funding_stress_forecast",
+    "historical_analogs", "replay_asof", "proof_backtest", "crypto_stress_record",
+    "institutional_flows", "oil_funding_context", "fx_materials_passage",
+    "positioning_book", "desk_brief", "ask_desk", "trade_safety_risk_context",
 })
-# Tools served from the per-engine projection, with the readings they need.
+# Tools whose handlers serve the per-engine projection, with the reading each
+# needs. Their REST twins (/api/overview, /api/engines/{name}, /api/deep,
+# /api/trade-safety/risk-context) are open.
 PROJECTED_TOOLS = {
     "funding_stress_now": ("engines", "composite"),
     "historical_analogs": ("deep", "tidetables"),
@@ -896,8 +905,9 @@ def rights_status() -> dict:
         "policy": POLICY, "prior_policy": PRIOR_POLICY, "context_only": True,
         "available_tools": ["source_rights_status", "money_market_context", "market_workbench",
                             "world_markets_context", "gift_city_context", "gold_inventory_carry",
-                            "research_network", "data_health", *sorted(PROJECTED_TOOLS)],
-        "projected_tools": {name: ".".join(path) for name, path in sorted(PROJECTED_TOOLS.items())},
+                            "research_network", "data_health"],
+        "projection_ready_tools": {name: ".".join(path) for name, path in sorted(PROJECTED_TOOLS.items())},
+        "projected_routes": sorted(PROJECTED_PATHS | {ENGINE_PREFIX + "{name}"}),
         "unavailable_tools": sorted(LEGACY_TOOLS), "rights_urls": [TERMS],
         "rule": ("A reading is public only when every input it reads is an allowed direct or open "
                  "source; readings that read a FRED copy, a blocked proprietary series or an "

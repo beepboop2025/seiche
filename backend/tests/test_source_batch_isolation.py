@@ -18,7 +18,7 @@ def series(mnemonic):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("module,names", [(fred, ["SOFR", "IORB"]), (ofr, ["BGCR", "TGCR"])])
+@pytest.mark.parametrize("module,names", [(fred, ["VIX", "HY_OAS"]), (ofr, ["BGCR", "TGCR"])])
 @pytest.mark.parametrize("operation", ["is_fresh", "load_series"])
 async def test_cache_failure_is_per_series_and_keeps_original_clocks(monkeypatch, module, names, operation):
     values = {m: series(m) for m in names}
@@ -53,7 +53,7 @@ async def test_cache_failure_is_per_series_and_keeps_original_clocks(monkeypatch
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("module,names", [(fred, ["SOFR", "IORB"]), (ofr, ["BGCR", "TGCR"])])
+@pytest.mark.parametrize("module,names", [(fred, ["VIX", "HY_OAS"]), (ofr, ["BGCR", "TGCR"])])
 async def test_unexpected_adapter_error_does_not_discard_successful_peer(monkeypatch, module, names):
     good = series(names[1])
     async def fetch(_client, spec, **_kwargs):
@@ -71,7 +71,7 @@ async def test_unexpected_adapter_error_does_not_discard_successful_peer(monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("module,mnemonic", [(fred, "SOFR"), (ofr, "BGCR")])
+@pytest.mark.parametrize("module,mnemonic", [(fred, "VIX"), (ofr, "BGCR")])
 async def test_task_cancellation_is_not_misreported_as_source_failure(monkeypatch, module, mnemonic):
     async def cancelled(*_args, **_kwargs):
         raise asyncio.CancelledError()

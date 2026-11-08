@@ -80,7 +80,12 @@ def test_export_public_withholds_static_files_and_keeps_the_exact_private_board(
 
     assert result == 0
     assert json.loads(public_path.read_text()) == public_rights.legacy_unavailable("/data/public.json")
-    assert json.loads(overview_path.read_text()) == public_rights.legacy_unavailable("/data/overview.json")
+    # The overview carries exactly the per-engine projection; this board has no
+    # provenance, so no reading can prove its inputs and every value is withheld.
+    overview = json.loads(overview_path.read_text())
+    assert overview == json.loads(json.dumps(public_rights.public_board(snapshot)))
+    assert overview["engines"]["composite"]["availability"] == "withheld"
+    assert "27.0" not in overview_path.read_text()
     assert json.loads(private_path.read_text()) == snapshot
     assert private_path.stat().st_mode & 0o777 == 0o600
 
@@ -135,7 +140,10 @@ def test_export_public_publishes_the_board_when_its_routes_are_open(tmp_path, mo
     )
 
     assert result == 0
-    assert json.loads(overview_path.read_text()) == snapshot
+    # An open route still publishes its projection, never the raw board.
+    overview = json.loads(overview_path.read_text())
+    assert public_rights.is_projection(overview)
+    assert overview == json.loads(json.dumps(public_rights.public_board(snapshot)))
     public = json.loads(public_path.read_text())
     assert public["generated_at"] == snapshot["generated_at"]
     assert public["conclusion"]["regime"] == "WATCH"

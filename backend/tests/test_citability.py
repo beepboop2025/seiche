@@ -42,6 +42,7 @@ def client(monkeypatch):
     # is independently covered; raw export source restrictions remain active.
     from seiche import public_rights
     monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
+    monkeypatch.setattr(public_rights, "public_board", lambda snapshot, **_kwargs: snapshot)
     async def fake_snapshot(force=False):
         return _SNAP
 

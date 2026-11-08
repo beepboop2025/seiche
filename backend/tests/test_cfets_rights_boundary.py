@@ -102,6 +102,8 @@ def _preserve_process_caches(monkeypatch):
     # Public release denial is verified by test_legacy_release_scope.
     from seiche import public_rights
     monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda path: False)
+    # ...and below the per-engine projection (test_per_engine_projection.py).
+    monkeypatch.setattr(public_rights, "public_board", lambda snapshot, **_kwargs: snapshot)
     assemble_cache = dict(assemble._cache)
     overview_wire = dict(api._OVERVIEW_WIRE)
     yield

@@ -14,7 +14,9 @@ from seiche.sources.base import Series, SourceFault
 
 @pytest.fixture
 def refresh(monkeypatch):
-    spec = ALL_SERIES["SOFR"]
+    # SOFR and the other re-sourced aliases now come from their original
+    # publishers; the FRED collector still serves the series that stay on FRED.
+    spec = ALL_SERIES["VIX"]
     cached = Series(
         spec.mnemonic, spec.source, spec.remote_id, spec.label, spec.unit,
         spec.freq, "2026-10-16T14:00:00+00:00",
@@ -115,7 +117,7 @@ async def test_transient_failure_retries_then_saves_success(refresh, failure):
     state, spec = refresh
     faults = []
     async with client_for(state, [
-        failure, httpx.Response(200, text="DATE,SOFR\n2026-10-19,4.6\n"),
+        failure, httpx.Response(200, text="DATE,VIXCLS\n2026-10-19,4.6\n"),
     ]) as client:
         result = await fred.fetch_series(client, spec, faults=faults)
     assert len(state["requests"]) == 2
@@ -152,7 +154,7 @@ async def test_retry_after_seconds_and_http_date_are_honored(refresh, monkeypatc
     monkeypatch.setattr(fred, "datetime", Clock)
     async with client_for(state, [
         httpx.Response(429, headers={"Retry-After": retry_after}),
-        httpx.Response(200, text="DATE,SOFR\n2026-10-19,4.6\n"),
+        httpx.Response(200, text="DATE,VIXCLS\n2026-10-19,4.6\n"),
     ]) as client:
         await fred.fetch_series(client, spec)
     assert state["delays"] == [7.0]
@@ -197,7 +199,7 @@ async def test_invalid_retry_after_uses_normal_bounded_backoff(refresh, retry_af
     state, spec = refresh
     async with client_for(state, [
         httpx.Response(429, headers={"Retry-After": retry_after}),
-        httpx.Response(200, text="DATE,SOFR\n2026-10-19,4.6\n"),
+        httpx.Response(200, text="DATE,VIXCLS\n2026-10-19,4.6\n"),
     ]) as client:
         await fred.fetch_series(client, spec)
     assert state["delays"] == [1.5]

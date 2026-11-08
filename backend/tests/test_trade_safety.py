@@ -589,10 +589,10 @@ def test_internal_rest_fails_closed_without_a_completed_snapshot(monkeypatch) ->
     assert response.json()["reason"] == "no_completed_snapshot"
 
 
-def test_risk_context_is_served_from_the_per_engine_projection() -> None:
-    # Its composite reads only direct or open sources once they are proven by
-    # the snapshot's provenance, so discovery lists it again; the projection
-    # itself withholds the composite whenever any input is not allowed.
+def test_risk_context_route_serves_the_projection_while_the_tool_stays_unlisted() -> None:
+    # The REST route serves the per-engine projection, which withholds the
+    # composite whenever any of its inputs is not allowed. The MCP tool stays
+    # outside the eight-tool anonymous surface until the owner grows it.
     discovery = api.api_index()
     openapi = api._public_openapi_document()
     tools = mcp_server.dispatch(
@@ -604,7 +604,8 @@ def test_risk_context_is_served_from_the_per_engine_projection() -> None:
     )
     route = openapi["paths"]["/api/trade-safety/risk-context"]["get"]
     assert route.get("deprecated") is not True
-    assert "trade_safety_risk_context" in {tool["name"] for tool in tools}
+    assert "trade_safety_risk_context" not in {tool["name"] for tool in tools}
+    assert "trade_safety_risk_context" in public_rights.LEGACY_TOOLS
     assert public_rights.PROJECTED_TOOLS["trade_safety_risk_context"] == ("engines", "composite")
 
 

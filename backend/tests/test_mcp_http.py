@@ -326,10 +326,13 @@ def test_public_openapi_is_curated_and_importable(client):
         "Retry-After",
     }
     assert "never starts or waits" in health["description"]
-    for path in ("/api/oil-funding", "/api/estuary", "/api/gauge", "/api/public"):
+    for path in ("/api/oil-funding", "/api/estuary", "/api/public"):
         operation = spec["paths"][path]["get"]
         assert operation["deprecated"] is True
         assert set(operation["responses"]) == {"403"}
+    # The gauge is served from the per-engine projection: withheld fields are
+    # null there, so the route itself is no longer refused.
+    assert spec["paths"]["/api/gauge"]["get"].get("deprecated") is not True
     assert "/undertow/live/quotes.json" in spec["paths"]
     assert "/api/auth/login" not in spec["paths"]
     assert "/api/deep" not in spec["paths"]
