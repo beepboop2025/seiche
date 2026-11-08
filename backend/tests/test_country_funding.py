@@ -128,7 +128,9 @@ def test_reader_is_bounded_and_only_reads_admitted_countries_and_public_series(m
     calls.clear()
     result = desk.read("UK", now=NOW)
     assert result["country"] == "GB" and calls[0][0][0] == "UK-GBP"
-    assert all("SONIA" not in instrument for instrument in calls[0][1]["instrument_ids"])
+    # Raw SONIA is public under the Bank of England's open licence by the
+    # owner's 2026-11-08 decision, so the desk now reads it with the rest.
+    assert "GB.BOE.SONIA" in calls[0][1]["instrument_ids"]
 
 
 def test_rest_mcp_and_assembled_country_data_agree(monkeypatch):

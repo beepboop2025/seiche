@@ -149,6 +149,20 @@ _SOURCE_URLS.update({key: value["source_url"] for key, value in _FUNDING_SOURCES
 _SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _FUNDING_SOURCES.items()})
 
 
+# Attribution a source licence requires on every served value.
+_SOURCE_ATTRIBUTIONS = {
+    "boe_sonia": {
+        "attribution": (
+            "SONIA and/or SONIA Compounded Index data licensed under the Open Government "
+            "Licence v3.0 and copyright the Governor and Company of the Bank of England."
+        ),
+        "terms_url": "https://www.bankofengland.co.uk/legal",
+        "licence_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+        "source_use_decision": "seiche.source-use.2026-11-08.boe-sonia",
+    },
+}
+
+
 def market_source_reference(adapter_id: str) -> dict[str, str | None]:
     """Return the public publisher anchor declared for a canonical adapter.
 
@@ -1634,6 +1648,7 @@ def _metric(
         ),
         "source": source_name,
         "source_url": _SOURCE_URLS.get(instrument.source_adapter_id),
+        **_SOURCE_ATTRIBUTIONS.get(instrument.source_adapter_id, {}),
         "source_tier": adapter.classification.value,
         "redistribution_status": adapter.redistribution_status.value,
         "revision_status": raw_latest.quality.value if raw_latest else None,
@@ -2452,6 +2467,17 @@ def build_global_money_market_atlas(
                 "notice": (
                     "Seiche is independent of and not endorsed by the New York Fed "
                     "and is responsible for its republication and analysis."
+                ),
+            },
+            {
+                "source": "Bank of England Database SONIA",
+                "terms_url": "https://www.bankofengland.co.uk/legal",
+                "notice": (
+                    "SONIA and/or SONIA Compounded Index data licensed under the Open Government "
+                    "Licence v3.0 and copyright the Governor and Company of the Bank of England. "
+                    "The trade marks Bank of England and SONIA are registered trade marks of the "
+                    "Bank of England. Values are the Database copy, available by 10:00 London time "
+                    "on the business day after first publication."
                 ),
             },
             {

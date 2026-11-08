@@ -76,9 +76,12 @@ def test_publication_clocks_roll_over_local_holidays() -> None:
     assert euro_clock.resolve(date(2026, 4, 2), euro.settlement_calendar) == datetime(
         2026, 4, 7, 6, tzinfo=UTC
     )
+    # Raw SONIA is the Bank's Database copy (owner decision 2026-11-08),
+    # due by 10:00 London on the business day after first publication.
+    assert sterling.adapter_map["boe_sonia"].redistribution_status.value == "allowed"
     assert sterling_clock.resolve(
         date(2026, 12, 24), sterling.settlement_calendar
-    ) == datetime(2026, 12, 29, 9, tzinfo=UTC)
+    ) == datetime(2026, 12, 29, 10, tzinfo=UTC)
 
 
 def test_us_legacy_config_aliases_preserve_v1_series_contract() -> None:

@@ -21,6 +21,7 @@ from seiche.markets.base import (
     PublicationClockPrecision,
     SourceAdapterSpec,
 )
+from seiche import source_decisions
 from seiche.markets.calendars import uk_england_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 from seiche.markets.funding_reference import extend_reference_pack
@@ -36,6 +37,16 @@ CALENDAR = BusinessCalendar(
 )
 _SONIA_CLOCK = PublicationClock(
     "Europe/London", time(9, 0), 1, PublicationClockPrecision.EXACT,
+    CALENDAR.calendar_id,
+)
+# Raw SONIA is served under the Bank of England's open licence by the owner's
+# 2026-11-08 decision. The open copy is the Bank's Database, available by
+# 10:00 London time on the business day after first publication, so its
+# clock replaces the 09:00 benchmark publication. Without the recorded
+# decision the adapter reverts to licensed, derived-only readings.
+_SONIA_OPEN = source_decisions.allows(source_decisions.BOE_SONIA)
+_SONIA_DATABASE_CLOCK = PublicationClock(
+    "Europe/London", time(10, 0), 1, PublicationClockPrecision.SCHEDULED,
     CALENDAR.calendar_id,
 )
 _POLICY_CLOCK = PublicationClock(
@@ -58,10 +69,10 @@ PACK = extend_reference_pack(MarketPack(
     source_adapters=(
         SourceAdapterSpec(
             "boe_sonia",
-            ConnectorClassification.LICENSED,
+            ConnectorClassification.OFFICIAL_OPEN if _SONIA_OPEN else ConnectorClassification.LICENSED,
             "P1D",
-            _SONIA_CLOCK,
-            RedistributionStatus.DERIVED_ONLY,
+            _SONIA_DATABASE_CLOCK if _SONIA_OPEN else _SONIA_CLOCK,
+            RedistributionStatus.ALLOWED if _SONIA_OPEN else RedistributionStatus.DERIVED_ONLY,
         ),
         SourceAdapterSpec(
             "boe_policy", ConnectorClassification.OFFICIAL_OPEN, "P1D",

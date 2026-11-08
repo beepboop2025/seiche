@@ -28,6 +28,25 @@ from seiche.markets.atlas import (
 from seiche.markets.registry import default_registry
 
 
+def _uk_pack_without_sonia_decision():
+    """The UK pack as configured without the owner's 2026-11-08 SONIA decision.
+
+    With the decision recorded, raw SONIA is served under the Bank of England's
+    open licence; these tests keep covering the licensed, derived-only path.
+    """
+    from seiche.markets.uk_gbp import pack as uk
+
+    pack = default_registry().get("UK-GBP")
+    adapters = tuple(
+        replace(adapter, classification=ConnectorClassification.LICENSED,
+                publication_clock=uk._SONIA_CLOCK,
+                redistribution_status=RedistributionStatus.DERIVED_ONLY)
+        if adapter.adapter_id == "boe_sonia" else adapter
+        for adapter in pack.source_adapters
+    )
+    return replace(pack, source_adapters=adapters)
+
+
 def _row(
     market_id: str,
     instrument_id: str,
@@ -340,7 +359,7 @@ def test_sparse_native_series_is_never_upsampled():
 
 
 def test_restricted_instrument_metadata_is_visible_without_value():
-    pack = default_registry().get("UK-GBP")
+    pack = _uk_pack_without_sonia_decision()
     out = build_global_money_market_atlas(
         (pack,), {}, as_of=datetime(2026, 8, 21, tzinfo=UTC)
     )
@@ -680,7 +699,7 @@ def test_stale_benchmark_remains_visible_but_cannot_win_global_ranking():
 
 
 def test_derived_context_uses_strict_allowlist_and_leaks_no_source_clock_or_lineage():
-    pack = default_registry().get("UK-GBP")
+    pack = _uk_pack_without_sonia_decision()
     start = datetime(2026, 6, 1, tzinfo=UTC)
     rows = []
     for index in range(25):

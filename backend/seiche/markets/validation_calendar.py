@@ -14,11 +14,14 @@ from datetime import UTC, date, datetime
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from seiche import source_decisions
 from seiche.markets.base import (
     CalendarUnavailableError,
     MarketPack,
     PublicationClockUnavailableError,
 )
+
+_SONIA_DATABASE_COPY = source_decisions.allows(source_decisions.BOE_SONIA)
 
 
 FIXTURE_SET_VERSION = "market-calendar-2026-v2"
@@ -212,7 +215,9 @@ REPRESENTATIVE_FIXTURES: Mapping[str, tuple[CalendarFixture, ...]] = MappingProx
                 "GB-STERLING-SETTLEMENT",
                 "boe_sonia",
                 date(2026, 12, 24),
-                datetime(2026, 12, 29, 9, tzinfo=UTC),
+                # The open Database copy is due by 10:00 London; without the
+                # owner's SONIA decision the 09:00 benchmark clock applies.
+                datetime(2026, 12, 29, 10 if _SONIA_DATABASE_COPY else 9, tzinfo=UTC),
             ),
         ),
         "US-USD": (
