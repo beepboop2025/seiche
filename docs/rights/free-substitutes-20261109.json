@@ -1,0 +1,1137 @@
+{
+  "schema": "seiche.free-substitutes.v1",
+  "approval": {
+    "approved_by": "owner",
+    "approved_on": "2026-11-08",
+    "approval_text": "go with them all just make sure everything starts working",
+    "evidence": "Seiche withheld-data inventory, 2026-11-09, sections 4.1, 4.2 and 5"
+  },
+  "class_definitions": {
+    "close substitute": "the same concept with a different method, cadence or publisher",
+    "proxy": "a related signal that can stand in for the analytical role, but not the same concept"
+  },
+  "label_rule": "Every served row carries substitute_for and substitute_class. A substitute is never the FRED original: never show it under the FRED id, title, publisher or units, and never splice it into the FRED history.",
+  "row_fields": [
+    "substitute_for",
+    "substitute_class",
+    "substitute_id",
+    "measure",
+    "label",
+    "notice",
+    "event_date",
+    "period",
+    "value",
+    "unit",
+    "frequency",
+    "source",
+    "publisher",
+    "source_url",
+    "terms_url",
+    "attribution",
+    "redistribution_status",
+    "knowledge_time",
+    "raw_documents",
+    "row_sha256"
+  ],
+  "blocked_fred_ids": [
+    "BAMLC0A0CM",
+    "BAMLH0A0HYM2",
+    "DCOILBRENTEU",
+    "DCOILWTICO",
+    "DHHNGSP",
+    "NASDAQCOM",
+    "NFCI",
+    "PALLFNFINDEXM",
+    "PALUMUSDM",
+    "PCOALAUUSDM",
+    "PCOPPUSDM",
+    "PMAIZMTUSDM",
+    "PNICKUSDM",
+    "PWHEAMTUSDM",
+    "SP500",
+    "TEDRATE",
+    "VIXCLS"
+  ],
+  "conditional_fred_ids": [
+    "DCPF3M",
+    "DCPN3M",
+    "JPNASSETS"
+  ],
+  "fred_originals": {
+    "VIXCLS": {
+      "fred_id": "VIXCLS",
+      "title": "CBOE Volatility Index: VIX",
+      "original_publisher": "Cboe",
+      "cadence": "daily close",
+      "role": "TELL market-stress leg (weight 0.35), playbook, ML feature, capital risk context",
+      "blocked_because": "licensed index; no free republishable source of the same data",
+      "condition": null
+    },
+    "BAMLH0A0HYM2": {
+      "fred_id": "BAMLH0A0HYM2",
+      "title": "ICE BofA US High Yield Index Option-Adjusted Spread",
+      "original_publisher": "ICE Data Indices",
+      "cadence": "daily",
+      "role": "TELL (weight 0.30), playbook, ML, capital risk context",
+      "blocked_because": "licensed index; no free republishable source of the same data",
+      "condition": null
+    },
+    "BAMLC0A0CM": {
+      "fred_id": "BAMLC0A0CM",
+      "title": "ICE BofA US Corporate Index Option-Adjusted Spread",
+      "original_publisher": "ICE Data Indices",
+      "cadence": "daily",
+      "role": "TELL (weight 0.15), playbook",
+      "blocked_because": "licensed index; no free republishable source of the same data",
+      "condition": null
+    },
+    "SP500": {
+      "fred_id": "SP500",
+      "title": "S&P 500",
+      "original_publisher": "S&P Dow Jones Indices",
+      "cadence": "daily close",
+      "role": "playbook outcome, book returns",
+      "blocked_because": "licensed index; no free republishable source of the same data",
+      "condition": null
+    },
+    "NASDAQCOM": {
+      "fred_id": "NASDAQCOM",
+      "title": "NASDAQ Composite Index",
+      "original_publisher": "Nasdaq",
+      "cadence": "daily close",
+      "role": "refereegli equity leg",
+      "blocked_because": "licensed index; no free republishable source of the same data",
+      "condition": null
+    },
+    "DCOILWTICO": {
+      "fred_id": "DCOILWTICO",
+      "title": "Crude Oil Prices: West Texas Intermediate (WTI)",
+      "original_publisher": "LSEG data republished by EIA",
+      "cadence": "daily spot",
+      "role": "oilfunding, ballast price leg, estuary energy",
+      "blocked_because": "EIA republishes LSEG (Refinitiv) spot prices; permission needed",
+      "condition": null
+    },
+    "DCOILBRENTEU": {
+      "fred_id": "DCOILBRENTEU",
+      "title": "Crude Oil Prices: Brent, Europe",
+      "original_publisher": "LSEG data republished by EIA",
+      "cadence": "daily spot",
+      "role": "oilfunding, estuary energy",
+      "blocked_because": "EIA republishes LSEG (Refinitiv) spot prices; permission needed",
+      "condition": null
+    },
+    "DHHNGSP": {
+      "fred_id": "DHHNGSP",
+      "title": "Henry Hub Natural Gas Spot Price",
+      "original_publisher": "LSEG data republished by EIA",
+      "cadence": "daily spot",
+      "role": "ballast price leg, estuary energy",
+      "blocked_because": "EIA republishes LSEG (Refinitiv) spot prices; permission needed",
+      "condition": null
+    },
+    "TEDRATE": {
+      "fred_id": "TEDRATE",
+      "title": "TED Spread",
+      "original_publisher": "computed by FRED from ICE LIBOR",
+      "cadence": "daily, discontinued in 2022",
+      "role": "ML pretraining rows only",
+      "blocked_because": "computed from ICE LIBOR, discontinued, no other publisher",
+      "condition": null
+    },
+    "PALLFNFINDEXM": {
+      "fred_id": "PALLFNFINDEXM",
+      "title": "Global price index of All Commodities",
+      "original_publisher": "IMF",
+      "cadence": "monthly",
+      "role": "estuary materials (broad)",
+      "blocked_because": "IMF permission needed for automated download and commercial reuse",
+      "condition": null
+    },
+    "PCOPPUSDM": {
+      "fred_id": "PCOPPUSDM",
+      "title": "Global price of Copper",
+      "original_publisher": "IMF",
+      "cadence": "monthly",
+      "role": "estuary industrial",
+      "blocked_because": "IMF permission needed for automated download and commercial reuse",
+      "condition": null
+    },
+    "PALUMUSDM": {
+      "fred_id": "PALUMUSDM",
+      "title": "Global price of Aluminum",
+      "original_publisher": "IMF",
+      "cadence": "monthly",
+      "role": "estuary industrial",
+      "blocked_because": "IMF permission needed for automated download and commercial reuse",
+      "condition": null
+    },
+    "PNICKUSDM": {
+      "fred_id": "PNICKUSDM",
+      "title": "Global price of Nickel",
+      "original_publisher": "IMF",
+      "cadence": "monthly",
+      "role": "estuary industrial",
+      "blocked_because": "IMF permission needed for automated download and commercial reuse",
+      "condition": null
+    },
+    "PCOALAUUSDM": {
+      "fred_id": "PCOALAUUSDM",
+      "title": "Global price of Coal, Australia",
+      "original_publisher": "IMF",
+      "cadence": "monthly",
+      "role": "estuary energy",
+      "blocked_because": "IMF permission needed for automated download and commercial reuse",
+      "condition": null
+    },
+    "PWHEAMTUSDM": {
+      "fred_id": "PWHEAMTUSDM",
+      "title": "Global price of Wheat",
+      "original_publisher": "IMF",
+      "cadence": "monthly",
+      "role": "estuary agriculture",
+      "blocked_because": "IMF permission needed for automated download and commercial reuse",
+      "condition": null
+    },
+    "PMAIZMTUSDM": {
+      "fred_id": "PMAIZMTUSDM",
+      "title": "Global price of Corn",
+      "original_publisher": "IMF",
+      "cadence": "monthly",
+      "role": "estuary agriculture",
+      "blocked_because": "IMF permission needed for automated download and commercial reuse",
+      "condition": null
+    },
+    "NFCI": {
+      "fred_id": "NFCI",
+      "title": "Chicago Fed National Financial Conditions Index",
+      "original_publisher": "Federal Reserve Bank of Chicago",
+      "cadence": "weekly",
+      "role": "SONAR and series export only",
+      "blocked_because": "republication or distribution needs Chicago Fed written permission",
+      "condition": null
+    },
+    "JPNASSETS": {
+      "fred_id": "JPNASSETS",
+      "title": "Bank of Japan: Total Assets for Japan",
+      "original_publisher": "Bank of Japan",
+      "cadence": "monthly",
+      "role": "refereegli",
+      "blocked_because": "BoJ notice excepts copying for commercial purposes",
+      "condition": "only if the owner reads the BoJ non-commercial clause against Seiche"
+    },
+    "DCPN3M": {
+      "fred_id": "DCPN3M",
+      "title": "3-Month AA Nonfinancial Commercial Paper Rate",
+      "original_publisher": "Federal Reserve Board, from DTCC data",
+      "cadence": "daily",
+      "role": "money desk unsecured section, cpsentinel, term_funding",
+      "blocked_because": "DTCC provenance under the Board notice is an open owner decision",
+      "condition": "only if the owner decides DTCC provenance blocks the Board CP rates"
+    },
+    "DCPF3M": {
+      "fred_id": "DCPF3M",
+      "title": "3-Month AA Financial Commercial Paper Rate",
+      "original_publisher": "Federal Reserve Board, from DTCC data",
+      "cadence": "daily",
+      "role": "money desk unsecured section, cpsentinel, term_funding",
+      "blocked_because": "DTCC provenance under the Board notice is an open owner decision",
+      "condition": "only if the owner decides DTCC provenance blocks the Board CP rates"
+    }
+  },
+  "sources": {
+    "ALT-OFRFSI": {
+      "substitute_id": "ALT-OFRFSI",
+      "module": "seiche.sources.substitutes.ofr_fsi",
+      "title": "OFR Financial Stress Index",
+      "publisher": "Office of Financial Research, U.S. Department of the Treasury",
+      "endpoints": [
+        "https://www.financialresearch.gov/financial-stress-index/data/fsi.csv"
+      ],
+      "terms_url": "https://www.financialresearch.gov/legal-notices/",
+      "terms_quote": "No copyright may be claimed for any work on this website that was created by a federal employee in the course of his or her duties. However, credit is requested if you reproduce or copy any such work.",
+      "terms_checked": "2026-11-09",
+      "terms_status": "public_domain_credit_requested",
+      "redistribution_status": "allowed",
+      "cadence": "daily; published with data current from two business days prior",
+      "history": "2000-01-03 onward",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/).",
+      "residual_risk": "Low. OFR computes the index from licensed market inputs (Refinitiv Datastream and Bloomberg per its working paper); only OFR's published index values are read.",
+      "owner_decision": null,
+      "charge_rule": null,
+      "endpoint_pattern": null,
+      "measures": {
+        "fsi": {
+          "label": "OFR FSI",
+          "unit": "index (0 = average stress)",
+          "frequency": "daily",
+          "description": "OFR Financial Stress Index level"
+        },
+        "credit": {
+          "label": "Credit",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "credit category contribution"
+        },
+        "equity_valuation": {
+          "label": "Equity valuation",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "equity valuation category contribution"
+        },
+        "safe_assets": {
+          "label": "Safe assets",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "safe assets category contribution"
+        },
+        "funding": {
+          "label": "Funding",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "funding category contribution"
+        },
+        "volatility": {
+          "label": "Volatility",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "volatility category contribution"
+        },
+        "united_states": {
+          "label": "United States",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "United States regional contribution"
+        },
+        "other_advanced_economies": {
+          "label": "Other advanced economies",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "other advanced economies regional contribution"
+        },
+        "emerging_markets": {
+          "label": "Emerging markets",
+          "unit": "index points (contribution to the OFR FSI)",
+          "frequency": "daily",
+          "description": "emerging markets regional contribution"
+        }
+      }
+    },
+    "ALT-CISS": {
+      "substitute_id": "ALT-CISS",
+      "module": "seiche.sources.substitutes.ecb_ciss",
+      "title": "New Composite Indicator of Systemic Stress (CISS), United States",
+      "publisher": "European Central Bank",
+      "endpoints": [
+        "https://data-api.ecb.europa.eu/service/data/CISS/D.US.Z0Z.4F.EC.SS_CIN.IDX?format=csvdata"
+      ],
+      "terms_url": "https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html",
+      "terms_quote": "Subject to the exception below, users of this website may make free use of the information obtained directly from it subject to the following conditions: When such information is distributed or reproduced, it must appear accurately and the ECB must be cited as the source.",
+      "terms_checked": "2026-11-09",
+      "terms_status": "free_use_with_citation",
+      "redistribution_status": "allowed",
+      "cadence": "daily; updated with the previous day's data",
+      "history": "1980-01-02 onward",
+      "attribution": "Source: European Central Bank, New CISS for the United States, series CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX. Values unmodified.",
+      "residual_risk": "Low. ECB statistics; any modification (resampling, growth rates) must be stated.",
+      "owner_decision": null,
+      "charge_rule": "If ever placed in a sold document, buyers must be told before paying and on each access that the information may be obtained free of charge from the ECB website.",
+      "endpoint_pattern": null,
+      "measures": {
+        "ciss": {
+          "label": "CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX",
+          "unit": "index (0 to 1)",
+          "frequency": "daily",
+          "description": "New Composite Indicator of Systemic Stress, United States"
+        }
+      }
+    },
+    "ALT-GZ": {
+      "substitute_id": "ALT-GZ",
+      "module": "seiche.sources.substitutes.frb_gz",
+      "title": "GZ credit spread and excess bond premium",
+      "publisher": "Board of Governors of the Federal Reserve System",
+      "endpoints": [
+        "https://www.federalreserve.gov/econres/notes/feds-notes/ebp_csv.csv"
+      ],
+      "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+      "terms_quote": "Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information.",
+      "terms_checked": "2026-11-09",
+      "terms_status": "public_domain_with_citation",
+      "redistribution_status": "allowed",
+      "cadence": "monthly; about the fourth business day of the next month",
+      "history": "1973-01 onward",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, GZ credit spread and excess bond premium (FEDS Notes data).",
+      "residual_risk": "Residual. The FEDS Note names commercial bond-price inputs; the CSV carries no restriction notice and only the Board's published calculations are read.",
+      "owner_decision": null,
+      "charge_rule": null,
+      "endpoint_pattern": null,
+      "measures": {
+        "gz_spread": {
+          "label": "gz_spread",
+          "unit": "percentage points",
+          "frequency": "monthly",
+          "description": "Gilchrist-Zakrajsek credit spread"
+        },
+        "ebp": {
+          "label": "ebp",
+          "unit": "percentage points",
+          "frequency": "monthly",
+          "description": "excess bond premium"
+        }
+      }
+    },
+    "ALT-PINK": {
+      "substitute_id": "ALT-PINK",
+      "module": "seiche.sources.substitutes.wb_pink",
+      "title": "World Bank Commodity Price Data (The Pink Sheet), monthly",
+      "publisher": "World Bank",
+      "endpoints": [
+        "https://www.worldbank.org/en/research/commodity-markets"
+      ],
+      "terms_url": "https://data.worldbank.org/summary-terms-of-use",
+      "terms_quote": "Unless indicated otherwise in the data or indicator metadata, you are free to copy, distribute, adapt, display or include the data in other products for commercial or noncommercial purposes at no cost under a Creative Commons Attribution 4.0 International License",
+      "terms_checked": "2026-11-09",
+      "terms_status": "cc_by_4_0",
+      "redistribution_status": "allowed",
+      "cadence": "monthly averages; first week of the next month",
+      "history": "1960-01 onward (WTI from 1982-01, Australian coal from 1970-01)",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day.",
+      "residual_risk": "Medium. The workbook's own source notes list Bloomberg Finance L.P. and Thomson Reuters Datastream (now LSEG) for crude oil, Henry Hub gas and LME metals. The World Bank terms warn that third-party data may need the original provider's consent \"Where applicable, these conditions are included in the dataset or indicator metadata\"; none was found on 2026-11-09.",
+      "owner_decision": null,
+      "charge_rule": null,
+      "endpoint_pattern": "https://thedocs\\.worldbank\\.org/en/doc/[0-9a-z]+(?:-[0-9a-z]+){0,4}/related/CMO-Historical-Data-Monthly\\.xlsx",
+      "measures": {
+        "crude_oil_brent": {
+          "label": "Crude oil, Brent",
+          "unit": "$/bbl",
+          "frequency": "monthly",
+          "description": "Pink Sheet Crude oil, Brent, monthly average"
+        },
+        "crude_oil_wti": {
+          "label": "Crude oil, WTI",
+          "unit": "$/bbl",
+          "frequency": "monthly",
+          "description": "Pink Sheet Crude oil, WTI, monthly average"
+        },
+        "natural_gas_us": {
+          "label": "Natural gas, US",
+          "unit": "$/mmbtu",
+          "frequency": "monthly",
+          "description": "Pink Sheet Natural gas, US, monthly average"
+        },
+        "coal_australia": {
+          "label": "Coal, Australian",
+          "unit": "$/mt",
+          "frequency": "monthly",
+          "description": "Pink Sheet Coal, Australian, monthly average"
+        },
+        "copper": {
+          "label": "Copper",
+          "unit": "$/mt",
+          "frequency": "monthly",
+          "description": "Pink Sheet Copper, monthly average"
+        },
+        "aluminum": {
+          "label": "Aluminum",
+          "unit": "$/mt",
+          "frequency": "monthly",
+          "description": "Pink Sheet Aluminum, monthly average"
+        },
+        "nickel": {
+          "label": "Nickel",
+          "unit": "$/mt",
+          "frequency": "monthly",
+          "description": "Pink Sheet Nickel, monthly average"
+        },
+        "wheat_us_hrw": {
+          "label": "Wheat, US HRW",
+          "unit": "$/mt",
+          "frequency": "monthly",
+          "description": "Pink Sheet Wheat, US HRW, monthly average"
+        },
+        "maize": {
+          "label": "Maize",
+          "unit": "$/mt",
+          "frequency": "monthly",
+          "description": "Pink Sheet Maize, monthly average"
+        },
+        "index_total": {
+          "label": "Total Index",
+          "unit": "2010=100",
+          "frequency": "monthly",
+          "description": "Pink Sheet Total Index, monthly average"
+        },
+        "index_energy": {
+          "label": "Energy",
+          "unit": "2010=100",
+          "frequency": "monthly",
+          "description": "Pink Sheet Energy, monthly average"
+        },
+        "index_non_energy": {
+          "label": "Non-energy",
+          "unit": "2010=100",
+          "frequency": "monthly",
+          "description": "Pink Sheet Non-energy, monthly average"
+        }
+      }
+    },
+    "ALT-HQM": {
+      "substitute_id": "ALT-HQM",
+      "module": "seiche.sources.substitutes.ust_hqm",
+      "title": "Treasury HQM corporate bond par yields, with Treasury spreads",
+      "publisher": "U.S. Department of the Treasury",
+      "endpoints": [
+        "https://home.treasury.gov/system/files/226/hqm_qh_pars.xls",
+        "https://www.federalreserve.gov/releases/h15/data/FRB_H15_xml.zip"
+      ],
+      "terms_url": "https://www.copyright.gov/title17/92chap1.html",
+      "terms_quote": "17 U.S.C. 105(a): \"Copyright protection under this title is not available for any work of the United States Government\". Treasury leg: Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information.",
+      "terms_checked": "2026-11-09",
+      "terms_status": "public_domain_us_government_work",
+      "redistribution_status": "allowed",
+      "cadence": "monthly averages",
+      "history": "1984-01 onward",
+      "attribution": "Source: U.S. Department of the Treasury, HQM Corporate Bond Yield Curve, monthly average par yields; Treasury constant maturity yields from the Board of Governors of the Federal Reserve System, H.15. Spread computed by Seiche.",
+      "residual_risk": "Low. HQM input vendor not checked.",
+      "owner_decision": null,
+      "charge_rule": null,
+      "endpoint_pattern": null,
+      "measures": {
+        "par_2y": {
+          "label": "2 Years",
+          "unit": "percent",
+          "frequency": "monthly",
+          "description": "HQM corporate par yield, 2 Years, monthly average"
+        },
+        "par_5y": {
+          "label": "5 Years",
+          "unit": "percent",
+          "frequency": "monthly",
+          "description": "HQM corporate par yield, 5 Years, monthly average"
+        },
+        "par_10y": {
+          "label": "10 Years",
+          "unit": "percent",
+          "frequency": "monthly",
+          "description": "HQM corporate par yield, 10 Years, monthly average"
+        },
+        "par_30y": {
+          "label": "30 Years",
+          "unit": "percent",
+          "frequency": "monthly",
+          "description": "HQM corporate par yield, 30 Years, monthly average"
+        },
+        "spread_2y": {
+          "label": "2 Years minus RIFLGFCY02_N.M",
+          "unit": "percentage points",
+          "frequency": "monthly",
+          "description": "HQM par yield minus Treasury constant maturity yield, 2 Years, monthly average"
+        },
+        "spread_5y": {
+          "label": "5 Years minus RIFLGFCY05_N.M",
+          "unit": "percentage points",
+          "frequency": "monthly",
+          "description": "HQM par yield minus Treasury constant maturity yield, 5 Years, monthly average"
+        },
+        "spread_10y": {
+          "label": "10 Years minus RIFLGFCY10_N.M",
+          "unit": "percentage points",
+          "frequency": "monthly",
+          "description": "HQM par yield minus Treasury constant maturity yield, 10 Years, monthly average"
+        },
+        "spread_30y": {
+          "label": "30 Years minus RIFLGFCY30_N.M",
+          "unit": "percentage points",
+          "frequency": "monthly",
+          "description": "HQM par yield minus Treasury constant maturity yield, 30 Years, monthly average"
+        }
+      }
+    },
+    "ALT-CPBILL": {
+      "substitute_id": "ALT-CPBILL",
+      "module": "seiche.sources.substitutes.frb_cp_bill",
+      "title": "AA financial 3-month commercial paper minus 3-month Treasury bill",
+      "publisher": "Board of Governors of the Federal Reserve System",
+      "endpoints": [
+        "https://www.federalreserve.gov/releases/cp/data/FRB_CP_xml.zip",
+        "https://www.federalreserve.gov/releases/h15/data/FRB_H15_xml.zip"
+      ],
+      "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+      "terms_quote": "Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information. CP release: \"The Federal Reserve Board's CP release is derived from data supplied by The Depository Trust & Clearing Corporation (DTCC)\" (https://www.federalreserve.gov/releases/cp/about.htm).",
+      "terms_checked": "2026-11-09",
+      "terms_status": "unclear_dtcc_provenance",
+      "redistribution_status": "metadata_only",
+      "cadence": "daily, business days",
+      "history": "1997-01-02 onward",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, Commercial Paper release (AA financial, 90 days) and H.15 (3-month Treasury bill, secondary market). Spread computed by Seiche. The Board derives the CP rates from DTCC data.",
+      "residual_risk": "Open. The CP leg is the same DTCC-derived data as DCPF3M.",
+      "owner_decision": "Whether DTCC provenance makes the Board CP rates an \"otherwise indicated\" case (the same decision that holds DCPN3M and DCPF3M). Until she decides, use it only for its internal role (ML pretraining) and publish no values.",
+      "charge_rule": null,
+      "endpoint_pattern": null,
+      "measures": {
+        "cp_aa_financial_3m_minus_tbill_3m": {
+          "label": "RIFSPPFAAD90_N.B minus RIFSGFSM03_N.B",
+          "unit": "percentage points",
+          "frequency": "daily",
+          "description": "AA financial 90-day commercial paper rate minus 3-month Treasury bill rate"
+        }
+      }
+    },
+    "ALT-BISCBTA": {
+      "substitute_id": "ALT-BISCBTA",
+      "module": "seiche.sources.substitutes.bis_cbta",
+      "title": "BIS central bank total assets, Japan",
+      "publisher": "Bank for International Settlements",
+      "endpoints": [
+        "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBTA/1.0/M.JP.B.XDC.JPY.N?format=csv"
+      ],
+      "terms_url": "https://www.bis.org/about/legal/permitted-use-statistics",
+      "terms_quote": "The use of the statistics is unrestricted, provided that: 1. if the statistics are reproduced, the BIS must be cited in your publication or product as the source of the statistics; ... 3. your use of the statistics must not be potentially misleading, for example by implying endorsement or affiliation with the BIS or any body affiliated with the BIS; 4. if the statistics will be used in a commercial publication or product, their inclusion in the publication or product will not result in any additional charge to subscribers or other users",
+      "terms_checked": "2026-11-09 (page refuses scripted clients; read through a fetch tool)",
+      "terms_status": "unrestricted_with_conditions_free_only",
+      "redistribution_status": "allowed",
+      "cadence": "monthly end-of-month values, released quarterly",
+      "history": "1953-01 onward",
+      "attribution": "Source: Bank for International Settlements, central bank total assets (WS_CBTA), Japan, BIS-spliced from Bank of Japan data. No BIS endorsement implied.",
+      "residual_risk": "Low. BIS splices national central bank data.",
+      "owner_decision": null,
+      "charge_rule": "Free surfaces only: never include in a product or tier that charges subscribers or users (BIS condition 4).",
+      "endpoint_pattern": null,
+      "measures": {
+        "total_assets_jpy": {
+          "label": "WS_CBTA M.JP.B.XDC.JPY.N",
+          "unit": "JPY billions",
+          "frequency": "monthly",
+          "description": "Japan, central bank total assets, end of month, BIS-spliced"
+        }
+      }
+    },
+    "ALT-FCIG": {
+      "substitute_id": "ALT-FCIG",
+      "module": "seiche.sources.substitutes.frb_fcig",
+      "title": "FCI-G financial conditions index (baseline, three-year lookback)",
+      "publisher": "Board of Governors of the Federal Reserve System",
+      "endpoints": [
+        "https://www.federalreserve.gov/econres/notes/feds-notes/fci_g_public_monthly_3yr.csv"
+      ],
+      "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+      "terms_quote": "Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information.",
+      "terms_checked": "2026-11-09",
+      "terms_status": "public_domain_with_citation",
+      "redistribution_status": "allowed",
+      "cadence": "monthly; research product with no fixed release calendar",
+      "history": "1990-01 onward",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, FCI-G (baseline, three-year lookback), a FEDS Notes research product.",
+      "residual_risk": "Residual. Inputs include commercial series; only the Board's published index and factor contributions are read. The Board says the index may be revised or discontinued without notice.",
+      "owner_decision": null,
+      "charge_rule": null,
+      "endpoint_pattern": null,
+      "measures": {
+        "fci_g": {
+          "label": "FCI-G Index (baseline)",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "FCI-G index, baseline, three-year lookback"
+        },
+        "ffr": {
+          "label": "FFR",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "federal funds rate contribution"
+        },
+        "treasury_10y": {
+          "label": "10Yr Treasury",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "10-year Treasury yield contribution"
+        },
+        "mortgage_rate": {
+          "label": "Mortgage Rate",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "30-year mortgage rate contribution"
+        },
+        "bbb": {
+          "label": "BBB",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "BBB corporate bond yield contribution"
+        },
+        "stock_market": {
+          "label": "Stock Market",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "stock market contribution"
+        },
+        "house_prices": {
+          "label": "House Prices",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "house prices contribution"
+        },
+        "dollar": {
+          "label": "Dollar",
+          "unit": "percentage points of GDP growth over the next year",
+          "frequency": "monthly",
+          "description": "dollar contribution"
+        }
+      }
+    }
+  },
+  "substitutes": [
+    {
+      "substitute_for": "VIXCLS",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "volatility",
+      "substitute_class": "proxy",
+      "rank": 1,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; VIXCLS was a same-day daily close",
+      "note": null,
+      "role": "TELL market-stress leg (weight 0.35), playbook, ML feature, capital risk context",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED VIXCLS, not as VIXCLS.",
+      "notice": "Seiche substitute for FRED VIXCLS, class: proxy. This is OFR Financial Stress Index (volatility) from Office of Financial Research, U.S. Department of the Treasury, not VIXCLS itself (original source: Cboe).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "VIXCLS",
+      "substitute_id": "ALT-CISS",
+      "measure": "ciss",
+      "substitute_class": "proxy",
+      "rank": 2,
+      "cadence_difference": "CISS is daily, one day behind; VIXCLS was a same-day daily close",
+      "note": null,
+      "role": "TELL market-stress leg (weight 0.35), playbook, ML feature, capital risk context",
+      "attribution": "Source: European Central Bank, New CISS for the United States, series CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX. Values unmodified. Shown by Seiche as a proxy for FRED VIXCLS, not as VIXCLS.",
+      "notice": "Seiche substitute for FRED VIXCLS, class: proxy. This is New Composite Indicator of Systemic Stress (CISS), United States (ciss) from European Central Bank, not VIXCLS itself (original source: Cboe).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "BAMLH0A0HYM2",
+      "substitute_id": "ALT-GZ",
+      "measure": "gz_spread",
+      "substitute_class": "proxy",
+      "rank": 1,
+      "cadence_difference": "GZ is monthly; the ICE spread was daily",
+      "note": "A close substitute for a corporate credit spread, but not high-yield specific, so a proxy for this series (section 4.2).",
+      "role": "TELL (weight 0.30), playbook, ML, capital risk context",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, GZ credit spread and excess bond premium (FEDS Notes data). Shown by Seiche as a proxy for FRED BAMLH0A0HYM2, not as BAMLH0A0HYM2.",
+      "notice": "Seiche substitute for FRED BAMLH0A0HYM2, class: proxy. This is GZ credit spread and excess bond premium (gz_spread) from Board of Governors of the Federal Reserve System, not BAMLH0A0HYM2 itself (original source: ICE Data Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "BAMLH0A0HYM2",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "credit",
+      "substitute_class": "proxy",
+      "rank": 2,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; the ICE spread was daily",
+      "note": null,
+      "role": "TELL (weight 0.30), playbook, ML, capital risk context",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED BAMLH0A0HYM2, not as BAMLH0A0HYM2.",
+      "notice": "Seiche substitute for FRED BAMLH0A0HYM2, class: proxy. This is OFR Financial Stress Index (credit) from Office of Financial Research, U.S. Department of the Treasury, not BAMLH0A0HYM2 itself (original source: ICE Data Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "BAMLH0A0HYM2",
+      "substitute_id": "ALT-CISS",
+      "measure": "ciss",
+      "substitute_class": "proxy",
+      "rank": 3,
+      "cadence_difference": "CISS is daily, one day behind; the ICE spread was daily",
+      "note": null,
+      "role": "TELL (weight 0.30), playbook, ML, capital risk context",
+      "attribution": "Source: European Central Bank, New CISS for the United States, series CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX. Values unmodified. Shown by Seiche as a proxy for FRED BAMLH0A0HYM2, not as BAMLH0A0HYM2.",
+      "notice": "Seiche substitute for FRED BAMLH0A0HYM2, class: proxy. This is New Composite Indicator of Systemic Stress (CISS), United States (ciss) from European Central Bank, not BAMLH0A0HYM2 itself (original source: ICE Data Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "BAMLC0A0CM",
+      "substitute_id": "ALT-GZ",
+      "measure": "gz_spread",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "GZ is monthly; the ICE spread was daily",
+      "note": null,
+      "role": "TELL (weight 0.15), playbook",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, GZ credit spread and excess bond premium (FEDS Notes data). Shown by Seiche as a close substitute for FRED BAMLC0A0CM, not as BAMLC0A0CM.",
+      "notice": "Seiche substitute for FRED BAMLC0A0CM, class: close substitute. This is GZ credit spread and excess bond premium (gz_spread) from Board of Governors of the Federal Reserve System, not BAMLC0A0CM itself (original source: ICE Data Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "BAMLC0A0CM",
+      "substitute_id": "ALT-HQM",
+      "measure": "spread_10y",
+      "substitute_class": "proxy",
+      "rank": 2,
+      "cadence_difference": "HQM is a monthly average; the ICE spread was daily",
+      "note": "HQM 10-year par yield minus the 10-year Treasury constant maturity yield, both monthly averages; 2, 5 and 30 years are also parsed.",
+      "role": "TELL (weight 0.15), playbook",
+      "attribution": "Source: U.S. Department of the Treasury, HQM Corporate Bond Yield Curve, monthly average par yields; Treasury constant maturity yields from the Board of Governors of the Federal Reserve System, H.15. Spread computed by Seiche. Shown by Seiche as a proxy for FRED BAMLC0A0CM, not as BAMLC0A0CM.",
+      "notice": "Seiche substitute for FRED BAMLC0A0CM, class: proxy. This is Treasury HQM corporate bond par yields, with Treasury spreads (spread_10y) from U.S. Department of the Treasury, not BAMLC0A0CM itself (original source: ICE Data Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "BAMLC0A0CM",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "credit",
+      "substitute_class": "proxy",
+      "rank": 3,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; the ICE spread was daily",
+      "note": null,
+      "role": "TELL (weight 0.15), playbook",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED BAMLC0A0CM, not as BAMLC0A0CM.",
+      "notice": "Seiche substitute for FRED BAMLC0A0CM, class: proxy. This is OFR Financial Stress Index (credit) from Office of Financial Research, U.S. Department of the Treasury, not BAMLC0A0CM itself (original source: ICE Data Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "SP500",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "equity_valuation",
+      "substitute_class": "proxy",
+      "rank": 1,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; SP500 was a same-day daily close",
+      "note": "A stress contribution, not an index level or a return.",
+      "role": "playbook outcome, book returns",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED SP500, not as SP500.",
+      "notice": "Seiche substitute for FRED SP500, class: proxy. This is OFR Financial Stress Index (equity_valuation) from Office of Financial Research, U.S. Department of the Treasury, not SP500 itself (original source: S&P Dow Jones Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "SP500",
+      "substitute_id": "ALT-CISS",
+      "measure": "ciss",
+      "substitute_class": "proxy",
+      "rank": 2,
+      "cadence_difference": "CISS is daily, one day behind; SP500 was a same-day daily close",
+      "note": null,
+      "role": "playbook outcome, book returns",
+      "attribution": "Source: European Central Bank, New CISS for the United States, series CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX. Values unmodified. Shown by Seiche as a proxy for FRED SP500, not as SP500.",
+      "notice": "Seiche substitute for FRED SP500, class: proxy. This is New Composite Indicator of Systemic Stress (CISS), United States (ciss) from European Central Bank, not SP500 itself (original source: S&P Dow Jones Indices).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "NASDAQCOM",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "equity_valuation",
+      "substitute_class": "proxy",
+      "rank": 1,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; NASDAQCOM was a same-day daily close",
+      "note": "A stress contribution, not an index level or a return.",
+      "role": "refereegli equity leg",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED NASDAQCOM, not as NASDAQCOM.",
+      "notice": "Seiche substitute for FRED NASDAQCOM, class: proxy. This is OFR Financial Stress Index (equity_valuation) from Office of Financial Research, U.S. Department of the Treasury, not NASDAQCOM itself (original source: Nasdaq).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "NASDAQCOM",
+      "substitute_id": "ALT-CISS",
+      "measure": "ciss",
+      "substitute_class": "proxy",
+      "rank": 2,
+      "cadence_difference": "CISS is daily, one day behind; NASDAQCOM was a same-day daily close",
+      "note": null,
+      "role": "refereegli equity leg",
+      "attribution": "Source: European Central Bank, New CISS for the United States, series CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX. Values unmodified. Shown by Seiche as a proxy for FRED NASDAQCOM, not as NASDAQCOM.",
+      "notice": "Seiche substitute for FRED NASDAQCOM, class: proxy. This is New Composite Indicator of Systemic Stress (CISS), United States (ciss) from European Central Bank, not NASDAQCOM itself (original source: Nasdaq).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "DCOILWTICO",
+      "substitute_id": "ALT-PINK",
+      "measure": "crude_oil_wti",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly average; DCOILWTICO was a daily spot price",
+      "note": "Same benchmark (WTI, 40 API), monthly average.",
+      "role": "oilfunding, ballast price leg, estuary energy",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED DCOILWTICO, not as DCOILWTICO.",
+      "notice": "Seiche substitute for FRED DCOILWTICO, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (crude_oil_wti) from World Bank, not DCOILWTICO itself (original source: LSEG data republished by EIA).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "DCOILBRENTEU",
+      "substitute_id": "ALT-PINK",
+      "measure": "crude_oil_brent",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly average; DCOILBRENTEU was a daily spot price",
+      "note": "Same benchmark (UK Brent, 38 API), monthly average.",
+      "role": "oilfunding, estuary energy",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED DCOILBRENTEU, not as DCOILBRENTEU.",
+      "notice": "Seiche substitute for FRED DCOILBRENTEU, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (crude_oil_brent) from World Bank, not DCOILBRENTEU itself (original source: LSEG data republished by EIA).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "DHHNGSP",
+      "substitute_id": "ALT-PINK",
+      "measure": "natural_gas_us",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly average; DHHNGSP was a daily spot price",
+      "note": "Pink Sheet definition: spot price at Henry Hub, Louisiana.",
+      "role": "ballast price leg, estuary energy",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED DHHNGSP, not as DHHNGSP.",
+      "notice": "Seiche substitute for FRED DHHNGSP, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (natural_gas_us) from World Bank, not DHHNGSP itself (original source: LSEG data republished by EIA).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "TEDRATE",
+      "substitute_id": "ALT-CPBILL",
+      "measure": "cp_aa_financial_3m_minus_tbill_3m",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "daily, both legs on the Board's business-day calendar; TEDRATE was daily until its 2022 discontinuation",
+      "note": "History starts 1997-01-02, so TEDRATE's earlier history is not covered. Both legs are on a discount basis with a 360-day year (H.15 footnotes 3 and 4).",
+      "role": "ML pretraining rows only",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, Commercial Paper release (AA financial, 90 days) and H.15 (3-month Treasury bill, secondary market). Spread computed by Seiche. The Board derives the CP rates from DTCC data. Shown by Seiche as a close substitute for FRED TEDRATE, not as TEDRATE.",
+      "notice": "Seiche substitute for FRED TEDRATE, class: close substitute. This is AA financial 3-month commercial paper minus 3-month Treasury bill (cp_aa_financial_3m_minus_tbill_3m) from Board of Governors of the Federal Reserve System, not TEDRATE itself (original source: computed by FRED from ICE LIBOR).",
+      "redistribution_status": "metadata_only",
+      "condition": null
+    },
+    {
+      "substitute_for": "TEDRATE",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "funding",
+      "substitute_class": "proxy",
+      "rank": 2,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; TEDRATE was daily",
+      "note": null,
+      "role": "ML pretraining rows only",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED TEDRATE, not as TEDRATE.",
+      "notice": "Seiche substitute for FRED TEDRATE, class: proxy. This is OFR Financial Stress Index (funding) from Office of Financial Research, U.S. Department of the Treasury, not TEDRATE itself (original source: computed by FRED from ICE LIBOR).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PALLFNFINDEXM",
+      "substitute_id": "ALT-PINK",
+      "measure": "index_total",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "Different weights and base year (World Bank 2010=100).",
+      "role": "estuary materials (broad)",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PALLFNFINDEXM, not as PALLFNFINDEXM.",
+      "notice": "Seiche substitute for FRED PALLFNFINDEXM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (index_total) from World Bank, not PALLFNFINDEXM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PALLFNFINDEXM",
+      "substitute_id": "ALT-PINK",
+      "measure": "index_energy",
+      "substitute_class": "close substitute",
+      "rank": 2,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "Use with the non-energy index; different weights and base year.",
+      "role": "estuary materials (broad)",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PALLFNFINDEXM, not as PALLFNFINDEXM.",
+      "notice": "Seiche substitute for FRED PALLFNFINDEXM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (index_energy) from World Bank, not PALLFNFINDEXM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PALLFNFINDEXM",
+      "substitute_id": "ALT-PINK",
+      "measure": "index_non_energy",
+      "substitute_class": "close substitute",
+      "rank": 2,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "Use with the energy index; different weights and base year.",
+      "role": "estuary materials (broad)",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PALLFNFINDEXM, not as PALLFNFINDEXM.",
+      "notice": "Seiche substitute for FRED PALLFNFINDEXM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (index_non_energy) from World Bank, not PALLFNFINDEXM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PCOPPUSDM",
+      "substitute_id": "ALT-PINK",
+      "measure": "copper",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "LME grade A copper, settlement price.",
+      "role": "estuary industrial",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PCOPPUSDM, not as PCOPPUSDM.",
+      "notice": "Seiche substitute for FRED PCOPPUSDM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (copper) from World Bank, not PCOPPUSDM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PALUMUSDM",
+      "substitute_id": "ALT-PINK",
+      "measure": "aluminum",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "LME primary aluminum, settlement price.",
+      "role": "estuary industrial",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PALUMUSDM, not as PALUMUSDM.",
+      "notice": "Seiche substitute for FRED PALUMUSDM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (aluminum) from World Bank, not PALUMUSDM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PNICKUSDM",
+      "substitute_id": "ALT-PINK",
+      "measure": "nickel",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "LME nickel cathodes, settlement price.",
+      "role": "estuary industrial",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PNICKUSDM, not as PNICKUSDM.",
+      "notice": "Seiche substitute for FRED PNICKUSDM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (nickel) from World Bank, not PNICKUSDM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PCOALAUUSDM",
+      "substitute_id": "ALT-PINK",
+      "measure": "coal_australia",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "Newcastle 6000 kcal/kg; futures price from February 2022.",
+      "role": "estuary energy",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PCOALAUUSDM, not as PCOALAUUSDM.",
+      "notice": "Seiche substitute for FRED PCOALAUUSDM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (coal_australia) from World Bank, not PCOALAUUSDM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PWHEAMTUSDM",
+      "substitute_id": "ALT-PINK",
+      "measure": "wheat_us_hrw",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "US no. 2 hard red winter, Gulf export price.",
+      "role": "estuary agriculture",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PWHEAMTUSDM, not as PWHEAMTUSDM.",
+      "notice": "Seiche substitute for FRED PWHEAMTUSDM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (wheat_us_hrw) from World Bank, not PWHEAMTUSDM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "PMAIZMTUSDM",
+      "substitute_id": "ALT-PINK",
+      "measure": "maize",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly, as the FRED series",
+      "note": "US no. 2 yellow, f.o.b. US Gulf ports.",
+      "role": "estuary agriculture",
+      "attribution": "Source: World Bank, Commodity Price Data (The Pink Sheet), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Values unchanged; Seiche dates each month at its last calendar day. Shown by Seiche as a close substitute for FRED PMAIZMTUSDM, not as PMAIZMTUSDM.",
+      "notice": "Seiche substitute for FRED PMAIZMTUSDM, class: close substitute. This is World Bank Commodity Price Data (The Pink Sheet), monthly (maize) from World Bank, not PMAIZMTUSDM itself (original source: IMF).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "NFCI",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "fsi",
+      "substitute_class": "proxy",
+      "rank": 1,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; NFCI was weekly",
+      "note": null,
+      "role": "SONAR and series export only",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED NFCI, not as NFCI.",
+      "notice": "Seiche substitute for FRED NFCI, class: proxy. This is OFR Financial Stress Index (fsi) from Office of Financial Research, U.S. Department of the Treasury, not NFCI itself (original source: Federal Reserve Bank of Chicago).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "NFCI",
+      "substitute_id": "ALT-CISS",
+      "measure": "ciss",
+      "substitute_class": "proxy",
+      "rank": 2,
+      "cadence_difference": "CISS is daily, one day behind; NFCI was weekly",
+      "note": null,
+      "role": "SONAR and series export only",
+      "attribution": "Source: European Central Bank, New CISS for the United States, series CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX. Values unmodified. Shown by Seiche as a proxy for FRED NFCI, not as NFCI.",
+      "notice": "Seiche substitute for FRED NFCI, class: proxy. This is New Composite Indicator of Systemic Stress (CISS), United States (ciss) from European Central Bank, not NFCI itself (original source: Federal Reserve Bank of Chicago).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "NFCI",
+      "substitute_id": "ALT-FCIG",
+      "measure": "fci_g",
+      "substitute_class": "proxy",
+      "rank": 3,
+      "cadence_difference": "FCI-G is monthly; NFCI was weekly",
+      "note": null,
+      "role": "SONAR and series export only",
+      "attribution": "Source: Board of Governors of the Federal Reserve System, FCI-G (baseline, three-year lookback), a FEDS Notes research product. Shown by Seiche as a proxy for FRED NFCI, not as NFCI.",
+      "notice": "Seiche substitute for FRED NFCI, class: proxy. This is FCI-G financial conditions index (baseline, three-year lookback) (fci_g) from Board of Governors of the Federal Reserve System, not NFCI itself (original source: Federal Reserve Bank of Chicago).",
+      "redistribution_status": "allowed",
+      "condition": null
+    },
+    {
+      "substitute_for": "JPNASSETS",
+      "substitute_id": "ALT-BISCBTA",
+      "measure": "total_assets_jpy",
+      "substitute_class": "close substitute",
+      "rank": 1,
+      "cadence_difference": "monthly end-of-month values released quarterly, so up to about four months behind; JPNASSETS was monthly",
+      "note": "BIS units are JPY billions; FRED shows JPNASSETS in 100 million yen.",
+      "role": "refereegli",
+      "attribution": "Source: Bank for International Settlements, central bank total assets (WS_CBTA), Japan, BIS-spliced from Bank of Japan data. No BIS endorsement implied. Shown by Seiche as a close substitute for FRED JPNASSETS, not as JPNASSETS.",
+      "notice": "Seiche substitute for FRED JPNASSETS, class: close substitute. This is BIS central bank total assets, Japan (total_assets_jpy) from Bank for International Settlements, not JPNASSETS itself (original source: Bank of Japan).",
+      "redistribution_status": "allowed",
+      "condition": "only if the owner reads the BoJ non-commercial clause against Seiche"
+    },
+    {
+      "substitute_for": "DCPN3M",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "funding",
+      "substitute_class": "proxy",
+      "rank": 1,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; DCPN3M was daily",
+      "note": null,
+      "role": "money desk unsecured section, cpsentinel, term_funding",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED DCPN3M, not as DCPN3M.",
+      "notice": "Seiche substitute for FRED DCPN3M, class: proxy. This is OFR Financial Stress Index (funding) from Office of Financial Research, U.S. Department of the Treasury, not DCPN3M itself (original source: Federal Reserve Board, from DTCC data).",
+      "redistribution_status": "allowed",
+      "condition": "only if the owner decides DTCC provenance blocks the Board CP rates"
+    },
+    {
+      "substitute_for": "DCPF3M",
+      "substitute_id": "ALT-OFRFSI",
+      "measure": "funding",
+      "substitute_class": "proxy",
+      "rank": 1,
+      "cadence_difference": "OFR FSI is daily, about two business days behind; DCPF3M was daily",
+      "note": null,
+      "role": "money desk unsecured section, cpsentinel, term_funding",
+      "attribution": "Source: Office of Financial Research, OFR Financial Stress Index (https://www.financialresearch.gov/financial-stress-index/). Shown by Seiche as a proxy for FRED DCPF3M, not as DCPF3M.",
+      "notice": "Seiche substitute for FRED DCPF3M, class: proxy. This is OFR Financial Stress Index (funding) from Office of Financial Research, U.S. Department of the Treasury, not DCPF3M itself (original source: Federal Reserve Board, from DTCC data).",
+      "redistribution_status": "allowed",
+      "condition": "only if the owner decides DTCC provenance blocks the Board CP rates"
+    }
+  ],
+  "not_built": {
+    "ALT-EIASURV": "EIA survey prices (proxies for the oil and gas spot series); not in this build's priority list",
+    "ALT-Z1": "Board Z.1 corporate equities market value (quarterly equity proxy); not in this build's priority list",
+    "realized_rates_vol": "Seiche-computed 10-year Treasury realized volatility (VIXCLS proxy); a computation, not a source adapter"
+  }
+}

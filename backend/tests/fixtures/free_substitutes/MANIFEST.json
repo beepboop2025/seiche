@@ -1,0 +1,102 @@
+{
+  "bis_cbta_jp.csv": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 7919,
+    "fixture_sha256": "8bc6e50f3095e762881a86e08e819ae67f8474597da166c28f007bf5c52fd719",
+    "original_bytes": 1347548,
+    "original_sha256": "876b1be53b85ce35b5db7a718c74faf5864e684560e3ec3c96cf12a167ce35e1",
+    "response_date_header": "2026-11-08T22:43:06+00:00",
+    "source_url": "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBTA/1.0/M.JP.B.XDC.JPY.N?format=csv",
+    "trimming": "header, the first two rows and the last three rows"
+  },
+  "ecb_ciss_us.csv": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 1759,
+    "fixture_sha256": "7560d7727b65fc0ca74eba491a9e87472ee0a6587d80c7d085bbbc6a03bde6fc",
+    "original_bytes": 3207665,
+    "original_sha256": "fe24b9f74f6d22811d2b7f5597faf394027bbcd5bbe01bbcc18a75e032e76826",
+    "response_date_header": "2026-11-08T22:35:20+00:00",
+    "source_url": "https://data-api.ecb.europa.eu/service/data/CISS/D.US.Z0Z.4F.EC.SS_CIN.IDX?format=csvdata",
+    "trimming": "header, the first two rows and the last three rows"
+  },
+  "frb_cp_release.zip": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 1175,
+    "fixture_sha256": "c9c7a4295ca150d6c7e480ee613f48328f759fcb4605b4c6c37db7182dc30c9a",
+    "original_bytes": 6295860,
+    "original_sha256": "e0e580ee2bec66ee78e2fd8128d8306d56e7f107beac2f22b74768ca48c2c4aa",
+    "response_date_header": "2026-11-08T22:37:22+00:00",
+    "source_url": "https://www.federalreserve.gov/releases/cp/data/FRB_CP_xml.zip",
+    "trimming": "CP_data.xml only: the real message header, the RATES data set, and the real declarations, annotations and last Obs lines of RIFSPPNAAD90_N.B (3) and RIFSPPFAAD90_N.B (8)"
+  },
+  "frb_fcig_monthly.csv": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 1084,
+    "fixture_sha256": "6ebd7f99e5269ea5ff054d566d7ad7072f889ea8634273c81f152224abe4da15",
+    "original_bytes": 72000,
+    "original_sha256": "a59044c569a24523c5d93c851f85e88576d0bb3b89223aedf4dad3a379e0121b",
+    "response_date_header": "2026-11-08T22:39:56+00:00",
+    "source_url": "https://www.federalreserve.gov/econres/notes/feds-notes/fci_g_public_monthly_3yr.csv",
+    "trimming": "header, 1990-01, 1990-02, 1990-05 (exponent notation) and the last three rows"
+  },
+  "frb_gz_ebp.csv": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 451,
+    "fixture_sha256": "0e864d656b1dfb109d831635899d177a5f1f41c399357c22ebe3d3cd3a94de54",
+    "original_bytes": 44669,
+    "original_sha256": "caa16e0619cb5399b9c8f44433868351f01973f9594c50a4f1f87dd0856542c5",
+    "response_date_header": "2026-11-08T22:35:28+00:00",
+    "source_url": "https://www.federalreserve.gov/econres/notes/feds-notes/ebp_csv.csv",
+    "trimming": "header, 1973-01, 1973-02, 1990-09 (exponent notation) and the last three rows"
+  },
+  "frb_h15_release.zip": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 1391,
+    "fixture_sha256": "e13bb143574718a059401fcae6ac358b6944d5f7503f5c384cd928d7de5c4b07",
+    "original_bytes": 4287753,
+    "original_sha256": "1af9c7fe56cfe2c778f83a8b7974264ca05d20437c5dd1ed544f30babbe5998e",
+    "response_date_header": "2026-11-08T22:37:23+00:00",
+    "source_url": "https://www.federalreserve.gov/releases/h15/data/FRB_H15_xml.zip",
+    "trimming": "H15_data.xml only: the real message header, the H15 data set, and the real declarations, annotations and last Obs lines of RIFSGFSM03_N.B (8) and the 2, 5, 10 and 30 year monthly constant maturity series (3 each)"
+  },
+  "ofr_fsi.csv": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 730,
+    "fixture_sha256": "25d9d558a4af353bd27f0e730a5ae9dccae751661a4330ffcfb7e15b58ef0b45",
+    "original_bytes": 517519,
+    "original_sha256": "43b6c9be5893db4928748ed41d61ec32a65b461e4dec2ca59dbb921f87da294c",
+    "response_date_header": "2026-11-08T22:25:44+00:00",
+    "source_url": "https://www.financialresearch.gov/financial-stress-index/data/fsi.csv",
+    "trimming": "header, 2000-01-03, 2000-01-04, 2022-04-29 (exponent notation) and the last four rows"
+  },
+  "ust_hqm_pars.xls": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 62976,
+    "fixture_sha256": "4ad4c59b4c2a30093e0507d99362724cb5f734d9abdb70c7a935f3c47f26554c",
+    "original_bytes": 62976,
+    "original_sha256": "4ad4c59b4c2a30093e0507d99362724cb5f734d9abdb70c7a935f3c47f26554c",
+    "response_date_header": "2026-11-08T22:36:59+00:00",
+    "source_url": "https://home.treasury.gov/system/files/226/hqm_qh_pars.xls",
+    "trimming": "none; the complete original BIFF workbook"
+  },
+  "wb_commodity_markets.html": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 628,
+    "fixture_sha256": "57037ef608b09901f6e60d517f34ea554d22a10bc5ec80708670cdbd5fdc1f6d",
+    "original_bytes": 56230,
+    "original_sha256": "ba646f0f343883a7741558d157deb00da0d7ea7975d69a148aae45ec987cd1da",
+    "response_date_header": "2026-11-08T22:35:44+00:00",
+    "source_url": "https://www.worldbank.org/en/research/commodity-markets",
+    "trimming": "the one real table row that carries the workbook links, in a minimal page shell"
+  },
+  "wb_pink_monthly.xlsx": {
+    "fetched_with": "one GET on 2026-11-08 UTC (2026-11-09 IST), user agent LiquiLensResearch/1.0 (+https://liquilens.in/about/), no key",
+    "fixture_bytes": 8985,
+    "fixture_sha256": "d0d07ca2a2047d07347cb3ac40e6fb76463a68f17185673bb683ffd943ea772b",
+    "original_bytes": 587760,
+    "original_sha256": "3c8d9d8dbb48342fdbf24777c39a8ce8964cc2fd0958f72f6779e6e4ad99cde2",
+    "response_date_header": "2026-11-08T22:36:03+00:00",
+    "source_url": "https://thedocs.worldbank.org/en/doc/74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/CMO-Historical-Data-Monthly.xlsx",
+    "trimming": "Monthly Prices and Monthly Indices only: real title, header and unit rows plus real cell values for 1960M01, 1982M01 (prices only), 2026M09 and 2026M10, re-saved by openpyxl"
+  }
+}
