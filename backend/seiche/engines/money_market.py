@@ -123,6 +123,8 @@ CARD_INPUTS: dict[str, tuple[str, ...]] = {
     "repo.dvp_minus_sofr": ("ofr", "sofr"),
     "repo.tri_minus_sofr": ("ofr", "sofr"),
     "repo.gcf_minus_sofr": ("ofr", "sofr"),
+    "repo.bgcr_minus_sofr": ("ofr", "sofr"),
+    "repo.tgcr_minus_sofr": ("ofr", "sofr"),
     "unsecured.cp_nonfinancial_3m": ("cp_nonfinancial_3m",),
     "unsecured.cp_financial_3m": ("cp_financial_3m",),
     "unsecured.treasury_3m": ("treasury_3m",),

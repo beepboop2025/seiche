@@ -468,7 +468,10 @@ _DISTRIBUTION_FIELDS = {
     "rate", "p01", "p25", "p75", "p99", "volume", "p99_minus_rate",
     "iqr", "p99_p01_width", "tail_skew",
 }
+# BGCR and TGCR arrive through OFR but are NY Fed reference rates under the NY
+# Fed Terms of Use; the desk carries the NY Fed and DTCC Solutions notices.
 _OFR_IDS = {
+    "repo.bgcr_rate", "repo.tgcr_rate",
     "repo.dvp_rate", "repo.tri_rate", "repo.gcf_rate", "repo.dvp_volume",
     "repo.tri_volume", "repo.gcf_volume", "repo.dvp_minus_tri",
     "repo.reported_segment_volume", "repo.dvp_volume_share", "repo.tri_volume_share",
