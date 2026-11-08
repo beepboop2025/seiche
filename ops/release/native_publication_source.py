@@ -42,6 +42,10 @@ REVIEWABLE_DIFFERENCES = {
         (None, "128757e23d47347106504b7250897fd2364fcb84"),
 }
 CONTROLLER_PATHS = ("ops", ".github/workflows/publish.yml", ".github/release-signers.pub")
+# FULL seals the built site into one fresh tempfile.mkdtemp(prefix=".railway-publication-",
+# dir=<trusted checkout>) directory before its final admission (publish.py seal_candidate), so
+# that checkout legitimately holds exactly one such untracked tree. Nothing else may differ.
+SEALED_CANDIDATE = re.compile(r"\.railway-publication-[A-Za-z0-9_]+")
 LIMITS = {"runtime_execution_authority": False, "writer_authority": False,
           "raw_data_publication": False}
 
@@ -128,13 +132,25 @@ def _inventory(root, source, paths):
     return result
 
 
+def _require_clean_except_sealed_candidate(root):
+    """A tracked change, or any untracked path outside one sealed candidate directory, fails."""
+    status = _git(root, "status", "--porcelain=v1", "--untracked-files=all", "-z")
+    candidates = set()
+    for entry in (item for item in status.split(b"\0") if item):
+        code, raw = entry[:2], entry[3:]
+        parts = PurePosixPath(raw.decode("utf-8", "surrogateescape")).parts
+        require(code == b"??" and len(parts) >= 2 and SEALED_CANDIDATE.fullmatch(parts[0]) is not None
+                and ".." not in parts, "publication checkout is not clean")
+        candidates.add(parts[0])
+    require(len(candidates) <= 1, "publication checkout is not clean")
+
+
 def _manifest(root, publication_source, runtime_source):
     root = Path(root).resolve(strict=True)
     publication, runtime = _identity(root, publication_source), _identity(root, runtime_source)
     require(_git(root, "rev-parse", "HEAD").decode().strip() == publication_source,
             "checkout is not the publication source")
-    require(not _git(root, "status", "--porcelain=v1", "--untracked-files=all"),
-            "publication checkout is not clean")
+    _require_clean_except_sealed_candidate(root)
     publication_backend = _inventory(root, publication_source, ("backend",))
     runtime_backend = _inventory(root, runtime_source, ("backend",))
     require(publication_backend and runtime_backend, "complete backend inventory is missing")

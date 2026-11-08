@@ -178,6 +178,56 @@ def test_dirty_controller_or_untracked_file_is_rejected(repo):
         prepared(repo)
 
 
+def _sealed(root, name=".railway-publication-ab12_cd"):
+    for rel, body in (("index.html", "<html></html>\n"), ("assets/app.js", "console.log(1)\n")):
+        path = root / name / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+
+
+def test_full_sealed_candidate_directory_is_the_only_untracked_exception(repo):
+    root = repo[0]
+    _sealed(root)
+    payload, manifest = prepared(repo)
+    assert payload["publication"]["commit"] == repo[2] and manifest["publication_controller"]
+
+
+def test_sealed_candidate_does_not_excuse_any_other_change(repo):
+    root = repo[0]
+    _sealed(root)
+    (root / "ops/release/controller.py").write_text("# changed after signed tree\n")
+    with pytest.raises(m.SourceBindingError, match="not clean"):
+        prepared(repo)
+    git(root, "checkout", "--", "ops/release/controller.py")
+    for stray in ("untracked.py", "backend/seiche/extra.py", "ops/release/extra.txt"):
+        (root / stray).write_text("stray\n")
+        with pytest.raises(m.SourceBindingError, match="not clean"):
+            prepared(repo)
+        (root / stray).unlink()
+    prepared(repo)
+
+
+@pytest.mark.parametrize("name", ["railway-publication-ab12", ".railway-publication-", ".railway-publication",
+                                  ".railway-publication-ab.cd", "nested/.railway-publication-ab12"])
+def test_lookalike_candidate_paths_are_rejected(repo, name):
+    root = repo[0]
+    _sealed(root, name)
+    with pytest.raises(m.SourceBindingError, match="not clean"):
+        prepared(repo)
+
+
+def test_candidate_must_be_a_directory_and_only_one(repo):
+    root = repo[0]
+    (root / ".railway-publication-ab12").write_text("a file, not the sealed tree\n")
+    with pytest.raises(m.SourceBindingError, match="not clean"):
+        prepared(repo)
+    (root / ".railway-publication-ab12").unlink()
+    _sealed(root, ".railway-publication-one")
+    _sealed(root, ".railway-publication-two")
+    with pytest.raises(m.SourceBindingError, match="not clean"):
+        prepared(repo)
+
+
 def test_durable_acceptance_allows_same_pair_after_window(repo):
     payload, _ = prepared(repo)
     envelope = signed(repo, payload)
