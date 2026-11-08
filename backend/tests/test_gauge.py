@@ -13,8 +13,10 @@ def client(monkeypatch, fake_snap):
     async def fake_snapshot(force=False):
         return fake_snap
 
-    # Exercise the retained calculation below the separately tested public rights gate.
+    # Exercise the retained calculation below the separately tested public
+    # rights gate and per-engine projection (test_per_engine_projection.py).
     monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda _path: False)
+    monkeypatch.setattr(public_rights, "cached_public_board", lambda value: value)
     monkeypatch.setattr(assemble, "snapshot", fake_snapshot)
     return TestClient(api.app)
 

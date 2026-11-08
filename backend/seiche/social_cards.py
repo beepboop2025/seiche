@@ -989,7 +989,7 @@ def _withheld_spec(
 def _board_spec(
     snapshot: Mapping[str, Any], *, canonical_url: str, identifier: str
 ) -> CardSpec:
-    if public_rights.is_restriction(snapshot):
+    if public_rights.is_restriction(snapshot) or public_rights.is_projection(snapshot):
         return _withheld_spec(
             snapshot,
             kind="board",
@@ -1243,7 +1243,7 @@ def _money_market_specs(site_dir: Path, snapshot: Mapping[str, Any]) -> list[Car
 
 
 def _series_specs(snapshot: Mapping[str, Any]) -> list[CardSpec]:
-    if public_rights.is_restriction(snapshot):
+    if public_rights.is_restriction(snapshot) or public_rights.is_projection(snapshot):
         return [
             _withheld_spec(
                 snapshot,
@@ -1320,7 +1320,7 @@ def _series_specs(snapshot: Mapping[str, Any]) -> list[CardSpec]:
 def _tab_specs(snapshot: Mapping[str, Any]) -> list[CardSpec]:
     """Project every finite generic UI share surface from the sealed snapshot."""
 
-    if public_rights.is_restriction(snapshot):
+    if public_rights.is_restriction(snapshot) or public_rights.is_projection(snapshot):
         return [
             _withheld_spec(
                 snapshot,

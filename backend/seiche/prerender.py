@@ -461,9 +461,88 @@ def withheld_block(restriction: dict) -> tuple[str, dict]:
     return f"<noscript>{inner}</noscript>", facts
 
 
+def projected_block(snap: dict) -> tuple[str, dict]:
+    """The home page over the per-engine public projection.
+
+    It states which readings are public and which are withheld. The only
+    values it prints are the composite reading when its inputs are all
+    allowed and the public headline rows. The editorial argument, the Tell,
+    the PROOF record, the Book and the dispatch letters combine withheld
+    readings and are not rendered.
+    """
+    projection = snap.get("rights_projection") or {}
+    verdicts = {**(projection.get("engines") or {}), **{
+        f"deep.{name}": verdict for name, verdict in (projection.get("deep") or {}).items()}}
+    public = sorted(name for name, verdict in verdicts.items() if verdict.get("status") == "public")
+    withheld = sorted(name for name, verdict in verdicts.items() if verdict.get("status") == "withheld")
+    comp = (snap.get("engines") or {}).get("composite") or {}
+    comp_public = (projection.get("engines") or {}).get("composite", {}).get("status") == "public"
+    policy = str(projection.get("policy") or public_rights.POLICY)
+    if public:
+        headline = ("Parts of the funding board are public; readings that depend on "
+                    "unqualified sources are withheld")
+    else:
+        headline = f"The funding board is {public_rights.WITHHELD_STATE.lower()}"
+    head = (
+        _MASTHEAD
+        + f'<div class="date">funding research &middot; free public data only &middot; '
+        f'policy {_esc(policy)}</div>'
+        f'<h1>{_esc(headline)}</h1>'
+        f'<p class="lede">{_esc(public_rights.WITHHELD_NOTE)} This page is written for readers '
+        'and machines that do not run JavaScript; the interactive terminal is the same URL '
+        'with scripting on.</p>'
+    )
+    body = ['<div class="body">', md_to_html(llms_intro_md())]
+    reading = ""
+    if comp_public and comp.get("ok") and comp.get("value") is not None:
+        regime = str(comp.get("regime") or "UNRATED").upper()
+        cov = comp.get("coverage_pct")
+        cov_txt = f", on {_num(cov, 0)}% coverage" if cov is not None else ""
+        reading = f"The composite reads {_num(comp.get('value'), 0)} out of 100, {regime}{cov_txt}."
+        body += ["<h2>Today's reading</h2>", f"<p>{_esc(reading)} Every input it reads comes "
+                 "from an allowed direct or open source.</p>"]
+    hb = headline_block(snap)
+    if hb:
+        body += ["<h2>The headline numbers</h2>", hb]
+    body += [
+        "<h2>What is public and what is withheld</h2>",
+        "<p>A reading is public only when every input it reads is an allowed direct or open "
+        "source. The editorial argument, the Tell, the forecasts, the PROOF record, the Book and "
+        f"the dispatch letters combine withheld readings and are not shown here. {_esc(public_rights.WITHHELD_NOTE)}</p>",
+        f"<p>Public readings: {_esc(', '.join(public) or 'none')}.</p>",
+        f"<p>Withheld readings: {_esc(', '.join(withheld) or 'none')}.</p>",
+        '<p>Research that remains available carries its own source clocks and field-level '
+        'restrictions: <a href="/money-markets/">money markets</a>, '
+        '<a href="/markets/">world markets</a>, <a href="/#workbench">the market workbench</a> '
+        'and <a href="/developers">the API and MCP tools</a>.</p>',
+    ]
+    docs = llms_docs_md()
+    if docs:
+        body += ["<h2>Read next</h2>", md_to_html(docs)]
+    body.append("</div>")
+    foot = (
+        '<div class="foot">Seiche is free open source software '
+        '(<a href="https://github.com/beepboop2025/seiche">AGPL-3.0-or-later, source</a>) and a free '
+        'public good: no sign-in or paywall for the public desk. '
+        '<a href="/llms.txt">llms.txt</a> &middot; '
+        '<a href="/sitemap.xml">sitemap</a> &middot; Not investment advice.</div>'
+    )
+    facts = {
+        "regime": str(comp.get("regime") or "WITHHELD").upper() if reading else "WITHHELD",
+        "value": comp.get("value") if reading else None, "headline": headline,
+        "reading": reading or public_rights.WITHHELD_STATE, "gloss": public_rights.WITHHELD_NOTE,
+        "generated_at": str(snap.get("generated_at") or "") if reading else "",
+        "proof": {}, "editorial": {}, "withheld": not reading, "policy": policy,
+    }
+    inner = f"<style>{_CSS}</style>{head}{''.join(body)}{foot}"
+    return f"<noscript>{inner}</noscript>", facts
+
+
 def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tuple[str, dict]:
     if public_rights.is_restriction(snap):
         return withheld_block(snap)
+    if public_rights.is_projection(snap):
+        return projected_block(snap)
     reading_html, facts = reading_block(snap)
     dailies = [e for e in entries if not str(e.get("slug", "")).endswith("-week-ahead")]
     weeklies = [e for e in entries if str(e.get("slug", "")).endswith("-week-ahead")]

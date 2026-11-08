@@ -3,10 +3,13 @@
 The publish job writes /data/overview.json, /data/public.json and
 /data/book_history.json and renders the home page, link cards and three
 derived pages from them. Each file must carry exactly what its API route may
-serve. These tests run the real publish steps in order over a board whose
-withheld fields hold unique sentinel strings, then search every public file.
-The same pipeline with the routes opened must leak the sentinels, which proves
-the search can see a leak.
+serve: /data/overview.json carries the per-engine public projection that
+/api/overview serves, while /data/public.json and /data/book_history.json carry
+the source-rights restriction. These tests run the real publish steps in order
+over a board whose withheld fields hold unique sentinel strings, then search
+every public file. A board whose composite inputs are proven direct publishes
+the composite and nothing else. The same pipeline with the projection
+bypassed must leak the sentinels, which proves the search can see a leak.
 """
 
 from __future__ import annotations
@@ -20,20 +23,25 @@ from pathlib import Path
 import pytest
 
 from seiche import ampleness, prerender, public_rights, publisher, referee, skeptic
+from seiche.config import ALL_SERIES
 
 ROOT = Path(__file__).resolve().parents[2]
 SHELL = ROOT / "frontend" / "index.html"
 STATIC = ("/data/overview.json", "/data/public.json", "/data/book_history.json")
+WITHHELD_FILES = ("/data/public.json", "/data/book_history.json")
+# Readings the projection must withhold on every board in these tests.
 SENTINELS = (
-    "SENTINELREGIME",
     "Sentinel thesis 7f3a9c",
     "Sentinel standfirst 7f3a9c",
     "Sentinel evidence 7f3a9c",
     "2031-12-25",
-    "2031-12-24T06:07",
     "2031-12-23",
     "sentinelstance",
 )
+# The composite regime is withheld unless every composite input is proven.
+REGIME = "SENTINELREGIME"
+# The board clock is public metadata on a projected board.
+CLOCK = "2031-12-24T06:07"
 
 
 def _script(name: str):
@@ -48,7 +56,7 @@ def _script(name: str):
 def _sentinel_board(fake_snap: dict) -> dict:
     board = deepcopy(fake_snap)
     board["generated_at"] = "2031-12-24T06:07:08+00:00"
-    board["engines"]["composite"].update(value=46.537, regime="SENTINELREGIME", coverage_pct=100.0)
+    board["engines"]["composite"].update(value=46.537, regime=REGIME, coverage_pct=100.0)
     board["editorial"] = {
         "thesis": "Sentinel thesis 7f3a9c",
         "standfirst": "Sentinel standfirst 7f3a9c",
@@ -66,11 +74,30 @@ def _sentinel_board(fake_snap: dict) -> dict:
     return board
 
 
+def _direct_provenance() -> list[dict]:
+    """Provenance as a build with every qualified capture present would write."""
+    rows = []
+    for mnemonic, spec in ALL_SERIES.items():
+        qualified = public_rights._qualified_source(mnemonic)
+        row = {"mnemonic": mnemonic, "source": qualified or spec.source, "freq": spec.freq,
+               "asof": "2031-12-20", "availability": "available"}
+        if qualified:
+            row["redistribution_status"] = "allowed"
+        rows.append(row)
+    return rows
+
+
+def _direct_board(fake_snap: dict) -> dict:
+    board = _sentinel_board(fake_snap)
+    board["provenance"] = _direct_provenance()
+    return board
+
+
 def _prior_book() -> list[dict]:
     history: list[dict] = []
     record = {"date": "2031-12-23", "stance": "sentinelstance", "positions": [["cash", 1.0]],
               "p_ensemble": 0.07731, "dispersion": 0.04131, "index": 46.537,
-              "regime": "SENTINELREGIME"}
+              "regime": REGIME}
     history.append(publisher.get_publisher().publish(record, history))
     assert publisher.verify_chain(history)[0]
     return history
@@ -115,22 +142,26 @@ def _public_text(site: Path) -> dict[str, str]:
             if path.is_file() and path.suffix in {".html", ".json", ".xml", ".txt", ".md"}}
 
 
-def _leaks(files: dict[str, str]) -> dict[str, list[str]]:
-    found = {name: [s for s in SENTINELS if s in body] for name, body in files.items()}
+def _leaks(files: dict[str, str], sentinels=SENTINELS) -> dict[str, list[str]]:
+    found = {name: [s for s in sentinels if s in body] for name, body in files.items()}
     return {name: hits for name, hits in found.items() if hits}
 
 
-def _open_routes(monkeypatch) -> None:
-    monkeypatch.setattr(public_rights, "LEGACY_PATHS", public_rights.LEGACY_PATHS
-                        - {public_rights.STATIC_SURFACES[path] for path in STATIC})
+def _projected(board: dict) -> dict:
+    exporter = _script("export_public.py")
+    return json.loads(json.dumps(exporter._json_safe(public_rights.public_board(board))))
 
 
-def test_every_static_board_file_is_its_routes_restriction():
-    for path in STATIC:
+def test_every_static_board_file_follows_its_route(fake_snap):
+    for path in WITHHELD_FILES:
         api = public_rights.STATIC_SURFACES[path]
         assert public_rights.legacy_http_restricted(api)
         assert public_rights.static_restriction(path) == public_rights.legacy_unavailable(path)
+        assert public_rights.static_board(path, fake_snap) == public_rights.legacy_unavailable(path)
         assert public_rights.is_restriction(public_rights.legacy_unavailable(api))
+    assert not public_rights.legacy_http_restricted("/api/overview")
+    assert public_rights.static_restriction("/data/overview.json") is None
+    assert public_rights.is_projection(public_rights.static_board("/data/overview.json", fake_snap))
 
 
 def test_no_withheld_value_reaches_any_public_file(tmp_path, fake_snap):
@@ -138,9 +169,15 @@ def test_no_withheld_value_reaches_any_public_file(tmp_path, fake_snap):
     site, private = _publish(tmp_path, board)
     files = _public_text(site)
 
-    for path in STATIC:
+    for path in WITHHELD_FILES:
         assert json.loads(files[path.lstrip("/")]) == public_rights.legacy_unavailable(path)
-    assert _leaks(files) == {}
+    overview = json.loads(files["data/overview.json"])
+    assert overview == _projected(board)
+    # The fixture's provenance proves no input, so every reading is withheld.
+    assert {v["status"] for v in overview["rights_projection"]["engines"].values()} == {"withheld"}
+    assert _leaks(files, SENTINELS + (REGIME,)) == {}
+    # The clock is board metadata; it never reaches a withheld-only file.
+    assert all(CLOCK not in files[path.lstrip("/")] for path in WITHHELD_FILES)
 
     home = prerender.body_text(files["index.html"])
     assert "The funding board is withheld pending source-rights qualification" in home
@@ -154,6 +191,34 @@ def test_no_withheld_value_reaches_any_public_file(tmp_path, fake_snap):
     assert site not in private.parents
 
 
+def test_proven_direct_composite_is_published_and_nothing_else(tmp_path, fake_snap):
+    board = _direct_board(fake_snap)
+    site, _private = _publish(tmp_path, board)
+    files = _public_text(site)
+
+    overview = json.loads(files["data/overview.json"])
+    assert overview == _projected(board)
+    verdicts = overview["rights_projection"]["engines"]
+    assert verdicts["composite"]["status"] == "public"
+    assert verdicts["oilfunding"]["status"] == verdicts["estuary"]["status"] == "withheld"
+    assert overview["engines"]["composite"]["regime"] == REGIME
+    assert overview["deep"]["tell"]["availability"] == "withheld"
+    assert overview["deep"]["book"]["availability"] == "withheld"
+    assert overview["headline"]["vix"] is None
+    assert overview["headline"]["sofr_pct"]["value"] == 3.9417
+    for path in WITHHELD_FILES:
+        assert json.loads(files[path.lstrip("/")]) == public_rights.legacy_unavailable(path)
+    # Narratives, the Tell and the Book still never reach a public file.
+    leaks = _leaks(files, ("Sentinel thesis 7f3a9c", "Sentinel standfirst 7f3a9c",
+                           "Sentinel evidence 7f3a9c", "sentinelstance", "13.137"))
+    assert leaks == {}
+
+    home = prerender.body_text(files["index.html"])
+    assert "The composite reads 47 out of 100, SENTINELREGIME" in home
+    assert "Parts of the funding board are public" in home
+    assert "Tell" not in home.split("What is public and what is withheld")[0]
+
+
 def test_no_withheld_value_reaches_any_link_card(tmp_path, fake_snap):
     pytest.importorskip("PIL")
     from seiche import social_cards
@@ -162,7 +227,7 @@ def test_no_withheld_value_reaches_any_link_card(tmp_path, fake_snap):
     manifest = social_cards.build(site)
     files = _public_text(site)
 
-    assert _leaks(files) == {}
+    assert _leaks(files, SENTINELS + (REGIME,)) == {}
     by_kind: dict[str, list[dict]] = {}
     for view in manifest["views"]:
         by_kind.setdefault(view["kind"], []).append(view)
@@ -175,11 +240,18 @@ def test_no_withheld_value_reaches_any_link_card(tmp_path, fake_snap):
     assert meta and meta.group(1) == "Dollar funding board withheld"
 
 
+def _open_routes(monkeypatch) -> None:
+    """Simulate a broken gate: routes open and the projection forgets to project."""
+    monkeypatch.setattr(public_rights, "LEGACY_PATHS", public_rights.LEGACY_PATHS
+                        - {public_rights.STATIC_SURFACES[path] for path in STATIC})
+    monkeypatch.setattr(public_rights, "public_board", lambda snapshot, **_kwargs: snapshot)
+
+
 def test_the_leak_search_detects_an_open_route(tmp_path, fake_snap, monkeypatch):
-    """Opening the routes republishes the board, so the search must find it."""
+    """Bypassing the projection republishes the board, so the search must find it."""
     _open_routes(monkeypatch)
     site, _private = _publish(tmp_path, _sentinel_board(fake_snap))
-    leaks = _leaks(_public_text(site))
+    leaks = _leaks(_public_text(site), SENTINELS + (REGIME,))
 
     for name in ("data/overview.json", "data/public.json", "data/book_history.json", "index.html"):
         assert name in leaks, name

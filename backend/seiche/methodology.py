@@ -116,8 +116,13 @@ def csv_restriction(mnemonic: str) -> str | None:
     label = spec.label if spec else mnemonic
     source = getattr(spec, "source", None)
     from seiche.sources import original_publishers
-    if mnemonic in original_publishers.CONTRACTS and original_publishers.load_series(mnemonic) is not None:
-        return None
+    if mnemonic in original_publishers.CONTRACTS:
+        qualified = original_publishers.load_series(mnemonic)
+        if qualified is not None:
+            if original_publishers.redistribution_allowed(qualified):
+                return None
+            return (f"{label} is a qualified original-publisher capture whose dated owner "
+                    "source-use decision is not recorded; values stay withheld.")
     if source == "fred":
         from seiche.public_rights import REASON
         return REASON
@@ -220,7 +225,8 @@ def series_index() -> dict:
         # twin enforce csv_restriction, so the catalog must not advertise a
         # link either route will 403. This also covers source-restricted
         # upstreams (BIS, CFETS, exchanges), which the old CSV field missed.
-        restricted = False if qualified else csv_restriction(m) is not None
+        restricted = (not original_publishers.redistribution_allowed(qualified) if qualified
+                      else csv_restriction(m) is not None)
         rows.append({
             "mnemonic": m,
             "label": spec.label,
@@ -233,7 +239,7 @@ def series_index() -> dict:
             "csv_restricted": restricted or None,
             "json": None if restricted else f"/api/series/{m}",
             "available": bool(qualified) or m in have,
-            **({"provenance": qualified.provenance()} if qualified else {}),
+            **({"provenance": original_publishers.compact_provenance(qualified)} if qualified else {}),
         })
     return {
         "schema": "seiche.series-index.v1",

@@ -4,10 +4,12 @@ Usage: python backend/scripts/export_public.py [--snapshot FILE] [--private-snap
 
 <public-path> and <overview-path> are published as /data/public.json and
 /data/overview.json. Each carries exactly what its API route may serve
-(public_rights.STATIC_SURFACES): while /api/public and /api/overview are
-withheld, both files carry the same source-rights restriction payload and no
-board values. Static readers (the prerendered home, social cards and the Book)
-render that state; they never fall back to a copy of the full board.
+(public_rights.STATIC_SURFACES): /data/public.json carries the source-rights
+restriction while /api/public is withheld, and /data/overview.json carries the
+per-engine public projection /api/overview serves, in which a reading is public
+only when every input it reads is allowed. Static readers (the prerendered
+home, social cards and the Book) render that state; they never fall back to a
+copy of the full board.
 
 The full board is written only to --private-snapshot, for internal steps that
 are allowed to read it. That path is refused inside the public web roots
@@ -103,11 +105,18 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"wrote public surface -> {out} (regime {payload['conclusion']['regime']})")
     if overview_out is not None:
-        withheld = public_rights.static_restriction("/data/overview.json")
-        board = withheld if withheld is not None else _json_safe(snap)
+        # The file carries exactly what /api/overview serves: the restriction
+        # while the route is withheld, otherwise the per-engine projection.
+        # The raw board never reaches a public file.
+        board = _json_safe(public_rights.static_board("/data/overview.json", snap))
         overview_out.parent.mkdir(parents=True, exist_ok=True)
         overview_out.write_text(json.dumps(board, separators=(",", ":"), allow_nan=False))
-        state = f"withheld under {withheld['policy']}" if withheld is not None else "full board"
+        if public_rights.is_restriction(board):
+            state = f"withheld under {board['policy']}"
+        else:
+            verdicts = (board.get("rights_projection") or {}).get("engines", {})
+            public = sum(1 for verdict in verdicts.values() if verdict.get("status") == "public")
+            state = f"projected under {public_rights.POLICY}: {public}/{len(verdicts)} engines public"
         print(f"wrote static board -> {overview_out} ({state})")
     if private_out is not None:
         _write_private(private_out, json.dumps(_json_safe(snap), separators=(",", ":"), allow_nan=False))

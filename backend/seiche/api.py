@@ -576,7 +576,12 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
 
 @app.middleware("http")
 async def _legacy_source_rights_boundary(request: Request, call_next):
-    """Deny unqualified legacy reads before collection, caching or model execution."""
+    """Deny unqualified legacy reads before collection, caching or model execution.
+
+    Board routes outside this list are served from the per-engine public
+    projection; an engine that reads a blocked or unqualified input is refused
+    here, before any snapshot loads.
+    """
     from seiche import public_rights
     if public_rights.legacy_http_restricted(request.url.path):
         return JSONResponse(public_rights.legacy_unavailable(request.url.path),
@@ -1910,10 +1915,14 @@ async def overview_head(ident: dict | None = Depends(require_board)):
 async def overview(
     request: Request, force: bool = False, ident: dict | None = Depends(require_board)
 ):
-    """The full board — subscriber-gated when SEICHE_BOARD_AUTH=1 (the public
-    box). Free visitors get /api/public instead. `force` (cache-bypass
+    """The board as projected for publication: each engine, deep block and
+    headline value is public only when every input it reads is an allowed
+    direct or open source; the rest is withheld metadata. Subscriber-gated
+    when SEICHE_BOARD_AUTH=1 (the public box). `force` (cache-bypass
     recompute) is honoured only for authenticated callers."""
-    payload = await assemble.snapshot(force=force and ident is not None)
+    from seiche import public_rights
+    snapshot = await assemble.snapshot(force=force and ident is not None)
+    payload = public_rights.cached_public_board(snapshot)
     wire = _overview_wire(payload)
     headers = {
         "ETag": wire["etag"],
@@ -1951,8 +1960,11 @@ async def public(
 async def gauge(response: Response):
     """The regime gauge, free and machine-shaped: the one reading a risk
     pipeline (an RWA curator, an agent framework, a circuit breaker) needs,
-    versioned so consumers can pin the contract. Never the full board."""
-    snap = await assemble.snapshot()
+    versioned so consumers can pin the contract. Never the full board.
+    Fields whose readings are withheld by the source-rights projection are
+    null, never reconstructed."""
+    from seiche import public_rights
+    snap = public_rights.cached_public_board(await assemble.snapshot())
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     engines = snap.get("engines", {})
     deep = snap.get("deep", {}) or {}
@@ -1989,6 +2001,14 @@ async def gauge(response: Response):
         "crunch_windows": (cal.get("crunch_windows") or [])[:3],
         "faults": len(snap.get("faults") or []),
         "notes": "point-in-time as-published; PROOF scoreboard at /api/public; not investment advice",
+        "publication_rights": {
+            "policy": public_rights.POLICY,
+            "composite": (snap.get("rights_projection") or {}).get("engines", {}).get("composite", {}).get("status", "withheld"),
+            "withheld": sorted(
+                name for name, value in (("tell", tell), ("p_event_5bd", stk), ("navigator", nav),
+                                         ("modelcourt", mcourt))
+                if public_rights.is_withheld_block(value)),
+        },
     }
 
 
@@ -2650,8 +2670,10 @@ def world_markets_v2(response: Response, section: str = "all"):
 def trade_safety_risk_context(response: Response):
     """Read a fail-closed, non-executable projection of completed Seiche state."""
 
+    from seiche import public_rights
+    completed = mcp_server._get_in_memory_completed_snapshot()
     payload = trade_safety.project(
-        mcp_server._get_in_memory_completed_snapshot(),
+        public_rights.cached_public_board(completed) if isinstance(completed, dict) else completed,
         evaluation_at=datetime.now(UTC).replace(microsecond=0),
     )
     if payload["status"] != "available":
@@ -3028,11 +3050,17 @@ async def wrecks_record():
 
 
 @app.get("/api/engines/{name}")
-async def engine(name: str, _ident: dict | None = Depends(require_board)):
+async def engine(name: str, request: Request, _ident: dict | None = Depends(require_board)):
+    """One engine, public only when every input it reads is allowed."""
+    from seiche import public_rights
     snap = await assemble.snapshot()
-    if name not in snap["engines"]:
+    block = public_rights.public_engine(snap, name)
+    if block is None:
         raise HTTPException(404, f"unknown engine '{name}'")
-    return sanitize_public_fault_payload(snap["engines"][name])
+    if public_rights.is_withheld_block(block):
+        return JSONResponse(public_rights.withheld_restriction(request.url.path, block),
+                            status_code=403, headers={"Cache-Control": "no-store"})
+    return sanitize_public_fault_payload(block)
 
 
 class LoginBody(BaseModel):
@@ -3284,9 +3312,12 @@ async def asof(
 
 @app.get("/api/deep")
 async def deep(_ident: dict | None = Depends(require_board)):
-    """History reconstruction, Tell, Turn, Playbook, PROOF backtest."""
+    """The deep layer as projected: each block is public only when every input
+    it reads is allowed. Blocks that read a FRED copy, a blocked proprietary
+    series or an unqualified source are withheld metadata."""
+    from seiche import public_rights
     snap = await assemble.snapshot()
-    return sanitize_public_fault_payload(snap.get("deep", {}))
+    return sanitize_public_fault_payload(public_rights.cached_public_board(snap).get("deep", {}))
 
 
 @app.get("/api/book")

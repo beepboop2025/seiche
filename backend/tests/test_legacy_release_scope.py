@@ -36,7 +36,11 @@ def test_old_callers_get_unavailable_without_loading_or_payment(name, monkeypatc
     assert preflight["error"]["data"]["category"] == "source_rights_restricted"
 
 
-@pytest.mark.parametrize("path", sorted(public_rights.LEGACY_PATHS) + ["/api/engines/composite", "/api/asof/2026-10-01", "/api/dispatch/latest", "/api/overview/"])
+# Engines that read a blocked or unqualified input are refused statically;
+# board routes whose readings can be public are served from the projection.
+@pytest.mark.parametrize("path", sorted(public_rights.LEGACY_PATHS) + [
+    "/api/engines/oilfunding", "/api/engines/estuary", "/api/engines/sonar",
+    "/api/engines/moorings", "/api/asof/2026-10-01", "/api/dispatch/latest", "/api/public/"])
 def test_legacy_http_is_explicit_and_no_store(path, monkeypatch):
     async def fail(*args, **kwargs):
         pytest.fail("legacy snapshot must never load")

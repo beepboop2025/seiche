@@ -533,8 +533,10 @@ def test_h10_cache_invalid_and_future_dates_do_not_become_fresh(asof) -> None:
 
 
 def test_internal_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
-    # Retained calculation contract, below the separately tested public rights gate.
+    # Retained calculation contract, below the separately tested public rights
+    # gate and per-engine projection (test_per_engine_projection.py).
     monkeypatch.setattr(public_rights, "legacy_http_restricted", lambda _path: False)
+    monkeypatch.setattr(public_rights, "cached_public_board", lambda value: value)
     snapshot = _snapshot()
     reads = []
 
@@ -587,7 +589,10 @@ def test_internal_rest_fails_closed_without_a_completed_snapshot(monkeypatch) ->
     assert response.json()["reason"] == "no_completed_snapshot"
 
 
-def test_legacy_risk_context_is_unavailable_in_public_discovery() -> None:
+def test_risk_context_is_served_from_the_per_engine_projection() -> None:
+    # Its composite reads only direct or open sources once they are proven by
+    # the snapshot's provenance, so discovery lists it again; the projection
+    # itself withholds the composite whenever any input is not allowed.
     discovery = api.api_index()
     openapi = api._public_openapi_document()
     tools = mcp_server.dispatch(
@@ -598,9 +603,9 @@ def test_legacy_risk_context_is_unavailable_in_public_discovery() -> None:
         "/api/trade-safety/risk-context"
     )
     route = openapi["paths"]["/api/trade-safety/risk-context"]["get"]
-    assert route["deprecated"] is True
-    assert set(route["responses"]) == {"403"}
-    assert "trade_safety_risk_context" not in {tool["name"] for tool in tools}
+    assert route.get("deprecated") is not True
+    assert "trade_safety_risk_context" in {tool["name"] for tool in tools}
+    assert public_rights.PROJECTED_TOOLS["trade_safety_risk_context"] == ("engines", "composite")
 
 
 def test_risk_context_is_in_the_edge_exact_path_allowlist() -> None:

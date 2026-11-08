@@ -717,16 +717,25 @@ def tool_latest_article(_args: dict, _public: bool) -> Any:
     return _latest_article_from_feed()
 
 
-def tool_stress_now(_args: dict, public: bool) -> Any:
-    snap = _get_snapshot()
-    if public:
-        from seiche import public_view
+def _projected_reading(name: str) -> tuple[dict, dict]:
+    """The projected board and the one reading a projected tool needs.
 
-        return {
-            **public_view.public_payload(snap),
-            "delivery": telegram_delivery(),
-        }
-    comp = snap.get("engines", {}).get("composite", {})
+    A withheld reading refuses with the source-rights restriction instead of
+    serving a value; nothing is reconstructed.
+    """
+    section, block_name = public_rights.PROJECTED_TOOLS[name]
+    board = public_rights.cached_public_board(_get_snapshot())
+    block = (board.get(section) or {}).get(block_name)
+    if not isinstance(block, dict) or public_rights.is_withheld_block(block):
+        raise StructuredToolError(public_rights.withheld_restriction(
+            name, block if isinstance(block, dict) else {}))
+    return board, block
+
+
+def tool_stress_now(_args: dict, public: bool) -> Any:
+    # The public conclusion envelope combines withheld narratives and the
+    # PROOF record, so every caller gets the projected composite read.
+    snap, comp = _projected_reading("funding_stress_now")
     tell = snap.get("deep", {}).get("tell", {})
     one = (
         f"SEICHE {comp.get('value')} {comp.get('regime')} "
@@ -734,7 +743,7 @@ def tool_stress_now(_args: dict, public: bool) -> Any:
     )
     if tell.get("ok"):
         one += f" · tell {tell.get('tell'):+.0f}"
-    return {
+    out = {
         "as_of": snap.get("generated_at"),
         "headline": one,
         "composite": comp,
@@ -745,9 +754,20 @@ def tool_stress_now(_args: dict, public: bool) -> Any:
             "composite is a 0-100 funding-stress index; regime is one of "
             "CALM / EROSION / STRAIN / STRESS. 'decomposition' lists each "
             "component's contribution; a DEAD component means its input went "
-            "stale (fail-loud, not silently dropped)."
+            "stale (fail-loud, not silently dropped). A withheld Tell reads a "
+            "blocked market series and is not a calm reading."
         ),
+        "publication_rights": {
+            "policy": public_rights.POLICY,
+            "composite_sources": (snap.get("rights_projection") or {}).get("engines", {})
+            .get("composite", {}).get("sources", []),
+            "terms": {key: value.get("terms_url") for key, value in
+                      ((snap.get("rights_projection") or {}).get("sources") or {}).items()},
+        },
     }
+    if public:
+        out["delivery"] = telegram_delivery()
+    return out
 
 
 def tool_forecast(_args: dict, public: bool) -> Any:
@@ -825,10 +845,8 @@ def tool_forecast(_args: dict, public: bool) -> Any:
 
 
 def tool_analogs(_args: dict, _public: bool) -> Any:
-    snap = _get_snapshot()
-    t = _need(
-        snap.get("deep", {}).get("tidetables"), "Tide Tables (historical analogs)"
-    )
+    snap, tide = _projected_reading("historical_analogs")
+    t = _need(tide, "Tide Tables (historical analogs)")
     return {
         "as_of": snap.get("generated_at"),
         "event_odds": t.get("event_odds", {}),
@@ -1447,8 +1465,9 @@ def tool_trade_safety_risk_context(args: dict, _public: bool) -> Any:
         )
     from seiche import trade_safety
 
+    completed = _get_in_memory_completed_snapshot()
     return trade_safety.project(
-        _get_in_memory_completed_snapshot(),
+        public_rights.cached_public_board(completed) if isinstance(completed, dict) else completed,
         evaluation_at=datetime.now(UTC).replace(microsecond=0),
     )
 
