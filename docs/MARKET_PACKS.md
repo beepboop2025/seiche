@@ -352,7 +352,7 @@ rows by one opportunity until the next posting. The FRED copies (the legacy
 `DGS3M`, `DGS2`, `DGS10` and `DGS30` series and DTB3) stay metadata-only. A
 deeper history needs the same one-off `seiche market-backfill --market US-USD`.
 
-### US commercial paper: implemented, off pending rights (2026-11-02)
+### US commercial paper: implemented, on by owner decision (2026-11-09)
 
 `seiche.sources.fed_cp` parses the 90-day AA financial and nonfinancial rates
 (`RIFSPPFAAD90_N.B`, `RIFSPPNAAD90_N.B`) from the Board's own CP release
@@ -363,12 +363,17 @@ by The Depository Trust & Clearing Corporation" and the About page states that
 the release "is derived from data supplied by The Depository Trust & Clearing
 Corporation (DTCC)", which may take these rates outside the Board's "Unless
 otherwise indicated" public-domain notice; FRED marks its H.15 copies "Data in
-this graph are copyrighted". The registry records `frb_commercial_paper` as
-`review_required` and `policy_blocked`. The US pack declares no `fed_cp`
-adapter, so no request is made and nothing is stored or served, and the FRED
-copies (`US.CP.NONFINANCIAL_3M`, legacy `CP_FIN_3M` and `CP_NONFIN_3M`) stay
-metadata-only. Enabling needs an owner rights decision recorded in the
-registry and an allowed pack declaration; no code change.
+this graph are copyrighted". On 2026-11-08 the owner accepted that DTCC origin
+(decision `seiche.source-use.2026-11-08.fed-cp` in
+`backend/seiche/source_decisions.json`). While it is recorded, the US pack
+declares the official-open, allowed `fed_cp` adapter (13:00 New York, next
+business day) with `US.FED.CP_AA_NONFINANCIAL_90D_DIRECT` and
+`US.FED.CP_AA_FINANCIAL_90D_DIRECT` (role `CP_3M`) ahead of the FRED copy, and
+every value is cited to the Board with the DTCC derivation. The registry
+records `frb_commercial_paper` as `allowed_in_current_pack` and `implemented`.
+The FRED copies (`US.CP.NONFINANCIAL_3M`, legacy `CP_FIN_3M` and
+`CP_NONFIN_3M`) stay metadata-only; the legacy board reads the same Board
+release directly.
 
 ### US direct Board release packages (0.17.0 candidate, Stage 2a)
 
@@ -420,12 +425,12 @@ an instrument clock of five business days at 16:15, so the day after the last
 published row falls due at the next Monday posting.
 
 The H.15 commercial paper rates (`RIFSPPNAAD90_N.B`, `RIFSPPFAAD90_N.B`) are
-parsed by the held package `fed_h15_cp` from the same H.15 file but carry a
-code-level rights hold: the gate stays closed even if a pack declared them, the
-US pack declares nothing for them, and registry record
-`frb_h15_commercial_paper` is `metadata_only` and `policy_blocked` pending the
-owner's decision on the DTCC provenance. Their test fixture values are
-synthetic.
+parsed by the package `fed_h15_cp` from the same H.15 file but keep a
+code-level hold: the owner accepted their DTCC origin on 2026-11-08, and the US
+pack serves the same two rates from the Board's CP release (`fed_cp`), so this
+copy stays off and each rate has one source. Registry record
+`frb_h15_commercial_paper` is `explicit_public_domain_with_exclusions` and
+`partial`. Their test fixture values are synthetic.
 
 Registry records: `frb_prates_release`, `frb_h41_release` (extended),
 `frb_h15_release`, `frb_h15_commercial_paper`, `frb_h10_release` and
@@ -460,7 +465,7 @@ unchanged even though IORB's publication clock is unknown. The FRED copy
 (`US.FED.POLICY_CEILING`, DFEDTARU) stays metadata-only, and the
 `us_policy_floor` gap stays open.
 
-### US CPI from the BLS Public Data API: built, held (0.17.0 candidate, Stage 2b)
+### US CPI from the BLS Public Data API: on by owner decision (2026-11-09)
 
 `seiche.sources.bls_cpi` reads `CUSR0000SA0E` (energy) and `CUSR0000SA0L1E`
 (all items less food and energy), seasonally adjusted index levels, in one
@@ -472,10 +477,14 @@ public domain, but the BLS.gov Terms of Service state that "Access to or use
 of BLS.gov services or its content constitutes acceptance to this Agreement",
 require the access date and the statement "BLS.gov cannot vouch for the data
 or analyses derived from these data after the data have been retrieved from
-BLS.gov.", and include an indemnity. Accepting them is an owner decision, so a
-code-level hold keeps the gate closed, the US pack declares nothing and the
-registry records `bls_public_data_api` as `review_required` and
-`policy_blocked`. The attribution already carries the required statement.
+BLS.gov.", and include an indemnity. The owner accepted them on 2026-11-08
+(decision `seiche.source-use.2026-11-08.bls-api`). While that decision is
+recorded the code-level hold is cleared, and the US pack declares the
+official-open, allowed `bls_cpi` adapter, polled once a day, with
+`US.BLS.CPI_ENERGY_SA` and `US.BLS.CPI_CORE_SA` under the context role
+`CONSUMER_PRICE_INDEX`, which no capability reads. The registry records
+`bls_public_data_api` as `allowed_in_current_pack` and `implemented`. The
+attribution carries the required statement and each value's retrieval date.
 
 ### US nominal GDP from BEA's flat file (0.17.0 candidate, Stage 2b)
 

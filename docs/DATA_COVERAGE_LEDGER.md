@@ -258,9 +258,10 @@ metadata-only. Treasury's own Daily Treasury Par Yield Curve Rates serve eight
 `SOVEREIGN_YIELD` tenors through adapter `treasury_par_yields` (registry record
 `treasury_par_yield_curve`, a US Government work cited to Treasury); they do
 not replace the DTB3 `TBILL_3M` input to `term_funding`. The Board's
-commercial paper rates are parsed by `fed_cp` but stay off (registry record
-`frb_commercial_paper`, `review_required`): the release is derived from DTCC
-data, so the `CP_3M` input stays the metadata-only FRED copy.
+commercial paper rates are served by `fed_cp` (registry record
+`frb_commercial_paper`, `allowed_in_current_pack`) since the owner accepted
+their DTCC origin on 2026-11-08; `US.FED.CP_AA_NONFINANCIAL_90D_DIRECT` now
+precedes the metadata-only FRED copy for `CP_3M`.
 
 For 0.17.0 (Stage 2a of the board re-sourcing plan), one generic Board
 release-package adapter (`seiche.sources.frb_release_package`) adds 40 direct
@@ -274,8 +275,8 @@ indexes (`CURRENCY_INDEX`) on `fed_h10`, and G.17 industrial production
 (`INDUSTRIAL_PRODUCTION`) on `fed_g17`. No capability reads these roles. Their
 registry records are `frb_prates_release`, `frb_h41_release`,
 `frb_h15_release`, `frb_h10_release` and `frb_g17_release`; the H.15 commercial
-paper rates are parsed but held (`frb_h15_commercial_paper`, `metadata_only`),
-so `CP_3M` still has no public direct instrument.
+paper rates are parsed but held (`frb_h15_commercial_paper`) because the CP
+release adapter `fed_cp` serves the same two rates.
 
 Authoritative declarations are `PACK.capabilities` in
 `backend/seiche/markets/us_usd/pack.py:374-454` and

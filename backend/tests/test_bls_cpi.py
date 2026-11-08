@@ -130,27 +130,28 @@ async def test_bounded_fetch_posts_once_for_both_series():
                 await bls_cpi.fetch_documents(client, 2025, 2026)
 
 
-def test_the_hold_keeps_bls_off_even_if_a_pack_declared_it():
-    assert bls_cpi.RIGHTS_HOLD and "Terms of Service" in bls_cpi.RIGHTS_HOLD
-    assert bls_cpi.ADAPTER_ID not in PACK.adapter_map
-    assert set(bls_cpi.SERIES.values()).isdisjoint(PACK.instrument_map)
-    assert ("US-USD", bls_cpi.ADAPTER_ID) not in PRODUCTION_ADAPTER_KEYS
-    declared = replace(
-        PACK,
-        source_adapters=(*PACK.source_adapters, SourceAdapterSpec(
-            bls_cpi.ADAPTER_ID, ConnectorClassification.OFFICIAL_OPEN, "P1M",
-            PACK.adapter_map["fed_g17"].publication_clock, RedistributionStatus.ALLOWED,
-            collection_cadence="P1D")),
-        instruments=(*PACK.instruments, *(InstrumentSpec(
-            instrument_id, instrument_id.rsplit(".", 1)[1], SemanticRole.INDUSTRIAL_PRODUCTION,
-            bls_cpi.ADAPTER_ID, "index, 1982-84 = 100", CanonicalUnit.INDEX_POINTS)
-            for instrument_id in bls_cpi.SERIES.values())),
-    )
-    assert bls_cpi.declared_instruments(declared) == set(bls_cpi.SERIES.values())
-    assert bls_cpi.rights_gate_open(declared) is False
-    registry = MarketRegistry(tuple(declared if item.market_id == "US-USD" else item
-                                    for item in default_registry().list()))
-    adapters = build_official_adapters(registry=registry, repository=SQLiteMarketRepository())
+def test_the_owner_decision_clears_the_hold_and_the_pack_declares_bls():
+    from seiche import source_decisions
+
+    assert source_decisions.allows(source_decisions.BLS_API) and bls_cpi.RIGHTS_HOLD is None
+    adapter = PACK.adapter_map[bls_cpi.ADAPTER_ID]
+    assert adapter.classification is ConnectorClassification.OFFICIAL_OPEN
+    assert adapter.redistribution_status is RedistributionStatus.ALLOWED
+    assert adapter.collection_cadence == "P1D"
+    assert bls_cpi.declared_instruments(PACK) == set(bls_cpi.SERIES.values())
+    assert {PACK.instrument_map[i].semantic_role for i in bls_cpi.SERIES.values()} == {
+        SemanticRole.CONSUMER_PRICE_INDEX}
+    assert ("US-USD", bls_cpi.ADAPTER_ID) in PRODUCTION_ADAPTER_KEYS
+    assert bls_cpi.rights_gate_open(PACK) is True
+    adapters = build_official_adapters(repository=SQLiteMarketRepository())
+    assert bls_cpi.ADAPTER_ID in {item.adapter_id for item in adapters}
+
+
+def test_a_restored_hold_keeps_bls_off_even_though_the_pack_declares_it(monkeypatch):
+    monkeypatch.setattr(bls_cpi, "RIGHTS_HOLD", "Terms of Service not accepted")
+    assert bls_cpi.declared_instruments(PACK) == set(bls_cpi.SERIES.values())
+    assert bls_cpi.rights_gate_open(PACK) is False
+    adapters = build_official_adapters(repository=SQLiteMarketRepository())
     assert bls_cpi.ADAPTER_ID not in {item.adapter_id for item in adapters}
 
 
@@ -158,7 +159,8 @@ def test_the_registry_record_quotes_the_rights_and_the_terms():
     ledger = json.loads((ROOT / "docs" / "data-source-expansion.json").read_text())
     record = next(item for item in ledger["candidates"] if item["id"] == bls_cpi.REGISTRY_RECORD)
     assert record["access_url"] == bls_cpi.API_URL and record["publisher_url"] == bls_cpi.RELEASE_URL
-    assert record["rights_status"] == "review_required" and record["implementation_status"] == "policy_blocked"
+    assert record["rights_status"] == "allowed_in_current_pack" and record["implementation_status"] == "implemented"
+    assert "seiche.source-use.2026-11-08.bls-api" in record["blocker"]
     assert record["rights_evidence_url"] == bls_cpi.TERMS_URL
     assert bls_cpi.VOUCH_STATEMENT in record["blocker"] and bls_cpi.ATTRIBUTION in record["blocker"]
     assert "everything that we publish, both in hard copy and electronically, is in the public domain" in record["blocker"]

@@ -69,6 +69,8 @@ _SOURCE_URLS = {
     "fed_prates": "https://www.federalreserve.gov/releases/prates/data/FRB_PRATES_xml.zip",
     "fed_h41": "https://www.federalreserve.gov/releases/h41/data/FRB_H41_xml.zip",
     "fed_h15": "https://www.federalreserve.gov/releases/h15/data/FRB_H15_xml.zip",
+    "fed_cp": "https://www.federalreserve.gov/releases/cp/data/FRB_CP_xml.zip",
+    "bls_cpi": "https://www.bls.gov/cpi/",
     "fed_h10": "https://www.federalreserve.gov/releases/h10/data/FRB_H10_xml.zip",
     "fed_g17": "https://www.federalreserve.gov/releases/g17/data/FRB_G17_xml.zip",
     "bea_nipa": "https://apps.bea.gov/national/Release/TXT/NipaDataQ.txt",
@@ -116,6 +118,8 @@ _SOURCE_PUBLISHERS = {
     "fed_prates": "Board of Governors of the Federal Reserve System",
     "fed_h41": "Board of Governors of the Federal Reserve System",
     "fed_h15": "Board of Governors of the Federal Reserve System",
+    "fed_cp": "Board of Governors of the Federal Reserve System",
+    "bls_cpi": "U.S. Bureau of Labor Statistics",
     "fed_h10": "Board of Governors of the Federal Reserve System",
     "fed_g17": "Board of Governors of the Federal Reserve System",
     "bea_nipa": "U.S. Bureau of Economic Analysis",
@@ -200,6 +204,28 @@ _SOURCE_ATTRIBUTIONS: dict[str, dict[str, str]] = {
     "treasury_par_yields": {
         "attribution": "Source: U.S. Department of the Treasury, Daily Treasury Par Yield Curve Rates",
         "terms_url": "https://home.treasury.gov/subfooter/site-policies-and-notices",
+    },
+    # Fed CP rates, by the owner's 2026-11-08 decision accepting their DTCC
+    # origin (seiche.source-use.2026-11-08.fed-cp).
+    "fed_cp": {
+        "attribution": (
+            "Source: Board of Governors of the Federal Reserve System, Commercial Paper, "
+            "derived by the Board from data supplied by The Depository Trust & Clearing "
+            "Corporation (DTCC)"
+        ),
+        "terms_url": "https://www.federalreserve.gov/disclaimer.htm",
+    },
+    # BLS CPI through the BLS API, whose Terms of Service the owner accepted on
+    # 2026-11-08 (seiche.source-use.2026-11-08.bls-api); the attribution
+    # carries the statement those terms require.
+    "bls_cpi": {
+        "attribution": (
+            "Source: U.S. Bureau of Labor Statistics, Consumer Price Index, retrieved through "
+            "the BLS Public Data API on each value's knowledge date. BLS.gov cannot vouch for "
+            "the data or analyses derived from these data after the data have been retrieved "
+            "from BLS.gov."
+        ),
+        "terms_url": "https://www.bls.gov/developers/termsOfService.htm",
     },
     # Raw SONIA under the Bank's open licence, by the owner's 2026-11-08
     # decision (seiche.source-use.2026-11-08.boe-sonia).
@@ -1833,6 +1859,7 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.CURRENCY_INDEX: "A trade-weighted index of the currency's value against a basket of currencies; an index level, not a price.",
         SemanticRole.INDUSTRIAL_PRODUCTION: "Real output of the industrial sector as an index of a base year; revised after first publication.",
         SemanticRole.GROSS_DOMESTIC_PRODUCT: "Nominal output of the whole economy at a seasonally adjusted annual rate; revised with every estimate.",
+        SemanticRole.CONSUMER_PRICE_INDEX: "A consumer price index level of a base period, seasonally adjusted; revised each February.",
     }
     return explanations.get(role, "Official local money-market observation.")
 

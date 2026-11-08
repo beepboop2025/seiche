@@ -48,6 +48,7 @@ import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from seiche import source_decisions
 from seiche.domain.observation import ConnectorClassification, RedistributionStatus
 from seiche.sources.canonical import FetchedDocument, ParsedPoint, PublicationTimePolicy
 
@@ -71,7 +72,10 @@ ATTRIBUTION = (
     "Source: U.S. Bureau of Labor Statistics, Consumer Price Index, retrieved through "
     "the BLS Public Data API on each value's knowledge date. " + VOUCH_STATEMENT
 )
-RIGHTS_HOLD = (
+# The owner accepted the BLS.gov Terms of Service on 2026-11-08
+# (seiche.source-use.2026-11-08.bls-api), which clears the hold below; without
+# that recorded decision the hold returns and nothing runs.
+RIGHTS_HOLD = None if source_decisions.allows(source_decisions.BLS_API) else (
     "The BLS.gov Terms of Service bind every API user (\"Access to or use of BLS.gov "
     "services or its content constitutes acceptance to this Agreement.\") and include an "
     "indemnity; accepting them for the company is an owner decision not yet made, so "

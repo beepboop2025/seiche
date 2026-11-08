@@ -16,6 +16,7 @@ from seiche.domain.observation import (
     RedistributionStatus,
     SemanticRole,
 )
+from seiche import source_decisions
 from seiche.markets.base import (
     BusinessCalendar,
     Capability,
@@ -170,6 +171,19 @@ _TREASURY_PAR_CLOCK = PublicationClock(
     timezone_name="America/New_York",
     local_time=time(18, 0),
     business_day_lag=0,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
+# Owner decisions of 2026-11-08 (seiche/source_decisions.json). Without a
+# recorded decision its adapter and instruments are simply not declared.
+_CP_DECIDED = source_decisions.allows(source_decisions.FED_CP)
+_BLS_DECIDED = source_decisions.allows(source_decisions.BLS_API)
+# The Board's CP release is "usually available at 1:00 p.m. EST" on the next
+# business day.
+_FED_CP_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(13, 0),
+    business_day_lag=1,
     precision=PublicationClockPrecision.SCHEDULED,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
@@ -442,6 +456,15 @@ PACK = MarketPack(
             "bea_nipa", _OPEN, "P3M", _BEA_NIPA_CLOCK, _ALLOW,
             collection_cadence="P1D",
         ),
+        # The Board's own CP release (decision seiche.source-use.2026-11-08.fed-cp):
+        # 90-day AA rates only, never the underlying DTCC trades.
+        *((SourceAdapterSpec("fed_cp", _OPEN, "P1D", _FED_CP_CLOCK, _ALLOW,
+                             collection_cadence="PT1H"),) if _CP_DECIDED else ()),
+        # BLS CPI through the keyless BLS API (decision
+        # seiche.source-use.2026-11-08.bls-api); polled once a day to stay
+        # well inside the unregistered daily request limit.
+        *((SourceAdapterSpec("bls_cpi", _OPEN, "P1M", _FED_G17_CLOCK, _ALLOW,
+                             collection_cadence="P1D"),) if _BLS_DECIDED else ()),
         SourceAdapterSpec(
             "nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW,
             collection_cadence="PT1H",
@@ -532,6 +555,14 @@ PACK = MarketPack(
             _SIMPLE,
             _ACT_360,
         ),
+        # The Board's CP rates, ahead of the FRED copy so pack order prefers them.
+        *((InstrumentSpec(
+            "US.FED.CP_AA_NONFINANCIAL_90D_DIRECT", "CP_AA_NONFINANCIAL_90D_DIRECT",
+            SemanticRole.CP_3M, "fed_cp", "percent", _BP, 100, _SIMPLE, _ACT_360,
+        ), InstrumentSpec(
+            "US.FED.CP_AA_FINANCIAL_90D_DIRECT", "CP_AA_FINANCIAL_90D_DIRECT",
+            SemanticRole.CP_3M, "fed_cp", "percent", _BP, 100, _SIMPLE, _ACT_360,
+        )) if _CP_DECIDED else ()),
         InstrumentSpec(
             "US.CP.NONFINANCIAL_3M",
             "CP_NONFIN_3M",
@@ -684,6 +715,12 @@ PACK = MarketPack(
             "US.BEA.GDP_NOMINAL_SAAR", "BEA_GDP_NOMINAL_SAAR", SemanticRole.GROSS_DOMESTIC_PRODUCT,
             "bea_nipa", "USD millions, seasonally adjusted annual rate", _LCY_M,
         ),
+        # BLS CPI, seasonally adjusted index levels (1982-84 = 100); context
+        # only. The FRED copies (CPILFESL, CPIENGSL) are not declared here.
+        *(tuple(InstrumentSpec(
+            instrument_id, instrument_id.rsplit(".", 1)[1], SemanticRole.CONSUMER_PRICE_INDEX,
+            "bls_cpi", "index, 1982-84 = 100", _INDEX,
+        ) for instrument_id in ("US.BLS.CPI_ENERGY_SA", "US.BLS.CPI_CORE_SA")) if _BLS_DECIDED else ()),
     ),
     capabilities=(
         Capability(

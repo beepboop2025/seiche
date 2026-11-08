@@ -584,10 +584,13 @@ def test_every_package_has_a_registry_record_quoting_the_board_notice(package):
         assert set(record["semantic_roles"]) == {
             item.semantic_role.value for item in pack.instruments if item.source_adapter_id == package.adapter_id}
     else:
-        # Unknown or unclear rights fail closed: metadata-only, blocked.
-        assert record["rights_status"] == "metadata_only"
-        assert record["implementation_status"] == "policy_blocked"
+        # The only held package is the H.15 copy of the CP rates. The owner
+        # accepted their DTCC origin on 2026-11-08; the CP release adapter
+        # (fed_cp) serves them, so this copy stays off: one source per rate.
+        assert record["rights_status"] == "explicit_public_domain_with_exclusions"
+        assert record["implementation_status"] == "partial"
         assert "Depository Trust" in record["blocker"]
+        assert "seiche.source-use.2026-11-08.fed-cp" in record["blocker"]
 
 
 def test_the_board_notice_is_quoted_verbatim():

@@ -312,7 +312,10 @@ H15 = ReleasePackage(
     exclusive_maximum=Decimal("50"),
 )
 
-# Built and tested, but held: the owner has not decided the DTCC provenance.
+# Built and tested, but held. The owner accepted the DTCC origin on 2026-11-08
+# (seiche.source-use.2026-11-08.fed-cp); the US pack serves these same two
+# rates from the Board's CP release (fed_cp), so this H.15 copy stays off
+# rather than duplicate them.
 H15_COMMERCIAL_PAPER = ReleasePackage(
     adapter_id="fed_h15_cp",
     release="H.15",
@@ -344,11 +347,10 @@ H15_COMMERCIAL_PAPER = ReleasePackage(
     label="Federal Reserve H.15 commercial paper",
     rights_hold=(
         "H.15 footnote 5 says these rates are \"interpolated from data on certain commercial "
-        "paper trades settled by The Depository Trust Company\", and the Board's CP release "
-        "\"is derived from data supplied by The Depository Trust & Clearing Corporation "
-        "(DTCC)\". Whether that provenance is an \"otherwise indicated\" exception to the "
-        "Board's public-domain notice is an owner decision not yet made, so the rates stay "
-        "metadata-only: nothing is requested, stored or served."
+        "paper trades settled by The Depository Trust Company\". The owner accepted that "
+        "DTCC origin on 2026-11-08, and the US pack serves the same two rates from the "
+        "Board's CP release (adapter fed_cp), so this H.15 copy is not requested, stored "
+        "or served: one source per rate."
     ),
 )
 

@@ -69,7 +69,7 @@ def document(xml: str = FULL) -> FetchedDocument:
 
 
 def declared(status: RedistributionStatus):
-    """A hypothetical pack that declares the CP record, as an owner decision would."""
+    """The US pack with its CP record declared at this redistribution status."""
     clock = PublicationClock("America/New_York", time(13, 0), 1, PublicationClockPrecision.SCHEDULED,
                              PACK.settlement_calendar.calendar_id)
     adapter = SourceAdapterSpec(fed_cp.ADAPTER_ID, ConnectorClassification.OFFICIAL_OPEN, "P1D", clock, status)
@@ -77,8 +77,12 @@ def declared(status: RedistributionStatus):
         InstrumentSpec(instrument_id, instrument_id.rsplit(".", 1)[1], SemanticRole.CP_3M, fed_cp.ADAPTER_ID,
                        "percent", CanonicalUnit.BASIS_POINTS, 100, RateCompounding.SIMPLE, DayCountConvention.ACT_360)
         for instrument_id in fed_cp.SERIES.values())
-    return replace(PACK, source_adapters=(*PACK.source_adapters, adapter),
-                   instruments=(*PACK.instruments, *instruments))
+    # The registered pack already declares the record (owner decision of
+    # 2026-11-08); replace it rather than declaring the adapter twice.
+    base_adapters = tuple(item for item in PACK.source_adapters if item.adapter_id != fed_cp.ADAPTER_ID)
+    base_instruments = tuple(item for item in PACK.instruments if item.source_adapter_id != fed_cp.ADAPTER_ID)
+    return replace(PACK, source_adapters=(*base_adapters, adapter),
+                   instruments=(*base_instruments, *instruments))
 
 
 def registry_with(pack) -> MarketRegistry:
@@ -86,20 +90,27 @@ def registry_with(pack) -> MarketRegistry:
                                 for item in default_registry().list()))
 
 
-def test_the_registered_pack_declares_no_cp_record_so_nothing_runs():
+def test_the_owner_decision_declares_the_cp_record_so_it_runs():
+    from seiche import source_decisions
+    from seiche.markets.us_usd import pack as us_pack
+
+    assert source_decisions.allows(source_decisions.FED_CP) and us_pack._CP_DECIDED
     pack = default_registry().get("US-USD")
-    assert fed_cp.ADAPTER_ID not in pack.adapter_map
-    assert fed_cp.declared_instruments(pack) == frozenset()
-    assert fed_cp.rights_gate_open(pack) is False
+    adapter = pack.adapter_map[fed_cp.ADAPTER_ID]
+    assert adapter.classification is ConnectorClassification.OFFICIAL_OPEN
+    assert adapter.redistribution_status is RedistributionStatus.ALLOWED
+    assert fed_cp.declared_instruments(pack) == frozenset(fed_cp.SERIES.values())
+    assert fed_cp.rights_gate_open(pack) is True
     adapters = build_official_adapters(repository=SQLiteMarketRepository())
-    assert fed_cp.ADAPTER_ID not in {item.adapter_id for item in adapters}
-    assert ("US-USD", fed_cp.ADAPTER_ID) not in PRODUCTION_ADAPTER_KEYS
-    # The FRED copy of the nonfinancial rate keeps its own restriction.
+    assert fed_cp.ADAPTER_ID in {item.adapter_id for item in adapters}
+    assert ("US-USD", fed_cp.ADAPTER_ID) in PRODUCTION_ADAPTER_KEYS
+    # The FRED copy of the nonfinancial rate keeps its own restriction, and the
+    # Board's own rates come first so pack order prefers them.
     copy = pack.instrument_map["US.CP.NONFINANCIAL_3M"]
     assert copy.source_adapter_id == "fred_daily"
     assert pack.adapter_map["fred_daily"].redistribution_status is RedistributionStatus.METADATA_ONLY
     assert [item.instrument_id for item in pack.instruments if item.semantic_role is SemanticRole.CP_3M] == [
-        "US.CP.NONFINANCIAL_3M"]
+        fed_cp.NONFINANCIAL_INSTRUMENT_ID, fed_cp.FINANCIAL_INSTRUMENT_ID, "US.CP.NONFINANCIAL_3M"]
 
 
 @pytest.mark.parametrize("status", [RedistributionStatus.METADATA_ONLY, RedistributionStatus.DERIVED_ONLY,
@@ -115,13 +126,14 @@ def test_only_an_allowed_declaration_would_open_the_gate(status):
     assert fed_cp.ADAPTER_ID in {item.adapter_id for item in adapters}
 
 
-def test_the_registry_records_the_dtcc_provenance_and_the_disabled_state():
+def test_the_registry_records_the_dtcc_provenance_and_the_owner_decision():
     ledger = json.loads((Path(__file__).resolve().parents[2] / "docs" / "data-source-expansion.json").read_text())
     record = next(item for item in ledger["candidates"] if item["id"] == "frb_commercial_paper")
     assert record["access_url"] == fed_cp.SOURCE_URL
     assert record["rights_evidence_url"] == fed_cp.ABOUT_URL
-    assert record["rights_status"] == "review_required"
-    assert record["implementation_status"] == "policy_blocked"
+    assert record["rights_status"] == "allowed_in_current_pack"
+    assert record["implementation_status"] == "implemented"
+    assert "seiche.source-use.2026-11-08.fed-cp" in record["blocker"]
     assert record["semantic_roles"] == ["CP_3M"]
     assert "Derived from data supplied by The Depository Trust & Clearing Corporation" in record["blocker"]
     assert ("is derived from data supplied by The Depository Trust & Clearing Corporation (DTCC)"

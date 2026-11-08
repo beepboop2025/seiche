@@ -3162,7 +3162,17 @@ def build_official_adapters(
 
 from seiche.sources.country_funding import PRODUCTION_KEYS as _COUNTRY_PRODUCTION_KEYS
 
-PRODUCTION_ADAPTER_KEYS = _COUNTRY_PRODUCTION_KEYS | frozenset(
+from seiche import source_decisions as _source_decisions
+
+# Adapters that run only while their owner decision is recorded.
+_DECIDED_PRODUCTION_KEYS = frozenset(
+    key for key, decision in (
+        (("US-USD", "fed_cp"), _source_decisions.FED_CP),
+        (("US-USD", "bls_cpi"), _source_decisions.BLS_API),
+    ) if _source_decisions.allows(decision)
+)
+
+PRODUCTION_ADAPTER_KEYS = _DECIDED_PRODUCTION_KEYS | _COUNTRY_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
         ("US-USD", "fed_h41"),
