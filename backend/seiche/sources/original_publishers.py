@@ -10,6 +10,22 @@ from seiche.sources.base import utcnow_iso
 
 CONTRACTS = {**fed_releases.CONTRACTS, **official_statistics.CONTRACTS}
 QUALIFIED_TYPES = (fed_releases.FedSeries, official_statistics.StatisticsSeries)
+# Per-observation evidence maps (operation ids, revision clocks) stay in the
+# capture and the single-series route; catalogs and boards carry their size.
+BULKY_EVIDENCE = ("source_operation_ids", "source_revision_times", "revision_indicators")
+
+
+def compact_provenance(series) -> dict:
+    row = series.provenance()
+    for key in BULKY_EVIDENCE:
+        if isinstance(row.get(key), (dict, list)):
+            row[key + "_count"] = len(row.pop(key))
+    return row
+
+
+def redistribution_allowed(series) -> bool:
+    """A qualified capture is exportable only while its status is allowed."""
+    return isinstance(series, QUALIFIED_TYPES) and series.provenance().get("redistribution_status") == "allowed"
 
 
 def load_many(mnemonics: list[str]) -> dict:

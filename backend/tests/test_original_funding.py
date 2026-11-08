@@ -20,8 +20,11 @@ def isolated(tmp_path, monkeypatch):
 
 
 def rate(m="SOFR"):
-    return {"refRates": [{"type": m, "effectiveDate": "2026-10-30",
-                          "percentRate": 3.94, "revisionIndicator": ""}]}
+    row = {"type": m, "effectiveDate": "2026-10-30", "percentRate": 3.94, "revisionIndicator": ""}
+    if m == "EFFR":
+        # Every NY Fed EFFR row also reports the FOMC target range.
+        row.update(targetRateFrom=3.75, targetRateTo=4.0)
+    return {"refRates": [row]}
 
 
 def operation(ident="RP 103026 1", amount=4375000000):
@@ -101,7 +104,9 @@ def test_rights_clocks_and_csv_json_use_only_qualified_capture(isolated, monkeyp
         parsed = stats.parse_nyfed_rrp(body)
     else:
         body = b"DATE,IUDSOIA\n30 Oct 2026,3.7341\n" if m == "SONIA" else json.dumps(rate(m)).encode()
-        parsed = {m: stats.parse_boe_sonia(body) if m == "SONIA" else stats.parse_nyfed_rates(m, body)}
+        parsed = ({m: stats.parse_boe_sonia(body)} if m == "SONIA"
+                  else stats.parse_nyfed_effr_group(body) if m == "EFFR"
+                  else {m: stats.parse_nyfed_rates(m, body)})
     cap = save(m, parsed, body)
     def forbidden(*args, **kwargs):
         pytest.fail("legacy cache, network, or assembler consulted")
@@ -130,7 +135,8 @@ def test_rights_clocks_and_csv_json_use_only_qualified_capture(isolated, monkeyp
         assert "derived_daily_total" in csv.text
         assert "settlementDate must equal operationDate" in csv.text
         assert "reject repeated operationId" in csv.text
-    for restricted in ["CALL_JP", "CREDIT_GAP_US", "SRF_CEILING", "VIX"]:
+    # The EFFR capture also qualifies the target-range ceiling it carries.
+    for restricted in ["CALL_JP", "CREDIT_GAP_US", "VIX"] + ([] if m == "EFFR" else ["SRF_CEILING"]):
         assert client.get("/api/series/" + restricted).status_code == 403
     cap["series"][m]["contract"]["rights"] = "self_attested"
     store.save_blob(stats._key(stats.CONTRACTS[m]["group"]), cap)

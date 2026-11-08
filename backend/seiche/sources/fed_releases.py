@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from seiche import store
+from seiche import source_decisions, store
 from seiche.config import ALL_SERIES
 from seiche.sources._async_store import run_store
 from seiche.sources.base import Series, utcnow_iso
@@ -58,7 +58,19 @@ def contract(mnemonic: str) -> dict:
         "source_url": URLS[selected["release"]], "terms_url": TERMS_URL,
         "rights": "public_domain_with_attribution", "terms_reviewed_at": "2026-11-06",
         "scope": "Only these Board-published statistics; no underlying third-party transaction data or logos.",
+        # The Board derives CP rates from DTCC data. The owner accepted that
+        # origin on 2026-11-08; the decision record gates redistribution.
+        **({"source_use_decision": source_decisions.FED_CP, "terms_reviewed_at": "2026-11-09"}
+           if selected["release"] == "cp" else {}),
     }
+
+
+def redistribution_status(expected: dict) -> str:
+    """Allowed, unless the series' dated owner decision is absent."""
+    decision = expected.get("source_use_decision")
+    if decision is None or source_decisions.allows(decision):
+        return "allowed"
+    return "owner_decision_required"
 
 
 def _key(release: str) -> str:
@@ -104,7 +116,7 @@ def _series(m: str, record: dict, capture: dict) -> FedSeries:
         raise ValueError("original publisher future observation")
     evidence = {
         "source_url": expected["source_url"], "terms_url": TERMS_URL,
-        "attribution": ATTRIBUTION, "redistribution_status": "allowed",
+        "attribution": ATTRIBUTION, "redistribution_status": redistribution_status(expected),
         "rights_basis": expected["rights"], "rights_scope": expected["scope"],
         "terms_reviewed_at": expected["terms_reviewed_at"],
         "raw_capture_sha256": raw_hash, "contract_sha256": record["contract_sha256"],
@@ -121,6 +133,16 @@ def _series(m: str, record: dict, capture: dict) -> FedSeries:
         evidence["unit_note"] = "Jan 2006 monthly average=100 per publisher Q&A; legacy XML UNIT label retained above. No rescaling applied."
     if expected["release"] == "cp":
         evidence["definition_note"] = "Board-published 90-day AA commercial-paper rate; missing prints remain missing. Not the underlying DTCC trades."
+        evidence["attribution"] = (ATTRIBUTION[:-1] + ", Commercial Paper release, derived by the Board from "
+                                   "data supplied by The Depository Trust & Clearing Corporation (DTCC).")
+        evidence["required_notices"] = [
+            "The Board's CP release is derived from data supplied by DTCC: "
+            "https://www.federalreserve.gov/releases/cp/about.htm. Only the Board-published rates are served."]
+    if expected.get("source_use_decision"):
+        evidence["source_use_decision"] = source_decisions.summary(expected["source_use_decision"]) or {
+            "id": expected["source_use_decision"], "redistribution_status": "owner_decision_required"}
+    if record.get("excluded_future_effective_observations"):
+        evidence["excluded_future_effective_observations"] = record["excluded_future_effective_observations"]
     points = pd.Series([r[1] for r in rows], index=pd.DatetimeIndex([r[0] for r in rows]), dtype=float)
     spec = ALL_SERIES[m]
     return FedSeries(m, expected["source"], expected["dimensions"]["SERIES_NAME"],
@@ -189,6 +211,10 @@ def parse_capture(release: str, payload: bytes, fetched_at: str) -> dict:
         raise ValueError("Fed release XML declarations forbidden")
     del text
     records = {}
+    # PRATES can list a pre-announced rate before its effective date. Such a
+    # rate is not yet in effect at acquisition; it is excluded and counted,
+    # never served early (the same rule as the atlas PRATES adapter).
+    captured_day = datetime.fromisoformat(fetched_at).astimezone(UTC).date()
     for _, node in ET.iterparse(io.BytesIO(xml), events=("end",)):
         if node.tag.rsplit("}", 1)[-1] != "Series":
             continue
@@ -197,7 +223,7 @@ def parse_capture(release: str, payload: bytes, fetched_at: str) -> dict:
             expected = wanted[m]
             if dict(node.attrib) != expected["dimensions"]:
                 raise ValueError(f"{m}: Fed publisher dimensions changed")
-            rows, seen = [], set()
+            rows, seen, future = [], set(), 0
             for obs in node:
                 if obs.tag.rsplit("}", 1)[-1] != "Obs":
                     continue
@@ -212,6 +238,9 @@ def parse_capture(release: str, payload: bytes, fetched_at: str) -> dict:
                         raise ValueError("G17 reference date is not month-end")
                     day = day.replace(day=1)
                 if day < date.fromisoformat(expected["start"]):
+                    continue
+                if release == "prates" and day > captured_day:
+                    future += 1
                     continue
                 if day in seen:
                     raise ValueError(f"{m}: duplicate observation date")
@@ -233,6 +262,8 @@ def parse_capture(release: str, payload: bytes, fetched_at: str) -> dict:
                 raise ValueError(f"{m}: empty or excessive source history")
             record = {"contract": expected, "contract_sha256": _digest(expected),
                       "points": rows, "points_sha256": _digest(rows)}
+            if future:
+                record["excluded_future_effective_observations"] = future
             if m in records and (expected["duplicate_series_policy"] != "identical_only" or record != records[m]):
                 raise ValueError(f"{m}: conflicting or unexpected duplicate series")
             records[m] = record

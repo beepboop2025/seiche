@@ -1,0 +1,101 @@
+{
+  "schema": "seiche.source-use-decisions.v1",
+  "policy": "seiche.public-source-rights.2026-11-09",
+  "purpose": "Dated owner source-use decisions that the adapters and the public rights projection read. A series or reading gated on a decision is public only while its decision is present here with redistribution_status allowed.",
+  "decisions": [
+    {
+      "id": "seiche.source-use.2026-11-08.fed-cp",
+      "decided_on": "2026-11-08",
+      "recorded_at": "2026-11-08T22:40:00Z",
+      "recorded_at_precision": "approximate (around 22:40Z)",
+      "decided_by": "Mrinal, owner of Seiche and LiquiLens Private Limited",
+      "owner_words": "go with them all just make sure everything starts working",
+      "question": "Whether the Federal Reserve Board's commercial paper rates, which the Board derives from data supplied by The Depository Trust & Clearing Corporation (DTCC), fall within the Board's public-domain notice and may be served.",
+      "decision": "Fed CP rates may be served. The DTCC origin of the Board's computation is accepted.",
+      "redistribution_status": "allowed",
+      "sources": ["fed_cp"],
+      "series": ["CP_NONFIN_3M", "CP_FIN_3M"],
+      "atlas_adapters": [],
+      "conditions": [
+        "Serve only the Board-published 90-day AA financial and nonfinancial rates from the CP release XML zip, never the underlying DTCC trade records.",
+        "Cite the Board as the source and state that the Board derives the release from data supplied by DTCC."
+      ],
+      "attribution": "Source: Board of Governors of the Federal Reserve System (US), Commercial Paper release, derived by the Board from data supplied by The Depository Trust & Clearing Corporation (DTCC).",
+      "terms_urls": [
+        "https://www.federalreserve.gov/disclaimer.htm",
+        "https://www.federalreserve.gov/releases/cp/about.htm"
+      ]
+    },
+    {
+      "id": "seiche.source-use.2026-11-08.bls-api",
+      "decided_on": "2026-11-08",
+      "recorded_at": "2026-11-08T22:40:00Z",
+      "recorded_at_precision": "approximate (around 22:40Z)",
+      "decided_by": "Mrinal, owner of Seiche and LiquiLens Private Limited",
+      "owner_words": "go with them all just make sure everything starts working",
+      "question": "Whether to accept the BLS Public Data API Terms of Service (the mandatory statement and the indemnity for non-government users) so the CPI series can be read through the BLS API.",
+      "decision": "BLS series are read through the BLS API and its Terms of Service are accepted.",
+      "redistribution_status": "allowed",
+      "sources": ["bls_original"],
+      "series": ["CORE_CPI", "ENERGY_CPI"],
+      "atlas_adapters": [],
+      "conditions": [
+        "Use only the keyless v1 Public Data API within its published limits; no registration key.",
+        "Carry the statement the Terms of Service require on every served copy: BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.",
+        "Cite the Bureau of Labor Statistics as the source."
+      ],
+      "attribution": "Source: U.S. Bureau of Labor Statistics.",
+      "required_statement": "BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.",
+      "terms_urls": [
+        "https://www.bls.gov/developers/termsOfService.htm",
+        "https://www.bls.gov/opub/copyright-information.htm"
+      ]
+    },
+    {
+      "id": "seiche.source-use.2026-11-08.boj-total-assets",
+      "decided_on": "2026-11-08",
+      "recorded_at": "2026-11-08T22:40:00Z",
+      "recorded_at_precision": "approximate (around 22:40Z)",
+      "decided_by": "Mrinal, owner of Seiche and LiquiLens Private Limited",
+      "owner_words": "go with them all just make sure everything starts working",
+      "question": "Whether serving Bank of Japan total assets on Seiche's free site falls within the Bank of Japan notice, which excludes copying or reproduction for commercial purposes.",
+      "decision": "Bank of Japan total assets may be served on the free, no-paywall site.",
+      "redistribution_status": "allowed",
+      "sources": ["boj_original"],
+      "series": ["BOJ_ASSETS"],
+      "atlas_adapters": [],
+      "conditions": [
+        "Serve only on Seiche's free, no-paywall public surfaces; never through a paid or metered surface.",
+        "Credit the Bank of Japan explicitly as the source."
+      ],
+      "attribution": "Source: Bank of Japan, Time-Series Data Search (BS01, MABJMTA).",
+      "terms_urls": [
+        "https://www.stat-search.boj.or.jp/info/notice_en.html",
+        "https://www.stat-search.boj.or.jp/info/api_manual_en.pdf"
+      ]
+    },
+    {
+      "id": "seiche.source-use.2026-11-08.boe-sonia",
+      "decided_on": "2026-11-08",
+      "recorded_at": "2026-11-08T22:40:00Z",
+      "recorded_at_precision": "approximate (around 22:40Z)",
+      "decided_by": "Mrinal, owner of Seiche and LiquiLens Private Limited",
+      "owner_words": "go with them all just make sure everything starts working",
+      "question": "Whether to serve raw SONIA from the Bank of England Database under the UK Open Government Licence, instead of derived readings only.",
+      "decision": "SONIA is served raw under the Bank of England's open licence, with its attribution.",
+      "redistribution_status": "allowed",
+      "sources": ["boe_original", "boe_sonia"],
+      "series": ["SONIA"],
+      "atlas_adapters": ["UK-GBP/boe_sonia"],
+      "conditions": [
+        "Use the Database copy, available by 10:00 London time on the business day after first publication; no real-time benchmark feed.",
+        "Carry the Bank's SONIA attribution and the Open Government Licence v3.0 link on every served value."
+      ],
+      "attribution": "SONIA and/or SONIA Compounded Index data licensed under the Open Government Licence v3.0 and copyright the Governor and Company of the Bank of England.",
+      "terms_urls": [
+        "https://www.bankofengland.co.uk/legal",
+        "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+      ]
+    }
+  ]
+}
