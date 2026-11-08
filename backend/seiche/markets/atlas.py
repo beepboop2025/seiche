@@ -144,7 +144,9 @@ _SOURCE_PUBLISHERS = {
 }
 
 
-from seiche.markets.funding_reference import COUNTRIES, OTHER_EUROPE, SOURCE_REFERENCES as _FUNDING_SOURCES
+from seiche.markets.funding_reference import (
+    COUNTRIES, OECD_ADAPTER, OTHER_EUROPE, SOURCE_REFERENCES as _FUNDING_SOURCES, oecd_row_reference,
+)
 _SOURCE_URLS.update({key: value["source_url"] for key, value in _FUNDING_SOURCES.items()})
 _SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _FUNDING_SOURCES.items()})
 
@@ -1708,6 +1710,10 @@ def _metric(
             else []
         ),
     }
+    if instrument.source_adapter_id == OECD_ADAPTER:
+        # The OECD asks to be cited; its citation travels with every row.
+        reference = oecd_row_reference(instrument.instrument_id, metric["knowledge_time"])
+        metric.update(source_url=reference["source_url"], attribution=reference["attribution"])
     return (
         _derived_context_projection(metric)
         if availability == "DERIVED_CONTEXT"

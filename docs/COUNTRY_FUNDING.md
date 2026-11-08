@@ -9,14 +9,14 @@ Code, collection qualification, deployment and public release are separate gates
 
 | Countries | New official public observations | Main remaining limitation |
 | --- | --- | --- |
-| China | BIS policy reference; OECD/FRED monthly three-month interbank reference | No admitted sovereign curve; CFETS/SHIBOR entitlements are unchanged |
+| China | BIS policy reference; OECD monthly three-month interbank reference | No admitted sovereign curve; CFETS/SHIBOR entitlements are unchanged |
 | Japan | MOF constant-maturity JGB yields at 1–10, 15, 20, 25, 30 and 40 years | Source-calculated maturity references, not individual traded bonds |
-| South Korea | BIS policy reference; OECD/FRED monthly three-month interbank and ten-year government-bond references | Monthly observations do not supply a daily curve; BOK ECOS access rules remain separate |
+| South Korea | BIS policy reference; OECD monthly three-month interbank and ten-year government-bond references | Monthly observations do not supply a daily curve; BOK ECOS access rules remain separate |
 | Taiwan | CBC dated discount decision and overnight call rate; eight monthly selected-rate columns, including a ten-year government-bond reference | Monthly averages and month-end bank/policy rates have different definitions |
-| Australia | OECD/FRED monthly ten-year government-bond reference | RBA cash/policy adapters remain separate; no newly qualified daily government curve |
+| Australia | OECD monthly ten-year government-bond reference | RBA cash/policy adapters remain separate; no newly qualified daily government curve |
 | United Kingdom | BoE nominal zero-coupon spot yields at 5, 10 and 20 years | Spot yields are not par yields; existing SONIA ingestion policy remains separately gated |
 | Germany, France, Spain, Italy, Netherlands, Belgium, Austria, Portugal, Ireland, Finland, Greece, Slovakia, Slovenia, Lithuania, Latvia, Estonia, Croatia, Cyprus, Malta, Luxembourg, Bulgaria | ECB monthly national long-term interest-rate references | One approximate ten-year monthly reference per issuer; source-defined proxies are retained |
-| Switzerland, Sweden, Norway, Denmark, Poland, Czechia, Hungary | BIS policy references; OECD/FRED monthly ten-year government-bond references | Local overnight, repo, facility and reserve coverage is incomplete |
+| Switzerland, Sweden, Norway, Denmark, Poland, Czechia, Hungary | BIS policy references; OECD monthly ten-year government-bond references | Local overnight, repo, facility and reserve coverage is incomplete |
 
 Existing admitted policy, funding and liquidity observations are included from
 the relevant market pack. Euro-area countries share the `EA-EUR` monetary-policy,
@@ -96,7 +96,7 @@ change another publisher's rights or retroactively relabel stored restricted row
 | Bank of England | Database series `IUDSNZC`, `IUDMNZC`, `IUDLNZC`; [yield-curve methodology](https://www.bankofengland.co.uk/statistics/yield-curves) | [Database Open Government Licence terms](https://www.bankofengland.co.uk/legal); these three yield series are distinct from excluded third-party exchange rates |
 | ECB and national contributors | [IRS long-term interest-rate references](https://data.ecb.europa.eu/data/concepts/long-term-interest-rates), scoped national `M.<country>.L.L40.CI.0000.EUR.N.Z` series | [ECB reuse terms](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html); attribution, accurate transformation labels and notice that originals are free from ECB |
 | BIS and reporting central banks | [Central bank policy rates](https://data.bis.org/topics/CBPOL); [source and methodology](https://www.bis.org/statistics/cbpol/cbpol_doc.pdf) | [BIS legal terms](https://data.bis.org/help/legal); name BIS and the reporting central bank; no separate charge for BIS statistics or implied endorsement |
-| OECD via Federal Reserve Bank of St. Louis FRED | Main Economic Indicators monthly ten-year government yields and China/Korea three-month interbank references; exact series URL supplied with each metric | [OECD data terms, section 3](https://www.oecd.org/en/about/terms-conditions.html), with each FRED series' OECD source and citation-required metadata checked; retain attribution and access date |
+| OECD | Main Economic Indicators [Financial market dataflow](https://data-explorer.oecd.org/vis?df[ds]=dsDisseminateFinalDMZ&df[id]=DSD_STES%40DF_FINMARK&df[ag]=OECD.SDD.STES&df[vs]=4.0) `OECD.SDD.STES:DSD_STES@DF_FINMARK(4.0)`, read from the OECD's own SDMX API: monthly long-term (`IRLT`) government yields and China/Korea three-month interbank (`IR3TIB`) references; each metric carries its exact series URL | [OECD Terms and Conditions, section 3 (Data), Permitted Use](https://www.oecd.org/en/about/terms-conditions.html): Data may be used "for any purpose, even for commercial use" with credit in the OECD citation format, including the access date, carried on every row. OECD metadata names each national central bank and states no further restriction (reviewed 2026-11-09) |
 | CBC Taiwan | [Dated indicators](https://www.cbc.gov.tw/en/mp-2.html), [Selected Interest Rates](https://www.cbc.gov.tw/en/cp-511-1876-0EF53-2.html), [definitions](https://www.cbc.gov.tw/en/cp-515-29985-C1D35-2.html) | [Open Government Data License Taiwan 1.0](https://www.cbc.gov.tw/en/cp-958-40419-F8209-2.html); attribute CBC and identify transformations |
 
 Each metric includes a source URL and its relevant publisher/terms. Original
@@ -104,6 +104,13 @@ captures, hashes, canonical row evidence and capture clocks are retained by the
 existing collector pipeline. Source files are size-bounded and requests use
 fixed official hosts and series identifiers. No paid credentials or scraping
 circumvention is part of this expansion.
+
+Until 2026-11-09 the OECD series were copied from FRED. That path is retired: the
+collector calls only `sdmx.oecd.org`, the instrument ids are unchanged, and rows
+stored under the retired `oecd_fred_reference` source are never served by the
+country desks, the money-markets atlas, the series values or sealed snapshot
+coverage. The OECD API admits 60 data downloads per hour; one scheduled request
+per market stays well below it.
 
 The existing CFETS, licensed market and BOK access policies remain intact.
 The BoE's current legal page expressly permits SONIA reuse under OGL, but the

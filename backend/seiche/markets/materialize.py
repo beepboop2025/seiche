@@ -47,6 +47,7 @@ from seiche.markets.calibration import (
     LocalCalibration,
     get_local_calibration,
 )
+from seiche.markets.funding_reference import RETIRED_SOURCES
 from seiche.markets.publication import (
     PublicationDecision,
     PublicationStatus,
@@ -119,6 +120,7 @@ def _public_observations(
         for observation in observations
         if observation.instrument_id in public_ids
         and observation.redistribution_status in DERIVABLE_REDISTRIBUTION
+        and observation.source not in RETIRED_SOURCES
     ]
 
 

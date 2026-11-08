@@ -6,7 +6,7 @@ reference packs do not promote any country to calibrated engine support.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import time
+from datetime import date, datetime, time
 
 from seiche.domain.observation import (
     ConnectorClassification, DayCountConvention, RateCompounding,
@@ -74,19 +74,98 @@ BIS_AUTHORITIES = {
 OECD_COUNTRIES = {"AU": "AUS", "KR": "KOR", "CH": "CHE", "SE": "SWE", "NO": "NOR",
                   "DK": "DNK", "PL": "POL", "CZ": "CZE", "HU": "HUN"}
 OECD_TERMS = {"CN": "CHN", "KR": "KOR"}
-FRED_SERIES = {
-    **{f"IRLTLT01{code}M156N": (code, iso3, "IRLT", code + ".OECD.LONG_TERM_10Y_MONTHLY")
-       for code, iso3 in OECD_COUNTRIES.items()},
-    **{f"IR3TIB01{code}M156N": (code, iso3, "IR3TIB", code + ".OECD.INTERBANK_3M_MONTHLY")
-       for code, iso3 in OECD_TERMS.items()},
+
+# The OECD's own SDMX API is the only acquisition path for these series.
+OECD_ADAPTER = "oecd_sdmx_reference"
+# Rows stored by the retired FRED mirror of the same OECD series keep this
+# source id. They are never public: FRED's terms prohibit caching and
+# redistribution, and the instrument ids now belong to the OECD adapter.
+RETIRED_SOURCES = frozenset({"oecd_fred_reference"})
+OECD_STRUCTURE_ID = "OECD.SDD.STES:DSD_STES@DF_FINMARK(4.0)"
+OECD_DATASET = "Financial market"
+OECD_DATA_URL = "https://sdmx.oecd.org/public/rest/data/OECD.SDD.STES,DSD_STES@DF_FINMARK,4.0/"
+OECD_DATASET_URL = ("https://data-explorer.oecd.org/vis?df[ds]=dsDisseminateFinalDMZ"
+                    "&df[id]=DSD_STES%40DF_FINMARK&df[ag]=OECD.SDD.STES&df[vs]=4.0")
+OECD_TERMS_URL = "https://www.oecd.org/en/about/terms-conditions.html"
+# OECD Terms and Conditions, section 3 (Data), "Permitted Use"; read 2026-11-09.
+OECD_TERMS_QUOTE = (
+    "Except where additional restrictions apply as stated above, you can extract from, "
+    "download, copy, adapt, print, distribute, share and embed Data for any purpose, even "
+    "for commercial use. You must give appropriate credit to the OECD by using the citation "
+    "associated with the relevant Data, or, if no specific citation is available, you must "
+    "cite the source information using the following format: OECD (year), (dataset name),"
+    "(data source) DOI or URL (accessed on (date))."
+)
+# Dimensions after MEASURE: UNIT_MEASURE, ACTIVITY, ADJUSTMENT, TRANSFORMATION,
+# TIME_HORIZ and METHODOLOGY. Percent per annum, national methodology.
+OECD_KEY_TAIL = ("PA", "_Z", "_Z", "_Z", "_Z", "N")
+# The OECD reference metadata (DISS_ORG) names each national source and states
+# no additional restriction for these series (checked 2026-11-09).
+OECD_NATIONAL_SOURCES = {
+    "AUS": "Reserve Bank of Australia", "KOR": "Bank of Korea",
+    "CHE": "Swiss National Bank", "SWE": "Sveriges Riksbank", "NOR": "Bank of Norway",
+    "DNK": "National Bank of Denmark", "POL": "National Bank of Poland",
+    "CZE": "Czech National Bank", "HUN": "National Bank of Hungary",
+    "CHN": "The Central Bank of the People's Republic of China",
 }
 
+
+@dataclass(frozen=True)
+class OecdSeries:
+    """One monthly OECD MEI series, pinned by its complete SDMX series key."""
+    country: str
+    ref_area: str
+    measure: str
+    instrument_id: str
+
+    @property
+    def key(self) -> str:
+        return ".".join((self.ref_area, "M", self.measure, *OECD_KEY_TAIL))
+
+    @property
+    def url(self) -> str:
+        return OECD_DATA_URL + self.key
+
+
+OECD_SERIES = (
+    *(OecdSeries(code, iso3, "IRLT", code + ".OECD.LONG_TERM_10Y_MONTHLY")
+      for code, iso3 in OECD_COUNTRIES.items()),
+    *(OecdSeries(code, iso3, "IR3TIB", code + ".OECD.INTERBANK_3M_MONTHLY")
+      for code, iso3 in OECD_TERMS.items()),
+)
+OECD_BY_INSTRUMENT = {series.instrument_id: series for series in OECD_SERIES}
+
+
+def oecd_citation(series: OecdSeries, accessed: date) -> str:
+    """The OECD's default citation, used because the dataset has no specific one."""
+    return (f"OECD ({accessed.year}), {OECD_DATASET} ({OECD_STRUCTURE_ID}), OECD Data Explorer, "
+            f"{series.url} (accessed on {accessed.isoformat()}). National source named in "
+            f"OECD metadata: {OECD_NATIONAL_SOURCES[series.ref_area]}.")
+
+
+def oecd_row_reference(instrument_id: str, accessed_at: str | None) -> dict[str, str | None]:
+    """Per-row OECD source fields; the citation carries the row's own access date."""
+    series = OECD_BY_INSTRUMENT[instrument_id]
+    return {
+        "source_url": series.url,
+        "series_key": series.key,
+        "national_source": OECD_NATIONAL_SOURCES[series.ref_area],
+        "accessed_at": accessed_at,
+        "attribution": (oecd_citation(series, datetime.fromisoformat(accessed_at).date())
+                        if accessed_at else None),
+    }
+
+
 SOURCE_REFERENCES = {
-    "oecd_fred_reference": {
-        "publisher": "OECD Main Economic Indicators, distributed by Federal Reserve Bank of St. Louis FRED",
-        "source_url": "https://fred.stlouisfed.org/release?rid=175",
-        "rights_url": "https://www.oecd.org/en/about/terms-conditions.html",
-        "terms": "OECD Main Economic Indicators; attribute OECD, the dataset, FRED series and access date. These named monthly series carry citation requirements; they do not change any separate provider entitlement.",
+    OECD_ADAPTER: {
+        "publisher": "OECD Main Economic Indicators, Financial market dataflow",
+        "source_url": OECD_DATASET_URL,
+        "rights_url": OECD_TERMS_URL,
+        "licence": "OECD Terms and Conditions, section 3 (Data), Permitted Use",
+        "terms": ("Reuse for any purpose, including commercial use, with credit to the OECD in its "
+                  "citation format and the access date; keep the same acknowledgment in any further "
+                  "licence."),
+        "terms_quote": OECD_TERMS_QUOTE,
     },
     "jp_mof_curve": {
         "publisher": "Ministry of Finance Japan",
@@ -152,9 +231,9 @@ CURVES = (
     Curve("TW", "TW-TWD", "cbc_monthly_rates", "monthly_long_term_reference", "P1M",
           ((10, "TW.CBC.GOVERNMENT_10Y_MONTHLY"),),
           "CBC monthly weighted-average yield of the most actively traded ten-year government bond in the secondary market. This is one monthly benchmark, not a fixed-maturity daily curve."),
-    *(Curve(code, COUNTRY_MAP[code].market_id, "oecd_fred_reference", "monthly_long_term_reference", "P1M",
+    *(Curve(code, COUNTRY_MAP[code].market_id, OECD_ADAPTER, "monthly_long_term_reference", "P1M",
             ((10, code + ".OECD.LONG_TERM_10Y_MONTHLY"),),
-            "OECD monthly ten-year main or benchmark government-bond yield, distributed by FRED. National definitions remain source-specific; this is a monthly reference, not a daily curve or executable quote.")
+            "OECD Main Economic Indicators monthly long-term (in most cases ten-year) government-bond yield, read from the OECD's own SDMX API. National definitions remain source-specific; this is a monthly reference, not a daily curve or executable quote.")
       for code in OECD_COUNTRIES),
     Curve("JP", "JP-JPY", "jp_mof_curve", "constant_maturity_yield", "P1D",
           tuple((t, f"JP.MOF.JGB_{t}Y") for t in JP_TENORS),
@@ -170,6 +249,8 @@ CURVES = (
 
 
 def _adapter(pack, identifier, cadence="P1D"):
+    # Each ALLOWED status rests on that publisher's own terms in
+    # SOURCE_REFERENCES; for OECD_ADAPTER, the OECD Terms and Conditions.
     clock = PublicationClock(pack.local_timezone, None, 0,
                              PublicationClockPrecision.UNKNOWN,
                              pack.settlement_calendar.calendar_id)
@@ -205,11 +286,11 @@ def extend_reference_pack(pack: MarketPack) -> MarketPack:
         ))
     code = next((c for c in OECD_TERMS if COUNTRY_MAP[c].market_id == pack.market_id), None)
     if code:
-        if not any(a.adapter_id == "oecd_fred_reference" for a in adapters):
-            adapters.append(_adapter(pack, "oecd_fred_reference", "P1M"))
+        if not any(a.adapter_id == OECD_ADAPTER for a in adapters):
+            adapters.append(_adapter(pack, OECD_ADAPTER, "P1M"))
         instruments.append(rate_instrument(
             code + ".OECD.INTERBANK_3M_MONTHLY", "OECD_INTERBANK_3M_MONTHLY",
-            SemanticRole.TERM_3M, "oecd_fred_reference", DayCountConvention.SOURCE_NATIVE,
+            SemanticRole.TERM_3M, OECD_ADAPTER, DayCountConvention.SOURCE_NATIVE,
             compounding=RateCompounding.SOURCE_NATIVE,
         ))
     if pack.market_id == "TW-TWD":
