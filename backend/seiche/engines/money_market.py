@@ -68,6 +68,108 @@ _PERCENTILE_COLUMNS = {
 }
 _VOLUME_COLUMN = "volumeInBillions"
 
+# Inputs whose legacy acquisition was a FRED copy: card label, short label for
+# combined cards, source id, publisher and series id. The assembler replaces a
+# row with the input's real acquisition when it comes from its original
+# publisher; the public rights projection reads the resulting source ids.
+LEGACY_INPUT_SOURCES: dict[str, dict[str, str]] = {
+    "sofr": {"label": "New York Fed SOFR via FRED", "short": "NY Fed SOFR",
+             "source_id": "fred_sofr", "publisher": "New York Fed via FRED", "series_id": "SOFR"},
+    "effr": {"label": "Federal Reserve via FRED EFFR", "short": "Federal Reserve EFFR",
+             "source_id": "fred_effr", "publisher": "Federal Reserve via FRED", "series_id": "EFFR"},
+    "iorb": {"label": "Federal Reserve via FRED IORB/IOER splice", "short": "Federal Reserve IORB",
+             "source_id": "fred_iorb", "publisher": "Federal Reserve via FRED", "series_id": "IORB/IOER"},
+    "cp_nonfinancial_3m": {"label": "Federal Reserve commercial paper release via FRED DCPN3M",
+                           "short": "Federal Reserve CP", "source_id": "fred_cp_nonfinancial",
+                           "publisher": "Federal Reserve via FRED", "series_id": "DCPN3M"},
+    "cp_financial_3m": {"label": "Federal Reserve commercial paper release via FRED DCPF3M",
+                        "short": "Federal Reserve CP", "source_id": "fred_cp_financial",
+                        "publisher": "Federal Reserve via FRED", "series_id": "DCPF3M"},
+    "treasury_3m": {"label": "US Treasury via FRED DGS3MO", "short": "US Treasury DGS3MO",
+                    "source_id": "fred_treasury_3m", "publisher": "US Treasury via FRED", "series_id": "DGS3MO"},
+    "bill_4w": {"label": "US Treasury via FRED DTB4WK", "short": "US Treasury DTB4WK",
+                "source_id": "fred_bill_4w", "publisher": "US Treasury via FRED", "series_id": "DTB4WK"},
+    "bill_3m": {"label": "US Treasury via FRED DTB3", "short": "US Treasury DTB3",
+                "source_id": "fred_bill_3m", "publisher": "US Treasury via FRED", "series_id": "DTB3"},
+    "reserves": {"label": "Federal Reserve H.4.1 via FRED WRESBAL", "short": "Federal Reserve H.4.1",
+                 "source_id": "fred_reserves", "publisher": "Federal Reserve via FRED", "series_id": "WRESBAL"},
+    "on_rrp": {"label": "NY Fed ON RRP operations via FRED RRPONTSYD", "short": "NY Fed ON RRP",
+               "source_id": "fred_on_rrp", "publisher": "Federal Reserve Bank of New York via FRED",
+               "series_id": "RRPONTSYD"},
+    "discount_window": {"label": "Federal Reserve H.4.1 via FRED WLCFLPCL", "short": "Federal Reserve H.4.1",
+                        "source_id": "fred_discount_window", "publisher": "Federal Reserve via FRED",
+                        "series_id": "WLCFLPCL"},
+}
+_DIRECT_SOFR_FALLBACK = {
+    "label": "Federal Reserve Bank of New York direct reference-rates feed", "short": "NY Fed SOFR",
+    "source_id": "nyfed_sofr_rate", "publisher": "Federal Reserve Bank of New York",
+    "series_id": "SOFR percentRate (direct reference-rates feed)",
+}
+# Inputs that never travelled through FRED keep these fixed identities.
+_FIXED_INPUTS: dict[str, dict[str, str]] = {
+    "ofr": {"short": "OFR Short-Term Funding Monitor", "source_id": "ofr"},
+    "srf": {"short": "NY Fed SRF", "source_id": "nyfed_srf"},
+}
+# Every card that reads a FRED-shaped input, with all of its inputs. A card's
+# source label and source ids are rebuilt from these when acquisitions are
+# supplied, so a combined card can never look more direct than its legs.
+CARD_INPUTS: dict[str, tuple[str, ...]] = {
+    "policy.sofr": ("sofr",),
+    "policy.effr": ("effr",),
+    "policy.iorb": ("iorb",),
+    "policy.sofr_minus_iorb": ("sofr", "iorb"),
+    "policy.effr_minus_iorb": ("effr", "iorb"),
+    "policy.sofr_minus_effr": ("sofr", "effr"),
+    "repo.dvp_minus_sofr": ("ofr", "sofr"),
+    "repo.tri_minus_sofr": ("ofr", "sofr"),
+    "repo.gcf_minus_sofr": ("ofr", "sofr"),
+    "unsecured.cp_nonfinancial_3m": ("cp_nonfinancial_3m",),
+    "unsecured.cp_financial_3m": ("cp_financial_3m",),
+    "unsecured.treasury_3m": ("treasury_3m",),
+    "unsecured.nonfinancial_cp_minus_treasury": ("cp_nonfinancial_3m", "treasury_3m"),
+    "unsecured.financial_cp_minus_treasury": ("cp_financial_3m", "treasury_3m"),
+    "unsecured.financial_minus_nonfinancial_cp": ("cp_financial_3m", "cp_nonfinancial_3m"),
+    "bills.bill_4w": ("bill_4w",),
+    "bills.bill_3m": ("bill_3m",),
+    "bills.treasury_3m_constant_maturity": ("treasury_3m",),
+    "bills.three_month_minus_four_week": ("bill_3m", "bill_4w"),
+    "bills.constant_maturity_minus_discount_basis": ("treasury_3m", "bill_3m"),
+    "bills.sofr_minus_four_week": ("sofr", "bill_4w"),
+    "bills.sofr_minus_three_month": ("sofr", "bill_3m"),
+    "liquidity.reserves": ("reserves",),
+    "liquidity.on_rrp": ("on_rrp",),
+    "liquidity.discount_window": ("discount_window",),
+    "liquidity.reserves_plus_on_rrp": ("reserves", "on_rrp"),
+    "liquidity.on_rrp_share": ("reserves", "on_rrp"),
+    "liquidity.reported_backstop_use": ("srf", "discount_window"),
+}
+
+
+def _input_labels(input_sources: Mapping[str, Mapping[str, str]] | None) -> dict[str, dict[str, str]]:
+    labels = {key: dict(value) for key, value in LEGACY_INPUT_SOURCES.items()}
+    for key, value in (input_sources or {}).items():
+        if key in labels and isinstance(value, Mapping):
+            labels[key].update({field: str(item) for field, item in value.items()
+                                if field in {"label", "short", "source_id", "publisher", "series_id",
+                                             "terms_url", "attribution"} and item})
+    return labels
+
+
+def _relabel_cards(sections: list[dict], labels: Mapping[str, Mapping[str, str]]) -> None:
+    """Name each FRED-shaped card by the real acquisition of every leg."""
+    known = {**labels, **_FIXED_INPUTS}
+    for section in sections:
+        for card in section.get("metrics", []):
+            inputs = CARD_INPUTS.get(card.get("id"))
+            if not inputs:
+                continue
+            legs = [known[key] for key in inputs]
+            if len(legs) == 1:
+                card["source"] = legs[0]["label"]
+            else:
+                card["source"] = " + ".join(dict.fromkeys(leg["short"] for leg in legs))
+            card["source_ids"] = [leg["source_id"] for leg in legs]
+
 
 # ---------------------------------------------------------------------------
 # Cleaning, alignment, and descriptive statistics
@@ -692,6 +794,8 @@ def _funding_diagnostics(
     *,
     evaluated_at: pd.Timestamp,
     sofr_source_id: str = "fred_sofr",
+    iorb_source_id: str = "fred_iorb",
+    effr_source_id: str = "fred_effr",
 ) -> dict:
     """Observed funding persistence and calendar context, never a new score."""
     spread, alignment = _exact(
@@ -706,7 +810,7 @@ def _funding_diagnostics(
         "used_in_regime": False,
         "asof": _asof(spread),
         "alignment": alignment,
-        "source_ids": [sofr_source_id, "fred_iorb", "fred_effr"],
+        "source_ids": [sofr_source_id, iorb_source_id, effr_source_id],
         "caveats": [
             "IORB is an administered rate available to eligible institutions; a spread is not a universally executable arbitrage.",
             "Persistence counts observed prints. Calendar weekdays without prints are disclosed, not filled or automatically called collection failures.",
@@ -899,6 +1003,7 @@ def analyze(
     srf: pd.Series | None = None,
     discount_window: pd.Series | None = None,
     evaluation_asof: pd.Timestamp | str | None = None,
+    input_sources: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict:
     """Build a point-in-time USD money-market context desk.
 
@@ -944,6 +1049,9 @@ def analyze(
     # The official NY Fed frame is an acceptable SOFR fallback if the FRED
     # mirror is absent.  It is the same benchmark, not a proxy for it.
     direct_nyfed_sofr_fallback = raw["sofr"].empty
+    labels = _input_labels(input_sources)
+    if direct_nyfed_sofr_fallback:
+        labels["sofr"] = dict(_DIRECT_SOFR_FALLBACK)
     core_sofr = (
         _column(frames["SOFR"], _RATE_COLUMN)
         if direct_nyfed_sofr_fallback
@@ -1917,32 +2025,28 @@ def analyze(
 
     # ---- source coverage and native-clock freshness ----------------------
     sofr_source_spec = (
-        (
-            "nyfed_sofr_rate",
-            "SOFR rate",
-            "Federal Reserve Bank of New York",
-            "SOFR percentRate (direct reference-rates feed)",
-            "daily",
-            core_sofr,
-        )
-        if direct_nyfed_sofr_fallback
-        else ("fred_sofr", "SOFR", "New York Fed via FRED", "SOFR", "daily", core_sofr)
+        labels["sofr"]["source_id"],
+        "SOFR rate" if direct_nyfed_sofr_fallback else "SOFR",
+        labels["sofr"]["publisher"],
+        labels["sofr"]["series_id"],
+        "daily",
+        core_sofr,
     )
     source_specs: list[tuple[str, str, str, str, str, pd.Series | pd.DataFrame]] = [
         sofr_source_spec,
         (
-            "fred_effr",
+            labels["effr"]["source_id"],
             "Effective federal funds rate",
-            "Federal Reserve via FRED",
-            "EFFR",
+            labels["effr"]["publisher"],
+            labels["effr"]["series_id"],
             "daily",
             raw["effr"],
         ),
         (
-            "fred_iorb",
+            labels["iorb"]["source_id"],
             "Interest on reserve balances",
-            "Federal Reserve via FRED",
-            "IORB/IOER",
+            labels["iorb"]["publisher"],
+            labels["iorb"]["series_id"],
             "daily",
             raw["iorb"],
         ),
@@ -2035,50 +2139,50 @@ def analyze(
             raw["gcf_volume"],
         ),
         (
-            "fred_cp_nonfinancial",
+            labels["cp_nonfinancial_3m"]["source_id"],
             "3m nonfinancial CP",
-            "Federal Reserve via FRED",
-            "DCPN3M",
+            labels["cp_nonfinancial_3m"]["publisher"],
+            labels["cp_nonfinancial_3m"]["series_id"],
             "daily",
             raw["cp_nonfinancial_3m"],
         ),
         (
-            "fred_cp_financial",
+            labels["cp_financial_3m"]["source_id"],
             "3m financial CP",
-            "Federal Reserve via FRED",
-            "DCPF3M",
+            labels["cp_financial_3m"]["publisher"],
+            labels["cp_financial_3m"]["series_id"],
             "daily",
             raw["cp_financial_3m"],
         ),
         (
-            "fred_treasury_3m",
+            labels["treasury_3m"]["source_id"],
             "3m Treasury constant maturity",
-            "US Treasury via FRED",
-            "DGS3MO",
+            labels["treasury_3m"]["publisher"],
+            labels["treasury_3m"]["series_id"],
             "daily",
             raw["treasury_3m"],
         ),
         (
-            "fred_bill_4w",
+            labels["bill_4w"]["source_id"],
             "4w Treasury bill",
-            "US Treasury via FRED",
-            "DTB4WK",
+            labels["bill_4w"]["publisher"],
+            labels["bill_4w"]["series_id"],
             "daily",
             raw["bill_4w"],
         ),
         (
-            "fred_bill_3m",
+            labels["bill_3m"]["source_id"],
             "3m Treasury bill",
-            "US Treasury via FRED",
-            "DTB3",
+            labels["bill_3m"]["publisher"],
+            labels["bill_3m"]["series_id"],
             "daily",
             raw["bill_3m"],
         ),
         (
-            "fred_reserves",
+            labels["reserves"]["source_id"],
             "Reserve balances",
-            "Federal Reserve via FRED",
-            "WRESBAL",
+            labels["reserves"]["publisher"],
+            labels["reserves"]["series_id"],
             "weekly",
             raw["reserves"],
         ),
@@ -2091,10 +2195,10 @@ def analyze(
             raw["tga"],
         ),
         (
-            "fred_on_rrp",
+            labels["on_rrp"]["source_id"],
             "ON RRP take-up",
-            "Federal Reserve Bank of New York via FRED",
-            "RRPONTSYD",
+            labels["on_rrp"]["publisher"],
+            labels["on_rrp"]["series_id"],
             "daily",
             raw["on_rrp"],
         ),
@@ -2107,10 +2211,10 @@ def analyze(
             raw["srf"],
         ),
         (
-            "fred_discount_window",
+            labels["discount_window"]["source_id"],
             "Discount-window primary credit",
-            "Federal Reserve via FRED",
-            "WLCFLPCL",
+            labels["discount_window"]["publisher"],
+            labels["discount_window"]["series_id"],
             "weekly",
             raw["discount_window"],
         ),
@@ -2650,6 +2754,11 @@ def analyze(
             1,
             "SOFR and IORB are both present but have no exact common date; their raw cards remain visible and SOFR-IORB remains unavailable rather than being forward-filled.",
         )
+    supplied: dict[str, dict[str, str]] = {}
+    if input_sources is not None:
+        _relabel_cards(sections, labels)
+        supplied = {key: {field: labels[key][field] for field in ("source_id", "label", "publisher", "series_id")}
+                    for key in LEGACY_INPUT_SOURCES}
 
     return _json_safe(
         {
@@ -2679,7 +2788,10 @@ def analyze(
                 raw["effr"],
                 evaluated_at=evaluated_at,
                 sofr_source_id=sofr_source_spec[0],
+                iorb_source_id=labels["iorb"]["source_id"],
+                effr_source_id=labels["effr"]["source_id"],
             ),
+            **({"input_sources": supplied} if supplied else {}),
         }
     )
 

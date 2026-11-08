@@ -679,6 +679,56 @@ def _derived(src: dict) -> dict:
     return d
 
 
+# The money desk's FRED-shaped inputs and the registry aliases behind them.
+# Each direct capture is named by what it is; any other input keeps the
+# engine's legacy FRED label, so the public projection can tell them apart.
+_DESK_INPUTS = {
+    "sofr": ("fred", ("SOFR",), "Federal Reserve Bank of New York SOFR, Markets API (direct)", "NY Fed SOFR"),
+    "effr": ("fred", ("EFFR",), "Federal Reserve Bank of New York EFFR, Markets API (direct)", "NY Fed EFFR"),
+    "iorb": ("fred", ("IORB", "IOER"), "Federal Reserve Board PRATES IORB with IOER history (direct)",
+             "Board PRATES IORB"),
+    "cp_nonfinancial_3m": ("fred_cp_rates", ("CP_NONFIN_3M",),
+                           "Federal Reserve Board CP release, 90-day AA nonfinancial (direct)", "Board CP"),
+    "cp_financial_3m": ("fred_cp_rates", ("CP_FIN_3M",),
+                        "Federal Reserve Board CP release, 90-day AA financial (direct)", "Board CP"),
+    "treasury_3m": ("fred_cp_rates", ("DGS3M",),
+                    "Federal Reserve Board H.15, 3-month Treasury constant maturity (direct)", "Board H.15 3m CMT"),
+    "bill_4w": ("fred", ("TB4W",), "Federal Reserve Board H.15, 4-week bill secondary market (direct)",
+                "Board H.15 4w bill"),
+    "bill_3m": ("fred", ("TB3M",), "Federal Reserve Board H.15, 3-month bill secondary market (direct)",
+                "Board H.15 3m bill"),
+    "reserves": ("fred", ("WRESBAL",), "Federal Reserve Board H.4.1 reserve balances (direct)", "Board H.4.1"),
+    "on_rrp": ("fred", ("RRPONTSYD",), "Federal Reserve Bank of New York ON RRP results, Markets API (direct)",
+               "NY Fed ON RRP"),
+    "discount_window": ("fred", ("DISCOUNT_WINDOW",), "Federal Reserve Board H.4.1 primary credit (direct)",
+                        "Board H.4.1"),
+}
+
+
+def _desk_input_sources(src: dict) -> dict:
+    """The real acquisition of each FRED-shaped money desk input."""
+    out = {}
+    for key, (group, mnemonics, label, short) in _DESK_INPUTS.items():
+        series = [(src.get(group) or {}).get(m) for m in mnemonics]
+        if not all(_qualified_identity(m, s) for m, s in zip(mnemonics, series)):
+            continue
+        sources = {s.source for s in series}
+        if len(sources) != 1:
+            continue
+        source = sources.pop()
+        evidence = series[0].provenance()
+        out[key] = {
+            "label": label, "short": short,
+            "source_id": f"{source}:{mnemonics[0]}",
+            "publisher": ("Federal Reserve Bank of New York" if source.startswith("nyfed")
+                          else "Board of Governors of the Federal Reserve System"),
+            "series_id": "+".join(s.remote_id for s in series),
+            "terms_url": evidence.get("terms_url"),
+            "attribution": evidence.get("attribution"),
+        }
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Engines (the light layer — sub-second, replayable)
 # ---------------------------------------------------------------------------
@@ -743,6 +793,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         srf=drv["srf"],
         discount_window=drv["dw_b"],
         evaluation_asof=evaluation_asof,
+        input_sources=_desk_input_sources(src),
     ))
 
     # --- Kink ---
@@ -2035,8 +2086,27 @@ def _calendar(src: dict, engines: dict, deep: dict, drv: dict) -> dict:
     }
 
 
+def _qualified_identity(mnemonic: str, series: object) -> bool:
+    """A validated original-publisher capture for exactly this registry alias.
+
+    These keep the publisher's own source and remote id rather than the legacy
+    FRED identity, so the registry's source/remote id cannot match them.
+    """
+    from seiche.sources import original_publishers
+
+    spec = ALL_SERIES.get(mnemonic)
+    contract = original_publishers.CONTRACTS.get(mnemonic)
+    return (
+        spec is not None and contract is not None
+        and isinstance(series, original_publishers.QUALIFIED_TYPES)
+        and series.mnemonic == mnemonic
+        and series.unit == spec.unit and series.freq == spec.freq
+    )
+
+
 def _provenance(src: dict) -> list[dict]:
     from seiche.methodology import csv_restriction
+    from seiche.sources import original_publishers
 
     src = _rights_eligible_sources(src)
     prov = []
@@ -2048,6 +2118,9 @@ def _provenance(src: dict) -> list[dict]:
             spec = ALL_SERIES.get(mnemonic)
             if spec is None:
                 continue  # An unregistered alias cannot expand public coverage.
+            if _qualified_identity(mnemonic, series):
+                candidates.setdefault(mnemonic, []).append(series)
+                continue
             if (
                 not isinstance(series, Series)
                 or series.mnemonic != mnemonic
@@ -2075,7 +2148,14 @@ def _provenance(src: dict) -> list[dict]:
     missing = []
     for mnemonic, spec in ALL_SERIES.items():
         matches = candidates.get(mnemonic, [])
-        restriction = csv_restriction(mnemonic)
+        if (mnemonic not in invalid and len(matches) == 1
+                and _qualified_identity(mnemonic, matches[0])):
+            # The completed capture in hand decides; never a stale store read.
+            status = matches[0].provenance().get("redistribution_status")
+            restriction = None if status == "allowed" else (
+                f"{spec.label} awaits its dated owner source-use decision; values stay withheld.")
+        else:
+            restriction = csv_restriction(mnemonic)
         metadata = {
             "collection_ttl_minutes": spec.ttl_minutes,
             "history_export_allowed": restriction is None,
@@ -2098,8 +2178,12 @@ def _provenance(src: dict) -> list[dict]:
             series = matches[0]
             # Preserve the original per-series/native publication policy,
             # including H.10 and the distinct ECB/CBUAE FX semantics.
+            # Per-observation evidence maps live in the capture and the series
+            # route; the board keeps their size, not thousands of rows.
+            row = (original_publishers.compact_provenance(series)
+                   if _qualified_identity(mnemonic, series) else series.provenance())
             prov.append({
-                **series.provenance(),
+                **row,
                 **metadata,
                 "availability": "empty" if series.asof is None else "available",
             })

@@ -208,7 +208,11 @@ def splice_iorb(iorb: Series, ioer: Series) -> Series:
         pts = old
     else:
         pts = pd.concat([old[old.index < new.index.min()], new]).sort_index()
+    # Both legs from the Board's own PRATES release keep that identity; any
+    # FRED leg keeps the whole splice labelled as a FRED copy.
+    source = iorb.source if iorb.source == ioer.source == "fed_prates" else "fred"
+    remote = "RESBME_N.D+RESBM_N.D" if source == "fed_prates" else "IOER+IORB"
     return Series(
-        "IORB_SPLICED", "fred", "IOER+IORB", "Administered rate (IOER/IORB spliced)",
+        "IORB_SPLICED", source, remote, "Administered rate (IOER/IORB spliced)",
         "%", "D", iorb.fetched_at, pts,
     )

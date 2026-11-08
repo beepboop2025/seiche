@@ -33,11 +33,19 @@ _ATTESTATION_DISCLOSURE = (
 )
 _FORWARD_EFFECTIVE_CLOCK_POLICIES = {
     ("fred", "IORB", "IORB", "D"): ("America/New_York", 14),
+    # The Board's own PRATES capture excludes pre-announced effective dates;
+    # the bound is kept so a cached row behaves exactly like the FRED copy.
+    ("fed_prates", "IORB", "RESBM_N.D", "D"): ("America/New_York", 14),
 }
 _RETIRED_CLOCK_POLICIES = {
     ("fred", "IOER", "IOER", "D"): {
         "last_observation": "2021-07-28", "retired_from": "2021-07-29",
         "replacement": "IORB", "source_url": "https://fred.stlouisfed.org/series/IOER",
+    },
+    ("fed_prates", "IOER", "RESBME_N.D", "D"): {
+        "last_observation": "2021-07-28", "retired_from": "2021-07-29",
+        "replacement": "IORB",
+        "source_url": "https://www.federalreserve.gov/releases/prates/data/FRB_PRATES_xml.zip",
     },
     ("fred", "TED", "TEDRATE", "D"): {
         "last_observation": "2022-01-21", "retired_from": "2022-01-31",
