@@ -667,6 +667,41 @@ def money_desk(value: object) -> dict:
 PROJECTION_SCHEMA = "seiche.public-board-projection.v1"
 
 
+_DATA_QUALITY_KEYS = frozenset({
+    "schema", "generated_at", "source_count", "status_counts", "classified_source_count",
+    "unclassified_source_count", "classification_coverage_pct", "fresh_share_pct",
+    "last_fetch_at", "oldest_fetch_at", "realtime", "publication_note",
+})
+
+
+def _without_floats(value: object) -> object:
+    """Provenance carries identities, dates and counts, never market values.
+
+    Any float (a value-shaped number) is dropped, so a row cannot smuggle an
+    observation past the projection whatever key it sits under.
+    """
+    if isinstance(value, float):
+        return None
+    if isinstance(value, Mapping):
+        return {key: _without_floats(item) for key, item in value.items()
+                if key not in {"value", "points", "history", "rows"} and not isinstance(item, float)}
+    if isinstance(value, list):
+        return [_without_floats(item) for item in value if not isinstance(item, float)]
+    return copy.deepcopy(value)
+
+
+def _data_quality(value: object, public_headline: set[str]) -> dict:
+    """Freshness metadata from the reviewed schema only."""
+    node = value if isinstance(value, Mapping) else {}
+    out = {key: copy.deepcopy(node[key]) for key in _DATA_QUALITY_KEYS if key in node}
+    ages = node.get("headline_ages")
+    if isinstance(ages, list):
+        out["headline_ages"] = [
+            {key: row[key] for key in ("series", "asof", "age_days") if key in row}
+            for row in ages if isinstance(row, Mapping) and row.get("series") in public_headline]
+    return out
+
+
 def is_projection(value: object) -> bool:
     return (isinstance(value, Mapping) and isinstance(value.get("rights_projection"), Mapping)
             and value["rights_projection"].get("schema") == PROJECTION_SCHEMA)
@@ -716,8 +751,11 @@ def public_board(snapshot: object, *, surface: str = "free") -> dict:
     engines: dict = {}
     deep_verdicts: dict = {}
     out = {key: copy.deepcopy(snapshot[key]) for key in
-           ("generated_at", "version", "historical_evidence", "faults", "provenance", "data_quality")
+           ("generated_at", "version", "historical_evidence", "faults")
            if key in snapshot}
+    if isinstance(snapshot.get("provenance"), list):
+        out["provenance"] = [_without_floats(row) for row in snapshot["provenance"]
+                             if isinstance(row, Mapping)]
     out["engines"] = _project_blocks(snapshot["engines"], ENGINE_INPUTS, ledger, engines, used, prefix="engines")
     deep = snapshot.get("deep")
     out["deep"] = (_project_blocks(deep, DEEP_INPUTS, ledger, deep_verdicts, used, prefix="deep")
@@ -730,6 +768,9 @@ def public_board(snapshot: object, *, surface: str = "free") -> dict:
         out["headline"][key] = copy.deepcopy(value) if verdict["status"] == "public" else None
         if verdict["status"] == "public":
             used.update(verdict["sources"])
+    if "data_quality" in snapshot:
+        out["data_quality"] = _data_quality(snapshot["data_quality"], {
+            key for key, verdict in headline_verdicts.items() if verdict["status"] == "public"})
     calendar = snapshot.get("calendar") if isinstance(snapshot.get("calendar"), Mapping) else {}
     out["calendar"] = {}
     for key, value in calendar.items():

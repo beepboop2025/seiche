@@ -626,6 +626,7 @@ def test_prates_excludes_a_pre_announced_rate_until_it_takes_effect():
 def test_board_data_uses_only_release_page_xml_zips():
     for release, url in fed.URLS.items():
         assert re.fullmatch(rf"https://www\.federalreserve\.gov/releases/{release}/data/FRB_\w+_xml\.zip", url)
+    # Prose may name the retiring Data Download Program; no code may call it.
     offenders = [path for path in (ROOT / "backend" / "seiche").rglob("*.py")
-                 if re.search(r"datadownload|Build Your Package", path.read_text(encoding="utf-8"), re.I)]
+                 if re.search(r"federalreserve\.gov/datadownload", path.read_text(encoding="utf-8"), re.I)]
     assert offenders == []

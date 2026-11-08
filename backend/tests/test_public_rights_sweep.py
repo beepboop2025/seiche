@@ -177,7 +177,10 @@ def test_the_us_reading_is_refused_with_the_source_rights_restriction(sealed, pr
     assert response.status_code == 403
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
-    legacy = TestClient(api.app).get("/api/gauge").json()
+    # The same restriction contract the withheld legacy routes return; the v1
+    # gauge itself now serves the per-engine projection instead.
+    from seiche import public_rights
+    legacy = public_rights.legacy_unavailable("/api/public")
     assert set(body) == set(legacy)
     assert body["schema"] == "seiche.source-rights-restriction.v1"
     assert body["surface"] == "/api/v2/markets/US-USD"
