@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased: original-publisher sources and the per-engine projection (2026-11-09)
+
+- Read 56 of the 76 FRED series Seiche used from their original publishers: the Board's H.4.1, H.15, H.10, G.17, commercial paper and PRATES release XML zips (never the retiring Data Download Program), the NY Fed Markets API (SOFR, EFFR, the target range that replaces DFEDTARU, and ON RRP), BEA, BLS, the ECB, the Bank of England and the Bank of Japan.
+- Record the owner's four 2026-11-08 source-use decisions (Fed CP with DTCC origin, the BLS API Terms of Service, Bank of Japan total assets on the free site, raw SONIA under the Bank of England's open licence) in `backend/seiche/source_decisions.json` and `docs/rights/`; the adapters and the public projection read them.
+- Replace the all-or-nothing legacy gate with policy `seiche.public-source-rights.2026-11-09`: an engine, deep block, card or headline value is public only when every input it reads is an allowed direct or open source proven by the snapshot's provenance. The composite, the money desk, the funding-spread engines and the history family return; readings that depend on a FRED copy, the 17 blocked series or an unqualified source stay withheld.
+- Serve raw SONIA in the atlas with its Open Government Licence attribution and the Bank's Database clock.
+
 ## 0.16.11: static source-rights projection and source clocks (2026-11-01)
 
 - Publish `/data/overview.json`, `/data/public.json` and `/data/book_history.json` with the same source-rights restriction as their API routes; the full board is written only to an explicit private build path outside the public web roots.

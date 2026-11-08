@@ -654,7 +654,7 @@
       "proposed_roles": [],
       "target_engines": ["JP-JPY:local_gauge", "basins", "harbors", "spillover", "estuary"],
       "implementation_status": "implemented",
-      "blocker": "No source blocker for mapped rows; canonical history and validation need production verification.",
+      "blocker": "No source blocker for mapped rows; canonical history and validation need production verification. Bank of Japan total assets (BS01 MABJMTA, statistics API) are served on the free, no-paywall site only, by owner decision seiche.source-use.2026-11-08.boj-total-assets (2026-11-08).",
       "next_action": "Verify scheduled backfill, event clocks, and sealed JP-JPY snapshots."
     },
     {
@@ -665,15 +665,15 @@
       "access_url": "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp",
       "access_format": ["CSV download", "official database query"],
       "cadence": "P1D",
-      "rights_status": "mixed_allowed_and_derived_only",
-      "rights_evidence_url": "https://www.bankofengland.co.uk/legal/terms-and-conditions",
+      "rights_status": "allowed_in_current_pack",
+      "rights_evidence_url": "https://www.bankofengland.co.uk/legal",
       "target_markets": ["UK-GBP"],
       "semantic_roles": ["POLICY_FLOOR", "POLICY_TARGET", "POLICY_CEILING", "UNSECURED_OVERNIGHT", "RESERVE_BALANCES"],
       "proposed_roles": ["SECURED_OVERNIGHT"],
       "target_engines": ["UK-GBP:local_gauge", "basins", "estuary"],
       "implementation_status": "implemented",
-      "blocker": "Policy rows are allowed and SONIA is derived-only; no production RONIA source exists.",
-      "next_action": "Verify canonical history and seek an entitled secured-overnight source without changing SONIA redistribution."
+      "blocker": "SONIA is served raw under the Open Government Licence v3.0 by owner decision seiche.source-use.2026-11-08.boe-sonia (2026-11-08), with the Bank's SONIA attribution on every value and the Database clock (by 10:00 London on the next business day); no production RONIA source exists.",
+      "next_action": "Verify canonical history and seek an entitled secured-overnight source; keep the SONIA attribution on every served value."
     },
     {
       "id": "nyfed_markets_api",

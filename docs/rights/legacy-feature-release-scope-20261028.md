@@ -1,5 +1,7 @@
 # Verified research release scope
 
+> Superseded on 2026-11-09 by `public-legacy-projection-20261109.md` (policy seiche.public-source-rights.2026-11-09) and the owner decisions in `owner-source-decisions-20261108.md`. Kept as the dated record of the earlier policy.
+
 On 28 October 2026 the owner approved releasing verified research tools while marking unqualified legacy features unavailable. This is an availability policy, not a claim of publisher permission.
 
 MCP discovery exposes the available research tools and source_rights_status. Older calls to restricted tools return explicit source-rights errors before loading a snapshot or executing a model. Paid preflight refuses these calls before payment. The associated legacy HTTP routes return 403 without running their handlers; authority and authentication middleware remain outer guards. All FRED series JSON and CSV exports use the same current restriction policy.

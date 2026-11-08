@@ -1,5 +1,7 @@
 # Public legacy-source projections
 
+> Superseded on 2026-11-09 by `public-legacy-projection-20261109.md` (policy seiche.public-source-rights.2026-11-09) and the owner decisions in `owner-source-decisions-20261108.md`. Kept as the dated record of the earlier policy.
+
 This route-specific engineering policy preserves acquired snapshots and their source clocks. It does not establish a blanket license for the fleet or historical point-in-time availability.
 
 The completed USD money desk is projected at the MCP, REST and world-markets read boundaries. Known FRED cards and dependent comparisons, diagnostics, headline statistics and narratives return restriction metadata. Their exact metric ID, original source label, observation date, unit and cadence remain. Known NYFed distributions, OFR segment/MMF observations and Treasury TGA/NYFed SRF cards retain their values and clocks. Chart columns are explicitly allowlisted; FRED-dependent columns become null. Unknown metrics and unexpected desk shapes fail closed.
