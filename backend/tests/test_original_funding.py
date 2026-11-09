@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from seiche import methodology, store
-from seiche.sources import official_statistics as stats, original_publishers
+from seiche.sources import official_statistics as stats
 
 
 @pytest.fixture

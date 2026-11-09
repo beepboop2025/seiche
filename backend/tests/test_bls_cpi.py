@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import copy
 import json
-from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -14,9 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from seiche.domain.observation import CanonicalUnit, ConnectorClassification, RedistributionStatus, SemanticRole
-from seiche.markets.base import InstrumentSpec, SourceAdapterSpec
-from seiche.markets.registry import MarketRegistry, default_registry
+from seiche.domain.observation import ConnectorClassification, RedistributionStatus, SemanticRole
 from seiche.markets.us_usd.pack import PACK
 from seiche.repository import SQLiteMarketRepository
 from seiche.sources import bls_cpi

@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
