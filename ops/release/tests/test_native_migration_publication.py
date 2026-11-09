@@ -8,8 +8,8 @@ import pytest
 spec=importlib.util.spec_from_file_location("protected_release_fixture",Path(__file__).resolve().parents[3] / "backend/tests/test_hetzner_release.py")
 legacy=importlib.util.module_from_spec(spec);spec.loader.exec_module(legacy)
 r=legacy.release
-SOURCE="0ecdf9017e76670e85eb2089be5ee0be03fb0c07"
-TREE="af0305d8aa64f16eca1e3b3e827f0078e8b956cb"
+SOURCE="1bcf8d7a48b1db59cc25cd93f6b45260a31dc814"
+TREE="fd4918ef3e16c8e01643aae22723b4c0fac43bae"
 NOW=legacy.NOW
 at=legacy.at
 
