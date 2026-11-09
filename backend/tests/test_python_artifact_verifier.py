@@ -286,3 +286,52 @@ def test_tar_framing_rejects_hidden_gnu_longname_record() -> None:
             expected_sizes={name: 1},
             epoch=1_700_000_000,
         )
+
+
+def _package_source(root: Path, members: dict[str, bytes]) -> tuple[Path, Path]:
+    """A minimal repository: root LICENSE and .gitignore, backend/ package source."""
+    licence = b"GNU AFFERO GENERAL PUBLIC LICENSE\n"
+    (root / "LICENSE").write_bytes(licence)
+    (root / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+    source = root / "backend"
+    source.mkdir()
+    (source / "pyproject.toml").write_text(
+        '[project]\nname = "seiche"\nlicense-files = ["LICENSE"]\n', encoding="utf-8"
+    )
+    (source / "README.md").write_text("README\n", encoding="utf-8")
+    (source / "LICENSE").write_bytes(licence)
+    for name, body in members.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    return source, root / "LICENSE"
+
+
+def test_source_contract_admits_reviewed_package_data_by_exact_path(
+    tmp_path: Path,
+) -> None:
+    reviewed = {name: b"{}\n" for name in VERIFIER.REVIEWED_PACKAGE_DATA}
+    unreviewed = {
+        "seiche/sources/unreviewed.json": b"{}\n",
+        "seiche/notes.md": b"notes\n",
+        "seiche/sources/source_decisions.json": b"{}\n",  # reviewed name, wrong directory
+        "seiche/dispatches/source_decisions.json": b"{}\n",
+    }
+    python = {"seiche/__init__.py": b"", "seiche/sources/fed_releases.py": b"X = 1\n"}
+    source, licence = _package_source(
+        tmp_path.resolve(), {**python, **reviewed, **unreviewed}
+    )
+
+    contract = VERIFIER._source_contract(source, licence)
+
+    assert set(contract["package_files"]) == set(python) | set(reviewed)
+
+
+def test_reviewed_package_data_is_exactly_the_0_16_12_registries_and_notes() -> None:
+    # Widening this set is a review decision: every name here ships in the wheel and the sdist.
+    assert VERIFIER.REVIEWED_PACKAGE_DATA == {
+        "seiche/source_decisions.json",
+        "seiche/sources/FED_RELEASES.md",
+        "seiche/sources/ORIGINAL_PUBLISHERS.md",
+        "seiche/sources/fed_release_contracts.json",
+    }

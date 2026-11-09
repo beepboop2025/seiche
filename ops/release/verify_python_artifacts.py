@@ -31,6 +31,18 @@ MAX_RECORD_BYTES = 2 * 1024 * 1024
 MAX_ENTRY_POINTS_BYTES = 64 * 1024
 MAX_WHEEL_METADATA_BYTES = 16 * 1024
 MINIMUM_ZIP_EPOCH = 315532800  # 1980-01-01T00:00:00Z
+# Non-Python package members, reviewed by exact path relative to the package source root.
+# 0.16.12: seiche/source_decisions.py and seiche/sources/fed_releases.py read the two JSON
+# registries at run and import time, and the two notes document those registries.  Any
+# other non-Python file (apart from a bootstrap_snapshot.json) still fails closed.
+REVIEWED_PACKAGE_DATA = frozenset(
+    {
+        "seiche/source_decisions.json",
+        "seiche/sources/FED_RELEASES.md",
+        "seiche/sources/ORIGINAL_PUBLISHERS.md",
+        "seiche/sources/fed_release_contracts.json",
+    }
+)
 
 
 class VerificationError(RuntimeError):
@@ -625,9 +637,13 @@ def _source_contract(source: Path, repository_license: Path) -> dict:
         relative_to_package = path.relative_to(package_root)
         if "dispatches" in relative_to_package.parts:
             continue
-        if path.suffix != ".py" and path.name != "bootstrap_snapshot.json":
-            continue
         relative = path.relative_to(source).as_posix()
+        if (
+            path.suffix != ".py"
+            and path.name != "bootstrap_snapshot.json"
+            and relative not in REVIEWED_PACKAGE_DATA
+        ):
+            continue
         package_files[relative] = resolved
     _require(package_files, "Seiche package source inventory is empty")
     return {

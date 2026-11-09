@@ -1000,7 +1000,6 @@ class WorkflowContracts(unittest.TestCase):
             "touch -t 202001010000",
             "touch -t 202401010000",
             'cmp --silent "$artifact" "${RUNNER_TEMP}/dist-second/$name"',
-            "source-verification/ops/release/verify_python_artifacts.py",
             '--repository-license "${RUNNER_TEMP}/source-verification/LICENSE"',
             "python -m twine check candidate-dist/*",
             "sha256sum candidate-dist/*",
@@ -1025,6 +1024,26 @@ class WorkflowContracts(unittest.TestCase):
             "permissions: {}",
         ):
             self.assertIn(required, workflow)
+        # Both jobs run the verifier selected from signed history: the release's own on a tag
+        # push, or an owner-signed <release>-workflow.N recovery that descends from the release
+        # and changes only reviewed release automation.
+        for job, invocation in (
+            (build_job, 'python "$ARTIFACT_VERIFIER" \\'),
+            (verify_job, 'python -I -S "$ARTIFACT_VERIFIER" \\'),
+        ):
+            for required in (
+                "name: Select the reviewed artifact verifier",
+                'git show "${RELEASE_TAG}^{commit}:ops/release/verify_python_artifacts.py" > "$verifier"',
+                'verify-tag "$DISPATCH_REF_NAME"',
+                'test "$(git rev-parse "${DISPATCH_REF_NAME}^{commit}")" = "$GITHUB_SHA"',
+                'git merge-base --is-ancestor "${RELEASE_TAG}^{commit}" "$GITHUB_SHA"',
+                "Workflow recovery changes an unreviewed path",
+                'git show "${GITHUB_SHA}:ops/release/verify_python_artifacts.py" > "$verifier"',
+                "DISPATCH_REF_NAME: ${{ github.ref_name }}",
+                invocation,
+            ):
+                self.assertIn(required, job)
+        self.assertNotIn("ops/release/verify_python_artifacts.py \\\n", workflow)
         self.assertNotIn("id-token: write", build_job)
         self.assertNotIn("id-token: write", verify_job)
         self.assertNotIn("environment: pypi", build_job)
