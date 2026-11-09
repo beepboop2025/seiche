@@ -1,5 +1,29 @@
 # Publishing Seiche release surfaces
 
+## 0.16.12 original-publisher successor
+
+The 9 November candidate reads 56 of the 76 withheld FRED series from their
+original publishers (the Federal Reserve Board's release packages, the NY Fed,
+Treasury, BEA, BLS, the ECB and the Bank of England) and the eleven
+country-funding OECD rates from the OECD's own API, and records the owner's four
+2026-11-08 source-use decisions. Policy `seiche.public-source-rights.2026-11-09`
+replaces the all-or-nothing legacy gate: an engine output is public only when
+every input it reads is allowed. The eight free substitutes are built and
+labelled but serve nothing, and the three projection MCP tools stay closed. The
+package version is `0.16.12`. Version metadata is preparation only: require the
+exact signed runtime release (a new owner-signed Hetzner grant for this code),
+the normal full-suite and recovery gates, the immutable PyPI receipt and the
+registry receipt.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r51`, for this successor.
+Preserve r50 on `1f551113`. Corpus observations, counts, hashes and rights are
+unchanged. Sign r51 only after the exact new runtime and corpus evidence pass
+their ordinary checks; declaration is not publication. The runtime source and
+the publication source are the same commit, so no source bridge is used. Run a
+FULL publication from this source before any static-only publication.
+
+
 ## 0.16.11 static source-rights successor
 
 The 1 November candidate makes every static board file carry exactly what its
