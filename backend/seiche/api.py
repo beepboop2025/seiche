@@ -83,6 +83,7 @@ from seiche.markets.atlas import (
     market_source_reference,
 )
 from seiche.markets.calibration import get_local_calibration
+from seiche.markets.funding_reference import RETIRED_SOURCES
 from seiche.markets.materialize import (
     PUBLIC_SNAPSHOT_VISIBILITY,
     RESTRICTED_SNAPSHOT_VISIBILITY,
@@ -2062,7 +2063,7 @@ def _observation_value_is_public(pack, observation) -> bool:
     """Apply the most restrictive declared and per-row value policy."""
 
     instrument = pack.instrument_map.get(observation.instrument_id)
-    if instrument is None:
+    if instrument is None or observation.source in RETIRED_SOURCES:
         return False
     adapter = pack.adapter_map.get(instrument.source_adapter_id)
     return (
@@ -2076,7 +2077,7 @@ def _observation_is_publicly_derivable(pack, observation) -> bool:
     """Allow only rows whose adapter and row policies permit public derivation."""
 
     instrument = pack.instrument_map.get(observation.instrument_id)
-    if instrument is None:
+    if instrument is None or observation.source in RETIRED_SOURCES:
         return False
     adapter = pack.adapter_map.get(instrument.source_adapter_id)
     derivable = {

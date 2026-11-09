@@ -1,7 +1,9 @@
-"""Official-file adapters reject shifted identities and retain native periods."""
-import asyncio
+"""Official-file adapters reject shifted identities and retain native periods.
+
+The OECD adapter has its own module and tests in test_oecd_sdmx.py.
+"""
 import csv
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 import io
 from pathlib import Path
@@ -9,56 +11,13 @@ from pathlib import Path
 import pytest
 
 from seiche.markets.funding_reference import JP_TENORS
-from seiche.markets.registry import default_registry
-from seiche.sources.canonical import FetchedDocument, FunctionalCanonicalAdapter, PublicationTimePolicy
+from seiche.sources.canonical import FetchedDocument, PublicationTimePolicy
 from seiche.sources import country_funding as sources
 
 
 def document(text, label, *, payload=None):
     return FetchedDocument("https://official.example.test/reference", "text/plain",
                            payload if payload is not None else text.encode(), label)
-
-
-def fred_table(**changes):
-    metadata = {"Series ID": "IRLTLT01KRM156N", "Source": "Organization for Economic Co-operation and Development",
-                "Frequency": "Monthly", "Units": "Percent", "Seasonal Adjustment": "Not Seasonally Adjusted",
-                "Notes": "REF_AREA: KOR MEASURE: IRLT UNIT_MEASURE: PA ACTIVITY: _Z ADJUSTMENT: _Z TRANSFORMATION: _Z FREQ: M"}
-    metadata.update(changes)
-    return ("<table>" + "".join(f"<tr><th>{key}</th><td>{value}</td></tr>" for key, value in metadata.items())
-            + '</table><table id="data-table-observations"><tr><th>DATE</th><th>VALUE</th></tr>'
-            '<tr><th>2024-01-01</th><td>3.500</td></tr><tr><th>2024-02-01</th><td>3.125</td></tr></table>')
-
-
-def test_fred_month_labels_do_not_become_first_day_market_quotes():
-    points = sources.parse_fred_oecd(document(fred_table(), "fred_oecd:IRLTLT01KRM156N"), start=date(2024, 2, 1))
-    assert len(points) == 1 and points[0].event_time == date(2024, 2, 29)
-    assert points[0].raw_value == Decimal("3.125")
-    assert points[0].source_publication_time is None
-    assert points[0].publication_time_policy is PublicationTimePolicy.UNKNOWN
-    assert b'2024-02-01' in points[0].row_evidence
-
-
-@pytest.mark.parametrize("changes", [
-    {"Series ID": "IRLTLT01AUM156N"}, {"Source": "Unreviewed publisher"},
-    {"Frequency": "Daily"}, {"Units": "Basis Points"}, {"Seasonal Adjustment": "Seasonally Adjusted"},
-    {"Notes": "REF_AREA: CHN MEASURE: IRLT UNIT_MEASURE: PA FREQ: M"},
-    {"Notes": "REF_AREA: KOR MEASURE: IR3TIB UNIT_MEASURE: PA FREQ: M"},
-])
-def test_fred_wrong_country_tenor_source_units_or_frequency_fails(changes):
-    with pytest.raises(ValueError):
-        sources.parse_fred_oecd(document(fred_table(**changes), "fred_oecd:IRLTLT01KRM156N"))
-
-
-@pytest.mark.parametrize("old,new", [("3.125", "NaN"), ("2024-02-01", "2024-02-02"),
-                                     ("2024-02-01", "2024-01-01"), ("<th>VALUE</th>", "<th>PRICE</th>")])
-def test_fred_nonfinite_ambiguous_or_changed_rows_fail(old, new):
-    with pytest.raises(ValueError):
-        sources.parse_fred_oecd(document(fred_table().replace(old, new), "fred_oecd:IRLTLT01KRM156N"))
-
-
-def test_script_tags_cannot_supply_fred_metadata():
-    with pytest.raises(ValueError):
-        sources.parse_fred_oecd(document("<script>" + fred_table() + "</script>", "fred_oecd:IRLTLT01KRM156N"))
 
 
 def mof_csv():
@@ -141,23 +100,6 @@ def test_original_cbc_biff_workbook_parses_all_eight_independent_columns():
     assert rates["TW.CBC.OVERNIGHT_CALL_MONTHLY"] == Decimal("0.822")
     assert rates["TW.CBC.GOVERNMENT_10Y_MONTHLY"] == Decimal("1.96")
     assert rates["TW.CBC.CP_31_90D_MONTHLY"] == Decimal("1.78")
-
-
-def test_canonical_adapter_does_not_backdate_a_monthly_capture():
-    source = document(fred_table(), "fred_oecd:IRLTLT01KRM156N")
-    async def fetch(_client):
-        return (source,)
-    class Repository:
-        def load_observations_as_of(self, *args, **kwargs):
-            assert kwargs["instrument_ids"] == ("KR.OECD.LONG_TERM_10Y_MONTHLY",)
-            return []
-    now = datetime(2026, 10, 6, tzinfo=UTC)
-    adapter = FunctionalCanonicalAdapter(pack=default_registry().get("KR-KRW"), adapter_id="oecd_fred_reference",
-        source="oecd_fred_reference", fetcher=fetch, parser=sources.parse_fred_oecd, repository=Repository(), clock=lambda: now)
-    batch = asyncio.run(adapter.collect())
-    assert {r.knowledge_time for r in batch.observations} == {now}
-    assert all(r.source_publication_time is None for r in batch.observations)
-    assert batch.observations[-1].value == Decimal("312.5")
 
 
 def test_bis_flagged_missing_values_are_gaps_and_unflagged_nan_still_fails():

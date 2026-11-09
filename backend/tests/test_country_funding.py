@@ -10,7 +10,9 @@ from seiche import country_funding as desk
 from seiche.domain.observation import (
     Observation, QualityState, RedistributionStatus, StalenessState, evidence_sha256,
 )
-from seiche.markets.funding_reference import COUNTRIES, EURO_COUNTRIES
+from seiche.markets.funding_reference import (
+    COUNTRIES, COUNTRY_MAP, EURO_COUNTRIES, OECD_ADAPTER, OECD_DATA_URL, OECD_SERIES,
+)
 from seiche.markets.registry import default_registry
 
 NOW = datetime(2026, 10, 6, 8, tzinfo=UTC)
@@ -103,8 +105,91 @@ def test_monthly_oecd_term_rate_is_not_relabelled_as_chinese_overnight():
     metric = next(m for s in result["sections"] for m in s["metrics"] if m["id"].startswith("CN.OECD"))
     assert metric["cadence"] == "P1M" and metric["semantic_role"] == "TERM_3M"
     assert metric["observation_period"] == "2026-07" and metric["value"] == 1.54
-    assert metric["source_url"].endswith("IR3TIB01CNM156N")
+    assert metric["source_url"] == OECD_DATA_URL + "CHN.M.IR3TIB.PA._Z._Z._Z._Z.N"
+    assert metric["source_reference"]["national_source"] == "The Central Bank of the People's Republic of China"
     assert result["curves"] == [] and result["coverage"]["complete"] is False
+
+
+def oecd_rows():
+    rows = {}
+    for item in OECD_SERIES:
+        market = COUNTRY_MAP[item.country].market_id
+        rows.setdefault(market, []).append(row(market, item.instrument_id, "2026-09-30", 300 + len(rows)))
+    return rows
+
+
+def test_every_oecd_row_cites_the_oecd_with_its_access_date_and_never_fred():
+    observations = oecd_rows()
+    for country in COUNTRIES:
+        result = desk.build(country.code, observations, now=NOW)
+        assert "stlouisfed" not in json.dumps(result).lower()
+        assert all("fred" not in json.dumps(source).lower() for source in result["sources"])
+    served = 0
+    for item in OECD_SERIES:
+        result = desk.build(item.country, observations, now=NOW)
+        metric = next(m for m in [*(m for s in result["sections"] for m in s["metrics"]),
+                                  *(n for c in result["curves"] for n in c["nodes"])]
+                      if m["id"] == item.instrument_id)
+        reference = metric["source_reference"]
+        assert metric["availability"] == "AVAILABLE" and metric["source"] == OECD_ADAPTER
+        assert metric["source_url"] == reference["source_url"] == OECD_DATA_URL + item.key
+        assert reference["rights_url"] == "https://www.oecd.org/en/about/terms-conditions.html"
+        assert reference["attribution"] == metric["attribution"]
+        assert metric["attribution"].startswith("OECD (2026), Financial market (OECD.SDD.STES:DSD_STES@DF_FINMARK(4.0))")
+        assert (OECD_DATA_URL + item.key + " (accessed on 2026-10-06)") in metric["attribution"]
+        assert reference["accessed_at"] == NOW.isoformat()
+        served += 1
+    assert served == 11
+    from seiche.markets.atlas import build_global_money_market_atlas
+    atlas = build_global_money_market_atlas(default_registry().list(), observations, as_of=NOW)
+    metrics = [m for market in atlas["markets"] for m in market["metrics"] if ".OECD." in m["id"]]
+    assert len(metrics) == 11 and all(m["source_url"].startswith(OECD_DATA_URL) for m in metrics)
+    assert all(m["attribution"].startswith("OECD (2026)") for m in metrics)
+    assert "stlouisfed" not in json.dumps(atlas["country_funding"]).lower()
+
+
+def test_rest_and_mcp_serve_the_same_cited_oecd_rows(monkeypatch):
+    from fastapi import Request, Response
+    from seiche import api, mcp_server
+    expected = desk.build("KR", oecd_rows(), now=NOW)
+    monkeypatch.setattr(desk, "read", lambda country=None, **kwargs: expected if country else desk.catalog())
+    request = Request({"type": "http", "query_string": b"", "headers": [], "client": ("127.0.0.1", 23456)})
+    served = mcp_server.tool_money_market({"section": "countries", "country": "KR"}, True)["countries"]
+    assert served == expected == api.country_funding_v2(request, Response(), "KR")
+    oecd = [m for s in served["sections"] for m in s["metrics"] if ".OECD." in m["id"]]
+    oecd += [n for c in served["curves"] for n in c["nodes"] if ".OECD." in n["id"]]
+    assert {m["id"] for m in oecd} == {"KR.OECD.INTERBANK_3M_MONTHLY", "KR.OECD.LONG_TERM_10Y_MONTHLY"}
+    assert all("National source named in OECD metadata: Bank of Korea." in m["attribution"] for m in oecd)
+    assert "stlouisfed" not in json.dumps(served).lower()
+
+
+def test_rows_stored_by_the_retired_fred_mirror_are_never_served(tmp_path, monkeypatch):
+    from fastapi import Response
+    from seiche import api, store
+    from seiche.markets.materialize import _public_observations
+    pack = default_registry().get("AU-AUD")
+    current = row("AU-AUD", "AU.OECD.LONG_TERM_10Y_MONTHLY", "2026-09-30", 528)
+    retired = replace(current, source="oecd_fred_reference", revision_id="fred-mirror",
+                      evidence_hash=evidence_sha256("fred-mirror"))
+    node = desk.build("AU", {"AU-AUD": [retired]}, now=NOW)["curves"][0]["nodes"][0]
+    assert node["value"] is None and node["availability"] == "UNAVAILABLE"
+    assert desk.build("AU", {"AU-AUD": [current]}, now=NOW)["curves"][0]["nodes"][0]["value"] == 5.28
+    assert _public_observations(pack, [retired, current]) == [current]
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "retired-mirror.sqlite")
+    store.save_observations([retired])
+    atlas = api.global_money_markets_v2(Response())
+    metric = next(m for market in atlas["markets"] if market["market_id"] == "AU-AUD"
+                  for m in market["metrics"] if m["id"] == "AU.OECD.LONG_TERM_10Y_MONTHLY")
+    assert metric["value"] is None and metric["availability"] == "UNAVAILABLE"
+    store.save_observations([current])
+    metric = next(m for market in api.global_money_markets_v2(Response())["markets"]
+                  if market["market_id"] == "AU-AUD"
+                  for m in market["metrics"] if m["id"] == "AU.OECD.LONG_TERM_10Y_MONTHLY")
+    assert metric["value"] == 5.28 and metric["source"] == OECD_ADAPTER
+    # The series route redacts each row through this same value policy.
+    assert not api._observation_value_is_public(pack, retired)
+    assert not api._observation_is_publicly_derivable(pack, retired)
+    assert api._observation_value_is_public(pack, current)
 
 
 def test_country_catalog_is_structural_and_never_touches_repository(monkeypatch):

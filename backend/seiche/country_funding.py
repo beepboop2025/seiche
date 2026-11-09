@@ -5,7 +5,10 @@ from datetime import UTC, datetime, timedelta
 import logging
 
 from seiche.domain.observation import RedistributionStatus, SemanticRole
-from seiche.markets.funding_reference import BIS_AUTHORITIES, COUNTRIES, COUNTRY_MAP, CURVES, FRED_SERIES, SOURCE_REFERENCES
+from seiche.markets.funding_reference import (
+    BIS_AUTHORITIES, COUNTRIES, COUNTRY_MAP, CURVES, OECD_ADAPTER, SOURCE_REFERENCES,
+    oecd_row_reference,
+)
 from seiche.markets.registry import default_registry
 from seiche.repository import get_repository
 
@@ -109,11 +112,10 @@ def _projection(pack, rows, cutoff, include_history):
             metric["observation_period"] = metric["asof"][:7] if metric.get("asof") else None
             metric["event_date_basis"] = "calendar_month_end_label"
             metric["aggregation"] = "source_defined_monthly_reference"
-        if spec.source_adapter_id == "oecd_fred_reference":
-            series = next(key for key, (_, _, _, identifier) in FRED_SERIES.items() if identifier == spec.instrument_id)
-            metric["source_url"] = "https://fred.stlouisfed.org/series/" + series
-            metric["source_reference"]["source_url"] = metric["source_url"]
-            metric["source_reference"]["accessed_at"] = metric.get("knowledge_time")
+        if spec.source_adapter_id == OECD_ADAPTER:
+            # Each served row carries the OECD citation with its own access date.
+            metric["source_reference"].update(
+                oecd_row_reference(spec.instrument_id, metric.get("knowledge_time")))
         if spec.source_adapter_id == "cbc_monthly_rates":
             metric["aggregation"] = "month_end" if "MONTH_END" in spec.instrument_id else "monthly_weighted_average"
         if spec.source_adapter_id == "ecb_sovereign_monthly":

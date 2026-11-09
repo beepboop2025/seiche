@@ -14,8 +14,10 @@ import unicodedata
 
 from seiche.domain.observation import QualityState
 from seiche.markets.funding_reference import (
-    BIS_MARKETS, BOE_TENORS, CBC_MONTHLY, COUNTRY_MAP, CURVES, FRED_SERIES, JP_TENORS,
+    BIS_MARKETS, BOE_TENORS, CBC_MONTHLY, COUNTRY_MAP, CURVES, JP_TENORS, OECD_ADAPTER,
+    OECD_SERIES,
 )
+from seiche.sources import oecd_sdmx
 from seiche.sources.canonical import (
     FetchedDocument, FunctionalCanonicalAdapter, ParsedPoint, PublicationTimePolicy,
 )
@@ -172,98 +174,6 @@ def parse_bis_policy(document):
     return tuple(points)
 
 
-class _Tables(HTMLParser):
-    """Extract table cells, excluding scripts and style; do not execute markup."""
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.tables = []
-        self.table = None
-        self.row = None
-        self.cell = None
-        self.ignored = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style"}:
-            self.ignored += 1
-        if self.ignored:
-            return
-        if tag == "table":
-            if self.table is not None:
-                raise ValueError("nested official data table is ambiguous")
-            self.table = {"id": dict(attrs).get("id"), "rows": []}
-        elif self.table is not None and tag == "tr":
-            self.row = []
-        elif self.row is not None and tag in {"td", "th"}:
-            self.cell = []
-        elif tag == "br" and self.cell is not None:
-            self.cell.append(" ")
-
-    def handle_endtag(self, tag):
-        if tag in {"script", "style"} and self.ignored:
-            self.ignored -= 1
-            return
-        if self.ignored:
-            return
-        if tag in {"td", "th"} and self.cell is not None and self.row is not None:
-            self.row.append(" ".join("".join(self.cell).split()))
-            self.cell = None
-        elif tag == "tr" and self.row is not None and self.table is not None:
-            self.table["rows"].append(self.row)
-            self.row = None
-        elif tag == "table" and self.table is not None:
-            self.tables.append(self.table)
-            self.table = None
-
-    def handle_data(self, value):
-        if self.cell is not None and not self.ignored:
-            self.cell.append(value)
-
-
-def parse_fred_oecd(document, *, start=None):
-    series = document.label.removeprefix("fred_oecd:")
-    if series not in FRED_SERIES:
-        raise ValueError("unknown OECD/FRED series")
-    _, iso3, measure, identifier = FRED_SERIES[series]
-    parser = _Tables()
-    parser.feed(_text(document))
-    metadata = [dict(t["rows"]) for t in parser.tables
-                if t["rows"] and all(len(r) == 2 for r in t["rows"])
-                and any(r[0] == "Series ID" for r in t["rows"])]
-    if len(metadata) != 1:
-        raise ValueError("OECD/FRED series metadata is missing or ambiguous")
-    meta = metadata[0]
-    expected = {"Series ID": series, "Source": "Organization for Economic Co-operation and Development",
-                "Frequency": "Monthly", "Units": "Percent", "Seasonal Adjustment": "Not Seasonally Adjusted"}
-    filters = {"REF_AREA": iso3, "MEASURE": measure, "UNIT_MEASURE": "PA", "ACTIVITY": "_Z",
-               "ADJUSTMENT": "_Z", "TRANSFORMATION": "_Z", "FREQ": "M"}
-    notes = meta.get("Notes", "")
-    if (any(meta.get(k) != v for k, v in expected.items())
-            or any(not re.search(r"\b" + key + r":\s*" + re.escape(value) + r"(?=\s|$)", notes)
-                   for key, value in filters.items())):
-        raise ValueError("OECD/FRED country, tenor, frequency or units changed")
-    observations = [t["rows"] for t in parser.tables if t["id"] == "data-table-observations"]
-    if len(observations) != 1 or observations[0][0] != ["DATE", "VALUE"]:
-        raise ValueError("OECD/FRED observation table changed")
-    points, seen = [], set()
-    for row in observations[0][1:]:
-        if len(row) != 2:
-            raise ValueError("OECD/FRED observation row is malformed")
-        label = date.fromisoformat(row[0])
-        if label.day != 1 or label in seen:
-            raise ValueError("OECD/FRED monthly label is invalid or duplicated")
-        seen.add(label)
-        event = label.replace(day=calendar.monthrange(label.year, label.month)[1])
-        if start and event < start:
-            continue
-        value = _value(row[1])
-        if value is not None:
-            points.append(_point(identifier, event, value, {"series": series, "source_month_label": row[0],
-                                 "percent": row[1], "source": meta["Source"], "filters": filters}))
-    if not points:
-        raise ValueError("OECD/FRED series has no numeric observations in the requested window")
-    return tuple(points)
-
-
 CBC_MONTHLY_HEADER = ["Month", "Discount Rates", "Interest Rates on Accommodations with Collateral",
     "1-Month Deposit Rates", "1-Year Deposit Rates", "Base Lending Rates(1)",
     "Weighted Averages of Overnight Interest Rates", "31-90 Days CP Rates in Secondary Market",
@@ -400,6 +310,15 @@ def build_country_adapters(*, registry, repository=None, backfill=False, clock=N
     def parse_mof(document):
         return parse_mof_curve(document, start=start(), history_before=(today().replace(day=1) if document.label == "jp_mof_history" else None))
 
+    def oecd_definition(series):
+        async def fetch(client):
+            return await oecd_sdmx.fetch_documents(client, (
+                ("oecd_sdmx:" + series[0].country, oecd_sdmx.request_url(series, start=start())),))
+
+        def parse(document):
+            return oecd_sdmx.parse_document(document, series=series, today=today(), start=start())
+        return fetch, parse
+
     definitions = {
         "jp_mof_curve": (fetch_mof, parse_mof),
         "boe_sovereign_curve": (scoped_fetch(lambda: (("boe_sovereign_curve", BOE_DATABASE, {
@@ -416,12 +335,9 @@ def build_country_adapters(*, registry, repository=None, backfill=False, clock=N
         for spec in pack.source_adapters:
             if spec.adapter_id in definitions:
                 fetcher, parser = definitions[spec.adapter_id]
-            elif spec.adapter_id == "oecd_fred_reference":
-                identifiers = tuple(series for series, (code, _, _, _) in FRED_SERIES.items()
-                                    if COUNTRY_MAP[code].market_id == pack.market_id)
-                fetcher = scoped_fetch(lambda identifiers=identifiers: tuple(("fred_oecd:" + series,
-                    "https://fred.stlouisfed.org/data/" + series, None) for series in identifiers))
-                parser = lambda document: parse_fred_oecd(document, start=start())
+            elif spec.adapter_id == OECD_ADAPTER:
+                fetcher, parser = oecd_definition(tuple(
+                    item for item in OECD_SERIES if COUNTRY_MAP[item.country].market_id == pack.market_id))
             elif spec.adapter_id == "bis_policy_reference":
                 code = next(code for code, market in BIS_MARKETS.items() if market == pack.market_id)
                 fetcher = scoped_fetch(lambda code=code: (("bis_policy:" + code, BIS_DATA + "D." + code,
@@ -447,5 +363,5 @@ PRODUCTION_KEYS = frozenset(
     [(curve.market_id, curve.adapter_id) for curve in CURVES]
     + [(market, "bis_policy_reference") for market in BIS_MARKETS.values()]
     + [("TW-TWD", "cbc_public_rates")]
-    + [(COUNTRY_MAP[code].market_id, "oecd_fred_reference") for code, _, _, _ in FRED_SERIES.values()]
+    + [(COUNTRY_MAP[item.country].market_id, OECD_ADAPTER) for item in OECD_SERIES]
 )
