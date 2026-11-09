@@ -105,10 +105,27 @@ def test_every_substitute_documents_role_cadence_and_attribution():
         assert all("stlouisfed" not in endpoint for endpoint in source["endpoints"])
 
 
-def test_open_rights_questions_stay_explicit():
+def test_cp_bill_publication_follows_the_owner_cp_decision(monkeypatch):
+    import importlib
+
+    from seiche import source_decisions
+
     cpbill = registry.SOURCES["ALT-CPBILL"]
-    assert cpbill.redistribution_status == "metadata_only"
-    assert cpbill.terms_status == "unclear_dtcc_provenance" and "DTCC" in cpbill.owner_decision
+    # The terms reading is unchanged; the owner's recorded decision is what allows publication.
+    assert cpbill.terms_status == "unclear_dtcc_provenance"
+    assert source_decisions.allows(source_decisions.FED_CP)
+    assert cpbill.redistribution_status == "allowed"
+    assert source_decisions.FED_CP in cpbill.owner_decision and "DTCC" in cpbill.owner_decision
+    monkeypatch.setattr(source_decisions, "allows", lambda decision_id: False)
+    try:
+        assert importlib.reload(registry).SOURCES["ALT-CPBILL"].redistribution_status == "metadata_only"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(registry)
+    assert registry.SOURCES["ALT-CPBILL"].redistribution_status == "allowed"
+
+
+def test_open_rights_questions_stay_explicit():
     bis = registry.SOURCES["ALT-BISCBTA"]
     assert bis.terms_status == "unrestricted_with_conditions_free_only"
     assert "additional charge" in bis.terms_quote and "never" in bis.charge_rule
@@ -224,7 +241,7 @@ async def test_rows_for_returns_labelled_rows_best_rank_first():
     assert all(r.substitute_for == "NFCI" and r.substitute_class == "proxy" for r in rows)
     cp = [r for r in tedrate if r.substitute_id == "ALT-CPBILL"]
     assert cp and all(r.substitute_class == "close substitute" for r in cp)
-    assert all(r.redistribution_status == "metadata_only" for r in cp)
+    assert all(r.redistribution_status == "allowed" for r in cp)  # under the owner's CP decision
     assert jpn and all(r.unit == "JPY billions" and r.substitute_class == "close substitute" for r in jpn)
     assert requests.count("https://www.federalreserve.gov/econres/notes/feds-notes/fci_g_public_monthly_3yr.csv") == 1
 
