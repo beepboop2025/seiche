@@ -1299,8 +1299,8 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         evaluation_asof=datetime.now(UTC).replace(microsecond=0),
     )
 
-    from seiche.public_rights import money_desk
-    engine = money_desk(engine)
+    from seiche.public_rights import desk_proven, money_desk
+    engine = money_desk(engine, allow_whole=desk_proven(snap))
     out = _money_market_base(snap, engine, selector, ok=True)
     raw_sections = engine.get("sections")
     raw_sections = raw_sections if isinstance(raw_sections, list) else []

@@ -509,8 +509,8 @@ def _money_markets(
             "reason": "money-market freshness evaluation failed",
             "sections": [],
         }
-    from seiche.public_rights import money_desk
-    engine = money_desk(engine)
+    from seiche.public_rights import desk_proven, money_desk
+    engine = money_desk(engine, allow_whole=desk_proven(snapshot))
     return {
         "status": "restricted",
         "as_of": engine.get("asof"),

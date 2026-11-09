@@ -27,6 +27,10 @@ granted Seiche a licence beyond its published terms.
   https://www.federalreserve.gov/releases/cp/data/FRB_CP_xml.zip.
 - Adapter status: `fed_cp` captures carry `redistribution_status` `allowed`
   and the decision summary; the attribution names the Board's DTCC derivation.
+  In the atlas, the US pack declares the official-open, allowed `fed_cp`
+  adapter with `US.FED.CP_AA_NONFINANCIAL_90D_DIRECT` and
+  `US.FED.CP_AA_FINANCIAL_90D_DIRECT`; the H.15 copy of the same rates stays
+  off so each rate has one source.
 - Conditions: serve only the Board-published 90-day AA rates, never the
   underlying DTCC trade records; cite the Board.
 - Terms: https://www.federalreserve.gov/disclaimer.htm and
@@ -42,7 +46,10 @@ granted Seiche a licence beyond its published terms.
 - Adapter status: `bls_original` captures carry `allowed`, the decision
   summary, and the statement the Terms of Service require on every served
   copy: "BLS.gov cannot vouch for the data or analyses derived from these data
-  after the data have been retrieved from BLS.gov."
+  after the data have been retrieved from BLS.gov." In the atlas, the
+  `bls_cpi` hold is cleared and the US pack declares the allowed adapter,
+  polled once a day without a key, with `US.BLS.CPI_CORE_SA` and
+  `US.BLS.CPI_ENERGY_SA`.
 - Terms: https://www.bls.gov/developers/termsOfService.htm and
   https://www.bls.gov/opub/copyright-information.htm
 

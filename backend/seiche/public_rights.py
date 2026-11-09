@@ -585,13 +585,15 @@ def _merged_notices(node: Mapping) -> list:
     return out
 
 
-def money_desk(value: object) -> dict:
+def money_desk(value: object, *, allow_whole: bool = True) -> dict:
     """Project a saved USD desk without recomputation or source relabelling.
 
     Required funding cards retain their exact identity, date, unit and source
     even when restricted. A card is public when each of its inputs is an
     allowed direct acquisition; the desk-level regime, narratives, diagnostics
-    and charts are public only when every desk input is.
+    and charts are public only when every desk input is. A caller holding the
+    snapshot passes ``allow_whole=desk_proven(snapshot)`` so the desk's own
+    leg ids alone can never publish the whole desk.
     """
     node = value if isinstance(value, Mapping) else {}
     sections = node.get("sections")
@@ -602,7 +604,7 @@ def money_desk(value: object) -> dict:
                    for section in sections)):
         return {**metadata(node), "ok": False, "sections": [], "charts": {},
                 "reason": "Unexpected USD desk schema or shape; public values are withheld."}
-    if _desk_fully_direct(node, sections):
+    if allow_whole and _desk_fully_direct(node, sections):
         out = copy.deepcopy(dict(node))
         out["legal_notices"] = _merged_notices(node)
         out["publication_projection"] = {"policy": POLICY, "status": "public",
@@ -658,6 +660,14 @@ def money_desk(value: object) -> dict:
     out["legal_notices"] = _merged_notices(node)
     out["caveats"] = [REASON, "Retained direct-source observations keep their original clocks; missing values are not treated as calm."]
     return out
+
+
+def desk_proven(snapshot: object, *, surface: str = "free") -> bool:
+    """True only when the snapshot's provenance proves every USD desk input."""
+    if not isinstance(snapshot, Mapping):
+        return False
+    verdict = _Ledger(snapshot, surface).verdict(ENGINE_INPUTS.get("money_market"))
+    return verdict["status"] == "public"
 
 
 # ---------------------------------------------------------------------------
@@ -717,12 +727,16 @@ def _project_blocks(blocks: Mapping, table: Mapping[str, tuple[str, ...]], ledge
             out[name] = copy.deepcopy(value)
             continue
         if prefix == "engines" and name == "money_market":
-            desk = money_desk(value)
+            # The whole desk needs both its own leg ids and the snapshot's
+            # provenance to agree; otherwise it is projected card by card.
+            proven = ledger.verdict(table.get(name))
+            desk = money_desk(value, allow_whole=proven["status"] == "public")
             public = (desk.get("publication_projection") or {}).get("status") == "public"
-            verdicts[name] = ledger.verdict(table.get(name)) if public else {
-                "status": "card_projection", "sources": [], "restricted_inputs": []}
+            verdicts[name] = proven if public else {
+                "status": "card_projection", "sources": [],
+                "restricted_inputs": proven["restricted_inputs"]}
             if public:
-                used.update(verdicts[name]["sources"])
+                used.update(proven["sources"])
             out[name] = desk
             continue
         verdict = ledger.verdict(table.get(name))

@@ -7,6 +7,7 @@ copy, a blocked series, a missing decision or an unverifiable row withholds.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import io
 import json
@@ -526,6 +527,53 @@ def test_money_desk_without_the_cp_decision_withholds_cp_and_the_desk_narrative(
         assert _card(projected, name)["value"] is None
     for name in ("policy.sofr", "policy.sofr_minus_iorb", "unsecured.treasury_3m", "liquidity.reserves"):
         assert _card(projected, name)["value"] == _card(desk, name)["value"] is not None
+
+
+def test_board_serves_the_whole_desk_only_when_provenance_agrees():
+    desk = _direct_desk()
+    proven = public_rights.public_board({**board(), "engines": {"money_market": desk}})
+    assert proven["engines"]["money_market"]["publication_projection"]["status"] == "public"
+    assert proven["rights_projection"]["engines"]["money_market"]["status"] == "public"
+    # The desk still names only direct legs, but the snapshot's own provenance
+    # records a FRED copy of SOFR: the whole desk is no longer public.
+    unproven = public_rights.public_board({**board(fred_copies=("SOFR",)), "engines": {"money_market": desk}})
+    block = unproven["engines"]["money_market"]
+    assert block["regime"]["state"] == "CANNOT_ASSESS" and block["quant_read"] is None
+    verdict = unproven["rights_projection"]["engines"]["money_market"]
+    assert verdict["status"] == "card_projection"
+    assert [row["input"] for row in verdict["restricted_inputs"]] == ["SOFR"]
+
+
+def test_rest_mcp_and_world_need_the_snapshot_provenance_for_the_whole_desk(isolated, monkeypatch):
+    from fastapi import Response
+    from seiche.markets.world import project_world_markets
+
+    desk = _direct_desk()
+    assert desk["regime"]["state"] != "CANNOT_ASSESS"
+    monkeypatch.setattr(money_market, "refresh_for_evaluation", lambda value, **kwargs: copy.deepcopy(value))
+    for rows, whole in ((provenance(), "public"), (provenance(fred_copies=("SOFR",)), None), (None, None)):
+        snapshot = {"generated_at": "2026-11-09T00:00:00+00:00", "engines": {"money_market": copy.deepcopy(desk)}}
+        if rows is not None:
+            snapshot["provenance"] = rows
+        before = copy.deepcopy(snapshot)
+        monkeypatch.setattr(mcp_server, "_get_completed_snapshot", lambda snap=snapshot: snap)
+
+        async def completed(snap=snapshot):
+            return snap
+
+        monkeypatch.setattr(api.assemble, "snapshot", completed)
+        mcp = mcp_server.dispatch({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "money_market_context", "arguments": {"section": "all"}}}, public=True)["result"]
+        assert not mcp.get("isError")
+        rest = asyncio.run(api.money_market_context(Response()))
+        world = project_world_markets(snapshot, selector="money_markets",
+                                      evaluation_asof=datetime(2026, 11, 9, 12, tzinfo=UTC))["money_markets"]
+        for served_desk in (mcp["structuredContent"], rest, world):
+            assert (served_desk.get("publication_projection") or {}).get("status") == whole
+        for served_desk in (mcp["structuredContent"], rest):
+            state = served_desk["regime"]["state"]
+            assert state == (desk["regime"]["state"] if whole else "CANNOT_ASSESS")
+        assert snapshot == before
 
 
 def test_legacy_desk_without_acquisitions_keeps_its_fred_labels_and_stays_withheld():
