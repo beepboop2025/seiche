@@ -1308,12 +1308,18 @@ def _annualized_change_vol(values: list[float], cadence: str) -> float | None:
     return statistics.stdev(changes) * math.sqrt(_periods_per_year(cadence))
 
 
+# Calendar maxima for date-based ISO 8601 cadences, so a monthly or annual series never
+# ages early. Monthly packs (P1M) made /api/v2/markets/{id}/series raise KeyError 'M'
+# (HTTP 500 for AU-AUD on 2026-11-09) before months were listed.
+_DATE_CADENCE_SECONDS = {"D": 86400, "W": 7 * 86400, "M": 31 * 86400, "Y": 366 * 86400}
+
+
 def _cadence_seconds(cadence: str) -> float:
     if cadence.startswith("PT"):
         amount = int(cadence[2:-1])
         return amount * {"H": 3600, "M": 60, "S": 1}[cadence[-1]]
     amount = int(cadence[1:-1])
-    return amount * {"D": 86400, "W": 7 * 86400}[cadence[-1]]
+    return amount * _DATE_CADENCE_SECONDS[cadence[-1]]
 
 
 def _parse_utc(value: Any) -> datetime | None:

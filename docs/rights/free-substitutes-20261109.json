@@ -561,12 +561,12 @@
       "terms_quote": "Unless otherwise indicated, information on Board's website is in the public domain and may be copied and distributed without permission. Please cite to the Board as the source of the information. CP release: \"The Federal Reserve Board's CP release is derived from data supplied by The Depository Trust & Clearing Corporation (DTCC)\" (https://www.federalreserve.gov/releases/cp/about.htm).",
       "terms_checked": "2026-11-09",
       "terms_status": "unclear_dtcc_provenance",
-      "redistribution_status": "metadata_only",
+      "redistribution_status": "allowed",
       "cadence": "daily, business days",
       "history": "1997-01-02 onward",
       "attribution": "Source: Board of Governors of the Federal Reserve System, Commercial Paper release (AA financial, 90 days) and H.15 (3-month Treasury bill, secondary market). Spread computed by Seiche. The Board derives the CP rates from DTCC data.",
       "residual_risk": "Open. The CP leg is the same DTCC-derived data as DCPF3M.",
-      "owner_decision": "Whether DTCC provenance makes the Board CP rates an \"otherwise indicated\" case (the same decision that holds DCPN3M and DCPF3M). Until she decides, use it only for its internal role (ML pretraining) and publish no values.",
+      "owner_decision": "Decided seiche.source-use.2026-11-08.fed-cp: the owner accepted the DTCC origin of the Board CP rates on 2026-11-08, so this spread is published with the Board and DTCC credit. Without that recorded decision it falls back to metadata only.",
       "charge_rule": null,
       "endpoint_pattern": null,
       "measures": {
@@ -901,7 +901,7 @@
       "role": "ML pretraining rows only",
       "attribution": "Source: Board of Governors of the Federal Reserve System, Commercial Paper release (AA financial, 90 days) and H.15 (3-month Treasury bill, secondary market). Spread computed by Seiche. The Board derives the CP rates from DTCC data. Shown by Seiche as a close substitute for FRED TEDRATE, not as TEDRATE.",
       "notice": "Seiche substitute for FRED TEDRATE, class: close substitute. This is AA financial 3-month commercial paper minus 3-month Treasury bill (cp_aa_financial_3m_minus_tbill_3m) from Board of Governors of the Federal Reserve System, not TEDRATE itself (original source: computed by FRED from ICE LIBOR).",
-      "redistribution_status": "metadata_only",
+      "redistribution_status": "allowed",
       "condition": null
     },
     {

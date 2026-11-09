@@ -33,6 +33,7 @@ from types import ModuleType
 
 import httpx
 
+from seiche import source_decisions
 from seiche.sources.substitutes._common import (
     REDISTRIBUTION_STATUSES,
     SUBSTITUTE_CLASSES,
@@ -166,6 +167,11 @@ BLOCKED_FRED_IDS = frozenset(
 )
 CONDITIONAL_FRED_IDS = frozenset(FRED_ORIGINALS) - BLOCKED_FRED_IDS
 
+# The DTCC question for the Board CP rates is the owner's recorded decision; publication
+# follows it, so removing the decision withholds the spread again.
+_CP_BILL_STATUS = "allowed" if source_decisions.allows(source_decisions.FED_CP) else "metadata_only"
+
+
 _FRB_QUOTE = (
     "Unless otherwise indicated, information on Board's website is in the public domain "
     "and may be copied and distributed without permission. Please cite to the Board as "
@@ -271,16 +277,16 @@ SOURCES: dict[str, SubstituteSource] = {item.substitute_id: item for item in (
         _FRB_QUOTE + " CP release: \"The Federal Reserve Board's CP release is derived from "
         "data supplied by The Depository Trust & Clearing Corporation (DTCC)\" "
         "(https://www.federalreserve.gov/releases/cp/about.htm).",
-        "2026-11-09", "unclear_dtcc_provenance", "metadata_only",
+        "2026-11-09", "unclear_dtcc_provenance", _CP_BILL_STATUS,
         "daily, business days", "1997-01-02 onward",
         "Source: Board of Governors of the Federal Reserve System, Commercial Paper release "
         "(AA financial, 90 days) and H.15 (3-month Treasury bill, secondary market). Spread "
         "computed by Seiche. The Board derives the CP rates from DTCC data.",
         "Open. The CP leg is the same DTCC-derived data as DCPF3M.",
         owner_decision=(
-            "Whether DTCC provenance makes the Board CP rates an \"otherwise indicated\" case "
-            "(the same decision that holds DCPN3M and DCPF3M). Until she decides, use it only "
-            "for its internal role (ML pretraining) and publish no values."
+            "Decided " + source_decisions.FED_CP + ": the owner accepted the DTCC origin of the "
+            "Board CP rates on 2026-11-08, so this spread is published with the Board and DTCC "
+            "credit. Without that recorded decision it falls back to metadata only."
         ),
     ),
     SubstituteSource(
