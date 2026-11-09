@@ -56,7 +56,12 @@ inputs and are public:
 
 The money desk is public card by card. Its regime, narratives, diagnostics
 and charts are public only when every desk input is an allowed direct
-acquisition; the desk names each card's legs in `source_ids`.
+acquisition; the desk names each card's legs in `source_ids`. Those ids are
+not enough on their own: the board, `/api/money-markets`, the
+`money_market_context` tool and the world markets context also require the
+snapshot's provenance to prove every desk input (`public_rights.desk_proven`)
+before serving the whole desk. When the two records disagree, the desk is
+projected card by card.
 
 ## What stays withheld
 
