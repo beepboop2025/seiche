@@ -25,7 +25,7 @@ claude mcp add --transport http liquilens https://api.liquilens.in/mcp
 claude mcp add --transport http undertow https://api.seiche.info/undertow/mcp
 ```
 
-**Try this first:** What is the current US funding stress regime, and which dated funding events are next? Cite source dates and missing evidence.
+**Try this first:** Which US money-market funding channel looks most stretched against its own last three years, and what is the countercase? Cite source dates and anything stale.
 
 [Try it in your browser](https://liquilens.in/start/?task=funding) ·
 [Cursor configuration](https://liquilens.in/agents/cursor.json) ·
