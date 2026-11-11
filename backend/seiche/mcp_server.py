@@ -1849,7 +1849,7 @@ TOOLS: dict[str, tuple] = {
         "Inspect USD, India and country funding metrics",
         "Inspect a funding desk's rates, spreads, policy corridor, liquidity buffers "
         "and source-level evidence. Choose this for detailed funding metrics; use "
-        "funding_stress_now for the headline US stress regime, world_markets_context "
+        "world_markets_context "
         "for a cross-asset overview, or market_workbench for FX and accepted China "
         "time series. Start with section='summary' for USD. "
         "Use section='countries' for the public-source country catalog, or add country='JP' "
