@@ -70,6 +70,7 @@ MONEY_MARKET_SECTION_IDS = (
 MONEY_MARKET_SELECTORS = (
     "summary",
     "india",
+    "india_states",
     "countries",
     "diagnostics",
     *MONEY_MARKET_SECTION_IDS,
@@ -1253,6 +1254,21 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         out["snapshot_generated_at"] = data.get("generated_at")
         return out
 
+    if selector == "india_states":
+        from seiche import india_sdl
+        data = india_sdl.read()
+        data["weekly"] = data["weekly"][-26:]       # the REST route serves the full series
+        out = _money_market_base({}, {"asof": data["asof"],
+                                      "plain_language": "RBI's weekly state government securities auctions: latest "
+                                                        "auction day, 52-week issuance and cut-offs by state.",
+                                      "coverage": f"{data['source']['releases']} RBI releases from "
+                                                  f"{data['source']['first_auction']}",
+                                      "caveats": data["caveats"]}, selector, ok=True)
+        out["india_states"] = data
+        out["sources"] = [{"publisher": "Reserve Bank of India", "title": data["source"]["title"],
+                           "url": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx"}]
+        return out
+
     if selector == "india":
         from seiche import india_funding
         india = india_funding.read(include_history=False)
@@ -1859,6 +1875,8 @@ TOOLS: dict[str, tuple] = {
         "desk: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions "
         "and tails; repo-segment rates and volumes; CP-Treasury spreads; bills and "
         "cash curve; liquidity buffers and Fed facilities; and MMF repo plumbing. "
+        "Use section='india_states' for RBI's weekly state government securities (SDL) auctions by state "
+        "(latest auction, 52-week issuance, cut-offs and bid cover). "
         "Use section='india' for the India funding, RBI liquidity, policy and sovereign-curve desk "
         "from a bounded canonical observation read. It keeps benchmark identities, date alignment, "
         "curve movements and mechanism hypotheses separate. India defaults to view='full' for compatibility; "
