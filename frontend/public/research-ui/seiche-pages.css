@@ -1,0 +1,58 @@
+/* Seiche static pages on the family record edition (12 Nov 2026).
+   Linked after the vendored research.css and family-tokens.css by
+   scripts/research_shell.py. The family header carries the wordmark, the
+   product switcher, API & MCP and Seiche's tabs; a page's own navigation stays
+   as a section switcher under it, as on liquilens.in. Every colour is a
+   --research-* token. No family value is written here. */
+
+/* The page's own wordmark is now in the family header. */
+html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header), body > nav[aria-label="Primary"]) :is(.wordmark, .brand) { display: none; }
+html.research-interface main > nav[aria-label="Products"] { display: none; }
+
+/* A page's own navigation: the family section switcher (a quiet row of underlined links). */
+html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header)):not(:has(h1)) {
+  box-sizing: border-box; max-width: 1400px; margin: 10px auto 0; padding: 10px 18px; min-height: 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+  border: 0; border-bottom: 1px solid var(--research-line); border-radius: 0;
+  background: transparent; position: static; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none;
+  font-family: var(--research-font); font-size: 12.5px; color: var(--research-muted);
+}
+html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header)):not(:has(h1)) nav {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; border: 0; background: none;
+}
+html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header)):not(:has(h1)) a {
+  color: var(--research-text-secondary); font-size: 12.5px; letter-spacing: 0; text-transform: none;
+  text-decoration: underline; text-decoration-color: var(--research-line-strong); text-underline-offset: 4px;
+  padding: 2px 0; background: none; border: 0; border-radius: 0;
+  transition: color var(--research-duration-fast) var(--research-ease), text-decoration-color var(--research-duration-fast) var(--research-ease);
+}
+html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header)):not(:has(h1)) a:hover,
+html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header)):not(:has(h1)) a[aria-current="page"] {
+  color: var(--research-text); text-decoration-color: var(--research-text);
+}
+html.research-interface :is(header.mast .edition, body > .top .crumb, header.support-header span) { color: var(--research-muted); font-size: 12px; letter-spacing: 0; text-transform: none; }
+html.research-interface body > nav[aria-label="Primary"] { max-width: 1400px; margin: 10px auto 0; padding: 0 18px; font-size: 12.5px; }
+
+/* Reading pages set their measure on <body> (guide, articles, privacy, terms,
+   support): the family header still spans the window, as on every other page. */
+html.research-interface body:is(:has(> .top), :has(> h1), :has(> header.support-header)) { padding-top: 0; }
+html.research-interface body:is(:has(> .top), :has(> h1), :has(> header.support-header)) > .research-header { width: auto; margin-inline: calc(50% - 50vw); margin-bottom: 28px; }
+html.research-interface:has(body > .research-header) { overflow-x: clip; }
+
+/* Page type: the family faces and weights. Pages keep their own layout. */
+html.research-interface main :is(h1) { font-family: var(--research-display); }
+html.research-interface :is(.kicker, .eyebrow, .label) { letter-spacing: 0; text-transform: none; color: var(--research-muted); font-family: var(--research-font); }
+html.research-interface :is(code, pre, kbd, samp, .code, .mono) { font-family: var(--research-code); }
+html.research-interface :focus-visible { outline: var(--research-focus-width) solid var(--research-focus); outline-offset: var(--research-focus-offset); }
+html.research-interface table { font-variant-numeric: tabular-nums; }
+
+/* A page that set its own field keeps the family field instead. */
+html.research-interface body { background: var(--research-bg); color: var(--research-text); }
+
+@media (max-width: 760px) {
+  html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header)):not(:has(h1)) { margin-top: 8px; padding: 8px 16px; }
+  html.research-interface body > nav[aria-label="Primary"] { padding: 0 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.research-interface * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}

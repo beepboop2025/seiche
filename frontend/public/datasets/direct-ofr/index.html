@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="research-interface" data-product="seiche">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -14,29 +14,29 @@
       type="application/ld+json"
       href="https://seiche.info/datasets/direct-ofr/catalog.jsonld"
     />
-    <style>
+    <link rel="stylesheet" href="/research-ui/research.css"><link rel="stylesheet" href="/research-ui/family-tokens.css"><link rel="stylesheet" href="/research-ui/seiche-pages.css"><style>
       :root {
         color-scheme: dark;
-        --ink: #f3efe5;
-        --muted: #b6b1a7;
-        --line: #343a3e;
-        --accent: #79d7c5;
-        --panel: #171b1d;
+        --ink: var(--research-text);
+        --muted: var(--research-text-secondary);
+        --line: var(--research-line);
+        --accent: var(--research-accent);
+        --panel: var(--research-raised);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        background: #0d1011;
+        background: var(--research-surface);
         color: var(--ink);
-        font: 16px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font: 16px/1.65 var(--research-code);
       }
       main, nav { width: min(920px, calc(100% - 36px)); margin: auto; }
       nav { padding: 24px 0; }
       nav a { color: var(--muted); text-decoration: none; }
       header { padding: 72px 0 36px; border-bottom: 1px solid var(--line); }
       .eyebrow { color: var(--accent); letter-spacing: .12em; text-transform: uppercase; }
-      h1 { max-width: 780px; margin: 12px 0 20px; font: 600 clamp(2.1rem, 6vw, 4.6rem)/1.04 Georgia, serif; }
-      h2 { margin-top: 52px; font: 600 1.45rem/1.3 Georgia, serif; }
+      h1 { max-width: 780px; margin: 12px 0 20px; font: 600 clamp(2.1rem, 6vw, 4.6rem)/1.04 var(--research-display); }
+      h2 { margin-top: 52px; font: 600 1.45rem/1.3 var(--research-display); }
       p { max-width: 76ch; }
       .lede { color: var(--muted); font-size: 1.08rem; }
       .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; margin: 34px 0; background: var(--line); border: 1px solid var(--line); }
@@ -56,9 +56,9 @@
       }
     </style>
   </head>
-  <body>
+  <body><a class="research-skip" href="#main">Skip to content</a><header class="research-header"><div class="research-mast"><a class="research-identity" href="/"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14"/><path d="M7 17c5-8 9 8 14 0s7-5 8-2M7 23c5-8 9 8 14 0s7-5 8-2"/></svg><span><strong>Seiche</strong></span></a><nav class="research-network" aria-label="Products"><a href="https://liquilens.in/">LiquiLens</a><a href="/" aria-current="page">Seiche</a><a href="https://liquilens-undertow.com/">Undertow</a></nav><a class="research-api" href="/developers">API &amp; MCP</a></div><nav class="research-tabs" aria-label="Seiche sections"><a href="/#today">Today</a><a href="/money-markets/">Money markets</a><a href="/gift-city/">GIFT City</a><a href="/#geography">India geography</a><a href="/#workbench">Workbench</a><a href="/#corpus">Market atlas</a><a href="/#research">Research</a><a href="/markets/">World markets</a><a href="/articles/">Published research</a><a href="/use-cases">Use cases</a><a href="/guide">Guide</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav></header>
     <nav aria-label="Primary"><a href="/">← Seiche</a></nav>
-    <main>
+    <main id="main">
       <header>
         <div class="eyebrow">Research dataset · draft, not submitted</div>
         <h1>Audited direct-OFR research snapshot</h1>
@@ -135,5 +135,5 @@
         <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a>
       </footer>
     </main>
-  </body>
+  <script type="module" src="/research-ui/context.js"></script></body>
 </html>

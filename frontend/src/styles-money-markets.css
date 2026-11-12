@@ -1,8 +1,8 @@
 .mm-shell {
-  --mm-water: #07090f;
-  --mm-shelf: #0c0f18;
-  --mm-shelf-lift: #121621;
-  --mm-rail: #3c4355;
+  --mm-water: var(--research-surface);
+  --mm-shelf: var(--research-surface);
+  --mm-shelf-lift: var(--research-raised);
+  --mm-rail: var(--research-line-strong);
   --mm-clear: var(--calm);
   --mm-turn: var(--erosion);
   --mm-fault: var(--stress);
@@ -44,8 +44,8 @@
   border: 1px solid var(--panel-edge);
   border-radius: var(--r-lg);
   background:
-    radial-gradient(circle at 80% 14%, rgba(124, 205, 180, .12), transparent 24%),
-    linear-gradient(135deg, rgba(156, 143, 232, .08), transparent 42%),
+    radial-gradient(circle at 80% 14%, color-mix(in srgb, var(--research-good) 12%, transparent), transparent 24%),
+    linear-gradient(135deg, color-mix(in srgb, var(--research-accent) 8%, transparent), transparent 42%),
     var(--mm-water);
 }
 
@@ -56,8 +56,8 @@
   content: "";
   opacity: .62;
   background:
-    repeating-linear-gradient(90deg, transparent 0, transparent 69px, rgba(237, 238, 244, .025) 70px),
-    repeating-linear-gradient(0deg, transparent 0, transparent 39px, rgba(237, 238, 244, .02) 40px);
+    repeating-linear-gradient(90deg, transparent 0, transparent 69px, color-mix(in srgb, var(--research-text) 2.5%, transparent) 70px),
+    repeating-linear-gradient(0deg, transparent 0, transparent 39px, color-mix(in srgb, var(--research-text) 2%, transparent) 40px);
   mask-image: linear-gradient(90deg, black, transparent 88%);
 }
 
@@ -68,12 +68,12 @@
   width: 310px;
   height: 160px;
   content: "";
-  border: 1px solid rgba(124, 205, 180, .16);
+  border: 1px solid color-mix(in srgb, var(--research-good) 16%, transparent);
   border-radius: 50%;
   box-shadow:
-    0 -28px 0 -27px rgba(124, 205, 180, .24),
-    0 -56px 0 -55px rgba(124, 205, 180, .2),
-    0 -84px 0 -83px rgba(124, 205, 180, .14);
+    0 -28px 0 -27px color-mix(in srgb, var(--research-good) 24%, transparent),
+    0 -56px 0 -55px color-mix(in srgb, var(--research-good) 20%, transparent),
+    0 -84px 0 -83px color-mix(in srgb, var(--research-good) 14%, transparent);
 }
 
 .mm-hero__index {
@@ -163,7 +163,7 @@
   border: 1px solid var(--panel-edge-2);
   border-radius: 999px;
   color: var(--dim);
-  background: rgba(255, 255, 255, .025);
+  background: color-mix(in srgb, var(--research-text) 2.5%, transparent);
   font-family: var(--mono);
   font-size: 8.5px;
   font-weight: 500;
@@ -174,33 +174,33 @@
 }
 
 .mm-state--fresh {
-  border-color: rgba(124, 205, 180, .36);
+  border-color: color-mix(in srgb, var(--research-good) 36%, transparent);
   color: var(--calm);
-  background: rgba(124, 205, 180, .07);
+  background: color-mix(in srgb, var(--research-good) 7%, transparent);
 }
 
 .mm-state--aging {
-  border-color: rgba(221, 179, 118, .38);
+  border-color: color-mix(in srgb, var(--research-warn) 38%, transparent);
   color: var(--erosion);
-  background: rgba(221, 179, 118, .07);
+  background: color-mix(in srgb, var(--research-warn) 7%, transparent);
 }
 
 .mm-state--stale {
-  border-color: rgba(229, 154, 122, .4);
+  border-color: color-mix(in srgb, var(--research-bad) 40%, transparent);
   color: var(--strain);
-  background: rgba(229, 154, 122, .07);
+  background: color-mix(in srgb, var(--research-bad) 7%, transparent);
 }
 
 .mm-state--dead {
-  border-color: rgba(239, 128, 120, .42);
+  border-color: color-mix(in srgb, var(--research-bad) 42%, transparent);
   color: var(--stress);
-  background: rgba(239, 128, 120, .08);
+  background: color-mix(in srgb, var(--research-bad) 8%, transparent);
 }
 
 .mm-state--restricted {
-  border-color: rgba(156, 143, 232, .38);
+  border-color: color-mix(in srgb, var(--research-accent) 38%, transparent);
   color: var(--accent-soft);
-  background: rgba(156, 143, 232, .07);
+  background: color-mix(in srgb, var(--research-accent) 7%, transparent);
 }
 
 .mm-mode-note {
@@ -209,9 +209,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 15px;
-  border: 1px solid rgba(221, 179, 118, .32);
+  border: 1px solid color-mix(in srgb, var(--research-warn) 32%, transparent);
   border-radius: var(--r-md);
-  background: rgba(221, 179, 118, .07);
+  background: color-mix(in srgb, var(--research-warn) 7%, transparent);
   color: var(--dim);
   font-size: 11.5px;
   line-height: 1.55;
@@ -236,7 +236,7 @@
 .mm-mode-note button:hover,
 .mm-empty button:hover {
   border-color: var(--accent);
-  background: rgba(156, 143, 232, .1);
+  background: color-mix(in srgb, var(--research-accent) 10%, transparent);
 }
 
 .mm-empty {
@@ -282,7 +282,7 @@
 .mm-global-read > div:first-child {
   padding: clamp(22px, 3vw, 38px);
   background:
-    radial-gradient(circle at 0 100%, rgba(156, 143, 232, .12), transparent 45%),
+    radial-gradient(circle at 0 100%, color-mix(in srgb, var(--research-accent) 12%, transparent), transparent 45%),
     var(--mm-shelf);
 }
 
@@ -320,7 +320,7 @@
 }
 
 .mm-counter {
-  background: linear-gradient(145deg, rgba(221, 179, 118, .05), transparent 72%);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--research-warn) 5%, transparent), transparent 72%);
 }
 
 .mm-selector,
@@ -384,7 +384,7 @@
 .mm-section-tabs button.is-active {
   border-color: var(--accent-deep);
   color: var(--accent-bright);
-  background: rgba(156, 143, 232, .08);
+  background: color-mix(in srgb, var(--research-accent) 8%, transparent);
 }
 
 .mm-market-select {
@@ -420,9 +420,9 @@
 .mm-market-tile.is-selected {
   border-color: var(--accent-dim);
   background:
-    linear-gradient(150deg, rgba(156, 143, 232, .1), transparent 64%),
+    linear-gradient(150deg, color-mix(in srgb, var(--research-accent) 10%, transparent), transparent 64%),
     var(--mm-shelf);
-  box-shadow: inset 0 0 0 1px rgba(156, 143, 232, .08);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--research-accent) 8%, transparent);
 }
 
 .mm-market-tile__top {
@@ -534,7 +534,7 @@
   padding: clamp(20px, 3vw, 34px);
   border-right: 1px solid var(--panel-edge);
   background:
-    linear-gradient(180deg, rgba(124, 205, 180, .025), transparent 56%),
+    linear-gradient(180deg, color-mix(in srgb, var(--research-good) 2.5%, transparent), transparent 56%),
     var(--mm-water);
 }
 
@@ -569,13 +569,13 @@
   min-height: 360px;
   margin: 0 auto;
   border: 1px solid var(--panel-edge);
-  border-top-color: rgba(124, 205, 180, .28);
-  border-bottom-color: rgba(156, 143, 232, .28);
+  border-top-color: color-mix(in srgb, var(--research-good) 28%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--research-accent) 28%, transparent);
   border-radius: 120px 120px 18px 18px;
   background:
-    linear-gradient(180deg, rgba(124, 205, 180, .055), transparent 30%, transparent 72%, rgba(156, 143, 232, .05)),
+    linear-gradient(180deg, color-mix(in srgb, var(--research-good) 5.5%, transparent), transparent 30%, transparent 72%, color-mix(in srgb, var(--research-accent) 5%, transparent)),
     var(--panel);
-  box-shadow: inset 0 0 70px rgba(0, 0, 0, .38);
+  box-shadow: inset 0 0 70px color-mix(in srgb, var(--research-bg) 38%, transparent);
 }
 
 .mm-ladder__rail::before {
@@ -586,7 +586,7 @@
   width: 1px;
   content: "";
   background: linear-gradient(var(--mm-clear), var(--mm-rail) 28%, var(--mm-rail) 72%, var(--mm-ledger));
-  box-shadow: 0 0 18px rgba(124, 205, 180, .18);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--research-good) 18%, transparent);
 }
 
 .mm-ladder__rail::after {
@@ -600,7 +600,7 @@
   border: 1px solid var(--calm);
   border-radius: 50%;
   background: var(--panel);
-  box-shadow: 0 0 11px rgba(124, 205, 180, .48);
+  box-shadow: 0 0 11px color-mix(in srgb, var(--research-good) 48%, transparent);
 }
 
 .mm-ladder__rung {
@@ -637,11 +637,11 @@
   gap: 10px;
   padding: 7px 10px;
   transform: translate(-50%, 50%);
-  border: 1px solid rgba(124, 205, 180, .7);
+  border: 1px solid color-mix(in srgb, var(--research-good) 70%, transparent);
   border-radius: 4px;
   color: var(--text);
-  background: #0e1718;
-  box-shadow: 0 0 28px rgba(124, 205, 180, .16);
+  background: var(--research-surface);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--research-good) 16%, transparent);
   transition: bottom .48s var(--rise);
 }
 
@@ -652,7 +652,7 @@
   width: 28px;
   height: 1px;
   content: "";
-  background: rgba(124, 205, 180, .62);
+  background: color-mix(in srgb, var(--research-good) 62%, transparent);
 }
 
 .mm-ladder__marker::before {
@@ -702,7 +702,7 @@
   padding: 17px 18px;
   border: 1px solid var(--panel-edge);
   border-bottom: 0;
-  background: rgba(17, 19, 29, .7);
+  background: color-mix(in srgb, var(--research-raised) 70%, transparent);
 }
 
 .mm-ladder__readout > div:first-child {
@@ -810,7 +810,7 @@
 }
 
 .mm-coverage-card {
-  background: linear-gradient(135deg, rgba(156, 143, 232, .075), transparent 70%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--research-accent) 7.5%, transparent), transparent 70%);
 }
 
 .mm-coverage-bar {
@@ -925,7 +925,7 @@
 .mm-table td {
   padding: 13px 15px;
   vertical-align: top;
-  border-right: 1px solid rgba(237, 238, 244, .05);
+  border-right: 1px solid color-mix(in srgb, var(--research-text) 5%, transparent);
   border-bottom: 1px solid var(--panel-edge);
   color: var(--dim);
   text-align: left;
@@ -949,7 +949,7 @@
 }
 
 .mm-table tbody tr:hover {
-  background: rgba(156, 143, 232, .025);
+  background: color-mix(in srgb, var(--research-accent) 2.5%, transparent);
 }
 
 .mm-table tbody th {
@@ -1016,7 +1016,7 @@
   padding: clamp(22px, 3vw, 32px);
   border-left: 1px solid var(--panel-edge);
   background:
-    linear-gradient(150deg, rgba(239, 128, 120, .04), transparent 60%),
+    linear-gradient(150deg, color-mix(in srgb, var(--research-bad) 4%, transparent), transparent 60%),
     var(--mm-water);
 }
 
@@ -1052,7 +1052,7 @@
 .mm-usd-desk {
   border-color: var(--accent-deep);
   background:
-    radial-gradient(circle at 100% 0, rgba(156, 143, 232, .08), transparent 30%),
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--research-accent) 8%, transparent), transparent 30%),
     var(--panel);
 }
 
@@ -1240,7 +1240,7 @@
   gap: 12px 18px;
   padding: 18px 20px;
   border-top: 1px solid var(--panel-edge);
-  background: linear-gradient(90deg, rgba(156, 143, 232, .055), transparent 65%);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--research-accent) 5.5%, transparent), transparent 65%);
 }
 
 .mm-legal h3 {
@@ -1303,7 +1303,7 @@
   grid-template-columns: minmax(220px, .55fr) minmax(280px, .8fr) minmax(0, 1.35fr);
   border-top: 1px solid var(--panel-edge);
   background:
-    linear-gradient(110deg, rgba(156, 143, 232, .06), transparent 44%),
+    linear-gradient(110deg, color-mix(in srgb, var(--research-accent) 6%, transparent), transparent 44%),
     var(--mm-water);
 }
 
@@ -1827,8 +1827,8 @@
   overflow: hidden;
   border: 1px solid var(--panel-edge);
   border-radius: var(--r-lg);
-  background: rgba(7, 9, 15, .9);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, .32);
+  background: color-mix(in srgb, var(--research-surface) 90%, transparent);
+  box-shadow: 0 14px 38px color-mix(in srgb, var(--research-bg) 32%, transparent);
   backdrop-filter: blur(18px);
 }
 
@@ -1877,7 +1877,7 @@
 .mm-view-nav button:hover,
 .mm-view-nav button.is-active {
   color: var(--text);
-  background: linear-gradient(180deg, rgba(156, 143, 232, .08), transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--research-accent) 8%, transparent), transparent);
 }
 
 .mm-view-nav button.is-active::after {
@@ -1980,9 +1980,9 @@
   overflow: hidden;
   border-right: 1px solid var(--panel-edge);
   background:
-    repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), rgba(237, 238, 244, .035) 10%),
-    repeating-linear-gradient(0deg, transparent 0, transparent calc(25% - 1px), rgba(237, 238, 244, .045) 25%),
-    radial-gradient(circle at 52% 48%, rgba(156, 143, 232, .06), transparent 44%);
+    repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), color-mix(in srgb, var(--research-text) 3.5%, transparent) 10%),
+    repeating-linear-gradient(0deg, transparent 0, transparent calc(25% - 1px), color-mix(in srgb, var(--research-text) 4.5%, transparent) 25%),
+    radial-gradient(circle at 52% 48%, color-mix(in srgb, var(--research-accent) 6%, transparent), transparent 44%);
 }
 
 .mm-sonar__bands {
@@ -1993,15 +1993,15 @@
 }
 
 .mm-sonar__bands i {
-  border-top: 1px dashed rgba(237, 238, 244, .1);
+  border-top: 1px dashed color-mix(in srgb, var(--research-text) 10%, transparent);
 }
 
 .mm-sonar__bands i:first-child {
-  background: linear-gradient(180deg, rgba(239, 128, 120, .055), transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--research-bad) 5.5%, transparent), transparent);
 }
 
 .mm-sonar__bands i:nth-child(2) {
-  background: rgba(221, 179, 118, .02);
+  background: color-mix(in srgb, var(--research-warn) 2%, transparent);
 }
 
 .mm-sonar__axis,
@@ -2048,8 +2048,8 @@
   border: 1px solid var(--panel-edge-2);
   border-radius: 5px;
   color: var(--text);
-  background: #0e111a;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .42);
+  background: var(--research-raised);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--research-bg) 42%, transparent);
   transition: transform .18s var(--rise), border-color .18s var(--ease), box-shadow .18s var(--ease);
 }
 
@@ -2058,7 +2058,7 @@
   z-index: 50 !important;
   transform: translate(-50%, -50%) scale(1.1);
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(156, 143, 232, .12), 0 10px 30px rgba(0, 0, 0, .6);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--research-accent) 12%, transparent), 0 10px 30px color-mix(in srgb, var(--research-bg) 60%, transparent);
 }
 
 .mm-sonar__point b,
@@ -2068,13 +2068,13 @@
 }
 
 .mm-sonar__point span { color: var(--faint); }
-.mm-sonar__point--stress { border-color: rgba(239, 128, 120, .58); background: #191013; }
+.mm-sonar__point--stress { border-color: color-mix(in srgb, var(--research-bad) 58%, transparent); background: var(--research-raised); }
 .mm-sonar__point--stress span { color: var(--stress); }
-.mm-sonar__point--watch { border-color: rgba(221, 179, 118, .52); background: #17140f; }
+.mm-sonar__point--watch { border-color: color-mix(in srgb, var(--research-warn) 52%, transparent); background: var(--research-surface); }
 .mm-sonar__point--watch span { color: var(--erosion); }
-.mm-sonar__point--normal { border-color: rgba(124, 205, 180, .38); }
+.mm-sonar__point--normal { border-color: color-mix(in srgb, var(--research-good) 38%, transparent); }
 .mm-sonar__point--normal span { color: var(--calm); }
-.mm-sonar__point--low { border-color: rgba(135, 158, 216, .42); }
+.mm-sonar__point--low { border-color: color-mix(in srgb, var(--research-accent) 42%, transparent); }
 .mm-sonar__point--low span { color: var(--chart-slate); }
 .mm-sonar__point--unknown { border-style: dashed; color: var(--faint); }
 
@@ -2112,7 +2112,7 @@
   background: transparent;
 }
 
-.mm-sonar__ranking button:hover { background: rgba(255, 255, 255, .025); }
+.mm-sonar__ranking button:hover { background: color-mix(in srgb, var(--research-text) 2.5%, transparent); }
 .mm-sonar__ranking button > span { color: var(--ghost); font-family: var(--mono); font-size: 8px; }
 .mm-sonar__ranking button > b { font-family: var(--mono); font-size: 11px; }
 .mm-sonar__ranking button > i { color: var(--calm); font-family: var(--mono); font-size: 10px; font-style: normal; }
@@ -2258,7 +2258,7 @@
 }
 
 .mm-brief-actions button:last-child { border-right: 0; }
-.mm-brief-actions button:hover { background: linear-gradient(145deg, rgba(156, 143, 232, .09), transparent); }
+.mm-brief-actions button:hover { background: linear-gradient(145deg, color-mix(in srgb, var(--research-accent) 9%, transparent), transparent); }
 .mm-brief-actions span { color: var(--accent-soft); font-family: var(--mono); font-size: 8px; letter-spacing: .1em; }
 .mm-brief-actions b { font-size: 15px; font-weight: 500; }
 .mm-brief-actions small { color: var(--faint); font-size: 9.5px; }
@@ -2273,7 +2273,7 @@
   font-size: 9px;
   white-space: nowrap;
 }
-.mm-open-button:hover { border-color: var(--accent); background: rgba(156, 143, 232, .08); }
+.mm-open-button:hover { border-color: var(--accent); background: color-mix(in srgb, var(--research-accent) 8%, transparent); }
 
 /* Optional local research preferences; all evidence still comes from the atlas. */
 .mm-watchlist {
@@ -2368,7 +2368,7 @@
 .mm-distribution figcaption p { margin-top: 6px; color: var(--faint); font-size: 9.5px; }
 .mm-distribution svg { display: block; width: 100%; min-height: 210px; margin-top: 12px; }
 .mm-distribution__axis { stroke: var(--panel-edge-2); stroke-width: 1; }
-.mm-distribution__bar { fill: rgba(124, 205, 180, .35); stroke: rgba(124, 205, 180, .6); stroke-width: .5; }
+.mm-distribution__bar { fill: color-mix(in srgb, var(--research-good) 35%, transparent); stroke: color-mix(in srgb, var(--research-good) 60%, transparent); stroke-width: .5; }
 .mm-distribution__latest { stroke: var(--stress); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .mm-distribution__label { fill: var(--stress); font: 9px var(--mono); letter-spacing: .08em; }
 .mm-distribution__tick { fill: var(--faint); font: 9px var(--mono); }
@@ -2407,8 +2407,8 @@
   border: 1px solid var(--panel-edge);
   border-radius: var(--r-lg);
   background:
-    linear-gradient(118deg, rgba(239, 128, 120, .075), transparent 34%),
-    radial-gradient(circle at 78% 42%, rgba(156, 143, 232, .12), transparent 28%),
+    linear-gradient(118deg, color-mix(in srgb, var(--research-bad) 7.5%, transparent), transparent 34%),
+    radial-gradient(circle at 78% 42%, color-mix(in srgb, var(--research-accent) 12%, transparent), transparent 28%),
     var(--mm-water);
 }
 
@@ -2445,11 +2445,11 @@
   position: absolute;
   width: 190px;
   height: 190px;
-  border: 1px solid rgba(156, 143, 232, .25);
+  border: 1px solid color-mix(in srgb, var(--research-accent) 25%, transparent);
   border-radius: 50%;
 }
-.mm-china-thesis__mark i:nth-child(2) { width: 130px; height: 130px; border-color: rgba(124, 205, 180, .3); }
-.mm-china-thesis__mark i:nth-child(3) { width: 68px; height: 68px; border-color: rgba(239, 128, 120, .35); }
+.mm-china-thesis__mark i:nth-child(2) { width: 130px; height: 130px; border-color: color-mix(in srgb, var(--research-good) 30%, transparent); }
+.mm-china-thesis__mark i:nth-child(3) { width: 68px; height: 68px; border-color: color-mix(in srgb, var(--research-bad) 35%, transparent); }
 .mm-china-thesis__mark::before,
 .mm-china-thesis__mark::after { position: absolute; width: 230px; height: 1px; content: ""; background: linear-gradient(90deg, transparent, var(--panel-edge-2), transparent); }
 .mm-china-thesis__mark::after { transform: rotate(90deg); }
@@ -2501,17 +2501,17 @@
   border-radius: 999px;
   background:
     linear-gradient(90deg,
-      rgba(124, 205, 180, .24) 0 25%,
-      rgba(135, 158, 216, .22) 25% 50%,
-      rgba(221, 179, 118, .25) 50% 75%,
-      rgba(239, 128, 120, .28) 75% 100%);
+      color-mix(in srgb, var(--research-good) 24%, transparent) 0 25%,
+      color-mix(in srgb, var(--research-accent) 22%, transparent) 25% 50%,
+      color-mix(in srgb, var(--research-warn) 25%, transparent) 50% 75%,
+      color-mix(in srgb, var(--research-bad) 28%, transparent) 75% 100%);
 }
 
 .mm-china-pressure-plot__scale > i {
   position: absolute;
   inset: 50% 0 auto;
   height: 1px;
-  background: rgba(237, 238, 244, .25);
+  background: color-mix(in srgb, var(--research-text) 25%, transparent);
 }
 
 .mm-china-pressure-plot__scale > b {
@@ -2524,7 +2524,7 @@
   border: 2px solid var(--text);
   border-radius: 5px;
   background: var(--mm-water);
-  box-shadow: 0 0 18px rgba(237, 238, 244, .2);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--research-text) 20%, transparent);
 }
 
 .mm-china-pressure-plot__scale > b span {
@@ -2540,7 +2540,7 @@
 }
 
 .mm-china-pressure-plot.is-missing .mm-china-pressure-plot__scale {
-  background: repeating-linear-gradient(135deg, rgba(122, 128, 148, .09) 0 6px, transparent 6px 12px);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--research-muted) 9%, transparent) 0 6px, transparent 6px 12px);
 }
 
 .mm-china-pressure-plot__scale > strong {
@@ -2608,7 +2608,7 @@
 .mm-china-atlas strong { font-family: var(--mono); font-size: 25px; font-weight: 500; }
 .mm-china-atlas small { color: var(--faint); }
 .mm-china-atlas button { width: fit-content; margin-top: 5px; padding: 8px 12px; border: 1px solid var(--accent-deep); border-radius: 999px; color: var(--accent-bright); background: transparent; font-size: 9px; }
-.mm-china-atlas button:hover { border-color: var(--accent); background: rgba(156, 143, 232, .08); }
+.mm-china-atlas button:hover { border-color: var(--accent); background: color-mix(in srgb, var(--research-accent) 8%, transparent); }
 
 .mm-notes-intro {
   display: grid;

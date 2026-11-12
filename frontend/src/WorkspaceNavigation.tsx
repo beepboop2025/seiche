@@ -12,13 +12,22 @@ export default function WorkspaceNavigation({ tab, goTab, openCommands, openHelp
   contextLink?: (href: string) => string;
 }) {
   const menu = useRef<HTMLDetailsElement>(null);
+  const row = useRef<HTMLElement>(null);
   useEffect(() => { if (menu.current) menu.current.open = false; }, [tab]);
+  // On a narrow screen the row scrolls sideways: keep the current tab in view without moving the page.
+  useEffect(() => {
+    const nav = row.current;
+    const current = nav?.querySelector<HTMLElement>(':scope > [aria-current="page"]') ?? menu.current;
+    if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollLeft = Math.max(0, current.offsetLeft - (nav.clientWidth - current.offsetWidth) / 2);
+  }, [tab]);
   const link = (target: TerminalTab) => <a key={target} href={`#${target.toLowerCase()}`} aria-current={target === tab ? "page" : undefined} onClick={(event) => {
     event.preventDefault();
     if (menu.current) menu.current.open = false;
     goTab(target);
   }}>{tabLabel(target)}</a>;
-  return <nav className="workspace-tabs research-desk-tabs" aria-label="Funding desk tools">
+  // The family tab row (.research-tabs): text links, the current tab underlined in paper white.
+  return <nav ref={row} className="research-tabs workspace-tabs" aria-label="Funding desk tools">
     {(["TODAY", "MONEY MARKETS", "GIFT CITY", "GEOGRAPHY", "WORKBENCH", "CORPUS", "RESEARCH"] as TerminalTab[]).map(link)}
     <a href="https://liquilens.in/investors/">Company &amp; investors</a>
     <details className="workspace-tools" ref={menu} onKeyDown={(event) => { if (event.key === "Escape" && menu.current) { menu.current.open = false; menu.current.querySelector("summary")?.focus(); } }}>
