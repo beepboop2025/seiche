@@ -4329,7 +4329,8 @@ def _mcp_usage_headers(meter: dict | None) -> dict:
 def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
     text = (
         f"ERROR: daily MCP quota reached ({meter['used']}/{meter['limit']} "
-        f"tool calls today). Upgrade for a higher limit: {MCP_UPGRADE_URL}"
+        f"tool calls today). The free allowance resets at 00:00 UTC. Seiche has no "
+        f"paid tier; voluntary support does not change limits: {MCP_UPGRADE_URL}"
     )
     return {
         "jsonrpc": "2.0",
