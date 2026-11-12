@@ -15,10 +15,10 @@ PROVENANCE = {
         "present.py": {
             "repository": "beepboop2025/liquilens-evidence-carrier",
             "branch": "feat/evidence-presenter-20261112",
-            "commit": "a274864c51276bef48d4fab835126e69f13173df",
+            "commit": "0ab40e45fabea7038eafe2f35274f928db62a2cd",
             "path": "src/liquilens_evidence/present.py",
-            "bytes": 87764,
-            "sha256": "fdef09fd92635e780d2b17ea3641fb06f598e34a120101cff12553443bc19000",
+            "bytes": 88187,
+            "sha256": "082bee97c65c2c76a88872860bbc9bd53f57013f0879392e9f5a24abb5d90560",
             "pull_request": "https://github.com/beepboop2025/liquilens-evidence-carrier/pull/84",
         }
     },

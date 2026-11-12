@@ -1061,18 +1061,22 @@ _CHECK_WORDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
             "missed_fraud_masked",
             "insufficient_data",
         ),
-        "undertow": ("match", "mismatch", "indeterminate"),
+        # verify() results, then the sealed-record outcomes exactly as
+        # undertow_mm.engine.sealed_calls serves them. VOID and PENDING are
+        # not decided and raise.
+        "undertow": ("match", "mismatch", "indeterminate", "HIT", "MISS"),
     }
 )
 # Check results a surface must always print, never cut to fit or leave out.
 NEVER_HIDDEN_CHECKS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "liquilens": frozenset({"inconsistent", "missed", "missed_fraud_masked"}),
-        "undertow": frozenset({"mismatch"}),
+        "undertow": frozenset({"mismatch", "MISS"}),
     }
 )
+# Case-folded, so state_for refuses a check word in any case.
 _ALL_CHECK_WORDS = frozenset(
-    word for words in _CHECK_WORDS.values() for word in words
+    word.casefold() for words in _CHECK_WORDS.values() for word in words
 )
 _LIQUILENS_ROWS = {
     "observed": (OBSERVED, "Accepted filing evidence"),
@@ -1329,7 +1333,8 @@ def state_for(product: str, native: str, **qualifiers: object) -> ProductState:
     (Partial, "Partial"). Licence values such as ``consent_required`` are not
     states: they belong in the reading's rights and limits, and raise here.
 
-    Check words (LiquiLens reconciliation, Undertow ``verify()``) and name
+    Check words (LiquiLens reconciliation, Undertow ``verify()`` and sealed
+    outcomes) and name
     resolution statuses are not readings: they raise here; use
     ``check_label`` and ``resolution_notice``.
     """
@@ -1363,12 +1368,13 @@ def check_label(product: str, word: str) -> str:
     LiquiLens reconciliation (``reconciled``, ``within_rounding``,
     ``inconsistent``), LiquiLens historical replay verdicts (``clean``,
     ``clean_pass``, ``flagged``, ``warned``, ``false_alarm``, ``missed``,
-    ``missed_fraud_masked``, ``insufficient_data``) and Undertow ``verify()``
-    (``match``, ``mismatch``, ``indeterminate``). The word gets no display
-    state, mark or state colour. The words in ``NEVER_HIDDEN_CHECKS``
-    (``inconsistent``, ``missed``, ``missed_fraud_masked``, ``mismatch``) are
-    always printed, never cut to fit, and ``indeterminate`` is never a pass or
-    a mismatch. Unknown words raise.
+    ``missed_fraud_masked``, ``insufficient_data``), Undertow ``verify()``
+    (``match``, ``mismatch``, ``indeterminate``) and Undertow sealed-record
+    outcomes (``HIT``, ``MISS``). The word gets no display state, mark or state
+    colour. The words in ``NEVER_HIDDEN_CHECKS`` (``inconsistent``, ``missed``,
+    ``missed_fraud_masked``, ``mismatch``, ``MISS``) are always printed, never
+    cut to fit, and ``indeterminate`` is never a pass or a mismatch. Unknown
+    words raise, including the sealed outcomes ``VOID`` and ``PENDING``.
     """
 
     if not isinstance(product, str) or not isinstance(word, str):
