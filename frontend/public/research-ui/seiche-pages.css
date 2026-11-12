@@ -35,7 +35,8 @@ html.research-interface body > nav[aria-label="Primary"] { max-width: 1400px; ma
 
 /* Reading pages set their measure on <body> (guide, articles, privacy, terms,
    support): the family header still spans the window, as on every other page. */
-html.research-interface body:is(:has(> .top), :has(> h1), :has(> header.support-header)) { padding-top: 0; }
+/* research.css sets body { margin: 0 }; these pages centre their column again. */
+html.research-interface body:is(:has(> .top), :has(> h1), :has(> header.support-header)) { margin-inline: auto; padding-top: 0; }
 html.research-interface body:is(:has(> .top), :has(> h1), :has(> header.support-header)) > .research-header { width: auto; margin-inline: calc(50% - 50vw); margin-bottom: 28px; }
 html.research-interface:has(body > .research-header) { overflow-x: clip; }
 

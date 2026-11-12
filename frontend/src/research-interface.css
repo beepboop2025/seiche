@@ -60,6 +60,9 @@ html.research-interface[data-surface="desk"] {
 .research-header .workspace-tools__menu a { display: block; padding: 7px 0; color: var(--research-text); font-size: 13px; text-decoration: none; }
 .research-header .workspace-tools__menu a:hover { color: var(--research-accent); }
 .research-header .workspace-tools__menu a[aria-current="page"] { color: var(--research-text); text-decoration: underline; text-underline-offset: 4px; }
+/* Menu links are not tabs: no tab underline, no tab padding. */
+.research-header .research-tabs .workspace-tools__menu a,
+.research-header .research-tabs .workspace-tools__menu a[aria-current="page"] { border-bottom: 0; padding: 7px 0; white-space: normal; }
 .research-header .workspace-tabs .cmdk {
   flex: 0 0 auto; align-self: center; min-height: 28px; margin: 0; padding: 0 9px;
   border: 1px solid var(--research-line); border-radius: var(--research-radius-control); background: transparent;

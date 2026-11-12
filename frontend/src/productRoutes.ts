@@ -17,5 +17,7 @@ export function terminalTabFromHash(hash: string): TerminalTab | null {
 
 const LABELS: Partial<Record<TerminalTab, string>> = {
   GEOGRAPHY: "India geography", TODAY: "Today", BOARD: "Funding board", CORPUS: "Market atlas", "GIFT CITY": "GIFT City", "FX×MATERIALS": "FX and materials", "OIL×FUNDING": "Oil and funding",
+  // Sentence case, as on every family tab row.
+  "MONEY MARKETS": "Money markets", "TIME MACHINE": "Time machine",
 };
 export const tabLabel = (tab: TerminalTab): string => LABELS[tab] ?? tab.toLowerCase().replace(/(^| )\S/g, (letter) => letter.toUpperCase());
