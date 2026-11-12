@@ -1301,6 +1301,7 @@ def api_index() -> dict[str, Any]:
             "research_network": "/api/v2/research-network",
             "market_workbench": "/api/v2/market-workbench",
             "gift_city": "/api/v2/gift-city",
+            "india_sdl": "/api/v2/india-sdl",
             "india_funding": "/api/v2/india-funding",
             "country_funding": "/api/v2/country-funding",
             "gold_inventory_carry": "/api/v2/gift-city/gold-carry",
@@ -1847,6 +1848,7 @@ def _public_openapi_document() -> dict[str, Any]:
         "paths": {
             **paths,
             "/api/v2/gift-city": {"get": {"summary": "Dated India–UAE funding, FX and gold evidence", "responses": {"200": object_response}}},
+            "/api/v2/india-sdl": {"get": {"summary": "RBI state government securities auctions by state", "parameters": [{"name": "state", "in": "query", "required": False, "schema": {"type": "string", "maxLength": 40}}, {"name": "history", "in": "query", "required": False, "schema": {"type": "boolean"}}], "responses": {"200": object_response, "422": {"description": "Unknown state or parameter"}}}},
             "/api/v2/india-funding": {"get": {"summary": "Dated RBI funding, liquidity and India sovereign-curve evidence", "responses": {"200": object_response, "422": {"description": "No query parameters accepted"}}}},
             "/api/v2/country-funding": {"get": {"summary": "Public-source country funding coverage catalog", "responses": {"200": object_response}}},
             "/api/v2/country-funding/{country}": {"get": {
@@ -2646,6 +2648,23 @@ def gift_city_v2(request: Request, response: Response):
         raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})
     response.headers["Cache-Control"] = "public, max-age=60"
     return mcp_server.tool_gift_city({}, True)
+
+
+@app.get("/api/v2/india-sdl")
+def india_sdl_v2(request: Request, response: Response, state: str | None = None, history: bool = False):
+    """RBI's state government securities auctions: latest day, state table and weekly series, or one state."""
+    unknown = sorted(set(request.query_params) - {"state", "history"})
+    if unknown:
+        raise HTTPException(422, f"unknown query parameter(s): {', '.join(unknown)}")
+    if not _market_series_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})
+    from seiche import india_sdl
+    try:
+        result = india_sdl.read(state, include_history=history)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return result
 
 
 @app.get("/api/v2/india-funding")
