@@ -33,8 +33,8 @@ html.research-interface :is(header.topbar, header.mast, body > .top, main > .top
 html.research-interface :is(header.mast .edition, body > .top .crumb, header.support-header span) { color: var(--research-muted); font-size: 12px; letter-spacing: 0; text-transform: none; }
 html.research-interface body > nav[aria-label="Primary"] { max-width: 1400px; margin: 10px auto 0; padding: 0 18px; font-size: 12.5px; }
 
-/* Reading pages set their measure on <body> (guide, articles, privacy, terms,
-   support): the family header still spans the window, as on every other page. */
+/* Reading pages set their measure on <body> (guide, privacy, terms, support):
+   the family header still spans the window, as on every other page. */
 /* research.css sets body { margin: 0 }; these pages centre their column again. */
 html.research-interface body:is(:has(> .top), :has(> h1), :has(> header.support-header)) { margin-inline: auto; padding-top: 0; }
 html.research-interface body:is(:has(> .top), :has(> h1), :has(> header.support-header)) > .research-header { width: auto; margin-inline: calc(50% - 50vw); margin-bottom: 28px; }
