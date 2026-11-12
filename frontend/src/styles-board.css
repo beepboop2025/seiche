@@ -27,8 +27,8 @@
   font-variant-numeric: tabular-nums;
 }
 .sparkbox svg { width: 100%; height: auto; display: block; overflow: visible; cursor: crosshair; }
-.spark-cross { stroke: rgba(233, 233, 237, 0.22); stroke-width: 1; stroke-dasharray: 2 3; }
-.spark-dot { fill: var(--accent-bright); filter: drop-shadow(0 0 4px rgba(156, 143, 232, 0.7)); }
+.spark-cross { stroke: color-mix(in srgb, var(--research-text) 22%, transparent); stroke-width: 1; stroke-dasharray: 2 3; }
+.spark-dot { fill: var(--accent-bright); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--research-accent) 70%, transparent)); }
 
 /* ---- the glance forward-odds triplet ------------------------------------ */
 .odds { margin-top: 22px; }

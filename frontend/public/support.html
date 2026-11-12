@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="research-interface" data-product="seiche">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,47 +7,46 @@
 <meta name="description" content="Seiche is free and runs on support. Support LIQUILENS PRIVATE LIMITED by UPI or IDFC FIRST Bank transfer, with payment-reference tracking. GitHub Sponsors is also available.">
 <link rel="canonical" href="https://seiche.info/support">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<style>
+<link rel="stylesheet" href="/research-ui/research.css"><link rel="stylesheet" href="/research-ui/family-tokens.css"><link rel="stylesheet" href="/research-ui/seiche-pages.css"><style>
   /* NOCTURNE — same material as the terminal. */
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   :root { color-scheme:dark; }
-  body { background:#000000; color:#edeef4; font-family:"Inter",system-ui,-apple-system,sans-serif;
+  body { background:var(--research-bg); color:var(--research-text); font-family:var(--research-font);
          font-size:16px; line-height:1.7; max-width:960px; margin:0 auto; padding:48px 24px 80px;
          -webkit-font-smoothing:antialiased; }
-  ::selection { background:rgba(156,143,232,.30); }
-  h1 { font-size:36px; font-weight:600; letter-spacing:-.01em; color:#edeef4; }
-  a { color:#bbaffe; text-decoration:none; } a:hover { color:#d9d4ff; text-decoration:underline; }
-  .dim { color:#a5adbf; font-size:14px; }
-  .support-header { display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; padding-bottom:24px; border-bottom:1px solid #333748; }
-  .support-payment { margin:36px 0; padding:28px 0; border-block:1px solid #333748; }
+  ::selection { background:color-mix(in srgb, var(--research-accent) 30%, transparent); }
+  h1 { font-size:36px; font-weight:600; letter-spacing:-.01em; color:var(--research-text); }
+  a { color:var(--research-accent); text-decoration:none; } a:hover { color:var(--research-text); text-decoration:underline; }
+  .dim { color:var(--research-text-secondary); font-size:14px; }
+  .support-header { display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; padding-bottom:24px; border-bottom:1px solid var(--research-line-strong); }
+  .support-payment { margin:36px 0; padding:28px 0; border-block:1px solid var(--research-line-strong); }
   h2 { font-size:26px; line-height:1.3; }
   details { margin:20px 0; }
   summary { cursor:pointer; }
   .row { flex-wrap:wrap; }
-  .coin { border:1px solid #1c1f2b; border-radius:12px; padding:14px 16px; margin-top:14px; background:#0b0d15; }
-  .coin .name { color:#bbaffe; font-size:11px; font-weight:500; letter-spacing:.1em; }
-  .coin .net { color:#787f95; font-size:11px; margin-left:8px; }
-  .addr { display:block; word-break:break-all; background:#11131d; border:1px solid #333748; border-radius:8px;
-          padding:8px 10px; margin-top:8px; font-size:12.5px; color:#edeef4;
-          font-family:"JetBrains Mono",ui-monospace,Menlo,monospace; }
+  .coin { border:1px solid var(--research-line); border-radius:12px; padding:14px 16px; margin-top:14px; background:var(--research-surface); }
+  .coin .name { color:var(--research-accent); font-size:11px; font-weight:500; letter-spacing:.1em; }
+  .coin .net { color:var(--research-muted); font-size:11px; margin-left:8px; }
+  .addr { display:block; word-break:break-all; background:var(--research-raised); border:1px solid var(--research-line-strong); border-radius:8px;
+          padding:8px 10px; margin-top:8px; font-size:12.5px; color:var(--research-text);
+          font-family:var(--research-code); }
   .row { display:flex; align-items:center; gap:10px; margin-top:8px; }
-  button.copy { background:transparent; color:#d9d4ff; border:1px solid #453c72; border-radius:999px;
+  button.copy { background:transparent; color:var(--research-text); border:1px solid var(--research-accent); border-radius:999px;
                 font-family:inherit; font-size:11px; font-weight:500; padding:4px 14px; cursor:pointer; letter-spacing:.04em;
                 transition:background .25s, border-color .25s; }
-  button.copy:hover { background:rgba(156,143,232,.12); border-color:#8071cc; }
-  .warn { color:#787f95; font-size:11px; }
-  .note { border-left:2px solid #8071cc; padding-left:12px; margin-top:24px; color:#9aa0b6; font-size:12.5px; }
-  .sponsor { display:inline-block; border:1px solid #6e5db5; border-radius:999px; padding:5px 15px;
-             color:#edeef4; background:rgba(156,143,232,.14); font-size:11px; font-weight:600;
+  button.copy:hover { background:color-mix(in srgb, var(--research-accent) 12%, transparent); border-color:var(--research-accent); }
+  .warn { color:var(--research-muted); font-size:11px; }
+  .note { border-left:2px solid var(--research-accent); padding-left:12px; margin-top:24px; color:var(--research-muted); font-size:12.5px; }
+  .sponsor { display:inline-block; border:1px solid var(--research-accent); border-radius:999px; padding:5px 15px;
+             color:var(--research-text); background:color-mix(in srgb, var(--research-accent) 14%, transparent); font-size:11px; font-weight:600;
              letter-spacing:.04em; }
-  .sponsor:hover { background:rgba(156,143,232,.24); text-decoration:none; }
+  .sponsor:hover { background:color-mix(in srgb, var(--research-accent) 24%, transparent); text-decoration:none; }
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "534f08f7270a4f4f9a9a10f90d723ca7"}'></script><!-- End Cloudflare Web Analytics -->
 <link rel="stylesheet" href="/payments/payment.css">
 </head>
-<body>
+<body><a class="research-skip" href="#main">Skip to content</a><header class="research-header"><div class="research-mast"><a class="research-identity" href="/"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14"/><path d="M7 17c5-8 9 8 14 0s7-5 8-2M7 23c5-8 9 8 14 0s7-5 8-2"/></svg><span><strong>Seiche</strong></span></a><nav class="research-network" aria-label="Products"><a href="https://liquilens.in/">LiquiLens</a><a href="/" aria-current="page">Seiche</a><a href="https://liquilens-undertow.com/">Undertow</a></nav><a class="research-api" href="/developers">API &amp; MCP</a></div><nav class="research-tabs" aria-label="Seiche sections"><a href="/#today">Today</a><a href="/money-markets/">Money markets</a><a href="/gift-city/">GIFT City</a><a href="/#geography">India geography</a><a href="/#workbench">Workbench</a><a href="/#corpus">Market atlas</a><a href="/#research">Research</a><a href="/markets/">World markets</a><a href="/articles/">Published research</a><a href="/use-cases">Use cases</a><a href="/guide">Guide</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav></header>
 <header class="support-header"><a href="/">Seiche</a><span>Operated by LIQUILENS PRIVATE LIMITED</span><a href="https://liquilens.in/about/">Company information</a></header>
-<h1>Support Seiche</h1>
+<h1 id="main">Support Seiche</h1>
 <p class="dim">seiche.info · the funding-stress terminal</p>
 
 <p>The Seiche website is free and open: eight public research tools are available without an account; legacy forecasts, backtests and dependent features remain unavailable pending source-rights qualification, and the code is open source. Voluntary support below keeps that public infrastructure running and does not itself unlock an entitlement. </p>
@@ -100,5 +99,5 @@
 <p class="dim" style="margin-top:32px"><a href="/">← back to the terminal</a> · <a href="/terms">terms</a> · <a href="/privacy">privacy</a></p>
 
 <script src="/payments/payment.js" defer></script>
-</body>
+<script type="module" src="/research-ui/context.js"></script></body>
 </html>

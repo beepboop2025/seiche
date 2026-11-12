@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="research-interface" data-product="seiche">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,23 +7,22 @@
 <meta name="description" content="How Seiche handles website, API, account and support data, including retention, security and user choices.">
 <link rel="canonical" href="https://seiche.info/privacy">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<style>
+<link rel="stylesheet" href="/research-ui/research.css"><link rel="stylesheet" href="/research-ui/family-tokens.css"><link rel="stylesheet" href="/research-ui/seiche-pages.css"><style>
   /* NOCTURNE — same material as the terminal. */
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
   :root { color-scheme:dark; }
-  body { background:#000000; color:#edeef4; font-family:"Inter",system-ui,-apple-system,sans-serif;
+  body { background:var(--research-bg); color:var(--research-text); font-family:var(--research-font);
          font-size:13.5px; line-height:1.7; max-width:760px; margin:0 auto; padding:48px 24px 80px;
          -webkit-font-smoothing:antialiased; }
-  ::selection { background:rgba(156,143,232,.30); }
+  ::selection { background:color-mix(in srgb, var(--research-accent) 30%, transparent); }
   h1 { font-size:22px; font-weight:500; letter-spacing:-.01em; }
-  h2 { font-size:11.5px; font-weight:500; margin-top:32px; color:#9c8fe8; letter-spacing:.14em; text-transform:uppercase; }
-  a { color:#bbaffe; text-decoration:none; } a:hover { color:#d9d4ff; text-decoration:underline; }
-  .dim { color:#787f95; font-size:12px; }
+  h2 { font-size:11.5px; font-weight:500; margin-top:32px; color:var(--research-accent); letter-spacing:.14em; text-transform:uppercase; }
+  a { color:var(--research-accent); text-decoration:none; } a:hover { color:var(--research-text); text-decoration:underline; }
+  .dim { color:var(--research-muted); font-size:12px; }
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "534f08f7270a4f4f9a9a10f90d723ca7"}'></script><!-- End Cloudflare Web Analytics -->
 </head>
-<body>
-<h1>Privacy</h1>
+<body><a class="research-skip" href="#main">Skip to content</a><header class="research-header"><div class="research-mast"><a class="research-identity" href="/"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14"/><path d="M7 17c5-8 9 8 14 0s7-5 8-2M7 23c5-8 9 8 14 0s7-5 8-2"/></svg><span><strong>Seiche</strong></span></a><nav class="research-network" aria-label="Products"><a href="https://liquilens.in/">LiquiLens</a><a href="/" aria-current="page">Seiche</a><a href="https://liquilens-undertow.com/">Undertow</a></nav><a class="research-api" href="/developers">API &amp; MCP</a></div><nav class="research-tabs" aria-label="Seiche sections"><a href="/#today">Today</a><a href="/money-markets/">Money markets</a><a href="/gift-city/">GIFT City</a><a href="/#geography">India geography</a><a href="/#workbench">Workbench</a><a href="/#corpus">Market atlas</a><a href="/#research">Research</a><a href="/markets/">World markets</a><a href="/articles/">Published research</a><a href="/use-cases">Use cases</a><a href="/guide">Guide</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav></header>
+<h1 id="main">Privacy</h1>
 <p class="dim">seiche.info · last updated 9 August 2026 · operational draft pending legal review</p>
 
 <h2>The short version</h2>
@@ -43,5 +42,5 @@
 <p>Ask <a href="mailto:desk@seiche.info">desk@seiche.info</a> to see or delete account information we control and the request will be handled within a reasonable time. Security, transaction or accounting records may be retained where needed to prevent abuse or meet legal obligations.</p>
 
 <p class="dim"><a href="/">← back to the terminal</a> · <a href="/terms">terms</a></p>
-</body>
+<script type="module" src="/research-ui/context.js"></script></body>
 </html>

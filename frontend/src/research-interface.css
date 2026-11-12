@@ -1,34 +1,158 @@
-/* Domain-specific content inherits the family interface rather than changing skins. */
-html.research-interface[data-surface="desk"]{--bg:var(--research-bg);--panel:var(--research-surface);--panel-2:var(--research-raised);--panel-edge:var(--research-line);--panel-edge-2:#4c6278;--text:var(--research-text);--dim:var(--research-muted);--faint:var(--research-muted);--ghost:#91a5b8;--accent:var(--research-accent);--accent-bright:var(--research-accent);--accent-soft:var(--research-accent);--accent-deep:#426082;--display:var(--research-font);--mono:var(--research-font)}
-.research-header .research-desk-tabs{max-width:1400px;margin:0 auto;padding:0 32px;min-height:49px;gap:26px;border:0;border-top:1px solid var(--research-line);border-radius:0;flex-wrap:nowrap}
-.research-header .research-desk-tabs>a{padding:14px 0;border-radius:0;border-bottom:2px solid transparent;font-size:13px;background:none}
-.research-header .research-desk-tabs>a[aria-current="page"]{color:var(--research-accent);border-bottom-color:var(--research-accent);background:none}
-.research-header .workspace-tools summary{font-size:13px;border:0;padding:11px 0;border-radius:0}
-.research-header .workspace-tools__menu{background:var(--research-surface);border-color:var(--research-line);padding:22px;box-shadow:0 16px 32px #0004;z-index:80}
-.research-header .workspace-tools__menu h2{color:var(--research-muted);font-size:12px;text-transform:none;letter-spacing:0}
-.research-header .workspace-tools__menu a{font-size:13px;padding:9px 10px}
-.research-app{max-width:1400px;padding:0 32px 60px;font-size:14px}
-.research-observation-bar{display:flex;align-items:center;gap:32px;flex-wrap:wrap;padding:20px 0;border-bottom:1px solid var(--research-line)}
-.research-observation-bar>div{display:grid;gap:5px}.research-observation-bar span{font-size:11px;color:var(--research-muted)}.research-observation-bar strong{font-size:12px;font-weight:500}.research-observation-bar>a{margin-left:auto;color:var(--research-accent);font-size:12px;text-decoration:none}
-.research-app .tabview{padding-top:18px}
-.research-app .today,.research-app .corpus-shell,.research-app .wb-shell{max-width:none;margin:0;padding-top:0;animation:none}
-.research-app .corpus-shell{--corpus-ink:var(--research-text);--corpus-dim:var(--research-muted);--corpus-faint:#91a5b8;--corpus-line:var(--research-line);--corpus-calm:var(--research-good);--corpus-violet:var(--research-accent);--corpus-sounding:var(--research-accent);--corpus-abyss:var(--research-bg)}
-.research-app .wb-shell{--wb-line:var(--research-line);--wb-ice:var(--research-accent);--wb-ink:var(--research-bg)}
-.research-app h1{font-family:var(--research-font);font-size:clamp(30px,3.1vw,44px);line-height:1.15;letter-spacing:-1.2px;font-weight:550}
-.research-app h2,.research-app h3{font-family:var(--research-font);letter-spacing:-.3px}
-.research-app .today-hero,.research-app .corpus-hero{padding:24px 0 28px;min-height:0;border:0;border-bottom:1px solid var(--research-line);border-radius:0;background:none}
-.research-app .corpus-hero::after{content:none}.research-app .corpus-hero h1{font-size:clamp(30px,3.1vw,44px);line-height:1.15}
-.research-app .today-hero__grid{margin-top:18px;gap:36px}.research-app .today-standfirst{font-size:15px;line-height:1.7}
-.research-app .today-dateline,.research-app .today-source,.research-app .corpus-hero__copy>span,.research-app .corpus-panel__head span,.research-app .corpus-kpis span,.research-app .corpus-hero__clock>span{font:12px/1.6 var(--research-font);letter-spacing:0;text-transform:none}
-.research-app .today-reading__value{font-size:48px;letter-spacing:-1px}.research-app .today-conviction,.research-app .today-section__head>p{font-size:12px;line-height:1.65}
-.research-app .today-section__head h2{font-size:19px}.research-app .today-evidence__row{grid-template-columns:1fr;min-height:0;padding:22px;background:var(--research-surface)}.research-app .today-evidence__no{display:none}
-.research-app .today-evidence__row p{font-size:14px;line-height:1.65}.research-app .today-source{margin-top:12px}
-.research-app table{font-size:12px}.research-app table th{font-size:11px;letter-spacing:0;text-transform:none}.research-app table button{font-size:inherit}
-.research-app .corpus-panel,.research-app .panel,.research-app .card,.research-app .wb-pair-detail{background:var(--research-surface);border-color:var(--research-line);box-shadow:none}
-.research-app .corpus-hero__clock{color:var(--research-muted)}.research-app .corpus-hero__clock strong{font-size:20px}
-.research-app :is(input,select,button){font-family:var(--research-font)}.research-app :is(input,select){min-height:38px;font-size:13px}
-.research-app .network-rail,.research-app .telegram-rail{border-color:var(--research-line);background:var(--research-surface)}
-.research-app .network-rail__head span,.research-app .network-rail__links b,.research-app .telegram-rail__head span,.research-app .telegram-rail__links b{font-size:11px;letter-spacing:0;text-transform:none}
-.research-app .relay{background:var(--research-surface)}.research-app .relay-title,.research-app .relay-state{text-transform:none;letter-spacing:0;font-size:12px}.research-app .relay-meta,.research-app .relay-detail,.research-app .relay-foot{font-size:11px}
-.research-app .regime{box-shadow:none}.research-app code,.research-app pre,.research-app kbd{font-family:ui-monospace,"SF Mono",Menlo,monospace}.research-app .errbox{margin:28px 0}
-@media(max-width:760px){.research-header .research-desk-tabs{padding:0 20px;gap:20px;overflow-x:auto;scrollbar-width:thin}.research-header .research-desk-tabs>a{padding:14px 0;font-size:12px;flex:0 0 auto;white-space:nowrap}.research-header .workspace-tools{margin-left:0;flex:0 0 auto}.research-header .workspace-tools summary{white-space:nowrap}.research-header .workspace-tools__menu{position:fixed;top:190px;left:16px;right:16px;width:auto;max-height:65vh;overflow:auto}.research-app{padding:0 20px 40px}.research-observation-bar{gap:16px 24px;padding:16px 0}.research-observation-bar>a{margin-left:0}.research-app .today-hero__grid{gap:24px;grid-template-columns:minmax(0,1fr)}.research-app .today-reading{padding:18px 0 0;grid-template-columns:auto auto minmax(0,1fr);min-width:0}.research-app .today-reading>.conviction,.research-app .today-reading>research-flow{grid-column:1/-1}.research-app .today-reading>research-flow{width:100%;max-width:400px}.research-app .today-reading__value{font-size:38px}}
+/* Seiche on the family record edition (12 Nov 2026). The look comes from the
+   vendored research-ui.css and family-tokens.css (see their headers); this file
+   only maps Seiche's own token names onto --research-* tokens and lays the desk's
+   own components out in the family language. No family value is written here:
+   every colour is a --research-* token or a colour-mix of one. One accent for
+   every product: products are told apart by name, never by colour. */
+
+/* ---- Seiche's token names on the family tokens (html.research-interface outranks :root) ---- */
+html.research-interface {
+  --hover: var(--research-raised);
+  --strain: var(--research-warn);
+  --accent-dim: var(--research-accent);
+  --accent-glow: transparent;
+  --divider: var(--research-line);
+  --rule: linear-gradient(var(--research-line), var(--research-line));
+  --rule-soft: linear-gradient(var(--research-line), var(--research-line));
+  /* chart roles: accent, paper, reference, muted (family-tokens.css "chart") */
+  --chart-gold: var(--research-chart-series-2);
+  --chart-slate: var(--research-chart-series-3);
+  --chart-amber: var(--research-chart-series-4);
+  --chart-ink: var(--research-text-secondary);
+  --chart-ink-bright: var(--research-text);
+  --chart-grid: var(--research-chart-grid);
+  --r-sm: var(--research-radius-control); --r-md: var(--research-radius-panel); --r-lg: var(--research-radius-panel);
+  --dur: var(--research-duration-base); --ease: var(--research-ease); --rise: var(--research-ease);
+}
+html.research-interface[data-surface="desk"] {
+  --bg: var(--research-bg); --panel: var(--research-surface); --panel-2: var(--research-raised);
+  --panel-edge: var(--research-line); --panel-edge-2: var(--research-line-strong);
+  --text: var(--research-text); --dim: var(--research-muted); --faint: var(--research-muted); --ghost: var(--research-muted);
+  --accent: var(--research-accent); --accent-bright: var(--research-accent); --accent-soft: var(--research-accent);
+  --accent-deep: var(--research-line-strong);
+  --display: var(--research-font); --mono: var(--research-font);
+}
+
+/* ---- The family tab row with Seiche's tools: the menu must not be clipped by the row ---- */
+.research-header .workspace-tabs { align-items: stretch; }
+.research-header .workspace-tabs > a { display: inline-flex; align-items: center; line-height: 20px; }
+.research-header .workspace-tabs a:focus-visible,
+.research-header .workspace-tools summary:focus-visible { outline-offset: -2px; border-radius: 3px; }
+.research-header .workspace-tools { margin-left: auto; position: relative; align-self: center; flex: 0 0 auto; }
+.research-header .workspace-tools summary {
+  list-style: none; display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px;
+  border: 1px solid var(--research-line); border-radius: var(--research-radius-control);
+  color: var(--research-muted); font-size: 12.5px; white-space: nowrap; cursor: pointer;
+  transition: color var(--research-duration-fast) var(--research-ease), border-color var(--research-duration-fast) var(--research-ease);
+}
+.research-header .workspace-tools summary:hover,
+.research-header .workspace-tools[open] summary { color: var(--research-text); border-color: var(--research-line-strong); }
+.research-header .workspace-tools summary::-webkit-details-marker { display: none; }
+.research-header .workspace-tools summary::after { content: "+"; margin-left: 6px; font-family: var(--research-code); }
+.research-header .workspace-tools[open] summary::after { content: "\2212"; }
+.research-header .workspace-tools__menu {
+  position: absolute; z-index: 80; right: 0; top: calc(100% + 8px); width: min(720px, 85vw);
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; padding: 22px;
+  border: 1px solid var(--research-line); border-radius: var(--research-radius-panel);
+  background: var(--research-surface); box-shadow: var(--research-shadow-overlay);
+}
+.research-header .workspace-tools__menu h2 { margin: 0 0 12px; color: var(--research-muted); font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; }
+.research-header .workspace-tools__menu a { display: block; padding: 7px 0; color: var(--research-text); font-size: 13px; text-decoration: none; }
+.research-header .workspace-tools__menu a:hover { color: var(--research-accent); }
+.research-header .workspace-tools__menu a[aria-current="page"] { color: var(--research-text); text-decoration: underline; text-underline-offset: 4px; }
+/* Menu links are not tabs: no tab underline, no tab padding. */
+.research-header .research-tabs .workspace-tools__menu a,
+.research-header .research-tabs .workspace-tools__menu a[aria-current="page"] { border-bottom: 0; padding: 7px 0; white-space: normal; }
+.research-header .workspace-tabs .cmdk {
+  flex: 0 0 auto; align-self: center; min-height: 28px; margin: 0; padding: 0 9px;
+  border: 1px solid var(--research-line); border-radius: var(--research-radius-control); background: transparent;
+  color: var(--research-muted); font: 12px/1 var(--research-code); cursor: pointer;
+  transition: color var(--research-duration-fast) var(--research-ease), border-color var(--research-duration-fast) var(--research-ease);
+}
+.research-header .workspace-tabs .cmdk:hover { color: var(--research-text); border-color: var(--research-line-strong); }
+/* Wide screens: the row fits, so it does not scroll and the tools menu is never clipped. */
+@media (min-width: 761px) { .research-header .workspace-tabs { overflow: visible; } }
+
+/* ---- The desk column ---- */
+.research-app { max-width: 1400px; padding: 0 var(--research-gutter) 60px; font-size: 14px; }
+.research-observation-bar { display: flex; align-items: center; gap: 32px; flex-wrap: wrap; padding: 20px 0; border-bottom: 1px solid var(--research-line); }
+.research-observation-bar > div { display: grid; gap: 5px; }
+.research-observation-bar span { font-size: 11px; color: var(--research-muted); }
+.research-observation-bar strong { font-size: 12px; font-weight: 500; font-family: var(--research-code); }
+.research-observation-bar > a { margin-left: auto; color: var(--research-accent); font-size: 12px; text-decoration: none; }
+.research-app .tabview { padding-top: 18px; animation: research-tab-enter var(--research-duration-base) var(--research-ease) both; }
+@keyframes research-tab-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.research-app .today, .research-app .corpus-shell, .research-app .wb-shell { max-width: none; margin: 0; padding-top: 0; animation: none; }
+.research-app .corpus-shell { --corpus-ink: var(--research-text); --corpus-dim: var(--research-muted); --corpus-faint: var(--research-muted); --corpus-line: var(--research-line); --corpus-calm: var(--research-good); --corpus-violet: var(--research-accent); --corpus-sounding: var(--research-accent); --corpus-abyss: var(--research-bg); }
+.research-app .wb-shell { --wb-line: var(--research-line); --wb-ice: var(--research-accent); --wb-ink: var(--research-bg); }
+html.research-interface .research-app h1 { font-family: var(--research-display); font-size: clamp(32px, 3.6vw, 52px); line-height: 1.06; letter-spacing: -.03em; font-weight: 400; }
+.research-app h2, .research-app h3 { font-family: var(--research-display); letter-spacing: -.015em; }
+.research-app .today-hero, .research-app .corpus-hero { padding: 24px 0 28px; min-height: 0; border: 0; border-bottom: 1px solid var(--research-line); border-radius: 0; background: none; }
+.research-app .corpus-hero::after { content: none; }
+.research-app .corpus-hero h1 { font-size: clamp(32px, 3.6vw, 52px); line-height: 1.06; }
+.research-app .today-hero__grid { margin-top: 18px; gap: 36px; }
+.research-app .today-standfirst { font-size: 15px; line-height: 1.7; }
+.research-app .today-dateline, .research-app .today-source, .research-app .corpus-hero__copy > span, .research-app .corpus-panel__head span, .research-app .corpus-kpis span, .research-app .corpus-hero__clock > span { font: 12px/1.6 var(--research-font); letter-spacing: 0; text-transform: none; }
+.research-app .today-reading__value { font-family: var(--research-code); font-size: 48px; font-weight: 400; letter-spacing: -1px; }
+.research-app .today-conviction, .research-app .today-section__head > p { font-size: 12px; line-height: 1.65; }
+.research-app .today-section__head h2 { font-size: 19px; }
+.research-app .today-evidence__row { grid-template-columns: 1fr; min-height: 0; padding: 22px; background: var(--research-surface); }
+.research-app .today-evidence__no { display: none; }
+.research-app .today-evidence__row p { font-size: 14px; line-height: 1.65; }
+.research-app .today-source { margin-top: 12px; }
+.research-app table { font-size: 12.5px; }
+.research-app table th { font-size: 11px; font-weight: 500; color: var(--research-muted); letter-spacing: 0; text-transform: none; }
+.research-app table td { font-variant-numeric: tabular-nums; }
+.research-app table button { font-size: inherit; }
+.research-app .corpus-panel, .research-app .panel, .research-app .card, .research-app .wb-pair-detail { background: var(--research-surface); border-color: var(--research-line); border-radius: var(--research-radius-panel); box-shadow: none; }
+.research-app .corpus-hero__clock { color: var(--research-muted); }
+.research-app .corpus-hero__clock strong { font-size: 20px; font-family: var(--research-code); font-weight: 400; }
+.research-app :is(input, select, button) { font-family: var(--research-font); }
+.research-app :is(input, select) { min-height: 38px; font-size: 13px; }
+.research-app .network-rail, .research-app .telegram-rail { border-color: var(--research-line); background: var(--research-surface); }
+.research-app .network-rail__head span, .research-app .network-rail__links b, .research-app .telegram-rail__head span, .research-app .telegram-rail__links b { font-size: 11px; letter-spacing: 0; text-transform: none; }
+.research-app .relay { background: var(--research-surface); }
+.research-app .relay-title, .research-app .relay-state { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.research-app .relay-meta, .research-app .relay-detail, .research-app .relay-foot { font-size: 11px; }
+.research-app .regime { box-shadow: none; }
+.research-app code, .research-app pre, .research-app kbd { font-family: var(--research-code); }
+.research-app .errbox { margin: 28px 0; }
+
+/* ---- Evidence display states: a drawn mark plus the literal word ----
+   Ported from liquilens-site banking/workspace.css (draft PR #224, d0d37d9),
+   following its EVIDENCE-PRESENTATION-CONTRACT.md section 3. Colour is never
+   the only channel and no gap state takes the calm treatment. */
+.ev-state { display: inline-flex; align-items: center; gap: 6px; color: var(--ev-color, var(--research-muted)); font-size: var(--research-size-label); font-weight: var(--research-weight-medium); line-height: 1.4; white-space: nowrap; }
+.ev-state::before { content: ""; display: inline-block; flex: none; inline-size: 9px; block-size: 9px; border: var(--ev-border, 0); border-radius: var(--ev-radius, 50%); background: var(--ev-fill, currentColor); transform: var(--ev-turn, none); }
+.ev-state[data-state="observed"] { --ev-color: var(--research-state-observed); }
+.ev-state[data-state="derived"] { --ev-color: var(--research-state-derived); --ev-radius: 1px; --ev-turn: rotate(45deg) scale(.82); }
+.ev-state[data-state="structural"] { --ev-color: var(--research-state-structural); --ev-radius: 1px; }
+.ev-state[data-state="research"] { --ev-color: var(--research-state-research); --ev-radius: 1px; --ev-turn: rotate(45deg) scale(.82); --ev-fill: transparent; --ev-border: 1.5px solid currentColor; }
+.ev-state[data-state="partial"] { --ev-color: var(--research-state-partial); --ev-fill: linear-gradient(90deg, currentColor 50%, transparent 0); --ev-border: 1.5px solid currentColor; }
+.ev-state[data-state="stale"] { --ev-color: var(--research-state-stale); --ev-fill: transparent; --ev-border: 1.5px solid currentColor; }
+.ev-state[data-state="restricted"] { --ev-color: var(--research-state-restricted); --ev-fill: linear-gradient(135deg, transparent 42%, currentColor 0 58%, transparent 0); --ev-border: 1.5px solid currentColor; }
+.ev-state[data-state="unavailable"] { --ev-color: var(--research-state-unavailable); --ev-radius: 1px; --ev-fill: repeating-linear-gradient(135deg, currentColor 0 1.5px, transparent 0 3.5px); --ev-border: 1px solid currentColor; }
+.ev-gap { padding: var(--research-space-3) var(--research-space-4); border-left: 2px solid var(--ev-color, var(--research-state-unavailable)); background: repeating-linear-gradient(135deg, var(--research-bad-soft) 0 6px, transparent 6px 12px); color: var(--research-text-secondary); font-size: var(--research-size-label); line-height: 1.6; }
+/* The withheld board and fault notices are gaps: hatched, with their words. */
+.research-app .errbox { border: 1px solid var(--research-line); border-left: 2px solid var(--research-state-unavailable); border-radius: 0 var(--research-radius-panel) var(--research-radius-panel) 0; background: repeating-linear-gradient(135deg, var(--research-bad-soft) 0 6px, transparent 6px 12px), var(--research-surface); }
+.research-app .errbox[data-board-state="withheld"] { border-left-color: var(--research-state-restricted); background: repeating-linear-gradient(135deg, var(--research-warn-soft) 0 6px, transparent 6px 12px), var(--research-surface); }
+.research-app .faults { border: 1px solid var(--research-line); border-left: 2px solid var(--research-state-unavailable); background: repeating-linear-gradient(135deg, var(--research-bad-soft) 0 6px, transparent 6px 12px); color: var(--research-text); border-radius: 0 var(--research-radius-control) var(--research-radius-control) 0; }
+
+/* ---- Phone: the row scrolls sideways, the tools menu opens fixed, a 16px gutter ---- */
+@media (max-width: 760px) {
+  .research-header .workspace-tools { margin-left: 0; }
+  .research-header .workspace-tools__menu { position: fixed; top: 150px; left: 16px; right: 16px; width: auto; max-height: 65vh; overflow: auto; grid-template-columns: 1fr 1fr; padding: 18px; }
+  .research-app { padding: 0 16px 40px; }
+  .research-observation-bar { gap: 16px 24px; padding: 16px 0; }
+  .research-observation-bar > a { margin-left: 0; }
+  .research-app .today-hero__grid { gap: 24px; grid-template-columns: minmax(0, 1fr); }
+  .research-app .today-reading { padding: 18px 0 0; grid-template-columns: auto auto minmax(0, 1fr); min-width: 0; }
+  .research-app .today-reading > .conviction, .research-app .today-reading > research-flow { grid-column: 1 / -1; }
+  .research-app .today-reading > research-flow { width: 100%; max-width: 400px; }
+  .research-app .today-reading__value { font-size: 38px; }
+}
+/* Reduced motion is a designed variant: the same information, nothing moves. */
+@media (prefers-reduced-motion: reduce) {
+  .research-app .tabview { animation: none; }
+  .research-header .workspace-tools summary, .research-header .workspace-tabs .cmdk { transition: none; }
+}

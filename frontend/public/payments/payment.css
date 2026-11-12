@@ -7,7 +7,7 @@
 }
 .payment-panel .payment-figure { margin: 0; max-width: 340px; }
 .payment-panel .payment-qr {
-  display: block; width: 100%; height: auto; background: #fff; border-radius: 8px;
+  display: block; width: 100%; height: auto; background: var(--research-text); border-radius: 8px;
 }
 .payment-panel figcaption { margin-top: .7rem; font-size: .9rem; line-height: 1.6; }
 .payment-panel h3 { margin: 0 0 .8rem; font-family: inherit; font-size: 1.1rem; font-weight: 600; line-height: 1.4; }
@@ -17,7 +17,7 @@
 }
 .payment-panel dt { font-size: .85rem; }
 .payment-panel dd { margin: .2rem 0 0; line-height: 1.6; overflow-wrap: anywhere; }
-.payment-panel code { font: 600 .95rem/1.6 ui-monospace, monospace; user-select: all; }
+.payment-panel code { font: 600 .95rem/1.6 var(--research-code); user-select: all; }
 .payment-panel .payment-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0; }
 .payment-panel .payment-action, .payment-panel .payment-copy {
   display: inline-flex; align-items: center; justify-content: center;

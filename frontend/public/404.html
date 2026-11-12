@@ -1,16 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="research-interface" data-product="seiche">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Page not found | Seiche</title>
   <meta name="robots" content="noindex,follow">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <meta name="theme-color" content="#050608">
-  <style>
-    :root { color-scheme: dark; --ink:#f4f5f8; --muted:#a7acba; --line:#292d37; --signal:#c5b7ff; --void:#050608; --panel:#0b0d11; --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace; --sans:Inter,system-ui,sans-serif; }
+  <meta name="theme-color" content="#000000">
+  <link rel="stylesheet" href="/research-ui/research.css"><link rel="stylesheet" href="/research-ui/family-tokens.css"><link rel="stylesheet" href="/research-ui/seiche-pages.css"><style>
+    :root { color-scheme: dark; --ink:var(--research-text); --muted:var(--research-text-secondary); --line:var(--research-line); --signal:var(--research-accent); --void:var(--research-bg); --panel:var(--research-surface); --mono:var(--research-code); --sans:var(--research-font); }
     * { box-sizing:border-box; }
-    body { min-height:100vh; margin:0; display:grid; place-items:center; background:radial-gradient(circle at 70% 20%,rgba(197,183,255,.08),transparent 30rem),var(--void); color:var(--ink); font:15px/1.65 var(--sans); }
+    body { min-height:100vh; margin:0; display:grid; place-items:center; background:radial-gradient(circle at 70% 20%,color-mix(in srgb, var(--research-accent) 8%, transparent),transparent 30rem),var(--void); color:var(--ink); font:15px/1.65 var(--sans); }
     main { width:min(760px,calc(100% - 32px)); padding:48px; border:1px solid var(--line); border-radius:16px; background:var(--panel); }
     .code { color:var(--signal); font:11px/1.4 var(--mono); letter-spacing:.12em; text-transform:uppercase; }
     h1 { margin:12px 0 16px; font-size:clamp(38px,8vw,72px); font-weight:480; letter-spacing:-.05em; line-height:1; }
@@ -20,8 +20,8 @@
     a:hover { border-color:var(--signal); }
   </style>
 </head>
-<body>
-  <main>
+<body><a class="research-skip" href="#main">Skip to content</a><header class="research-header"><div class="research-mast"><a class="research-identity" href="/"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14"/><path d="M7 17c5-8 9 8 14 0s7-5 8-2M7 23c5-8 9 8 14 0s7-5 8-2"/></svg><span><strong>Seiche</strong></span></a><nav class="research-network" aria-label="Products"><a href="https://liquilens.in/">LiquiLens</a><a href="/" aria-current="page">Seiche</a><a href="https://liquilens-undertow.com/">Undertow</a></nav><a class="research-api" href="/developers">API &amp; MCP</a></div><nav class="research-tabs" aria-label="Seiche sections"><a href="/#today">Today</a><a href="/money-markets/">Money markets</a><a href="/gift-city/">GIFT City</a><a href="/#geography">India geography</a><a href="/#workbench">Workbench</a><a href="/#corpus">Market atlas</a><a href="/#research">Research</a><a href="/markets/">World markets</a><a href="/articles/">Published research</a><a href="/use-cases">Use cases</a><a href="/guide">Guide</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav></header>
+  <main id="main">
     <span class="code">HTTP 404 / evidence route absent</span>
     <h1>This page is not in the ledger.</h1>
     <p>The requested URL does not resolve to a published Seiche surface. Nothing has been redirected or substituted, because a missing page should remain an explicit missing page.</p>
@@ -34,5 +34,5 @@
       <a href="/developers">API + MCP</a>
     </nav>
   </main>
-</body>
+<script type="module" src="/research-ui/context.js"></script></body>
 </html>

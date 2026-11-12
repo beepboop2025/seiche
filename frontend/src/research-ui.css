@@ -1,10 +1,17 @@
-/* Shared research interface v1. Keep these bytes identical across the family. */
+/* VENDORED. Source: beepboop2025/liquilens-site research-ui/research.css at commit
+   dfb8f0899344b473c179d48ca08e94220333e868 (branch feat/site-redesign-20261112, draft PR #223), blob
+   953bb6d5315ca93f147dd70fb149edefabe9385c. Every byte after this comment is that blob,
+   unedited. Do not edit here: re-vendor from the source (and update this header) whenever
+   the family file changes. Seiche-only rules live in research-interface.css, never in this file. */
+/* Shared research interface v1, record edition (12 Nov 2026): black field, paper type, one signal colour. */
 html.research-interface {
   color-scheme: dark;
-  --research-bg: #090a0c; --research-surface: #121417; --research-raised: #1b1e23;
-  --research-line: #30343b; --research-text: #f1f2f4; --research-muted: #a6abb3;
+  --research-bg: #000000; --research-surface: #0b0d10; --research-raised: #14171c;
+  --research-line: #23272e; --research-text: #f2f1ec; --research-muted: #9da2ab;
   --research-accent: #abc7ff; --research-good: #92d3bd; --research-warn: #ebc58d;
-  --research-bad: #f1a3a3; --research-font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --research-bad: #f1a3a3; --research-font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --research-display: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --research-code: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
   --bg: var(--research-bg); --panel: var(--research-surface); --panel-2: var(--research-raised);
   --panel-edge: var(--research-line); --panel-edge-2: #51565f; --text: var(--research-text);
   --dim: var(--research-muted); --faint: var(--research-muted); --ghost: #969ca6;
@@ -23,8 +30,7 @@ html.research-interface {
   --brown: var(--research-warn); --warning: #ebc58d0d;
   --liquilens: #abc7ff; --seiche: #83d1cb; --undertow: #c3b6eb; --palimpsest: #ebc58d;
 }
-html.research-interface[data-product="seiche"] { --research-accent: #83d1cb; }
-html.research-interface[data-product="undertow"] { --research-accent: #c3b6eb; }
+/* One accent for every product (12 Nov 2026): products are told apart by name, not colour. */
 html.research-interface body { margin: 0; background: var(--research-bg); color: var(--research-text); font-family: var(--research-font); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
 html.research-interface main :is(h1,h2,h3) { font-family: var(--research-font); }
 html.research-interface main h1 { font-size: clamp(30px,3.2vw,44px); line-height: 1.12; letter-spacing: -1.2px; font-weight: 550; }
@@ -67,8 +73,9 @@ html.research-interface main .step::after { background: var(--research-bg); }
 .research-tabs a { display: block; padding: 13px 1px; color: var(--research-muted); border-bottom: 2px solid transparent; text-decoration: none; font-size: 13px; white-space: nowrap; }
 .research-tabs a[aria-current="page"] { color: var(--research-accent); border-bottom-color: var(--research-accent); }
 .research-tabs a:hover { color: var(--research-text); }
-.research-skip { position: fixed; top: -80px; left: 20px; z-index: 200; color: var(--research-bg); background: var(--research-accent); padding: 12px 20px; }
-.research-skip:focus { top: 12px; }
+a.research-skip { position: fixed; top: -80px; left: 20px; z-index: 200; color: var(--research-bg); background: var(--research-accent); padding: 12px 20px; }
+a.research-skip:hover, a.research-skip:focus { color: var(--research-bg); }
+a.research-skip:focus { top: 12px; }
 .research-header :focus-visible, .research-page :focus-visible, .research-app :focus-visible { outline: 2px solid var(--research-accent); outline-offset: 4px; }
 .research-page { max-width: 1400px; margin: 0 auto; padding: 42px 32px 64px; }
 .research-intro { display: grid; grid-template-columns: minmax(0,1fr) minmax(250px,360px); align-items: end; gap: 40px; margin: 0 0 30px; }
@@ -126,6 +133,9 @@ html.research-interface main .step::after { background: var(--research-bg); }
 .rw-metrics dd { margin: 0; font-size: 23px; line-height: 1.3; font-weight: 450; overflow-wrap: anywhere; }
 .rw-metrics dd small { font-size: 12px; }
 .rw-metrics .rw-missing { font-size: 13px; color: var(--research-muted); }
+.rw-provisional { margin: 20px 0; padding: 16px; border: 1px solid var(--research-line); border-radius: 8px; background: var(--research-surface); }
+.rw-provisional .rw-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.rw-provisional .rw-metrics dd.rw-caption { font-size: 11px; color: var(--research-muted); margin-top: 6px; }
 .rw-detail { border-top: 1px solid var(--research-line); padding: 14px 0; }
 .rw-detail summary { color: var(--research-text); cursor: pointer; font-size: 13px; line-height: 1.4; }
 .rw-detail li { color: var(--research-muted); font-size: 12px; line-height: 1.65; margin-bottom: 9px; overflow-wrap: anywhere; }
@@ -182,12 +192,12 @@ html.research-interface main .step::after { background: var(--research-bg); }
 @media(prefers-reduced-motion:reduce){.rw-chart path{animation:none}.research-network a,.rw-button,.rw-table tbody tr{transition:none}}
 
 /* Graphite edition: quiet depth behind the data, not a solid blue field. */
-html.research-interface body{background:radial-gradient(ellipse at 82% 0%,#ffffff04,transparent 40%),var(--research-bg)}
+html.research-interface body{background:var(--research-bg)}
 .research-mast{min-height:76px;padding-top:14px;padding-bottom:14px}.research-network{background:#ffffff03}.research-network a[aria-current="page"]{box-shadow:inset 0 1px #ffffff08,0 2px 7px #0004}
 .research-intro{margin-bottom:24px;gap:30px}.research-intro h1{font-size:clamp(30px,3.2vw,44px);max-width:25ch}.research-intro p{font-size:14px;max-width:72ch}
 .research-intro aside{font-size:12px}.research-page{padding-top:30px}.rw-summary{background:linear-gradient(135deg,#ffffff03,transparent),var(--research-surface)}
 .rw-workspace{box-shadow:0 18px 50px #0002}.rw-inspector{background:linear-gradient(150deg,#ffffff04,transparent),var(--research-surface)}
-.research-header{background:#090a0ced;backdrop-filter:blur(18px)}
+
 .rw-chart-frame{position:relative;background:radial-gradient(ellipse at 80% 0%,#ffffff05,transparent 60%),var(--research-surface);border:1px solid var(--research-line);border-radius:10px;padding:22px;overflow:hidden;min-width:0}
 .rw-chart-frame h2{font-size:16px;letter-spacing:-.2px;margin:0 0 5px}.rw-chart-frame p{font-size:12px;color:var(--research-muted);line-height:1.6}.rw-chart-frame .rw-chart{margin:14px 0 0}.rw-chart-frame .rw-chart svg{max-height:220px}
 .rw-chart-tabs{display:flex;flex-wrap:wrap;gap:7px;margin:15px 0}.rw-chart-tabs button{background:transparent;color:var(--research-muted);border:1px solid var(--research-line);border-radius:5px;font:12px var(--research-font);padding:7px 10px;cursor:pointer}.rw-chart-tabs button[aria-pressed="true"]{background:var(--research-raised);color:var(--research-accent);border-color:var(--research-accent)}
@@ -202,3 +212,68 @@ html.research-interface body{background:radial-gradient(ellipse at 82% 0%,#fffff
 research-flow{display:block;min-width:0;max-width:640px}research-flow svg{display:block;width:100%;height:auto;overflow:visible}.rw-flow-strand{fill:none;stroke:var(--research-accent);stroke-width:.65;opacity:.2}.rw-flow-current{fill:none;stroke:var(--research-accent);stroke-width:1;stroke-dasharray:2 98;opacity:.65;animation:research-current 10s linear infinite}.rw-flow-lens{fill:var(--research-bg);stroke:var(--research-line);stroke-width:.8}.rw-flow-name{fill:var(--research-text);font-size:19px;font-family:var(--research-font);font-weight:550;letter-spacing:-.5px}.rw-flow-caption{fill:var(--research-muted);font-size:9px;font-family:var(--research-font)}.rw-flow-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:10px;color:var(--research-muted)}.rw-flow-controls button{border:0;background:transparent;color:var(--research-muted);font:inherit;cursor:pointer;padding:8px 0}.rw-flow-controls button:hover{color:var(--research-accent)}research-flow[data-paused="true"] .rw-flow-current{animation-play-state:paused}.research-intro__visual{align-self:center}.research-intro__visual>a{font-size:12px;color:var(--research-accent);display:inline-block;margin-top:12px;text-decoration:none}
 @keyframes research-current{to{stroke-dashoffset:-100}}
 @media(prefers-reduced-motion:reduce){.rw-flow-current{animation:none}}
+.unlock-panel { border: 1px solid var(--research-line); border-left: 3px solid var(--research-accent); border-radius: 8px; margin: 14px 0; padding: 12px 14px; }
+.unlock-panel p { color: var(--research-text); font-size: 13px; line-height: 1.6; margin: 0; }
+.unlock-panel a { color: var(--research-accent); overflow-wrap: anywhere; }
+
+/* Record edition: a floating header, a quiet engineered field behind every page,
+   and lighter display type. Data states keep their own colours; chrome stays monochrome. */
+html.research-interface body::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: min(100vh, 980px); z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(1100px 520px at 72% -12%, rgba(171,199,255,.075), transparent 70%),
+    linear-gradient(rgba(242,241,236,.03) 1px, transparent 1px) 0 0 / 88px 88px,
+    linear-gradient(90deg, rgba(242,241,236,.03) 1px, transparent 1px) 0 0 / 88px 88px;
+  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 60% 0%, #000 25%, transparent 82%);
+  mask-image: radial-gradient(ellipse 85% 75% at 60% 0%, #000 25%, transparent 82%); }
+.research-header { padding: 12px clamp(10px, 1.4vw, 18px) 0; background: transparent; border-bottom: 0; }
+.research-header .research-mast { max-width: 1400px; min-height: 60px; margin: 0 auto; padding: 8px 8px 8px 18px; gap: 28px;
+  background: rgba(13,15,19,.74); border: 1px solid rgba(242,241,236,.09); border-radius: 10px;
+  -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); box-shadow: 0 12px 40px -20px #000; }
+.research-header .research-identity { min-width: 0; gap: 10px; }
+.research-header .research-identity svg { width: 26px; height: 26px; stroke: var(--research-text); stroke-width: 1.5; }
+.research-header .research-identity strong { font-family: var(--research-display); font-size: 19px; font-weight: 500; letter-spacing: -.02em; }
+.research-header .research-network { margin: 0 auto; padding: 3px; gap: 2px; background: transparent; border: 1px solid rgba(242,241,236,.08); border-radius: 7px; }
+.research-header .research-network a { min-height: 30px; padding: 6px 14px; border-radius: 5px; font-size: 12.5px; }
+.research-header .research-network a[aria-current="page"] { background: rgba(242,241,236,.09); color: var(--research-text); box-shadow: none; }
+.research-header .research-network a:hover { background: rgba(242,241,236,.06); }
+.research-mast .research-api { display: inline-flex; align-items: center; min-height: 40px; padding: 0 18px; border-radius: 6px; background: var(--research-text); color: #000; font-size: 13.5px; font-weight: 600; letter-spacing: -.005em; transition: background-color 160ms ease; }
+.research-mast .research-api:hover { background: #fff; color: #000; }
+.research-header .research-tabs { max-width: 1400px; margin: 4px auto 0; padding: 0 18px; gap: 24px; }
+.research-header .research-tabs a { padding: 11px 1px; font-size: 13px; }
+.research-header .research-tabs a[aria-current="page"] { color: var(--research-text); border-bottom-color: var(--research-text); }
+.research-header .research-tabs a:hover { color: var(--research-text); }
+html.research-interface main h1 { font-family: var(--research-display); font-size: clamp(32px, 3.6vw, 52px); line-height: 1.06; letter-spacing: -.03em; font-weight: 400; }
+html.research-interface main .audience-hero h1 { font-family: var(--research-display); font-weight: 400; letter-spacing: -.035em; }
+html.research-interface main :is(h2, h3) { font-family: var(--research-display); }
+html.research-interface main .rw-section-title h2 { font-size: 21px; font-weight: 500; letter-spacing: -.015em; }
+html.research-interface main :is(pre, code, kbd, samp) { font-family: var(--research-code); }
+.rw-toolbar input, .rw-toolbar select, .rw-control { border-color: #393f48; background: #000; }
+.rw-button { border-color: #393f48; }
+.rw-button--primary { background: var(--research-text); color: #000; }
+@media (max-width: 760px) {
+  .research-header { padding: 8px 8px 0; }
+  .research-header .research-mast { padding: 10px 8px 10px 14px; gap: 10px 12px; }
+  .research-header .research-network { margin: 0; }
+  .research-mast .research-api { min-height: 36px; padding: 0 14px; font-size: 12.5px; }
+  .research-header .research-tabs { padding: 0 12px; gap: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { .research-mast .research-api { transition: none; } }
+@media print { html.research-interface body::before { display: none; } }
+/* Moving between tabs: the header holds still while the page changes underneath it. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+  html.research-interface { scroll-behavior: smooth; }
+}
+.research-header { view-transition-name: research-header; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 180ms; animation-timing-function: cubic-bezier(.2, .7, .2, 1); }
+::view-transition-group(research-header) { animation-duration: 180ms; }
+/* The selected institution travels with the reader across tabs. */
+.research-header .research-context { max-width: 1400px; margin: 8px auto 0; padding: 8px 8px 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  border: 1px solid rgba(171,199,255,.24); border-radius: 8px; background: rgba(13,15,19,.82); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); font-size: 12.5px; color: var(--research-muted); }
+.research-context__name { color: var(--research-text); font-weight: 600; }
+.research-header .research-context__links { position: static; display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 0 6px; padding: 0; border: 0; background: none; box-shadow: none; }
+.research-header .research-context__links a { color: var(--research-accent); text-decoration: none; }
+.research-header .research-context__links a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.research-header .research-context__links a[aria-current="page"] { color: var(--research-text); text-decoration: underline; text-underline-offset: 4px; }
+.research-header .research-context button { margin-left: auto; padding: 5px 11px; border: 1px solid var(--research-line); border-radius: 4px; background: transparent; color: var(--research-text); font: inherit; cursor: pointer; }
+.research-header .research-context button:hover { border-color: var(--research-muted); }

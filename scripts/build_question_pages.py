@@ -10,6 +10,7 @@ import argparse
 import datetime as dt
 import hashlib
 import html
+import importlib.util
 import json
 import pathlib
 import re
@@ -132,6 +133,12 @@ def outputs(catalog):
         from research_shell import unify_html
         result = {path: unify_html(content.replace("<header>", '<header class="family-header">', 1), "/" + str(path.relative_to(PUBLIC)).removesuffix("index.html")) for path, content in result.items()}
         result[PUBLIC / "questions/exit-research.js"] = (ROOT / "app/exit-research.js").read_text()
+    elif catalog["brand"] == "Seiche":
+        # Seiche's static pages share the family research shell (scripts/research_shell.py).
+        spec = importlib.util.spec_from_file_location("research_shell", pathlib.Path(__file__).with_name("research_shell.py"))
+        shell = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(shell)
+        result = {path: shell.unify_html(content, "/" + str(path.relative_to(PUBLIC)).removesuffix("index.html")) for path, content in result.items()}
     return result
 
 

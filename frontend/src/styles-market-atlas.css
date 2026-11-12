@@ -1,13 +1,13 @@
 .ma-shell {
-  --ma-abyss: #050a0e;
-  --ma-basin: #091219;
-  --ma-shelf: #102029;
-  --ma-slate: #1b3039;
-  --ma-glacial: #a9d8e4;
+  --ma-abyss: var(--research-surface);
+  --ma-basin: var(--research-surface);
+  --ma-shelf: var(--research-raised);
+  --ma-slate: var(--research-raised);
+  --ma-glacial: var(--research-accent);
   --ma-mineral: var(--calm);
   --ma-cobalt: var(--chart-slate);
   --ma-silt: var(--dim);
-  --ma-line: rgba(169, 216, 228, .15);
+  --ma-line: color-mix(in srgb, var(--research-accent) 15%, transparent);
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
   gap: clamp(14px, 2.4vw, 34px);
@@ -54,8 +54,8 @@
   bottom: 62px;
   left: 13px;
   width: 1px;
-  background: linear-gradient(var(--ma-glacial), var(--ma-cobalt) 54%, rgba(135, 158, 216, .12));
-  box-shadow: 0 0 18px rgba(169, 216, 228, .16);
+  background: linear-gradient(var(--ma-glacial), var(--ma-cobalt) 54%, color-mix(in srgb, var(--research-accent) 12%, transparent));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--research-accent) 16%, transparent);
 }
 
 .ma-strata a {
@@ -80,7 +80,7 @@
   height: 1px;
   content: "";
   background: var(--ma-glacial);
-  box-shadow: 0 0 8px rgba(169, 216, 228, .38);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--research-accent) 38%, transparent);
 }
 
 .ma-strata a:nth-of-type(2)::before { width: 13px; background: var(--ma-mineral); }
@@ -123,8 +123,8 @@
   border: 1px solid var(--ma-line);
   border-radius: var(--r-lg);
   background:
-    radial-gradient(ellipse at 88% 12%, rgba(169, 216, 228, .1), transparent 24%),
-    linear-gradient(148deg, rgba(124, 205, 180, .07), transparent 44%),
+    radial-gradient(ellipse at 88% 12%, color-mix(in srgb, var(--research-accent) 10%, transparent), transparent 24%),
+    linear-gradient(148deg, color-mix(in srgb, var(--research-good) 7%, transparent), transparent 44%),
     var(--ma-abyss);
 }
 
@@ -137,14 +137,14 @@
   height: 270px;
   content: "";
   opacity: .64;
-  border: 1px solid rgba(169, 216, 228, .16);
+  border: 1px solid color-mix(in srgb, var(--research-accent) 16%, transparent);
   border-radius: 51% 49% 0 0 / 25% 26% 0 0;
   box-shadow:
-    0 -29px 0 -28px rgba(169, 216, 228, .14),
-    0 -59px 0 -58px rgba(124, 205, 180, .12),
-    0 -91px 0 -90px rgba(135, 158, 216, .12),
-    0 -126px 0 -125px rgba(169, 216, 228, .09),
-    0 -165px 0 -164px rgba(135, 158, 216, .07);
+    0 -29px 0 -28px color-mix(in srgb, var(--research-accent) 14%, transparent),
+    0 -59px 0 -58px color-mix(in srgb, var(--research-good) 12%, transparent),
+    0 -91px 0 -90px color-mix(in srgb, var(--research-accent) 12%, transparent),
+    0 -126px 0 -125px color-mix(in srgb, var(--research-accent) 9%, transparent),
+    0 -165px 0 -164px color-mix(in srgb, var(--research-accent) 7%, transparent);
   transform: rotate(-2deg);
 }
 
@@ -154,8 +154,8 @@
   inset: 0;
   content: "";
   background:
-    repeating-linear-gradient(90deg, transparent 0 79px, rgba(169, 216, 228, .025) 80px),
-    repeating-linear-gradient(0deg, transparent 0 39px, rgba(169, 216, 228, .022) 40px);
+    repeating-linear-gradient(90deg, transparent 0 79px, color-mix(in srgb, var(--research-accent) 2.5%, transparent) 80px),
+    repeating-linear-gradient(0deg, transparent 0 39px, color-mix(in srgb, var(--research-accent) 2.2%, transparent) 40px);
   mask-image: linear-gradient(90deg, transparent, black 38%, black);
 }
 
@@ -219,7 +219,7 @@
   border: 1px solid var(--panel-edge-2);
   border-radius: 999px;
   color: var(--dim);
-  background: rgba(255, 255, 255, .025);
+  background: color-mix(in srgb, var(--research-text) 2.5%, transparent);
   font-family: var(--mono);
   font-size: 8px;
   letter-spacing: .065em;
@@ -229,33 +229,33 @@
 }
 
 .ma-state--tone-positive {
-  border-color: rgba(124, 205, 180, .38);
+  border-color: color-mix(in srgb, var(--research-good) 38%, transparent);
   color: var(--ma-mineral);
-  background: rgba(124, 205, 180, .07);
+  background: color-mix(in srgb, var(--research-good) 7%, transparent);
 }
 
 .ma-state--tone-caution {
-  border-color: rgba(221, 179, 118, .4);
+  border-color: color-mix(in srgb, var(--research-warn) 40%, transparent);
   color: var(--erosion);
-  background: rgba(221, 179, 118, .07);
+  background: color-mix(in srgb, var(--research-warn) 7%, transparent);
 }
 
 .ma-state--tone-danger {
-  border-color: rgba(239, 128, 120, .43);
+  border-color: color-mix(in srgb, var(--research-bad) 43%, transparent);
   color: var(--stress);
-  background: rgba(239, 128, 120, .075);
+  background: color-mix(in srgb, var(--research-bad) 7.5%, transparent);
 }
 
 .ma-state--tone-restricted {
-  border-color: rgba(156, 143, 232, .4);
+  border-color: color-mix(in srgb, var(--research-accent) 40%, transparent);
   color: var(--accent-soft);
-  background: rgba(156, 143, 232, .075);
+  background: color-mix(in srgb, var(--research-accent) 7.5%, transparent);
 }
 
 .ma-state--tone-neutral {
-  border-color: rgba(154, 160, 182, .3);
+  border-color: color-mix(in srgb, var(--research-muted) 30%, transparent);
   color: var(--faint);
-  background: rgba(154, 160, 182, .05);
+  background: color-mix(in srgb, var(--research-muted) 5%, transparent);
 }
 
 .ma-catalog-control {
@@ -266,7 +266,7 @@
   padding: 15px 17px;
   border: 1px solid var(--ma-line);
   border-radius: var(--r-md);
-  background: linear-gradient(90deg, rgba(16, 32, 41, .78), rgba(9, 18, 25, .38));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--research-raised) 78%, transparent), color-mix(in srgb, var(--research-surface) 38%, transparent));
 }
 
 .ma-catalog-control label,
@@ -374,13 +374,13 @@
 .ma-notice button:disabled,
 .ma-pagination button:disabled,
 .ma-clear:disabled { cursor: not-allowed; opacity: .38; }
-.ma-notice--error { border-color: rgba(239, 128, 120, .38); background: rgba(239, 128, 120, .06); }
+.ma-notice--error { border-color: color-mix(in srgb, var(--research-bad) 38%, transparent); background: color-mix(in srgb, var(--research-bad) 6%, transparent); }
 .ma-notice--error strong { color: var(--stress); }
-.ma-notice--restricted { border-color: rgba(156, 143, 232, .28); background: rgba(156, 143, 232, .045); }
+.ma-notice--restricted { border-color: color-mix(in srgb, var(--research-accent) 28%, transparent); background: color-mix(in srgb, var(--research-accent) 4.5%, transparent); }
 .ma-notice--restricted strong { color: var(--accent-soft); }
-.ma-notice--unavailable { border-color: rgba(154, 160, 182, .24); }
+.ma-notice--unavailable { border-color: color-mix(in srgb, var(--research-muted) 24%, transparent); }
 .ma-notice--unavailable strong { color: var(--dim); }
-.ma-notice--stale { border-color: rgba(239, 128, 120, .3); background: rgba(239, 128, 120, .045); }
+.ma-notice--stale { border-color: color-mix(in srgb, var(--research-bad) 30%, transparent); background: color-mix(in srgb, var(--research-bad) 4.5%, transparent); }
 .ma-notice--stale strong { color: var(--stress); }
 
 .ma-readout {
@@ -419,7 +419,7 @@
   padding: clamp(18px, 3vw, 30px);
   border: 1px solid var(--ma-line);
   border-radius: var(--r-lg);
-  background: rgba(9, 18, 25, .72);
+  background: color-mix(in srgb, var(--research-surface) 72%, transparent);
   scroll-margin-top: 18px;
 }
 
@@ -448,10 +448,10 @@
 .ma-plot {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(169, 216, 228, .11);
+  border: 1px solid color-mix(in srgb, var(--research-accent) 11%, transparent);
   border-radius: var(--r-md);
   background:
-    linear-gradient(180deg, rgba(169, 216, 228, .025), rgba(5, 10, 14, .55)),
+    linear-gradient(180deg, color-mix(in srgb, var(--research-accent) 2.5%, transparent), color-mix(in srgb, var(--research-surface) 55%, transparent)),
     var(--ma-abyss);
 }
 
@@ -461,7 +461,7 @@
   pointer-events: none;
   content: "";
   opacity: .4;
-  background: repeating-linear-gradient(90deg, transparent 0 99px, rgba(169, 216, 228, .025) 100px);
+  background: repeating-linear-gradient(90deg, transparent 0 99px, color-mix(in srgb, var(--research-accent) 2.5%, transparent) 100px);
 }
 
 .ma-plot svg { position: relative; z-index: 1; display: block; width: 100%; min-height: 210px; }
@@ -470,7 +470,7 @@
 .ma-plot__date { fill: var(--faint); font: 8px var(--mono); }
 .ma-plot__area { pointer-events: none; }
 .ma-plot__line { fill: none; stroke: var(--ma-glacial); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; vector-effect: non-scaling-stroke; }
-.ma-plot__line--echo { stroke: rgba(169, 216, 228, .14); stroke-width: 7; }
+.ma-plot__line--echo { stroke: color-mix(in srgb, var(--research-accent) 14%, transparent); stroke-width: 7; }
 .ma-plot__point { fill: var(--ma-abyss); stroke: var(--ma-mineral); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 
 .ma-plot figcaption {
@@ -494,9 +494,9 @@
   justify-items: start;
   gap: 6px;
   padding: 28px;
-  border: 1px dashed rgba(169, 216, 228, .18);
+  border: 1px dashed color-mix(in srgb, var(--research-accent) 18%, transparent);
   border-radius: var(--r-md);
-  background: rgba(5, 10, 14, .38);
+  background: color-mix(in srgb, var(--research-surface) 38%, transparent);
 }
 
 .ma-empty strong { font-size: 12px; font-weight: 530; }
@@ -515,7 +515,7 @@
   gap: 14px;
   min-width: 0;
   padding: 14px;
-  border: 1px solid rgba(169, 216, 228, .1);
+  border: 1px solid color-mix(in srgb, var(--research-accent) 10%, transparent);
   border-radius: var(--r-md);
   background: var(--ma-abyss);
 }
@@ -547,7 +547,7 @@
   max-height: min(70vh, 720px);
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid rgba(169, 216, 228, .11);
+  border: 1px solid color-mix(in srgb, var(--research-accent) 11%, transparent);
   border-radius: var(--r-md);
   background: var(--ma-abyss);
   outline: 1px solid transparent;
@@ -570,7 +570,7 @@
   padding: 10px 12px;
   border-bottom: 1px solid var(--ma-line);
   color: var(--ma-glacial);
-  background: #081117;
+  background: var(--research-surface);
   font-family: var(--mono);
   font-size: 8px;
   font-weight: 500;
@@ -587,13 +587,13 @@
 
 .ma-table td {
   padding: 12px;
-  border-bottom: 1px solid rgba(169, 216, 228, .075);
+  border-bottom: 1px solid color-mix(in srgb, var(--research-accent) 7.5%, transparent);
   vertical-align: top;
   font-size: 9.5px;
 }
 
 .ma-table tbody tr:last-child td { border-bottom: 0; }
-.ma-table tbody tr:hover td { background: rgba(169, 216, 228, .022); }
+.ma-table tbody tr:hover td { background: color-mix(in srgb, var(--research-accent) 2.2%, transparent); }
 .ma-table td > strong,
 .ma-table td > span,
 .ma-table td > code,

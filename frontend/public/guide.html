@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="research-interface" data-product="seiche">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,20 +7,19 @@
 <meta name="description" content="A no-jargon guide to Seiche, the free open source funding stress terminal. What the regime word means, how to use the board in three steps, and every engine name translated into plain English.">
 <link rel="canonical" href="https://seiche.info/guide">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<style>
+<link rel="stylesheet" href="/research-ui/research.css"><link rel="stylesheet" href="/research-ui/family-tokens.css"><link rel="stylesheet" href="/research-ui/seiche-pages.css"><style>
   /* NOCTURNE — same material as the terminal: near-neutral blue-grey ground,
      Inter at medium weight, one blurple accent used as line not flood, rules
      that fade to transparent at their ends. */
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   :root {
-    --bg:#000000; --panel:#0b0d15; --panel-2:#11131d; --edge:#1c1f2b; --edge-2:#333748;
-    --text:#edeef4; --dim:#9aa0b6; --faint:#787f95; --ghost:#5a5f70;
-    --accent:#9c8fe8; --accent-bright:#d9d4ff; --accent-soft:#bbaffe; --accent-dim:#8071cc; --accent-deep:#453c72;
-    --accent-glow:rgba(156,143,232,.45);
-    --calm:#7ccdb4; --erosion:#ddb376; --strain:#e59a7a; --stress:#ef8078;
-    --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
-    --display:"Inter",system-ui,-apple-system,sans-serif;
-    --rule:linear-gradient(to right,transparent,rgba(237,238,244,.16) 48px,rgba(237,238,244,.16) calc(100% - 48px),transparent);
+    --bg:var(--research-bg); --panel:var(--research-surface); --panel-2:var(--research-raised); --edge:var(--research-line); --edge-2:var(--research-line-strong);
+    --text:var(--research-text); --dim:var(--research-muted); --faint:var(--research-muted); --ghost:var(--research-line-strong);
+    --accent:var(--research-accent); --accent-bright:var(--research-text); --accent-soft:var(--research-accent); --accent-dim:var(--research-accent); --accent-deep:var(--research-accent);
+    --accent-glow:color-mix(in srgb, var(--research-accent) 45%, transparent);
+    --calm:var(--research-good); --erosion:var(--research-warn); --strain:var(--research-bad); --stress:var(--research-bad);
+    --mono:var(--research-code);
+    --display:var(--research-font);
+    --rule:linear-gradient(to right,transparent,color-mix(in srgb, var(--research-text) 16%, transparent) 48px,color-mix(in srgb, var(--research-text) 16%, transparent) calc(100% - 48px),transparent);
     color-scheme:dark;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -31,7 +30,7 @@
   }
   a { color:var(--accent-soft); text-decoration:none; }
   a:hover { color:var(--accent-bright); text-decoration:underline; }
-  ::selection { background:rgba(156,143,232,.30); }
+  ::selection { background:color-mix(in srgb, var(--research-accent) 30%, transparent); }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
 
   .top { display:flex; align-items:baseline; justify-content:space-between; gap:14px; flex-wrap:wrap;
@@ -56,10 +55,10 @@
   /* outlined tints, as on the board — the word carries the state, colour supports */
   .rg .tag { font-family:var(--display); font-weight:500; font-size:11px; letter-spacing:.09em; padding:3px 10px;
              border-radius:6px; display:inline-block; text-transform:uppercase; border:1px solid transparent; }
-  .rg.calm .tag { color:var(--calm); border-color:rgba(124,205,180,.45); background:rgba(124,205,180,.10); }
-  .rg.erosion .tag { color:var(--erosion); border-color:rgba(221,179,118,.45); background:rgba(221,179,118,.10); }
-  .rg.strain .tag { color:var(--strain); border-color:rgba(229,154,122,.5); background:rgba(229,154,122,.10); }
-  .rg.stress .tag { color:var(--stress); border-color:rgba(239,128,120,.55); background:rgba(239,128,120,.12); }
+  .rg.calm .tag { color:var(--calm); border-color:color-mix(in srgb, var(--research-good) 45%, transparent); background:color-mix(in srgb, var(--research-good) 10%, transparent); }
+  .rg.erosion .tag { color:var(--erosion); border-color:color-mix(in srgb, var(--research-warn) 45%, transparent); background:color-mix(in srgb, var(--research-warn) 10%, transparent); }
+  .rg.strain .tag { color:var(--strain); border-color:color-mix(in srgb, var(--research-bad) 50%, transparent); background:color-mix(in srgb, var(--research-bad) 10%, transparent); }
+  .rg.stress .tag { color:var(--stress); border-color:color-mix(in srgb, var(--research-bad) 55%, transparent); background:color-mix(in srgb, var(--research-bad) 12%, transparent); }
   .rg p { font-size:12.5px; color:var(--dim); margin:10px 0 0; }
 
   ol.steps { list-style:none; counter-reset:s; display:grid; gap:12px; margin:8px 0; }
@@ -67,7 +66,7 @@
                 background:var(--panel); border:1px solid var(--edge); border-radius:10px; padding:13px 15px; }
   ol.steps li::before { content:counter(s); font-family:var(--display); font-weight:500; font-size:15px; color:var(--accent-soft);
                         border:1px solid var(--accent-deep); border-radius:8px; width:30px; height:30px; display:grid; place-items:center;
-                        background:rgba(156,143,232,.06); }
+                        background:color-mix(in srgb, var(--research-accent) 6%, transparent); }
   ol.steps b { color:var(--text); font-weight:600; }
 
   dl.tabs { display:grid; gap:1px; background:var(--edge); border:1px solid var(--edge); border-radius:10px; overflow:hidden; }
@@ -93,14 +92,14 @@
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "534f08f7270a4f4f9a9a10f90d723ca7"}'></script><!-- End Cloudflare Web Analytics -->
 </head>
-<body>
+<body><a class="research-skip" href="#main">Skip to content</a><header class="research-header"><div class="research-mast"><a class="research-identity" href="/"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14"/><path d="M7 17c5-8 9 8 14 0s7-5 8-2M7 23c5-8 9 8 14 0s7-5 8-2"/></svg><span><strong>Seiche</strong></span></a><nav class="research-network" aria-label="Products"><a href="https://liquilens.in/">LiquiLens</a><a href="/" aria-current="page">Seiche</a><a href="https://liquilens-undertow.com/">Undertow</a></nav><a class="research-api" href="/developers">API &amp; MCP</a></div><nav class="research-tabs" aria-label="Seiche sections"><a href="/#today">Today</a><a href="/money-markets/">Money markets</a><a href="/gift-city/">GIFT City</a><a href="/#geography">India geography</a><a href="/#workbench">Workbench</a><a href="/#corpus">Market atlas</a><a href="/#research">Research</a><a href="/markets/">World markets</a><a href="/articles/">Published research</a><a href="/use-cases">Use cases</a><a href="/guide" aria-current="page">Guide</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav></header>
 
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
   <a class="back" href="/">← back to the terminal</a>
 </div>
 
-<h1>How to read Seiche</h1>
+<h1 id="main">How to read Seiche</h1>
 <p class="lede">Seiche watches the plumbing of the dollar. When banks and funds start to run short of cash, that stress shows up in a few boring public numbers days or weeks before it reaches the news. Seiche reads those numbers every day and turns them into one plain reading: how much stress is building, and how close it is.</p>
 <p class="sub">This is the no-jargon guide. If a word on the board looks like a shipping term, it probably is, on purpose, and this page tells you what each one actually means.</p>
 
@@ -214,5 +213,5 @@
   <br>Not investment advice.
 </div>
 
-</body>
+<script type="module" src="/research-ui/context.js"></script></body>
 </html>

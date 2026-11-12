@@ -1,4 +1,4 @@
-.wb-shell { --wb-line: rgba(169,216,228,.17); --wb-ice: #a9d8e4; --wb-ink: #090f15; display: grid; gap: 22px; margin: 24px 0 48px; }
+.wb-shell { --wb-line: color-mix(in srgb, var(--research-accent) 17%, transparent); --wb-ice: var(--research-accent); --wb-ink: var(--research-surface); display: grid; gap: 22px; margin: 24px 0 48px; }
 .wb-shell, .wb-shell > *, .wb-forex, .wb-china, .wb-forex > *, .wb-china > *, .wb-section-heading > *, .wb-filter-row { min-width: 0; }
 .wb-shell button, .wb-shell input, .wb-shell select { font: inherit; }
 .wb-shell button { cursor: pointer; }
@@ -72,7 +72,7 @@
 .wb-table th:first-child { text-align: left; }
 .wb-table tbody th { font-weight: 450; }
 .wb-table tbody tr:hover { background: var(--panel); }
-.wb-table tbody tr.is-selected { background: rgba(169,216,228,.07); }
+.wb-table tbody tr.is-selected { background: color-mix(in srgb, var(--research-accent) 7%, transparent); }
 .wb-table tbody tr.is-selected th:first-child { box-shadow: inset 3px 0 var(--wb-ice); }
 .wb-table button { color: var(--text); padding: 0; border: 0; background: transparent; text-align: left; line-height: 1.6; font-weight: 550; }
 .wb-table small { display: block; color: var(--dim); font: 9px/1.6 var(--display); margin-top: 4px; }
