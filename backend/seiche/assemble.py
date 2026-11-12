@@ -410,7 +410,7 @@ async def _on_build_thread(func, /, *args, **kwargs):
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.16.12"
+VERSION = "0.16.13"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 

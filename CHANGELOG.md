@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.13: India SDL auctions desk, one board-build thread, honest MCP copy (2026-11-12)
+
+- Add the India state government securities (SDL) auctions desk. `seiche/india_sdl.py` reads a committed pack of every RBI "State Government Securities: Full Auction Result" press release from 8 April 2021 to 9 November 2026 (293 releases, 4,556 securities, 31 states and union territories). `money_market_context` gains `section='india_states'` (the latest auction day, a 52-week state table, a weekly series and one state's securities with their RBI release links), and `GET /api/v2/india-sdl` (`?state=`, `?history=true`) serves the same desk under the existing `/api/v2/*` allow-list. A cut-off printed as "-" or 0 stays empty, never a yield. Descriptive only: no spread to central government bonds, no forecast, no score; RBI attributed (#433).
+- Ship that pack, `seiche/india_sdl_auctions.json`, in the wheel and the sdist as reviewed package data: the artifact verifier admits it by exact path. It was built offline by `backend/scripts/build_india_sdl.py` and is not rebuilt at release.
+- Run every blocking stage of a board rebuild on one long-lived dedicated thread (`_BUILD_EXECUTOR`) instead of the event loop's shared default executor. Successive rebuilds had rotated through every worker, and each worker kept its own glibc arena (and, for the deep layer, its own OpenMP team), so the API process grew with every rebuild until it restarted. Sources, engines, payload, clocks and rights checks are unchanged, and Time Machine replays keep `asyncio.to_thread` (#434).
+- `money_market_context` no longer points agents at `funding_stress_now`, which this release does not serve, and the daily MCP quota message now says the free allowance resets at 00:00 UTC, that Seiche has no paid tier and that voluntary support does not change limits (#432).
+- The `ops/Caddyfile` comments say what each route serves without naming internal collectors, relay paths or cadence. No directive changed (#430).
+
 ## 0.16.12: original-publisher sources and the per-engine projection (2026-11-09)
 
 - Write only changed observations during series refreshes: `INSERT ... ON CONFLICT (mnemonic, obs_date) DO UPDATE ... WHERE value IS NOT excluded.value` replaces `INSERT OR REPLACE`, conversion happens before the writer lock, and each write logs its timings without series identities or values (#426).
