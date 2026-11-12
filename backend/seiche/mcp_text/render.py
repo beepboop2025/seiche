@@ -33,7 +33,10 @@ MARKS = "unicode"
 COLOUR = "none"
 INCOMPLETE = "Not every served item is rendered here; the JSON block has the full result."
 OPEN_LEAD = "Not mapped to a display state: "
-_FAILURES = (ValueError, TypeError, KeyError, AttributeError, IndexError)
+# Anything a rendering bug or an unprintable number can raise (ArithmeticError covers
+# ZeroDivisionError, OverflowError and decimal errors; LookupError covers KeyError and
+# IndexError). The block is an addition: it must never fail a call.
+_FAILURES = (ArithmeticError, AttributeError, LookupError, RecursionError, TypeError, ValueError)
 
 
 def _size(text: str) -> int:

@@ -623,3 +623,18 @@ def test_the_block_is_the_same_at_a_later_render_time(serve, monkeypatch):
     monkeypatch.setattr(mcp_server, "datetime", Later)
     assert _block(_result(serve, "data_health", {}, SYNTHETIC_HEALTH)) == first
     assert "2031" not in first
+
+
+# ------------------------------------------------- the block never fails a call
+def test_an_unexpected_error_while_rendering_a_result_keeps_the_json_block_alone(monkeypatch):
+    def broken(*args, **kwargs):
+        raise ZeroDivisionError("synthetic failure")
+    monkeypatch.setattr(render.adapters, "build", broken)
+    assert render.result_block("data_health", {"synthetic": True}) is None
+
+
+def test_an_unexpected_error_while_rendering_a_legacy_refusal_keeps_the_json_block_alone(monkeypatch):
+    def broken(*args, **kwargs):
+        raise ZeroDivisionError("synthetic failure")
+    monkeypatch.setattr(render.adapters, "legacy_unavailable", broken)
+    assert render.legacy_block({"synthetic": True}) is None
