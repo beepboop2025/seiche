@@ -516,7 +516,8 @@ def test_ok_false_is_unavailable_with_the_producers_reason():
 
 def test_world_domains_and_items_use_seiches_five_words():
     text = render.compose(_view(SYNTHETIC_WORLD, "world_markets_context"))
-    assert "money_markets: ⊘ Restricted" in text and "forex: ▨ Unavailable" in text
+    assert text.count("money_markets: ⊘ Restricted") == 1  # the domain prints once
+    assert "forex: ▨ Unavailable" in text
     assert "capital_markets" not in text  # a derived domain summary has no value to draw
     assert "Synthetic observed rate: 3.88 %\n● Observed" in text
     assert "Synthetic derived spread: 6.5 bp\n◆ Derived" in text

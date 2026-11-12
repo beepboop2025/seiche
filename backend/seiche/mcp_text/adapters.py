@@ -413,8 +413,12 @@ def money_market_context(out: Mapping[str, Any], view: View) -> None:
 # World markets, FX workbench and the GIFT City desk
 # --------------------------------------------------------------------------
 def _world_items(view: View, node: Any, checked: str | None, parent: str | None,
-                 name: str | None, depth: int = 0) -> None:
-    """Walk one selected domain: world.py serves Seiche's five words per item."""
+                 name: str | None, depth: int = 0, skip_root: bool = False) -> None:
+    """Walk one selected domain: world.py serves Seiche's five words per item.
+
+    ``skip_root`` leaves out the domain's own status when ``coverage.domains``
+    already drew it, so one domain gap prints once.
+    """
     if depth > _MAX_DEPTH:
         view.incomplete = True
         return
@@ -426,7 +430,7 @@ def _world_items(view: View, node: Any, checked: str | None, parent: str | None,
         return
     own = _label(node)
     claim = node.get("evidence_status", node.get("status"))
-    if isinstance(claim, str) and claim not in PRESENT:
+    if isinstance(claim, str) and claim not in PRESENT and not (skip_root and depth == 0):
         reading(view, claim, freshness=node.get("freshness"), value=node.get("value"),
                 reason=text(node.get("reason")), label=own or parent,
                 subject=None if own else name, unit=text(node.get("unit")),
@@ -445,8 +449,11 @@ def world_markets_context(out: Mapping[str, Any], view: View) -> None:
                                                 text(clocks.get("boundary"))) if part) or None
     if tool_gap(view, out, checked):
         return
+    covered: set[str] = set()
     for domain in _rows(_mapping(out.get("coverage")).get("domains")):
         row = state(domain.get("status"))
+        if isinstance(domain.get("id"), str):
+            covered.add(domain["id"])
         if row is None:
             open_word(view, "domain status", domain.get("status"))
         elif row.state in present.GAP_STATES:
@@ -454,7 +461,7 @@ def world_markets_context(out: Mapping[str, Any], view: View) -> None:
                 reason=None, checked_at=checked)
     for key in _WORLD_DOMAINS:
         if isinstance(out.get(key), Mapping):
-            _world_items(view, out[key], checked, key, None)
+            _world_items(view, out[key], checked, key, None, skip_root=key in covered)
     view.incomplete = True  # domain summaries and context blocks stay in the JSON
 
 
