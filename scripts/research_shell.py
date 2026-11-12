@@ -78,6 +78,8 @@ def unify_html(source: str, path: str) -> str:
         return opening
 
     source = re.sub(r"<html\b[^>]*>", html_class, source, count=1)
+    # The family field is black on every page.
+    source = re.sub(r'(<meta name="theme-color" content=")#[0-9a-fA-F]{3,8}(")', r"\g<1>#000000\2", source, count=1)
     if STYLE not in source:
         # The family first, so each page's own stylesheet still lays out its content.
         first = re.search(r'<link rel="stylesheet"|<style\b', source)
