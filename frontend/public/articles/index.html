@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="research-interface" data-product="seiche">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +8,9 @@
 <link rel="canonical" href="https://seiche.info/articles/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="theme-color" content="#000000">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Seiche">
 <meta property="og:url" content="https://seiche.info/articles/">
@@ -41,14 +44,14 @@
  ]
 }
 </script>
-<link rel="stylesheet" href="/research-ui/research.css"><link rel="stylesheet" href="/research-ui/family-tokens.css"><link rel="stylesheet" href="/research-ui/seiche-pages.css"><style>
+<style>
 :root {
-  --bg:var(--research-bg); --panel:var(--research-surface); --panel-2:var(--research-raised); --edge:var(--research-line); --edge-2:var(--research-line-strong);
-  --text:var(--research-text); --dim:var(--research-muted); --faint:var(--research-muted);
-  --accent:var(--research-accent); --accent-soft:var(--research-accent); --accent-deep:var(--research-accent);
-  --divider:color-mix(in srgb, var(--research-text) 16%, transparent);
-  --mono:var(--research-code);
-  --display:var(--research-font);
+  --bg:#000000; --panel:#0b0d15; --panel-2:#11131d; --edge:#1c1f2b; --edge-2:#333748;
+  --text:#edeef4; --dim:#9aa0b6; --faint:#787f95;
+  --accent:#9c8fe8; --accent-soft:#bbaffe; --accent-deep:#453c72;
+  --divider:rgba(237,238,244,0.16);
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --display:"Inter",system-ui,-apple-system,sans-serif;
   color-scheme:dark;
 }
 * { box-sizing:border-box; margin:0; padding:0; }
@@ -92,9 +95,9 @@ h1 { font-size:clamp(26px,4.5vw,38px); font-weight:500; letter-spacing:-.02em; l
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "534f08f7270a4f4f9a9a10f90d723ca7"}'></script><!-- End Cloudflare Web Analytics -->
 </head>
-<body><a class="research-skip" href="#main">Skip to content</a><header class="research-header"><div class="research-mast"><a class="research-identity" href="/"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14"/><path d="M7 17c5-8 9 8 14 0s7-5 8-2M7 23c5-8 9 8 14 0s7-5 8-2"/></svg><span><strong>Seiche</strong></span></a><nav class="research-network" aria-label="Products"><a href="https://liquilens.in/">LiquiLens</a><a href="/" aria-current="page">Seiche</a><a href="https://liquilens-undertow.com/">Undertow</a></nav><a class="research-api" href="/developers">API &amp; MCP</a></div><nav class="research-tabs" aria-label="Seiche sections"><a href="/#today">Today</a><a href="/money-markets/">Money markets</a><a href="/gift-city/">GIFT City</a><a href="/#geography">India geography</a><a href="/#workbench">Workbench</a><a href="/#corpus">Market atlas</a><a href="/#research">Research</a><a href="/markets/">World markets</a><a href="/articles/" aria-current="page">Published research</a><a href="/use-cases">Use cases</a><a href="/guide">Guide</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav></header>
+<body>
 <div class="top"><a class="wordmark" href="/">SEI<span>CHE</span></a><span class="crumb"><a href="/articles/">articles</a> &middot; <a href="/dispatches/">dispatches</a> &middot; <a href="/">live board</a></span></div>
 <h1>Funding analysis, every day</h1><p class="lede">When the board finds a material change, the article explains the mechanism, evidence, counter-case, and next test. When it does not, the desk opens one historical episode and shows what happened without manufacturing a breaking-news claim. Follow the system into LiquiLens for institution risk and Undertow for market exits.</p><div class="cards"><a class="card" href="/articles/2026-08-15-reserve-drain-puts-the-calendar-in-charge-of-dollar-funding-risk/"><div class="date" style="margin-top:0">2026-08-15 &middot; current analysis</div><div class="card-title">Reserve drain puts the calendar in charge of dollar-funding risk</div><div class="card-sum">A measured reserve decline and a dated settlement have put Seiche’s funding board in STRAIN. But overnight cash still signals abundance, making the settlement a test of whether calendar pressure can become a funding constraint.</div><div class="read">read the analysis</div></a></div>
 <div class="foot">Reported from the point-in-time live board; every number is checked against the article dossier and remains inspectable on the <a href="/">free board</a>. Seiche is free open source software (<a href="https://github.com/beepboop2025/seiche">AGPL-3.0-or-later, source</a>). <a href="/guide">Plain English guide</a> &middot; <a href="/support">Support</a> &middot; Not investment advice.</div>
-<script type="module" src="/research-ui/context.js"></script></body>
+</body>
 </html>

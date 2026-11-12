@@ -53,7 +53,8 @@ test("one accent for every product: no Seiche stylesheet overrides the family ac
 });
 
 test("every static page carries the family header, tokens and context script", () => {
-  const pages = walk(PUBLIC).filter((p) => p.endsWith(".html") && !p.includes("/research-ui/"));
+  // articles/ and dispatches/ are generated at publish time by backend/seiche/dispatch_pages.py.
+  const pages = walk(PUBLIC).filter((p) => p.endsWith(".html") && !/\/(research-ui|articles|dispatches)\//.test(p));
   assert.ok(pages.length >= 20, "static pages found");
   const shell = readFileSync(join(PUBLIC, "research-ui/header.html"), "utf8").trim();
   const mast = shell.slice(0, shell.indexOf('<nav class="research-tabs"'));
@@ -67,6 +68,8 @@ test("every static page carries the family header, tokens and context script", (
     assert.equal(html.split('<header class="research-header">').length - 1, 1, `${name} has one family header`);
     assert.ok(html.includes(mast.replace('<a class="research-skip" href="#main">Skip to content</a>', "")), `${name} mast matches header.html`);
     assert.ok(html.includes('<script type="module" src="/research-ui/context.js"></script>'), `${name} loads context.js`);
+    const skip = html.match(/class="research-skip" href="#([^"]+)"/);
+    assert.ok(skip && new RegExp(`\\bid="${skip[1]}"`).test(html), `${name} skip link has a target`);
     assert.doesNotMatch(html, /fonts\.googleapis\.com|fonts\.gstatic\.com/, `${name} loads a web font`);
   }
 });

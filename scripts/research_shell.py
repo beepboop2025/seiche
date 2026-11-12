@@ -92,13 +92,15 @@ def unify_html(source: str, path: str) -> str:
     if own_skip:
         target = own_skip[1]
         source = source[: own_skip.start()] + source[own_skip.end():]
-    main = re.search(r"<main\b[^>]*>", source)
+    # Pages without a <main> (the reading pages) skip to their first heading.
+    main = re.search(r"<main\b[^>]*>", source) or re.search(r"<h1\b[^>]*>", source)
     if target is None and main:
         identity = re.search(r'\bid="([^"]+)"', main[0])
         if identity:
             target = identity[1]
         else:
-            source = source[: main.start()] + main[0].replace("<main", '<main id="main"', 1) + source[main.end():]
+            tag = "<main" if main[0].startswith("<main") else "<h1"
+            source = source[: main.start()] + main[0].replace(tag, tag + ' id="main"', 1) + source[main.end():]
             target = "main"
     if target and target != "main":
         source = re.sub(r'class="research-skip" href="#[^"]*"', f'class="research-skip" href="#{target}"', source, count=1)
@@ -110,9 +112,14 @@ def page_path(name: str) -> str:
     return "/" + rel.removesuffix("index.html") if rel.endswith("index.html") else "/" + rel
 
 
+# Generated at publish time by backend/seiche/dispatch_pages.py (and committed by
+# the daily dispatch workflow); their shell belongs in that generator, not here.
+GENERATED = ("frontend/public/articles/", "frontend/public/dispatches/")
+
+
 def pages() -> list[str]:
     names = subprocess.check_output(["git", "ls-files", "frontend/public/*.html"], cwd=ROOT, text=True).splitlines()
-    return [n for n in names if not n.startswith("frontend/public/research-ui/")]
+    return [n for n in names if not n.startswith(("frontend/public/research-ui/", *GENERATED))]
 
 
 def sync(check: bool = False) -> list[str]:
