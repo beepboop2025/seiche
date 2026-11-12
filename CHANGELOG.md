@@ -7,6 +7,7 @@
 - Run every blocking stage of a board rebuild on one long-lived dedicated thread (`_BUILD_EXECUTOR`) instead of the event loop's shared default executor. Successive rebuilds had rotated through every worker, and each worker kept its own glibc arena (and, for the deep layer, its own OpenMP team), so the API process grew with every rebuild until it restarted. Sources, engines, payload, clocks and rights checks are unchanged, and Time Machine replays keep `asyncio.to_thread` (#434).
 - `money_market_context` no longer points agents at `funding_stress_now`, which this release does not serve, and the daily MCP quota message now says the free allowance resets at 00:00 UTC, that Seiche has no paid tier and that voluntary support does not change limits (#432).
 - The `ops/Caddyfile` comments say what each route serves without naming internal collectors, relay paths or cadence. No directive changed (#430).
+- Every desk tab and every static page moves onto the family research interface that liquilens.in and Undertow use: the family header and tab row, one accent for every product, and the family tokens and stylesheets, vendored byte for byte. `scripts/research_shell.py` applies the family header to the 21 committed static pages. Presentation only: no data, route, request or copy of record changes (#435).
 
 ## 0.16.12: original-publisher sources and the per-engine projection (2026-11-09)
 
