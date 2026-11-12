@@ -12,6 +12,7 @@ frontend/public/research-ui/header.html; `--check` fails when a page drifts.
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -104,6 +105,8 @@ def unify_html(source: str, path: str) -> str:
             target = "main"
     if target and target != "main":
         source = re.sub(r'class="research-skip" href="#[^"]*"', f'class="research-skip" href="#{target}"', source, count=1)
+    if path in SCRIPT_FREE:
+        return source.replace(CONTEXT, "")
     return attach_context(source)
 
 
@@ -115,11 +118,23 @@ def page_path(name: str) -> str:
 # Generated at publish time by backend/seiche/dispatch_pages.py (and committed by
 # the daily dispatch workflow); their shell belongs in that generator, not here.
 GENERATED = ("frontend/public/articles/", "frontend/public/dispatches/")
+# The owner's Google-Extended permission is tied to these pages' reviewed bytes;
+# they join the shell only with a content re-review and a new receipt.
+REVIEWED = ROOT / "docs" / "google-extended-reviewed-pages.json"
+# The no-JS canonical answer page carries exactly one (ld+json) script by contract
+# (backend/tests/test_public_money_market_discovery.py): no context.js there.
+SCRIPT_FREE = {"/money-markets/"}
+
+
+def reviewed_pages() -> set[str]:
+    review = json.loads(REVIEWED.read_text())
+    return {page["source_file"] for page in review["pages"]}
 
 
 def pages() -> list[str]:
     names = subprocess.check_output(["git", "ls-files", "frontend/public/*.html"], cwd=ROOT, text=True).splitlines()
-    return [n for n in names if not n.startswith(("frontend/public/research-ui/", *GENERATED))]
+    held = reviewed_pages()
+    return [n for n in names if not n.startswith(("frontend/public/research-ui/", *GENERATED)) and n not in held]
 
 
 def sync(check: bool = False) -> list[str]:
