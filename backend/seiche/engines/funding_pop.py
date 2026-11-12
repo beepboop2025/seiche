@@ -47,6 +47,9 @@ from seiche.engines.tidetables import _auroc
 
 _TURN_BUCKETS = ("year_turn", "quarter_turn", "month_end")
 FEATURES = ["pop_bp", "rrp_co_z", "is_turn", "damping_pctl"]
+# Owner ruling, 12 Nov 2026: Funding Pop is shown everywhere as research only,
+# with its skill, so the website, the MCP and the alerts say the same thing.
+CLAIM_STATUS = "research_only"
 
 
 def extract_pops(
@@ -157,6 +160,23 @@ def _walk_forward_probs(P: pd.DataFrame, target: str) -> pd.Series:
     return probs
 
 
+def research_label(block: object) -> str:
+    """The label quoted beside Funding Pop's probabilities on every surface.
+
+    Built from the block's own walk-forward validation, never typed by hand,
+    so it stays true whatever the skill's sign: a skill below zero means the
+    probabilities score worse than the base rate."""
+    validation = block.get("validation") if isinstance(block, dict) else None
+    parts = []
+    for target in ("sticky", "escalates"):
+        row = validation.get(target) if isinstance(validation, dict) else None
+        skill = row.get("skill") if isinstance(row, dict) else None
+        if isinstance(skill, (int, float)) and not isinstance(skill, bool):
+            parts.append(f"{target} skill {skill:+.3f}")
+    scored = ", ".join(parts) + " vs the base rate" if parts else "skill not yet scored"
+    return f"research only, not validated: {scored}"
+
+
 def analyze(
     spread_bp: pd.Series,
     rrp_b: pd.Series,
@@ -200,8 +220,8 @@ def analyze(
         p_esc = float(probs["escalates"].iloc[-1]) if np.isfinite(probs["escalates"].iloc[-1]) else None
         verdict = "?"
         if p_sticky is not None:
-            verdict = "CURRENT — this pop reads as genuine scarcity" if p_sticky >= 0.5 else \
-                      "CHOP — this pop reads as calendar mechanics"
+            verdict = "CURRENT: this pop reads as genuine scarcity" if p_sticky >= 0.5 else \
+                      "CHOP: this pop reads as calendar mechanics"
         live_block = {
             "date": last_pop["date"].date().isoformat(),
             "age_bd": age_bd,
@@ -242,9 +262,9 @@ def analyze(
         "receipts": receipts,
         "validation": validation,
         "caveats": [
-            "pops are declustered (>7 calendar days apart) so trials are ~independent — but regimes still overlap",
+            "pops are declustered (>7 calendar days apart) so trials are ~independent, but regimes still overlap",
             "the model is a 4-feature logistic on purpose: a few hundred pops cannot discipline more",
-            "a pop with its expected RRP co-move is choreography; without it, scarcity — the discriminator the 2025 squeezes proved",
+            "a pop with its expected RRP co-move is choreography; without it, scarcity: the discriminator the 2025 squeezes proved",
         ],
         "method": (
             f"pop = shared PROOF statistic ≥ {FUNDING_POP_POP_BP:g}bp, declustered; targets: STICKY = "

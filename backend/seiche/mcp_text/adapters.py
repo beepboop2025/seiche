@@ -406,6 +406,12 @@ def money_market_context(out: Mapping[str, Any], view: View) -> None:
     if diagnostics.get("status") == "unavailable":
         reading(view, "unavailable", reason=text(diagnostics.get("reason")),
                 label="diagnostics", checked_at=checked)
+    pop = _mapping(out.get("funding_pop"))
+    if pop:
+        # Research only (owner ruling, 12 Nov 2026). The contract has no Seiche
+        # word for a research reading yet, so it is named, never drawn as a desk
+        # reading; its probabilities, skill and label stay in the JSON block.
+        open_word(view, "funding_pop", pop.get("claim_status"))
     view.incomplete = True  # levels, percentiles and the methodology stay in the JSON
 
 

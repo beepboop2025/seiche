@@ -104,13 +104,13 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
     thr = ALERT_RULES.get("tail_z")
     if thr is not None and tail_z is not None and tail_z >= thr:
         candidates.append(("tail_z", f"ge{thr}:{(snap.get('generated_at') or '')[:10]}",
-                           f"tail index z {tail_z} ≥ {thr} — tails detaching"))
+                           f"tail index z {tail_z} ≥ {thr}: tails detaching"))
 
     srf = (hl.get("srf_accepted_b") or {}).get("value")
     thr = ALERT_RULES.get("srf_accepted_b")
     if thr is not None and srf is not None and srf >= thr:
         candidates.append(("srf", f"{(hl.get('srf_accepted_b') or {}).get('asof')}",
-                           f"SRF take-up ${srf}B ≥ ${thr}B — the confession channel is open"))
+                           f"SRF take-up ${srf}B ≥ ${thr}B: the confession channel is open"))
 
     dw = (hl.get("dw_b") or {}).get("value")
     thr = ALERT_RULES.get("discount_window_b")
@@ -149,7 +149,7 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
     if thr is not None and (swap.get("ops_30d_total_m") or 0.0) >= thr:
         candidates.append(("swap_lines", f"{swap.get('outstanding_asof')}",
                            f"USD swap lines drawn ${swap['ops_30d_total_m']:.0f}M over 30d "
-                           f"({', '.join(list(swap.get('ops_30d_by_counterparty', {}))[:3])}) — global dollar confession"))
+                           f"({', '.join(list(swap.get('ops_30d_by_counterparty', {}))[:3])}): global dollar confession"))
 
     moor = eng.get("moorings") or {}
     thr = ALERT_RULES.get("peg_dev_bp")
@@ -158,13 +158,13 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
             if p.get("dev_bp") is not None and abs(p["dev_bp"]) >= thr:
                 candidates.append(("peg", f"{p['symbol']}:{(moor.get('usdt') or {}).get('asof', '')}",
                                    f"{p['symbol']} peg {p['dev_bp']:+.0f}bp off $1 "
-                                   f"(${p.get('circulating_b')}B circulating) — offshore dollar strain"))
+                                   f"(${p.get('circulating_b')}B circulating): offshore dollar strain"))
     thr = ALERT_RULES.get("stable_drain_30d_pct")
     dem = (moor.get("demand") or {})
     if thr is not None and dem.get("chg_30d_pct") is not None and dem["chg_30d_pct"] <= thr:
         candidates.append(("stable_drain", dem.get("asof", "?"),
                            f"stablecoin circulation {dem['chg_30d_pct']:+.1f}%/30d "
-                           f"(${dem.get('chg_30d_b')}B) — offshore dollar redemptions"))
+                           f"(${dem.get('chg_30d_b')}B): offshore dollar redemptions"))
 
     ml = (deep.get("ml") or {})
     thr = ALERT_RULES.get("ml_event_prob")
@@ -209,7 +209,7 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
         candidates.append(("stack_dispersion", stk.get("asof", "?"),
                            f"forecast members disagree (dispersion {stk['dispersion_now']:.2f}): "
                            + ", ".join(f"{k} {p:.0%}" for k, p in vs.items() if p is not None)
-                           + " — regime ambiguity, trust ranges not points"))
+                           + ": regime ambiguity, trust ranges not points"))
 
     # Funding Pop (renamed from Riptide on 2026-08-04). Read either key so a
     # board assembled before the rename still fires. The alert CODE stays
@@ -219,8 +219,12 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
     thr = ALERT_RULES.get("riptide_sticky")
     lv = rt.get("live") if rt.get("ok") else None
     if thr is not None and lv and (lv.get("p_sticky") or 0.0) >= thr:
+        # Owner ruling, 12 Nov 2026: research only, with its skill, in the
+        # alert's own text, as the website and the MCP show it.
+        from seiche.engines.funding_pop import research_label
+        label = research_label(rt)
         candidates.append(("riptide_sticky", lv.get("date", "?"),
-                           f"Funding Pop: the {lv.get('pop_bp')}bp pop on {lv.get('date')} reads as a "
+                           f"Funding Pop ({label}): the {lv.get('pop_bp')}bp pop on {lv.get('date')} reads as a "
                            f"CURRENT (P(sticky) {lv['p_sticky']:.0%}, P(escalates) "
                            f"{(lv.get('p_escalates') or 0):.0%}; RRP co-sign "
                            f"{'present' if lv.get('rrp_cosigned') else 'ABSENT, genuine scarcity'})"))
@@ -231,7 +235,7 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
     ms_identified = bool((ms.get("lr_test") or {}).get("identified"))
     if thr is not None and ms_identified and (ms_fit.get("branching") or 0.0) >= thr:
         candidates.append(("microseism_branching", ms.get("asof", "?"),
-                           f"Microseism: aftershock chain near-critical — each shock breeds "
+                           f"Microseism: aftershock chain near-critical; each shock breeds "
                            f"~{ms_fit['branching']:.2f} aftershocks (half-life "
                            f"{ms_fit.get('half_life_bd') or 0:.0f}bd, LR p="
                            f"{(ms.get('lr_test') or {}).get('p', 1):.4f} vs the calendar null); "
@@ -244,7 +248,7 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
             and (inst.get("g_now") or 0.0) > 0.0:
         candidates.append(("merian_instability", mer.get("asof", "?"),
                            f"Merian Modes: a growing mode is live (growth {inst['g_now']:+.3f}/bd, "
-                           f"{inst['pctl']:.0f}th pctl vs own history) — instability before levels move"))
+                           f"{inst['pctl']:.0f}th pctl vs own history): instability before levels move"))
 
     bw = eng.get("breakwater") or {}
     thr = ALERT_RULES.get("breakwater_proximity")
@@ -260,7 +264,7 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
             for p in book_today.get("positions", []) if p.get("weight")
         ) or "flat"
         candidates.append(("book_flip", f"{book_today['stance']}:{sig}",
-                           f"the Book is {book_today['stance']} ({sig}) — "
+                           f"the Book is {book_today['stance']} ({sig}): "
                            f"P(event,5bd)={book_today.get('p_ensemble')}, "
                            f"dispersion {book_today.get('dispersion')}"))
 
@@ -297,7 +301,7 @@ def _candidates(snap: dict) -> list[tuple[str, str, str]]:
                             "pit_gap",
                             f"{h0.date().isoformat()}:{h1.date().isoformat()}",
                             f"the PIT record has a HOLE: {n_miss} business days missing "
-                            f"({h0.date().isoformat()} → {h1.date().isoformat()}) — the "
+                            f"({h0.date().isoformat()} → {h1.date().isoformat()}): the "
                             f"as-published chain is broken for that span and must be "
                             f"disclosed, not papered over",
                         ))

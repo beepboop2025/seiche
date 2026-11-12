@@ -932,3 +932,92 @@ def test_ask_requires_llm(monkeypatch, stubbed):
 
 async def _fake_ai_unconfigured(q, snap):
     return {"ok": False, "reason": "LLM endpoint not configured"}
+
+
+# ------------------------------------------------ Funding Pop, research only
+# Owner ruling, 12 Nov 2026: the MCP shows Funding Pop, clearly marked research
+# only with its skill, so agents and the website say the same thing.
+
+def _funding_pop_block(sticky_skill=-0.038):
+    return {
+        "ok": True, "asof": "2026-11-12", "n_pops": 120, "n_resolved": 89,
+        "live": None, "flat_water": True,
+        "validation": {
+            "sticky": {"n_scored": 60, "base_rate": 0.4, "brier": 0.25,
+                       "brier_base": 0.2409, "skill": sticky_skill},
+            "escalates": {"n_scored": 60, "base_rate": 0.2, "brier": 0.16,
+                          "brier_base": 0.16, "skill": 0.0},
+        },
+        "caveats": ["a research caveat"],
+        "validated_backtest": False, "real_money_eligible": False,
+    }
+
+
+def _snapshot_with_funding_pop(fake_snap, block=None):
+    snap = _snapshot_with_money_market(fake_snap)
+    pop = _funding_pop_block() if block is None else block
+    return {**snap, "deep": {**(snap.get("deep") or {}), "funding_pop": pop, "riptide": pop}}
+
+
+def _ledger(monkeypatch, status):
+    from seiche import public_rights
+    restricted = [] if status == "public" else [
+        {"input": "SOFR", "source": "fred", "reason": "synthetic restriction"}]
+    monkeypatch.setattr(public_rights._Ledger, "verdict", lambda self, inputs: {
+        "status": status, "sources": [], "restricted_inputs": restricted})
+
+
+def test_money_market_summary_serves_funding_pop_as_the_overview_publishes_it(
+    monkeypatch, stubbed, fake_snap
+):
+    from seiche import public_rights
+    _ledger(monkeypatch, "public")
+    snap = _snapshot_with_funding_pop(fake_snap)
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snap)
+    payload = _payload(_call("money_market_context"))
+    pop = payload["funding_pop"]
+    assert pop["claim_status"] == "research_only" and pop["evidence_state"] == "research"
+    assert pop["status"] == "research"
+    assert pop["reading"] == public_rights.cached_public_board(snap)["deep"]["funding_pop"]
+    assert pop["validated_backtest"] is False and pop["real_money_eligible"] is False
+    assert pop["label"] == ("research only, not validated: sticky skill -0.038, "
+                            "escalates skill +0.000 vs the base rate")
+    # its own typed block: never blended into the desk's rows, regime or summary
+    desk = json.dumps({key: value for key, value in payload.items() if key != "funding_pop"})
+    assert "funding_pop" not in desk and "Funding Pop" not in desk
+    assert "funding_pop" in _payload(_call("money_market_context", {"section": "all"}))
+
+
+def test_a_withheld_funding_pop_carries_only_its_stub(monkeypatch, stubbed, fake_snap):
+    _ledger(monkeypatch, "withheld")
+    snap = _snapshot_with_funding_pop(fake_snap)
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snap)
+    pop = _payload(_call("money_market_context"))["funding_pop"]
+    assert pop["status"] == "withheld" and pop["label"] is None
+    assert pop["reading"]["availability"] == "withheld"
+    assert pop["claim_status"] == "research_only"
+    assert "-0.038" not in json.dumps(pop) and "validation" not in pop["reading"]
+
+
+def test_funding_pop_is_unavailable_without_a_block_and_absent_from_other_sections(
+    monkeypatch, stubbed, fake_snap
+):
+    snap = _snapshot_with_money_market(fake_snap)
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snap)
+    pop = _payload(_call("money_market_context"))["funding_pop"]
+    assert pop["status"] == "unavailable" and "reading" not in pop
+    assert pop["validated_backtest"] is False and pop["real_money_eligible"] is False
+    section = mcp.MONEY_MARKET_SECTION_IDS[0]
+    assert "funding_pop" not in _payload(_call("money_market_context", {"section": section}))
+
+
+def test_the_mcp_names_funding_pop_as_the_one_research_only_exception():
+    from seiche import public_rights
+    assert "The one exception is Funding Pop" in mcp.SERVER_INSTRUCTIONS
+    assert "research-only block" in mcp.SERVER_INSTRUCTIONS
+    assert "Funding Pop" in mcp.TOOLS["source_rights_status"][1]
+    assert "funding_pop" in mcp.TOOLS["money_market_context"][1]
+    row = public_rights.rights_status()["research_only_readings"]["funding_pop"]
+    assert row["claim_status"] == "research_only"
+    assert row["validated_backtest"] is False and row["real_money_eligible"] is False
+    assert "funding_pop" not in public_rights.rights_status()["available_tools"]

@@ -1,4 +1,4 @@
-> Current release scope: eight public research tools, beginning with `source_rights_status`. Legacy forecasts and backtests are unavailable. The dated directory receipts below remain historical and require a fresh directory refresh after deployment.
+> Current release scope: eight public research tools, beginning with `source_rights_status`. Legacy forecasts and backtests are unavailable, except Funding Pop, served research only with its skill. The dated directory receipts below remain historical and require a fresh directory refresh after deployment.
 
 # Connect Seiche to MCP clients
 

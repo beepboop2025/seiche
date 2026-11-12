@@ -847,6 +847,16 @@ def public_engine(snapshot: object, name: str) -> dict | None:
     return block
 
 
+def public_deep(snapshot: object, name: str) -> dict | None:
+    """One deep block exactly as /api/overview publishes it (public, or its
+    withheld stub), or None when the snapshot has no such block."""
+    board = cached_public_board(snapshot)
+    deep = board.get("deep") if isinstance(board.get("deep"), Mapping) else {}
+    if name not in deep:
+        return None
+    return copy.deepcopy(deep[name])
+
+
 def is_withheld_block(value: object) -> bool:
     return (isinstance(value, Mapping) and value.get("availability") == "withheld"
             and value.get("publication_allowed") is False)
@@ -964,6 +974,16 @@ def rights_status() -> dict:
         "projection_ready_tools": {name: ".".join(path) for name, path in sorted(PROJECTED_TOOLS.items())},
         "projected_routes": sorted(PROJECTED_PATHS | {ENGINE_PREFIX + "{name}"}),
         "unavailable_tools": sorted(LEGACY_TOOLS), "rights_urls": [TERMS],
+        # Owner ruling, 12 Nov 2026: Funding Pop is shown, research only, with
+        # its skill, so agents and the website say the same thing.
+        "research_only_readings": {"funding_pop": {
+            "served_by": "money_market_context, section summary or all: funding_pop",
+            "rest_route": "/api/overview deep.funding_pop (alias deep.riptide)",
+            "claim_status": "research_only", "validated_backtest": False,
+            "real_money_eligible": False,
+            "note": ("Its walk-forward skill is published whatever its sign; quote it "
+                     "with its label, never as a validated forecast."),
+        }},
         "rule": ("A reading is public only when every input it reads is an allowed direct or open "
                  "source; readings that read a FRED copy, a blocked proprietary series or an "
                  "unqualified source stay withheld."),

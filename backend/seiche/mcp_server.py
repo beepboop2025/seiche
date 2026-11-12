@@ -1325,6 +1325,45 @@ def _rates_section(selector: str, args: dict) -> dict[str, Any]:
     return out
 
 
+def _funding_pop_research(snap: object) -> dict[str, Any]:
+    """Funding Pop, the one legacy forecast this MCP serves: research only.
+
+    Owner ruling, 12 Nov 2026: the MCP shows Funding Pop, clearly marked
+    research only with its skill, so agents and the website say the same
+    thing. ``reading`` is exactly the deep.funding_pop block /api/overview
+    publishes after the source-rights projection, or its withheld stub. It is
+    its own typed block, never blended into the desk's observed rows, its
+    regime or its summary sentence. REST keeps the riptide alias.
+    """
+    from seiche.engines import funding_pop as eng_funding_pop
+    from seiche.public_rights import public_deep
+
+    block = public_deep(snap, "funding_pop")
+    out: dict[str, Any] = {
+        "claim_status": eng_funding_pop.CLAIM_STATUS,
+        "evidence_state": "research",
+        "rest_route": "/api/overview deep.funding_pop (alias deep.riptide)",
+    }
+    if not isinstance(block, dict):
+        out.update(status="unavailable", validated_backtest=False, real_money_eligible=False,
+                   reason="this completed snapshot carries no Funding Pop block")
+        return out
+    if block.get("availability") == "withheld":
+        status = "withheld"
+    elif block.get("ok") is True:
+        status = "research"
+    else:
+        status = "unavailable"
+    out.update(
+        status=status,
+        validated_backtest=block.get("validated_backtest") is True,
+        real_money_eligible=block.get("real_money_eligible") is True,
+        label=eng_funding_pop.research_label(block) if status == "research" else None,
+        reading=block,
+    )
+    return out
+
+
 def tool_money_market(args: dict, _public: bool) -> Any:
     """Serve chartless funding desks from completed or canonical evidence."""
     if not isinstance(args, dict):
@@ -1508,6 +1547,8 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         out["source_metadata"] = source_metadata
         out["sources"] = source_metadata
         out["legal_notices"] = engine.get("legal_notices") or []
+    if selector in ("summary", "all"):
+        out["funding_pop"] = _funding_pop_research(raw_snap)
     return out
 
 
@@ -1783,7 +1824,7 @@ _AGENT_ROOM_EVENT_INPUT_SCHEMA = {
 TOOLS: dict[str, tuple] = {
     "source_rights_status": (
         "Source rights and feature availability",
-        "List the research tools available in this release and legacy features withheld pending source qualification. Returns policy and source-rights metadata only; does not grant redistribution rights or certify freshness.",
+        "List the research tools available in this release, the one legacy reading shown research only (Funding Pop, in money_market_context), and the legacy features withheld pending source qualification. Returns policy and source-rights metadata only; does not grant redistribution rights or certify freshness.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         lambda args, public: public_rights.rights_status(),
         True,
@@ -1987,7 +2028,8 @@ TOOLS: dict[str, tuple] = {
         "and source-level evidence. Choose this for detailed funding metrics; use "
         "world_markets_context "
         "for a cross-asset overview, or market_workbench for FX and accepted China "
-        "time series. Start with section='summary' for USD. "
+        "time series. Start with section='summary' for USD; it also returns funding_pop, "
+        "a separate research-only block with its skill, as the website shows it. "
         "Use section='countries' for the public-source country catalog, or add country='JP' "
         "(a supported ISO alpha-2 code; UK is an alias for GB) for dated policy, funding, liquidity and sovereign references. "
         "Country coverage is partial and monthly references are explicitly separate from daily curves. "
@@ -3569,7 +3611,10 @@ SERVER_INSTRUCTIONS = (
     "Seiche provides source-dated funding, money-market and reference FX research. "
     "Use source_rights_status for the current release boundary. Legacy forecasts, "
     "stress scores, backtests, replay and derived narratives are unavailable pending "
-    "source qualification; never reconstruct their values. Use money_market_context "
+    "source qualification; never reconstruct their values. The one exception is "
+    "Funding Pop: money_market_context serves it as a separate research-only block, "
+    "as the website does, with its skill published; quote its label with its numbers. "
+    "Use money_market_context "
     "for a bounded funding review, market_workbench with its default ECB provider "
     "for reference FX, world_markets_context for available cross-market evidence, "
     "and data_health for source clocks and faults. gift_city_context provides dated "

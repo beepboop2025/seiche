@@ -58,6 +58,8 @@ def test_registry_stdio_package_matches_hosted_surface():
     assert "research_network" in description
     assert "world_markets_context" in description
     assert "Legacy forecasts and backtests are unavailable" in description
+    # owner ruling, 12 Nov 2026: Funding Pop is the one research-only exception
+    assert "except Funding Pop, served research only with its skill" in description
     assert "0.16.13" in description
 
 

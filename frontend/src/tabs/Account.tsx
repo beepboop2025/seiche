@@ -36,7 +36,7 @@ export default function Account() {
         <div className="card span6">
           <h2>No account needed</h2>
           <div className="sub">
-            Eight public research tools need no account. Legacy forecasts, backtests and dependent features remain unavailable pending source-rights qualification. Optional accounts can hold <b>email alerts</b> and,
+            Eight public research tools need no account. Legacy forecasts, backtests and dependent features remain unavailable pending source-rights qualification; Funding Pop is the one exception, shown research only with its skill. Optional accounts can hold <b>email alerts</b> and,
             when separately provisioned, authenticate five private, non-executable Agent Room tools. If you want alerts,
             email <a href="mailto:desk@seiche.info?subject=Seiche%20alerts%20account">desk@seiche.info</a> and
             one is set up by hand, free, usually within a day.

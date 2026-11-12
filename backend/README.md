@@ -146,7 +146,9 @@ Eight public research tools are anonymous: `source_rights_status`,
 `data_health`. Start with `source_rights_status` to inspect the release scope.
 Legacy forecasts, backtests, stress conclusions and Trade Safety context are
 explicitly unavailable for every caller while their source rights remain
-unverified. Authentication does not unlock these legacy features.
+unverified. Authentication does not unlock these legacy features. Funding Pop
+is the one exception: `money_market_context` serves it as a separate
+research-only block, with its skill published, as `/api/overview` does.
 
 Authenticated hosted MCP adds five private Agent Room preview tools for
 identity-to-key binding, room creation, signed append, verified listing, and
