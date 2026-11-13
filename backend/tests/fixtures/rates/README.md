@@ -21,3 +21,21 @@ continuous compounding, percent per annum (`UNIT=PCPA`, `UNIT_MULT=0`).
 Source: European Central Bank. Reuse of ECB information requires that it "must appear accurately and the ECB
 must be cited as the source" (`https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html`,
 read 2026-11-13).
+
+## ECB euro short-term rate distribution and compounded series (EST dataset)
+
+Retrieved 2026-11-13T20:00:01Z from the ECB Data API, `format=csvdata`, `startPeriod=2026-11-09`,
+`endPeriod=2026-11-13`, request `https://data-api.ecb.europa.eu/service/data/EST/B.<series>`:
+
+| File | Series | Meaning |
+| --- | --- | --- |
+| `ecb-est-eu000a2x2a25-r25-2026-11-09-to-13.csv` | `EU000A2X2A25.R25` | rate at the 25th percentile of volume, percent |
+| `ecb-est-eu000a2x2a25-r75-2026-11-09-to-13.csv` | `EU000A2X2A25.R75` | rate at the 75th percentile of volume, percent |
+| `ecb-est-eu000a2x2a25-nt-2026-11-09-to-13.csv` | `EU000A2X2A25.NT` | number of transactions |
+| `ecb-est-eu000a2x2a25-nb-2026-11-09-to-13.csv` | `EU000A2X2A25.NB` | number of active banks |
+| `ecb-est-eu000a2x2a25-vl-2026-11-09-to-13.csv` | `EU000A2X2A25.VL` | share of volume of the five largest active banks, percent |
+| `ecb-est-eu000a2qqf24-cr-2026-11-09-to-13.csv` | `EU000A2QQF24.CR` | compounded average rate, one month tenor, percent |
+| `ecb-est-eu000a2qqf08-ci-2026-11-09-to-13.csv` | `EU000A2QQF08.CI` | compounded index, 1 October 2019 = 100 |
+
+The distribution series are dated with the trading day (published the next TARGET day at 08:00 Frankfurt time); the
+compounded rate and index are dated with their publication day. Source: European Central Bank (terms as above).

@@ -1026,8 +1026,10 @@ def instrument_observation_counts(
 ) -> dict[tuple[str, str], dict]:
     """Distinct stored observation dates per instrument and source, knowable by the cutoff.
 
-    A read-only aggregate for catalogs: it never loads rows. Unavailable-quality
-    vintages are not counted as observations.
+    A read-only aggregate for catalogs that never loads rows. It reads only the
+    covering adapter index, so explicit missing-value markers (quality
+    'unavailable', which no current adapter writes) would count as dates here;
+    values served elsewhere are always validated row by row.
     """
 
     identifiers = tuple(sorted(set(instrument_ids)))
@@ -1039,8 +1041,7 @@ def instrument_observation_counts(
             f"""SELECT instrument_id, source, COUNT(DISTINCT event_time), MIN(event_time),
                        MAX(event_time), MAX(knowledge_time)
                   FROM canonical_observations
-                 WHERE market_id=? AND knowledge_time<=? AND quality<>'unavailable'
-                   AND instrument_id IN ({marks})
+                 WHERE market_id=? AND knowledge_time<=? AND instrument_id IN ({marks})
                  GROUP BY instrument_id, source""",
             (market_id.upper(), _canonical_utc(knowledge_time), *identifiers),
         ).fetchall()

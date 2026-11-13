@@ -66,10 +66,11 @@ FAMILY_BY_ROLE = {
     _R.UNSECURED_OVERNIGHT: "overnight_unsecured",
     _R.SECURED_OVERNIGHT: "overnight_secured",
     **dict.fromkeys((_R.RATE_P01, _R.RATE_P25, _R.RATE_MEDIAN, _R.RATE_P75, _R.RATE_P99, _R.REPO_VOLUME,
-                     _R.UNSECURED_FUNDING_VOLUME), "overnight_distribution"),
+                     _R.UNSECURED_FUNDING_VOLUME, _R.BENCHMARK_TRANSACTIONS, _R.BENCHMARK_ACTIVE_BANKS,
+                     _R.BENCHMARK_TOP5_VOLUME_SHARE), "overnight_distribution"),
     **dict.fromkeys((_R.COMPOUNDED_OVERNIGHT_AVERAGE_30D, _R.COMPOUNDED_OVERNIGHT_AVERAGE_90D,
-                     _R.COMPOUNDED_OVERNIGHT_AVERAGE_180D, _R.COMPOUNDED_OVERNIGHT_RATE_INDEX),
-                    "compounded_average"),
+                     _R.COMPOUNDED_OVERNIGHT_AVERAGE_180D, _R.COMPOUNDED_OVERNIGHT_RATE_INDEX,
+                     _R.COMPOUNDED_OVERNIGHT_AVERAGE_TENOR), "compounded_average"),
     **dict.fromkeys((_R.TERM_1W, _R.TERM_1M, _R.TERM_3M, _R.TERM_FUNDING_RATE, _R.CP_3M, _R.CD_3M),
                     "term_money_market"),
     **dict.fromkeys((_R.TBILL_3M, _R.TBILL_6M, _R.TBILL_12M, _R.TBILL_DISCOUNT_RATE), "bills"),
@@ -103,7 +104,8 @@ FUNDING_LEGS: dict[str, dict[str, tuple[str, ...]]] = {
                "volume": ("US.NYFED.SOFR_VOLUME",), "p25": ("US.NYFED.SOFR_P25",), "p75": ("US.NYFED.SOFR_P75",)},
     "EA-EUR": {"overnight": ("EA.ECB.ESTR",), "anchor": ("EA.ECB.DFR",), "floor": ("EA.ECB.DFR",),
                "ceiling": ("EA.ECB.MLF",), "volume": ("EA.ECB.ESTR_VOLUME",), "p25": ("EA.ECB.ESTR_P25",),
-               "p75": ("EA.ECB.ESTR_P75",)},
+               "p75": ("EA.ECB.ESTR_P75",), "transactions": ("EA.ECB.ESTR_TRANSACTIONS",),
+               "active_banks": ("EA.ECB.ESTR_ACTIVE_BANKS",), "top5_share": ("EA.ECB.ESTR_TOP5_SHARE",)},
     "UK-GBP": {"overnight": ("GB.BOE.SONIA",), "anchor": ("GB.BOE.BANK_RATE",), "floor": ("GB.BOE.OSF_DEPOSIT",),
                "ceiling": ("GB.BOE.OSF_LENDING",)},
     "JP-JPY": {"overnight": ("JP.BOJ.TONA",), "anchor": ("JP.BOJ.POLICY_TARGET", "JP.BOJ.BASIC_LOAN"),
@@ -416,7 +418,8 @@ def _catalog(repository, registry, cutoff) -> dict[str, Any]:
         CATALOG_SCHEMA, cutoff, "ok" if markets and not faults else "partial" if markets else "unavailable",
         totals={"markets": len(markets), "instruments": sum(len(m["instruments"]) for m in markets),
                 "observations": sum(f["observations"] for f in family_list), "sources": len(sources)},
-        counting_rule="observations are distinct stored publisher dates per instrument (latest vintage per date)",
+        counting_rule=("observations are distinct stored publisher dates per instrument and source, read from "
+                       "the store index; revisions of a date count once"),
         families=family_list, markets=markets,
         curves=[{"curve_id": c.curve_id, "label": c.label, "market_id": c.market_id, "kind": c.kind,
                  "tenors": [t for t, _, _ in c.nodes], "url": "/api/v2/rates/curves/" + c.curve_id}
@@ -848,7 +851,8 @@ def _funding(selected, window_days, repository, registry, cutoff) -> dict[str, A
                             "status": "unavailable", "known_gaps": ["Canonical observations could not be read."]})
             continue
         picked = {role: _pick(pack, rows, legs.get(role, ())) for role in
-                  ("overnight", "anchor", "floor", "ceiling", "volume", "p25", "p75")}
+                  ("overnight", "anchor", "floor", "ceiling", "volume", "p25", "p75",
+                   "transactions", "active_banks", "top5_share")}
         metrics = {role: (_metric_block(pack, spec, values, cutoff) if spec is not None else None)
                    for role, (spec, values) in picked.items()}
         metrics_all.extend(metric for metric in metrics.values() if metric)
@@ -921,7 +925,10 @@ def _funding(selected, window_days, repository, registry, cutoff) -> dict[str, A
             "overnight": overnight_metric, "policy_anchor": anchor_metric,
             "policy_floor": metrics["floor"], "policy_ceiling": metrics["ceiling"],
             "spread_to_policy": spread_block, "corridor": corridor, "volume": metrics["volume"],
-            "dispersion": dispersion, "known_gaps": gaps,
+            "dispersion": dispersion,
+            "participation": ({key: metrics[key] for key in ("transactions", "active_banks", "top5_share")}
+                              if any(metrics[key] for key in ("transactions", "active_banks", "top5_share")) else None),
+            "known_gaps": gaps,
         })
     statuses = {item["status"] for item in results}
     overall = ("unavailable" if not results or statuses == {"unavailable"} else

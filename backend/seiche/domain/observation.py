@@ -69,6 +69,13 @@ class SemanticRole(StrEnum):
     COMPOUNDED_OVERNIGHT_AVERAGE_90D = "COMPOUNDED_OVERNIGHT_AVERAGE_90D"
     COMPOUNDED_OVERNIGHT_AVERAGE_180D = "COMPOUNDED_OVERNIGHT_AVERAGE_180D"
     COMPOUNDED_OVERNIGHT_RATE_INDEX = "COMPOUNDED_OVERNIGHT_RATE_INDEX"
+    # A compounded average of an overnight benchmark over the calendar tenor its
+    # instrument names (one week to twelve months), as the publisher defines it.
+    COMPOUNDED_OVERNIGHT_AVERAGE_TENOR = "COMPOUNDED_OVERNIGHT_AVERAGE_TENOR"
+    # Participation and concentration statistics published with a benchmark.
+    BENCHMARK_TRANSACTIONS = "BENCHMARK_TRANSACTIONS"
+    BENCHMARK_ACTIVE_BANKS = "BENCHMARK_ACTIVE_BANKS"
+    BENCHMARK_TOP5_VOLUME_SHARE = "BENCHMARK_TOP5_VOLUME_SHARE"
     FX_SWAP_BASIS = "FX_SWAP_BASIS"
     COLLATERAL_HAIRCUT = "COLLATERAL_HAIRCUT"
     # Reference context outside the funding kernel: no capability reads these.
@@ -171,6 +178,7 @@ RATE_ROLES = frozenset(
         SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_30D,
         SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_90D,
         SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_180D,
+        SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_TENOR,
         SemanticRole.FX_SWAP_BASIS,
         SemanticRole.COLLATERAL_HAIRCUT,
     }

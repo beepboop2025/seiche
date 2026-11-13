@@ -98,7 +98,7 @@ def test_declarations_are_complete_allowed_and_in_production_keys():
     assert [c.curve_id for c in DECLARED_CURVES] == ["EA_AAA_SPOT", "EA_ALL_SPOT"]
     # Curves declared by their own packs are read, never re-declared or re-collected here.
     assert {c.adapter_id for c in EXISTING_CURVES} & {k[1] for k in rates_sources.PRODUCTION_KEYS} == set()
-    assert rates_sources.PRODUCTION_KEYS == {("EA-EUR", "ecb_yield_curve")}
+    assert rates_sources.PRODUCTION_KEYS == {("EA-EUR", "ecb_yield_curve"), ("EA-EUR", "ecb_compounded")}
     reference = RATES_SOURCES["ecb_yield_curve"]
     assert reference["terms_url"].startswith("https://www.ecb.europa.eu/services/using-our-site/disclaimer")
     assert reference["terms_read_on"] == "2026-11-13"
@@ -187,3 +187,87 @@ def test_backfill_rows_are_provisional_until_seen_as_vintages(tmp_path, monkeypa
     batch = asyncio.run(adapter.collect())
     assert {o.quality for o in batch.observations} == {QualityState.PROVISIONAL}
     assert {o.knowledge_time for o in batch.observations} == {now}
+
+
+# ----------------------------------------------------------------------------- EST distribution and compounded
+
+EST = {
+    "EA.ECB.ESTR_P25": "ecb-est-eu000a2x2a25-r25-2026-11-09-to-13.csv",
+    "EA.ECB.ESTR_P75": "ecb-est-eu000a2x2a25-r75-2026-11-09-to-13.csv",
+    "EA.ECB.ESTR_TRANSACTIONS": "ecb-est-eu000a2x2a25-nt-2026-11-09-to-13.csv",
+    "EA.ECB.ESTR_ACTIVE_BANKS": "ecb-est-eu000a2x2a25-nb-2026-11-09-to-13.csv",
+    "EA.ECB.ESTR_TOP5_SHARE": "ecb-est-eu000a2x2a25-vl-2026-11-09-to-13.csv",
+    "EA.ECB.ESTR_COMPOUNDED_1M": "ecb-est-eu000a2qqf24-cr-2026-11-09-to-13.csv",
+    "EA.ECB.ESTR_INDEX": "ecb-est-eu000a2qqf08-ci-2026-11-09-to-13.csv",
+}
+
+
+def est(label: str) -> FetchedDocument:
+    return document(fixture(EST[label]), label)
+
+
+def test_est_distribution_and_compounded_fixtures_parse_as_published():
+    latest = {label: rates_sources.parse_ecb_est(est(label))[-1] for label in EST}
+    assert latest["EA.ECB.ESTR_P25"].raw_value == Decimal("2.41")
+    assert latest["EA.ECB.ESTR_P75"].raw_value == Decimal("2.46")
+    assert latest["EA.ECB.ESTR_TRANSACTIONS"].raw_value == Decimal("886")
+    assert latest["EA.ECB.ESTR_ACTIVE_BANKS"].raw_value == Decimal("49")
+    assert latest["EA.ECB.ESTR_TOP5_SHARE"].raw_value == Decimal("40")
+    # The compounded series are dated with their publication day.
+    assert latest["EA.ECB.ESTR_COMPOUNDED_1M"].event_time == date(2026, 11, 13)
+    assert latest["EA.ECB.ESTR_COMPOUNDED_1M"].raw_value == Decimal("2.44355")
+    assert latest["EA.ECB.ESTR_INDEX"].raw_value == Decimal("110.21905548")
+    assert latest["EA.ECB.ESTR_P25"].event_time == date(2026, 11, 12)
+
+
+@pytest.mark.parametrize("label,old,new,message", [
+    ("EA.ECB.ESTR_P25", b",PC,0", b",_Z,0", "unit changed"),
+    ("EA.ECB.ESTR_TRANSACTIONS", b",886,", b",886.5,", "plausibility"),
+    ("EA.ECB.ESTR_TOP5_SHARE", b",40,", b",140,", "plausibility"),
+    ("EA.ECB.ESTR_INDEX", b",F,", b",C,", "free for publication"),
+    ("EA.ECB.ESTR_P75", b"EU000A2X2A25.R75,B", b"EU000A2X2A25.R25,B", "series key"),
+])
+def test_est_identity_unit_permission_and_bounds_fail_closed(label, old, new, message):
+    payload = fixture(EST[label]).replace(old, new, 1)
+    with pytest.raises(ValueError, match=message):
+        rates_sources.parse_ecb_est(document(payload, label))
+
+
+def test_est_declarations_units_clocks_and_legacy_parser_untouched():
+    from seiche.sources import official
+    pack = default_registry().get("EA-EUR")
+    share = pack.instrument_map["EA.ECB.ESTR_TOP5_SHARE"]
+    assert share.normalize("40") == Decimal("0.40") and share.canonical_unit.value == "ratio"
+    assert pack.instrument_map["EA.ECB.ESTR_TRANSACTIONS"].canonical_unit.value == "count"
+    assert pack.instrument_map["EA.ECB.ESTR_P25"].normalize("2.41") == Decimal("241")
+    assert pack.instrument_map["EA.ECB.ESTR_P25"].source_adapter_id == "ecb_benchmark"
+    compounded = pack.adapter_map["ecb_compounded"]
+    assert compounded.publication_clock.local_time is None and compounded.publication_clock.business_day_lag == 0
+    assert ("EA-EUR", "ecb_compounded") in PRODUCTION_ADAPTER_KEYS
+    # The rate and volume keep the generic parser so stored evidence never changes.
+    rate = FetchedDocument("u", "text/csv", b"KEY,TIME_PERIOD,OBS_VALUE,OBS_STATUS\nk,2026-11-12,2.443,A\n", "EA.ECB.ESTR")
+    assert official.parse_ecb_benchmark(rate) == official.parse_ecb_csv(rate)
+    assert official.parse_ecb_benchmark(est("EA.ECB.ESTR_P25"))[0].row_evidence.startswith(b'{"conf":"F"')
+
+
+def test_compounded_rows_count_as_published_only_by_the_end_of_their_date(tmp_path, monkeypatch):
+    from seiche import store
+    from seiche.repository import SQLiteMarketRepository
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "est.sqlite")
+
+    def run(now):
+        async def fetch(_client):
+            return (est("EA.ECB.ESTR_COMPOUNDED_1M"),)
+        adapter = FunctionalCanonicalAdapter(
+            pack=default_registry().get("EA-EUR"), adapter_id="ecb_compounded", source="ecb_compounded",
+            fetcher=fetch, parser=rates_sources.parse_ecb_est, repository=SQLiteMarketRepository(),
+            clock=lambda: now)
+        return asyncio.run(adapter.collect()).observations
+
+    midday = run(datetime(2026, 11, 13, 12, 0, tzinfo=UTC))
+    assert midday[-1].event_time.day == 12  # the 13th is not knowable before the end of its date
+    late = run(datetime(2026, 11, 13, 23, 30, tzinfo=UTC))
+    assert late[-1].event_time.day == 13
+    assert late[-1].source_publication_time == datetime(2026, 11, 13, 22, 59, 59, tzinfo=UTC)
+    assert late[-1].value == Decimal("244.35500")
+    assert late[-1].quality is QualityState.ESTIMATED

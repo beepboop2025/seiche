@@ -1315,8 +1315,7 @@ class PostgresMarketRepository:
                 """SELECT instrument_id, source, COUNT(DISTINCT event_time), MIN(event_time),
                           MAX(event_time), MAX(knowledge_time)
                      FROM canonical_observations
-                    WHERE market_id=%s AND knowledge_time<=%s AND quality<>'unavailable'
-                      AND instrument_id = ANY(%s)
+                    WHERE market_id=%s AND knowledge_time<=%s AND instrument_id = ANY(%s)
                     GROUP BY instrument_id, source""",
                 (market_id.upper(), _utc(knowledge_time), identifiers),
             ).fetchall()

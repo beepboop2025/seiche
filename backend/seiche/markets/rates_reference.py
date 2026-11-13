@@ -8,13 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import time
+from decimal import Decimal
 
 from seiche.domain.observation import (
-    ConnectorClassification, DayCountConvention, RateCompounding,
+    CanonicalUnit, ConnectorClassification, DayCountConvention, RateCompounding,
     RedistributionStatus, SemanticRole,
 )
 from seiche.markets.base import (
-    MarketPack, PublicationClock, PublicationClockPrecision, SourceAdapterSpec,
+    InstrumentSpec, MarketPack, PublicationClock, PublicationClockPrecision, SourceAdapterSpec,
 )
 from seiche.markets.reference import rate_instrument
 
@@ -48,6 +49,23 @@ RATES_SOURCES = {
                             "euro_area_yield_curves/html/index.en.html"),
         "publication_rule": ("Updated every TARGET business day at noon (12:00 CET) for the previous "
                              "TARGET business day; an update may be delayed to the next business day."),
+    },
+    "ecb_compounded": {
+        "publisher": "European Central Bank",
+        "source_url": "https://data.ecb.europa.eu/data/datasets/EST",
+        "rights_url": ECB_TERMS_URL,
+        "terms_url": ECB_TERMS_URL,
+        "terms_read_on": "2026-11-13",
+        "licence": "ECB disclaimer and copyright: free use with accurate reproduction and ECB attribution",
+        "terms": ("Free reuse when the values appear accurately and the ECB is cited as the source; "
+                  "modifications must be stated."),
+        "terms_quote": ECB_TERMS_QUOTE,
+        "attribution": ECB_ATTRIBUTION,
+        "methodology_url": ("https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/"
+                            "euro_short-term_rate/html/index.en.html"),
+        "publication_rule": ("Compounded average rates and the compounded index are published on TARGET business "
+                             "days and dated with their publication day. The time of day is not recorded here, so a "
+                             "row counts as published only by the end of its date."),
     },
 }
 
@@ -144,6 +162,38 @@ CURVE_MAP = {curve.curve_id: curve for curve in RATE_CURVES}
 ECB_YC_KEYS = {identifier: key for curve in RATE_CURVES if curve.adapter_id == "ecb_yield_curve"
                for identifier, key in curve.remote_keys}
 
+# Euro short-term rate distribution, published with the rate by the existing
+# ecb_benchmark adapter (same clock: 08:00 Frankfurt time on the next TARGET day).
+ESTR_DISTRIBUTION = (
+    ("EA.ECB.ESTR_P25", "EST.B.EU000A2X2A25.R25", SemanticRole.RATE_P25, "rate",
+     "Euro short-term rate, 25th percentile of volume"),
+    ("EA.ECB.ESTR_P75", "EST.B.EU000A2X2A25.R75", SemanticRole.RATE_P75, "rate",
+     "Euro short-term rate, 75th percentile of volume"),
+    ("EA.ECB.ESTR_TRANSACTIONS", "EST.B.EU000A2X2A25.NT", SemanticRole.BENCHMARK_TRANSACTIONS, "count",
+     "Euro short-term rate, number of transactions"),
+    ("EA.ECB.ESTR_ACTIVE_BANKS", "EST.B.EU000A2X2A25.NB", SemanticRole.BENCHMARK_ACTIVE_BANKS, "count",
+     "Euro short-term rate, number of active banks"),
+    ("EA.ECB.ESTR_TOP5_SHARE", "EST.B.EU000A2X2A25.VL", SemanticRole.BENCHMARK_TOP5_VOLUME_SHARE, "share",
+     "Euro short-term rate, share of volume of the five largest active banks"),
+)
+# Compounded averages and the index are dated with their publication day, so they
+# have their own adapter and clock (end of the dated day, never earlier).
+ESTR_COMPOUNDED = (
+    ("EA.ECB.ESTR_COMPOUNDED_1W", "EST.B.EU000A2QQF16.CR", "1W", 7 / 365),
+    ("EA.ECB.ESTR_COMPOUNDED_1M", "EST.B.EU000A2QQF24.CR", "1M", 1 / 12),
+    ("EA.ECB.ESTR_COMPOUNDED_3M", "EST.B.EU000A2QQF32.CR", "3M", 0.25),
+    ("EA.ECB.ESTR_COMPOUNDED_6M", "EST.B.EU000A2QQF40.CR", "6M", 0.5),
+    ("EA.ECB.ESTR_COMPOUNDED_12M", "EST.B.EU000A2QQF57.CR", "12M", 1.0),
+)
+ESTR_INDEX = ("EA.ECB.ESTR_INDEX", "EST.B.EU000A2QQF08.CI")
+# The first €STR date; the distribution and the compounded series start with it.
+ESTR_FIRST_DATE = "2019-10-01"
+EST_SERIES = {
+    **{identifier: (key, kind) for identifier, key, _, kind, _ in ESTR_DISTRIBUTION},
+    **{identifier: (key, "rate") for identifier, key, _, _ in ESTR_COMPOUNDED},
+    ESTR_INDEX[0]: (ESTR_INDEX[1], "index"),
+}
+
 _LABEL_SAMPLE = {"AAA": "Euro area AAA government spot rate", "ALL": "Euro area all issuers government spot rate"}
 
 
@@ -158,8 +208,13 @@ INSTRUMENT_LABELS = {
     for curve in RATE_CURVES if curve.adapter_id == "ecb_yield_curve"
     for tenor, _, identifier in curve.nodes
 }
+INSTRUMENT_LABELS.update({identifier: label for identifier, _, _, _, label in ESTR_DISTRIBUTION})
+INSTRUMENT_LABELS.update({identifier: f"Compounded euro short-term rate average, {tenor} tenor"
+                          for identifier, _, tenor, _ in ESTR_COMPOUNDED})
+INSTRUMENT_LABELS[ESTR_INDEX[0]] = "Compounded euro short-term rate index (1 Oct 2019 = 100)"
 INSTRUMENT_TENORS = {identifier: (tenor, years) for curve in RATE_CURVES
                      for tenor, years, identifier in curve.nodes}
+INSTRUMENT_TENORS.update({identifier: (tenor, years) for identifier, _, tenor, years in ESTR_COMPOUNDED})
 
 # Spreads with a stated formula. Legs are (instrument_id, sign); both legs must be
 # observed on the same date, nothing is filled.
@@ -208,6 +263,31 @@ FORWARDS = (("1y1y", 1.0, 2.0), ("2y1y", 2.0, 3.0), ("5y5y", 5.0, 10.0), ("10y10
 _ECB_YC_CLOCK = PublicationClock(
     "Europe/Berlin", time(12, 0), 1, PublicationClockPrecision.SCHEDULED, "TARGET"
 )
+_ECB_COMPOUNDED_CLOCK = PublicationClock(
+    "Europe/Berlin", None, 0, PublicationClockPrecision.UPSTREAM_NATIVE, "TARGET"
+)
+
+
+def _estr_instruments() -> list[InstrumentSpec]:
+    specs = []
+    for identifier, _, role, kind, _ in ESTR_DISTRIBUTION:
+        mnemonic = identifier.removeprefix("EA.ECB.")
+        if kind == "rate":
+            specs.append(rate_instrument(identifier, mnemonic, role, "ecb_benchmark", DayCountConvention.ACT_360))
+        elif kind == "count":
+            specs.append(InstrumentSpec(identifier, mnemonic, role, "ecb_benchmark",
+                                        "transactions" if "TRANSACTIONS" in identifier else "banks",
+                                        CanonicalUnit.COUNT))
+        else:
+            specs.append(InstrumentSpec(identifier, mnemonic, role, "ecb_benchmark", "percent of volume",
+                                        CanonicalUnit.RATIO, value_multiplier=Decimal("0.01")))
+    for identifier, _, _, _ in ESTR_COMPOUNDED:
+        specs.append(rate_instrument(identifier, identifier.removeprefix("EA.ECB."),
+                                     SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_TENOR, "ecb_compounded",
+                                     DayCountConvention.ACT_360, compounding=RateCompounding.COMPOUNDED))
+    specs.append(InstrumentSpec(ESTR_INDEX[0], "ESTR_INDEX", SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX,
+                                "ecb_compounded", "index, 1 Oct 2019 = 100", CanonicalUnit.INDEX_POINTS))
+    return specs
 
 
 def extend_rates_pack(pack: MarketPack) -> MarketPack:
@@ -226,4 +306,10 @@ def extend_rates_pack(pack: MarketPack) -> MarketPack:
             identifier, identifier.removeprefix("EA.").replace(".", "_"), SemanticRole.SOVEREIGN_YIELD,
             curve.adapter_id, DayCountConvention.SOURCE_NATIVE, compounding=RateCompounding.SOURCE_NATIVE,
         ) for _, _, identifier in curve.nodes)
+    if pack.market_id == "EA-EUR":
+        adapters.append(SourceAdapterSpec(
+            "ecb_compounded", ConnectorClassification.OFFICIAL_OPEN, "P1D", _ECB_COMPOUNDED_CLOCK,
+            RedistributionStatus.ALLOWED, retry_limit=2,
+        ))
+        instruments.extend(_estr_instruments())
     return replace(pack, instruments=tuple(instruments), source_adapters=tuple(adapters))

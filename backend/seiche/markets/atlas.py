@@ -1877,6 +1877,10 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.INDUSTRIAL_PRODUCTION: "Real output of the industrial sector as an index of a base year; revised after first publication.",
         SemanticRole.GROSS_DOMESTIC_PRODUCT: "Nominal output of the whole economy at a seasonally adjusted annual rate; revised with every estimate.",
         SemanticRole.CONSUMER_PRICE_INDEX: "A consumer price index level of a base period, seasonally adjusted; revised each February.",
+        SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_TENOR: "The overnight benchmark compounded over the named calendar tenor, as the publisher computes it.",
+        SemanticRole.BENCHMARK_TRANSACTIONS: "How many transactions the benchmark was computed from on that date.",
+        SemanticRole.BENCHMARK_ACTIVE_BANKS: "How many reporting banks contributed transactions on that date.",
+        SemanticRole.BENCHMARK_TOP5_VOLUME_SHARE: "The share of benchmark volume from the five largest active banks; higher means more concentrated.",
     }
     return explanations.get(role, "Official local money-market observation.")
 
