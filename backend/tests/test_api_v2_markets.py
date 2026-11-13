@@ -159,7 +159,7 @@ def test_v2_catalog_does_not_collect_at_request_time(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(assemble, "snapshot", forbidden_collection)
     payload = api.markets_v2(Response())
 
-    assert payload["count"] == 40
+    assert payload["count"] == 41
     assert {item["market_id"] for item in payload["markets"]} >= {
         "US-USD",
         "IN-INR",
@@ -469,21 +469,17 @@ def test_global_money_market_atlas_reads_canonical_rows_without_collecting(
     us = next(item for item in payload["markets"] if item["market_id"] == "US-USD")
 
     assert payload["schema"] == "seiche.global-money-markets.v1"
-    assert payload["coverage"]["declared_markets"] == 19
+    assert payload["coverage"]["declared_markets"] == 20
     assert us["benchmark"]["value"] == 5.31
     assert us["policy_relative_spread"]["value"] == -9.0
     assert not any(
         item["market_id"] == "KR-KRW" for item in payload["expansion_ledger"]
     )
-    assert payload["coverage"]["expansion_markets"] == 44
+    assert payload["coverage"]["expansion_markets"] == 43
     assert payload["coverage"]["global_discovery_universe"] >= 60
-    canada = next(
-        item for item in payload["expansion_ledger"] if item["market_id"] == "CA-CAD"
-    )
-    assert canada["benchmark"] == "CORRA"
-    assert canada["benchmark_kind"] == "secured overnight transaction rate"
-    assert canada["source_url"].startswith("https://www.bankofcanada.ca/")
-    assert canada["verified_on"] == "2026-08-21"
+    assert not any(item["market_id"] == "CA-CAD" for item in payload["expansion_ledger"])
+    canada = next(item for item in payload["markets"] if item["market_id"] == "CA-CAD")
+    assert canada["status"] == "DECLARED_UNAVAILABLE"
     assert response.headers["Cache-Control"].startswith("public, max-age=60")
 
 
@@ -1246,7 +1242,7 @@ def test_atlas_batch_is_exactly_equal_to_legacy_projection_with_rights_gates(
     legacy = api.global_money_markets_v2(legacy_response)
     assert batched == legacy
     assert response.headers == legacy_response.headers
-    assert batched["coverage"]["declared_markets"] == 19
+    assert batched["coverage"]["declared_markets"] == 20
     assert batched["read_faults"] == []
     us = next(
         market for market in batched["markets"] if market["market_id"] == "US-USD"
@@ -1274,7 +1270,7 @@ def test_batch_failure_preserves_individual_faults_cutoff_and_sanitization(
 
     class Repository:
         def load_observations_batch_as_of(self, selections, cutoff, **kwargs):
-            assert len(selections) == 40
+            assert len(selections) == 41
             bounds.append((cutoff, kwargs["event_time"], kwargs["event_time_from"]))
             raise ValueError(secret)
 
@@ -1293,7 +1289,7 @@ def test_batch_failure_preserves_individual_faults_cutoff_and_sanitization(
     repository = Repository()
     _freeze_api(monkeypatch, repository)
     result = api.global_money_markets_v2(Response())
-    assert len(calls) == len(set(calls)) == 40
+    assert len(calls) == len(set(calls)) == 41
     assert len(result["read_faults"]) == 1
     assert result["read_faults"][0]["market_id"] == "EA-EUR"
     assert result["read_faults"][0]["source"] == "canonical_repository"

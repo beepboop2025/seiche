@@ -429,17 +429,41 @@
       "publisher": "Bank of Canada",
       "publisher_url": "https://www.bankofcanada.ca/rates/interest-rates/corra/",
       "access_url": "https://www.bankofcanada.ca/valet/observations/group/CORRA/json",
-      "access_format": ["Valet JSON API", "CSV API", "XML API"],
+      "access_format": [
+        "Valet JSON API",
+        "CSV API",
+        "XML API"
+      ],
       "cadence": "P1D",
       "rights_status": "explicit_with_attribution",
       "rights_evidence_url": "https://www.bankofcanada.ca/terms/",
-      "target_markets": ["CA-CAD"],
-      "semantic_roles": ["SECURED_OVERNIGHT", "POLICY_TARGET", "POLICY_FLOOR", "POLICY_CEILING"],
+      "target_markets": [
+        "CA-CAD"
+      ],
+      "semantic_roles": [
+        "SECURED_OVERNIGHT",
+        "POLICY_TARGET",
+        "POLICY_FLOOR",
+        "POLICY_CEILING",
+        "RATE_P25",
+        "RATE_P75",
+        "REPO_VOLUME",
+        "BENCHMARK_SUBMITTERS",
+        "SOVEREIGN_YIELD",
+        "TBILL_3M",
+        "TBILL_6M",
+        "TBILL_12M"
+      ],
       "proposed_roles": [],
-      "target_engines": ["CA-CAD:future_local_gauge", "harbors", "spillover", "estuary"],
-      "implementation_status": "candidate",
-      "blocker": "No CA-CAD pack, selected policy-band series, or publication-clock contract exists; distribution requires attribution, accuracy, and paid-access disclosure.",
-      "next_action": "Probe the CORRA group and official policy-band series through Valet, encode the daily publication clocks and attribution, and draft a reference CA-CAD pack."
+      "target_engines": [
+        "CA-CAD:future_local_gauge",
+        "harbors",
+        "spillover",
+        "estuary"
+      ],
+      "implementation_status": "implemented",
+      "blocker": "Reference pack only. Settlement-calendar validation is pending; freshness remains UNKNOWN and publication timestamps are not invented.",
+      "next_action": "Run incremental Valet collection and retain revised vintages; qualify the Bank calendar before enabling schedule-based freshness."
     },
     {
       "id": "eia_bulk_data",

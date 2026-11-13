@@ -25,7 +25,7 @@ FUNDING_ROLES = {SemanticRole.UNSECURED_OVERNIGHT, SemanticRole.SECURED_OVERNIGH
 # Benchmark distribution and compounded series belong to the rates routes
 # (/api/v2/rates); they are not central bank liquidity and stay off these desks.
 RATES_ONLY_ROLES = {SemanticRole.RATE_P01, SemanticRole.RATE_P25, SemanticRole.RATE_MEDIAN, SemanticRole.RATE_P75,
-                    SemanticRole.RATE_P99, SemanticRole.BENCHMARK_TRANSACTIONS, SemanticRole.BENCHMARK_ACTIVE_BANKS,
+                    SemanticRole.RATE_P99, SemanticRole.BENCHMARK_TRANSACTIONS, SemanticRole.BENCHMARK_ACTIVE_BANKS, SemanticRole.BENCHMARK_SUBMITTERS,
                     SemanticRole.BENCHMARK_TOP5_VOLUME_SHARE, SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_TENOR,
                     SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX}
 CAVEATS = [

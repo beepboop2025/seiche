@@ -1139,9 +1139,10 @@ _REVIEWED_DISCOVERY_LEDGER: tuple[dict[str, str | None], ...] = (
 # Preserve the dated review above; countries with declared adapters move out
 # of the active discovery queue without being labelled complete or supported.
 EXPANSION_LEDGER = tuple(item for item in _REVIEWED_DISCOVERY_LEDGER
-                         if item["market_id"] not in {country.market_id for country in COUNTRIES})
+                         if item["market_id"] not in {country.market_id for country in COUNTRIES} | {"CA-CAD"})
 _REGIONS.update({country.market_id: "Europe" for country in COUNTRIES if country.code in OTHER_EUROPE})
 _REGIONS["TW-TWD"] = "East Asia"
+_REGIONS["CA-CAD"] = "North America"
 
 
 def _validate_expansion_ledger(

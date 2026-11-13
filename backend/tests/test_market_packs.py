@@ -22,6 +22,7 @@ def test_reference_registry_is_monetary_area_aware() -> None:
     registry = default_registry()
     assert {pack.market_id for pack in registry.list()} == {
         "US-USD",
+        "CA-CAD",
         "EA-EUR",
         "UK-GBP",
         "JP-JPY",

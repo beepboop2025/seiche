@@ -368,3 +368,7 @@ Run the consistency check with:
 ```bash
 pytest -q backend/tests/test_data_source_expansion_ledger.py
 ```
+
+## Bank of Canada Valet reference pack (14 November 2026)
+
+CA-CAD adds CORRA, its distribution and volume, policy bounds, five benchmark bond tenors and three Treasury bill tenors. Terms read 14 November 2026: https://www.bankofcanada.ca/terms/. Attribution and the notice that the original is freely available accompany values. Source dates are preserved, missing dates are not filled, revised values append vintages. Publication receipts and a validated Bank settlement calendar are unavailable, so publication time remains null and freshness UNKNOWN. This reference pack is not calibrated engine support.

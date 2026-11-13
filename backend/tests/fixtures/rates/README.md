@@ -39,3 +39,14 @@ Retrieved 2026-11-13T20:00:01Z from the ECB Data API, `format=csvdata`, `startPe
 
 The distribution series are dated with the trading day (published the next TARGET day at 08:00 Frankfurt time); the
 compounded rate and index are dated with their publication day. Source: European Central Bank (terms as above).
+
+## Bank of Canada Valet (14 November 2026)
+
+`boc-valet-2026-11-09-to-13.json` is the original Valet JSON response for the 16
+series declared in `markets/canada_cad.py`, requested with start_date=2026-11-09
+and end_date=2026-11-13. Publisher: Bank of Canada. Terms:
+https://www.bankofcanada.ca/terms/ (read 2026-11-14). The original data are freely
+available from the Bank of Canada. Fixture bytes are retained; parser unit and
+identity mutations occur only in memory in tests. November 11 CORRA is missing
+for the bank holiday, while any policy observations actually printed on that
+date retain their source date. No dates are filled.

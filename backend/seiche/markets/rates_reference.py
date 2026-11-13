@@ -135,6 +135,7 @@ def _ecb_yc_curve(curve_id: str, sample: str, code: str, label: str, method: str
 # routes only read them. Conventions are the publishers' own; no forwards are
 # computed for par or constant-maturity curves.
 EXISTING_CURVES = (
+    RateCurve("CA_GOC_BENCHMARK", "CA-CAD", "CAD", "boc_valet", "Government of Canada benchmark yields (Bank of Canada)", "benchmark_bond_yield", None, "P1D", tuple((f"{t}Y", float(t), f"CA.BOC.GOC_{t}Y") for t in (2,3,5,7,10)), "Designated benchmark bond yields, not zero-coupon rates. Benchmark issue changes can affect comparisons. No forwards are derived.", ()),
     RateCurve("US_TREASURY_PAR", "US-USD", "USD", "treasury_par_yields",
               "US Treasury par yield curve (U.S. Department of the Treasury)", "par_yield",
               "semiannual bond-equivalent", "P1D",
@@ -242,6 +243,7 @@ def _slope(curve: RateCurve, short: str, long: str, name: str) -> RateSpread:
 
 
 _SLOPES = {
+    "CA_GOC_BENCHMARK": (("2Y", "10Y", "2S10S"),),
     "EA_AAA_SPOT": (("2Y", "10Y", "2S10S"), ("3M", "10Y", "3M10Y"), ("5Y", "30Y", "5S30S")),
     "EA_ALL_SPOT": (("2Y", "10Y", "2S10S"), ("3M", "10Y", "3M10Y"), ("5Y", "30Y", "5S30S")),
     "US_TREASURY_PAR": (("2Y", "10Y", "2S10S"), ("3M", "10Y", "3M10Y"), ("5Y", "30Y", "5S30S")),
@@ -313,3 +315,7 @@ def extend_rates_pack(pack: MarketPack) -> MarketPack:
         ))
         instruments.extend(_estr_instruments())
     return replace(pack, instruments=tuple(instruments), source_adapters=tuple(adapters))
+
+from seiche.markets.canada_cad import SOURCE as _BOC_SOURCE, SERIES_MAP as _BOC_SERIES
+RATES_SOURCES["boc_valet"] = _BOC_SOURCE
+INSTRUMENT_LABELS.update({identifier: label for identifier, _, _, label in _BOC_SERIES.values()})

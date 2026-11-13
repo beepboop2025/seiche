@@ -66,7 +66,7 @@ FAMILY_BY_ROLE = {
     _R.UNSECURED_OVERNIGHT: "overnight_unsecured",
     _R.SECURED_OVERNIGHT: "overnight_secured",
     **dict.fromkeys((_R.RATE_P01, _R.RATE_P25, _R.RATE_MEDIAN, _R.RATE_P75, _R.RATE_P99, _R.REPO_VOLUME,
-                     _R.UNSECURED_FUNDING_VOLUME, _R.BENCHMARK_TRANSACTIONS, _R.BENCHMARK_ACTIVE_BANKS,
+                     _R.UNSECURED_FUNDING_VOLUME, _R.BENCHMARK_TRANSACTIONS, _R.BENCHMARK_ACTIVE_BANKS, _R.BENCHMARK_SUBMITTERS,
                      _R.BENCHMARK_TOP5_VOLUME_SHARE), "overnight_distribution"),
     **dict.fromkeys((_R.COMPOUNDED_OVERNIGHT_AVERAGE_30D, _R.COMPOUNDED_OVERNIGHT_AVERAGE_90D,
                      _R.COMPOUNDED_OVERNIGHT_AVERAGE_180D, _R.COMPOUNDED_OVERNIGHT_RATE_INDEX,
@@ -123,6 +123,7 @@ FUNDING_LEGS: dict[str, dict[str, tuple[str, ...]]] = {
     "HK-HKD": {"overnight": (), "anchor": ("HK.HKMA.BASE_RATE",)},
 }
 FUNDING_NOTES = {
+    "CA-CAD": "CORRA methodology changed on 12 June 2020. Policy band rows are published on change dates; no daily band values are filled. Publication receipts and a validated Bank calendar are unavailable, so freshness remains UNKNOWN.",
     "SG-SGD": "Monetary policy works through the exchange rate; no policy interest rate anchor exists.",
     "HK-HKD": "The overnight benchmark is not redistributable under its terms; only the base rate is public.",
 }
