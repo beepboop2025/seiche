@@ -89,8 +89,7 @@ Disallow: /.well-known/api-catalog
         reverse_proxy 127.0.0.1:8797
     }
 
-    # AnakE-Nyx external-factor feeds — static public-data mirror,
-    # pulled hourly from the private repo; consumed by LiquiLens/DragonScope.
+    # AnakE-Nyx external-factor feed namespace.
     handle_path /anake-nyx/feeds/* {
         header Access-Control-Allow-Origin "*"
         header Cache-Control "public, max-age=600"
@@ -153,11 +152,9 @@ Disallow: /.well-known/api-catalog
         respond `{"product":"Undertow","rail":"paypal","status":"DORMANT","detail":"PayPal webhook is not active; activation requires the documented readiness preflight."}` 503
     }
 
-    # Undertow LIVE relay snapshots (undertow-liverelay.service writes
-    # /var/lib/undertow-relay every ~1.5s; quotes.json + klines.json).
-    # no-store: the mirror 10-minute cache header would defeat a live
-    # snapshot. The static mirror excludes this namespace regardless of
-    # Caddy's directive sorting.
+    # Undertow live relay snapshots. no-store: the mirror 10-minute cache
+    # header would defeat a live snapshot. The static mirror excludes this
+    # namespace regardless of Caddy's directive sorting.
     handle_path /undertow/live/* {
         header Access-Control-Allow-Origin "*"
         header Cache-Control "no-store"
@@ -178,10 +175,9 @@ Disallow: /.well-known/api-catalog
         respond `{"product":"Undertow","job":"market-level liquidity and position-sized exit cost","developer_guide":"https://liquilens-undertow.com/developers/","mcp":{"url":"https://api.seiche.info/undertow/mcp","transport":"streamable-http","authentication":"none for ten public tools","first_tool":"latest_article"},"rest":{"article_json_feed":"/undertow/articles-feed.json","free_summary":"/undertow/x402/summary","sealed_record":"/undertow/sealed_calls.json","public_packs":"/undertow/<pack>.json","machine_payable":"/undertow/x402/"},"disclaimer":"Research and market data, not investment advice."}` 200
     }
 
-    # Undertow published packs — static public mirror (board + retail
-    # packs only; refreshed by undertow-public-mirror.timer). Consumed by
-    # the LiquiLens app's Undertow Retail layer. Named exclusions prevent
-    # Caddy's directive sorting from shadowing the API and exact index.
+    # Undertow published packs: static public mirror (board and retail
+    # packs only). Named exclusions prevent Caddy's directive sorting from
+    # shadowing the API and exact index.
     @undertow_static {
         path /undertow/*
         not path /undertow/ /undertow/mcp* /undertow/x402/* /undertow/desk/* /undertow/paypal/* /undertow/live/*

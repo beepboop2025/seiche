@@ -1,5 +1,32 @@
 # Publishing Seiche release surfaces
 
+## 0.16.13 SDL desk and board-build successor
+
+The 12 November candidate adds the India state government securities (SDL)
+auctions desk (`money_market_context` section `india_states` and
+`GET /api/v2/india-sdl`), read from a committed RBI pack that ships in the wheel
+and the sdist as reviewed package data. It runs every blocking board-rebuild
+stage on one dedicated thread, stops pointing agents at a tool this release does
+not serve, stops implying a paid MCP tier, and keeps collection internals out of
+the public Caddyfile comments. The package version is `0.16.13`. Version
+metadata is preparation only: require the exact signed runtime release (a new
+owner-signed Hetzner grant for this code), the normal full-suite and recovery
+gates, the immutable PyPI receipt and the registry receipt.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r52`, for this successor.
+Preserve r51 on `a4922dc1`. Corpus observations, counts, hashes and rights are
+unchanged. Sign r52 only after the exact new runtime and corpus evidence pass
+their ordinary checks; declaration is not publication. The runtime source and
+the publication source are the same commit, so no source bridge is used. Run a
+FULL publication from this source before any static-only publication.
+
+`ops/release/tests/test_native_migration_publication.py` pins a commit whose
+`backend/seiche` equals the checkout's. A commit cannot name itself, so the pin
+moves in its own commit after the last `backend/seiche` change, as it did for
+0.16.12; any later `backend/seiche` change moves it again.
+
+
 ## 0.16.12 original-publisher successor
 
 The 9 November candidate reads 56 of the 76 withheld FRED series from their

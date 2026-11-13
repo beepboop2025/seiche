@@ -19,6 +19,8 @@ backtest reconstruction can be accused of polishing.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import hashlib
 import hmac
 import json
@@ -31,6 +33,7 @@ import time
 import traceback
 import unicodedata
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -376,13 +379,38 @@ _lock = asyncio.Lock()
 _refreshing = False  # one background rebuild at a time; readers never wait on it
 _build_generation = 0  # completed build/lock epochs; restores do not advance it
 
+# Every blocking stage of a board build runs on this one long-lived thread.
+# asyncio.to_thread hands each call to the longest-idle worker of the loop's
+# shared default executor, and /api/health and the other to_thread routes
+# grow that pool whenever a request arrives during a build. Rebuilds then
+# rotated the engine and deep stages through every worker. glibc caches the
+# memory a thread frees in that thread's own arena (and each new deep-layer
+# host started its own OpenMP team), so every worker that hosted a stage kept
+# its own copy of the stage's working set and RSS grew rebuild after rebuild.
+_BUILD_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="seiche-board-build"
+)
+
+
+async def _on_build_thread(func, /, *args, **kwargs):
+    """``asyncio.to_thread`` pinned to the board-build thread.
+
+    ``_lock`` already serializes builds. A stage still running after its
+    build was cancelled now delays the next build's stage instead of running
+    beside it on a second thread with a second working set.
+    """
+    loop = asyncio.get_running_loop()
+    call = functools.partial(contextvars.copy_context().run, func, *args, **kwargs)
+    return await loop.run_in_executor(_BUILD_EXECUTOR, call)
+
+
 # Two audiences, two strings. VERSION is the machine-facing contract and must
 # stay bare semver matching server.json and the MCP registry listing — it is
 # what the MCP handshake hands an agent. RELEASE is the human-facing codename
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.16.12"
+VERSION = "0.16.13"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
@@ -3543,7 +3571,7 @@ async def _publish_rebuilt_snapshot(
     _assert_snapshot_rights(payload)
     handoff_id = None
     if release_receipt is not None:
-        handoff_id = await asyncio.to_thread(
+        handoff_id = await _on_build_thread(
             _persist_pending_snapshot, payload, release_receipt
         )
     producer_sha = capture_process_release_sha() if handoff_id is not None else None
@@ -3682,12 +3710,13 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
     # loop and every HTTP request hangs until the fit finishes (observed
     # live 2026-07-17: /, /docs and all /api/* timing out while the
     # keep-warm cycle trained). One rebuild at a time is still guaranteed
-    # by the caller holding `_lock`.
-    engines = await asyncio.to_thread(_run_engines, src, drv, faults)
+    # by the caller holding `_lock`, and every rebuild reuses the same
+    # worker (see _BUILD_EXECUTOR).
+    engines = await _on_build_thread(_run_engines, src, drv, faults)
     # Engine results are the first completed value-bearing projection. Reject
     # restricted rows before the deep layer can cache or otherwise consume them.
     _assert_snapshot_rights({"engines": _strip_private(engines)})
-    deep = await asyncio.to_thread(_deep_layer, src, drv, engines, faults)
+    deep = await _on_build_thread(_deep_layer, src, drv, engines, faults)
     # Model Court sits on the finished deep layer (published payloads, never
     # raw series) and re-reads the as-published odds ledger on every rebuild,
     # so it stays OUTSIDE _deep_layer's per-day blob cache. The ledger is the
@@ -3747,7 +3776,7 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
         except Exception as e:  # noqa: BLE001 — fail loud, never block the board
             nav = safe_failure_envelope(e)
         if nav.get("ok"):
-            records = await asyncio.to_thread(store.load_pit_records)
+            records = await _on_build_thread(store.load_pit_records)
             nav = {**nav, "record": eng_navigator.score_record(
                 records, drv["spread_bp"])}
     payload["navigator"] = nav
@@ -3760,7 +3789,7 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
         },
     }
     try:
-        payload["system"]["alert_log"] = await asyncio.to_thread(
+        payload["system"]["alert_log"] = await _on_build_thread(
             alerts.snapshot_log, payload, record=publish,
         )
     except Exception as exc:
@@ -3779,13 +3808,13 @@ async def _build_snapshot(*, publish: bool = True) -> dict:
             hetzner_runtime.require_authority()
         # SQLite lock waits and notary I/O must not hold the serving loop.
         # The assembly lock still orders PIT recording before evidence sealing.
-        await asyncio.to_thread(_record_pit, engines, deep, nav)
+        await _on_build_thread(_record_pit, engines, deep, nav)
         # v2 never collects at request time. The existing US cycle is the first
         # producer during migration: once its payload is complete, a pack-local
         # adapter seals independent market products for read-only v2 routes.
         # Failure is isolated from ordinary v1 reads but makes the candidate
         # ineligible for promotion through the strict deployment health gate.
-        release_receipt = await asyncio.to_thread(_seal_release_evidence, payload)
+        release_receipt = await _on_build_thread(_seal_release_evidence, payload)
         # Stage after the evidence seal, retaining the previous complete cache
         # until the new payload and its authority can be published together.
         # The root deploy controller activates a new release after every gate.

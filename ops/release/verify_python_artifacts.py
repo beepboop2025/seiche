@@ -33,10 +33,13 @@ MAX_WHEEL_METADATA_BYTES = 16 * 1024
 MINIMUM_ZIP_EPOCH = 315532800  # 1980-01-01T00:00:00Z
 # Non-Python package members, reviewed by exact path relative to the package source root.
 # 0.16.12: seiche/source_decisions.py and seiche/sources/fed_releases.py read the two JSON
-# registries at run and import time, and the two notes document those registries.  Any
-# other non-Python file (apart from a bootstrap_snapshot.json) still fails closed.
+# registries at run and import time, and the two notes document those registries.
+# 0.16.13: seiche/india_sdl.py reads seiche/india_sdl_auctions.json, the RBI SDL auction
+# pack built offline by backend/scripts/build_india_sdl.py, at run time.  Any other
+# non-Python file (apart from a bootstrap_snapshot.json) still fails closed.
 REVIEWED_PACKAGE_DATA = frozenset(
     {
+        "seiche/india_sdl_auctions.json",
         "seiche/source_decisions.json",
         "seiche/sources/FED_RELEASES.md",
         "seiche/sources/ORIGINAL_PUBLISHERS.md",

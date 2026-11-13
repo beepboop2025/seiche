@@ -327,9 +327,11 @@ def test_source_contract_admits_reviewed_package_data_by_exact_path(
     assert set(contract["package_files"]) == set(python) | set(reviewed)
 
 
-def test_reviewed_package_data_is_exactly_the_0_16_12_registries_and_notes() -> None:
+def test_reviewed_package_data_is_exactly_the_registries_notes_and_sdl_pack() -> None:
     # Widening this set is a review decision: every name here ships in the wheel and the sdist.
+    # 0.16.12 reviewed the two registries and their notes; 0.16.13 adds the SDL auction pack.
     assert VERIFIER.REVIEWED_PACKAGE_DATA == {
+        "seiche/india_sdl_auctions.json",
         "seiche/source_decisions.json",
         "seiche/sources/FED_RELEASES.md",
         "seiche/sources/ORIGINAL_PUBLISHERS.md",
