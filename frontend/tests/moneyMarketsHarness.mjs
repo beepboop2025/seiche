@@ -45,7 +45,7 @@ export async function loadMoneyMarkets() {
   const ecb = await load("ecbReference.ts");
   const usdDesk = await load("usdAtlasDesk.ts", { "./usdFunding": funding });
   const snapshot = await load("snapshotStatus.ts");
-  const summary = await load("UsdFundingSummary.tsx", { "./apiBase": { API_BASE: "https://example.invalid" }, "./usdFunding": funding }, true);
+  const summary = await load("UsdFundingSummary.tsx", { "./apiBase": { API_BASE: "https://example.invalid" }, "./desk/deskModel": {clock:value=>value||"Not supplied"}, "./research/fundingSources": {readFundingAtlas:()=>Promise.reject(new Error("not used during static render"))}, "./usdFunding": funding }, true);
   const moneyMarkets = await load("tabs/MoneyMarkets.tsx", {
     "../snapshotStatus": snapshot,
     "../UsdFundingSummary": summary,

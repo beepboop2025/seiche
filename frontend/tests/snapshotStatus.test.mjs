@@ -22,6 +22,8 @@ const summaryContext = {exports: {}, require(name) {
   if (name === "react") return React;
   if (name === "react/jsx-runtime") return jsxRuntime;
   if (name === "./apiBase") return {API_BASE: "https://example.invalid"};
+  if (name === "./desk/deskModel") return {clock:value=>value||"Not supplied"};
+  if (name === "./research/fundingSources") return {readFundingAtlas:()=>Promise.reject(new Error("not used during static render"))};
   if (name === "./usdFunding") return fundingContext.exports;
   if (name.endsWith(".css")) return {};
   throw new Error("Unexpected funding summary dependency: " + name);
@@ -35,6 +37,8 @@ vm.runInNewContext(ts.transpileModule(await readFile(new URL("../src/ecbReferenc
   compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
 }).outputText, ecbContext);
 const usdDeskContext = { exports: {}, URL, require(name) {
+  if (name === "./desk/deskModel") return {clock:value=>value||"Not supplied"};
+  if (name === "./research/fundingSources") return {readFundingAtlas:()=>Promise.reject(new Error("not used during static render"))};
   if (name === "./usdFunding") return fundingContext.exports;
   throw new Error("Unexpected USD desk dependency: " + name);
 } };

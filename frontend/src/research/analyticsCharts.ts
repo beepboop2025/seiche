@@ -245,7 +245,7 @@ export function chartCard(spec: ChartSpec): HTMLElement {
   }
   draw(); card.append(visual, readout, el('p', spec.note, 'ac-note'));
   const footer = el('footer', undefined, 'ac-card-foot'), details = el('details');
-  details.append(el('summary', 'Data & sources'));
+  details.append(el('summary', 'Data table & sources'));
   const tableWrap = el('div', undefined, 'ac-table-wrap'), rows = chartRows(spec);
   let tableBuilt = false;
   details.addEventListener('toggle', () => {

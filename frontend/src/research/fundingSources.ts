@@ -1,9 +1,19 @@
 import {record, readJSON} from "./core";
 import {seriesModel, type EconomicSeries} from "./seriesModel";
 
+// One shared pending read and short cache prevents duplicate multi-megabyte atlas downloads.
+let atlasRead: {until:number; promise:Promise<unknown>} | null = null;
 // The complete atlas contains many markets and exceeds the per-series 2 MiB limit.
 export function readFundingAtlas(signal: AbortSignal): Promise<unknown> {
-  return readJSON("https://api.seiche.info/api/v2/money-markets", signal, 8 * 1024 * 1024);
+  if (!atlasRead || atlasRead.until < Date.now()) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    const origin = typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname) ? "" : "https://api.seiche.info";
+    const promise = readJSON(origin + "/api/v2/money-markets", controller.signal, 8 * 1024 * 1024)
+      .catch(error => {atlasRead = null; throw error;}).finally(() => clearTimeout(timer));
+    atlasRead = {until:Date.now()+60000,promise};
+  }
+  return atlasRead.promise.then(value => {if(signal.aborted)throw new DOMException("Read cancelled", "AbortError");return value;});
 }
 
 const chartColumns = [
