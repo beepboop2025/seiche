@@ -32,6 +32,8 @@ const runWhenIdle = (task: () => void, timeout: number): (() => void) => {
 // first paint small and fast; each chunk streams in behind a skeleton.
 const Dispatches = lazy(() => import("./tabs/Dispatches"));
 const Today = lazy(() => import("./tabs/Today"));
+const RatesDesk = lazy(() => import("./desk/RatesDesk"));
+const SourceClocks = lazy(() => import("./desk/SourceClocks"));
 const Board = lazy(() => import("./tabs/Board"));
 const MoneyMarkets = lazy(() => import("./tabs/MoneyMarkets"));
 const MarketWorkbench = lazy(() => import("./tabs/MarketWorkbench"));
@@ -310,6 +312,11 @@ function AppInner() {
       <Suspense fallback={<TabSkeleton />}>
         {tab === "CORPUS" ? <Corpus /> : tab === "DISPATCHES" ? <Dispatches /> : <Account />}
       </Suspense></main>;
+  }
+  if (!snap && (tab === "TODAY" || tab === "SYSTEM")) {
+    return <main className="app research-app" id="main" data-tab={tab}><Suspense fallback={<TabSkeleton/>}>
+      {tab === "TODAY" ? <RatesDesk/> : <SourceClocks snapshot={{}}/>}
+    </Suspense><p className="sub">The rates desk reads its independent public source records. {err || "The broader funding board is loading."}</p></main>;
   }
   if (err && !snap) {
     return (

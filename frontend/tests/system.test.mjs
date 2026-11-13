@@ -7,9 +7,17 @@ import * as React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 
+async function loadModule(path, deps) {
+ const context={exports:{},require(name){if(name==="react")return React;if(name==="react/jsx-runtime")return jsxRuntime;if(name.endsWith(".css"))return {};if(name in deps)return deps[name];throw new Error("Unexpected source clock dependency: "+name);}};
+ vm.runInNewContext(ts.transpileModule(await readFile(new URL(path,import.meta.url),"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,context);
+ return context.exports;
+}
+const deskModel=await loadModule("../src/desk/deskModel.ts",{});
+const sourceClocks=await loadModule("../src/desk/SourceClocks.tsx",{"./deskModel":deskModel,"./deskApi":{useDesk:()=>({data:null,error:null})},"../research/fundingSources":{readFundingAtlas:()=>Promise.reject(new Error("not used during static render"))}});
 const source = await readFile(new URL("../src/tabs/System.tsx", import.meta.url), "utf8");
 const context = { exports: {}, require(name) {
   if (name === "react/jsx-runtime") return jsxRuntime;
+  if (name === "../desk/SourceClocks") return sourceClocks;
   if (name === "../lib") return { fmt: (value, digits) => value.toFixed(digits) };
   throw new Error(`Unexpected dependency: ${name}`);
 } };
@@ -50,12 +58,12 @@ test("missing freshness never defaults to fresh and aggregate dates stay explici
     { mnemonic: "TABLE", availability: "available", fetched_at: "2026-10-26T16:00:00Z" },
     { mnemonic: "OLD", availability: "available", asof: "2026-10-13", staleness: "stale" },
   ] });
-  assert.match(html, /unknown/);
-  assert.match(html, /Fetch clock only/);
-  assert.match(html, /Multiple source dates/);
+  assert.match(html, /UNKNOWN/);
+  assert.match(html, /Not supplied/);
+  assert.match(html, /Unavailable/);
   assert.match(html, /2026-10-13/);
-  assert.match(html, /chip stale/);
-  assert.doesNotMatch(html, /chip fresh/);
+  assert.match(html, /STALE/);
+  assert.doesNotMatch(html, /FRESH/);
 });
 
 test("faults identify each failed series and distinguish retained observations", () => {

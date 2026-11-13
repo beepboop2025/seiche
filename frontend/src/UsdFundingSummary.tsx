@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { API_BASE } from "./apiBase";
+import {readFundingAtlas} from "./research/fundingSources";
+import {clock} from "./desk/deskModel";
 import { fundingValue, usdFundingCards, usdMarket } from "./usdFunding";
 import "./styles-usd-funding.css";
 
@@ -19,11 +20,7 @@ export default function UsdFundingSummary({ snap, atlas }: { snap: unknown; atla
       controller = new AbortController();
       const timeout = window.setTimeout(() => controller?.abort(), 90000); // same budget as Money Markets' atlas read
       try {
-        const response = await fetch(API_BASE + "/api/v2/money-markets", {
-          credentials: "omit", cache: "no-cache", signal: controller.signal,
-        });
-        if (!response.ok || !(response.headers.get("content-type") || "").includes("json")) throw new Error("refresh unavailable");
-        const payload: unknown = await response.json();
+        const payload = await readFundingAtlas(controller.signal);
         if (!usdMarket(payload)) throw new Error("USD observations unavailable");
         if (!disposed) { setLastAtlas(payload); setCheckedAt(new Date().toISOString()); setRefreshFailed(false); }
       } catch {
@@ -48,9 +45,10 @@ export default function UsdFundingSummary({ snap, atlas }: { snap: unknown; atla
           <article className="usd-funding__card" key={card.id}>
             <h3>{card.label}</h3><strong>{fundingValue(card)}</strong>
             <span>{card.asof ? (card.id === "liquidity.reserves" ? "Week ended " : "As of ") + card.asof : "Observation date unavailable"}</span>
-            <small>{card.cadence}{card.status.toLowerCase() === "stale" ? " · behind schedule" : ""}</small>
+            <small>{card.cadence} · {card.status.toUpperCase() || "UNKNOWN"}</small>
             <small>{card.gap ?? card.source}</small>
             {card.terms && <small>Terms: <a href={card.terms} target="_blank" rel="noopener noreferrer">{card.terms.replace(/^https:\/\//, "")}</a></small>}
+            <small>Published {clock(card.publishedAt)} · Captured {clock(card.capturedAt)}</small>
             <small>{card.origin === "live" ? "Latest collected observation" : card.origin === "published" ? "Published board observation" : "No observation supplied"}</small>
           </article>
         ))}

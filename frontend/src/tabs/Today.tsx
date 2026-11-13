@@ -1,5 +1,6 @@
 import { createElement, useEffect, useMemo, useState } from "react";
 import Chart from "../Chart";
+import RatesDesk from "../desk/RatesDesk";
 import LiveMarket from "../LiveMarket";
 import UsdFundingSummary from "../UsdFundingSummary";
 import { clarifyFundingEditorial } from "../usdFunding";
@@ -84,6 +85,8 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
 
   return (
     <div className="today">
+      <RatesDesk />
+      <details className="today-editorial"><summary>Editorial context and its countercase</summary>
       <header className="today-hero">
         <div className="today-dateline">
           <span>THE DAILY READ</span>
@@ -92,7 +95,7 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
         </div>
         <div className="today-hero__grid">
           <div>
-            <h1>{editorial.thesis}</h1>
+            <h2>{editorial.thesis}</h2>
             <p className="today-standfirst">{editorial.standfirst}</p>
             <a
               className="today-follow"
@@ -114,6 +117,7 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
         </div>
         <div className="today-conviction"><b>Why that conviction:</b> {editorial.confidence_note}</div>
       </header>
+      </details>
       <UsdFundingSummary snap={snap} />
       {createElement("economic-context", { "aria-label": "Economic context", ref: (node: HTMLElement | null) => {
         if (node) (node as HTMLElement & {snapshot: unknown}).snapshot = snap;
