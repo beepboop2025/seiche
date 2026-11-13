@@ -58,10 +58,13 @@ REQUIRED_CANDIDATE_FIELDS = {
 # comparable without guessing from publisher names or overlapping semantic
 # roles.  A candidate can describe more than one production adapter.
 CANDIDATE_ADAPTER_KEYS = {
+    "bank_canada_valet_corra": (("CA-CAD", "boc_valet"),),
     "ecb_data_api": (
         ("EA-EUR", "ecb_benchmark"),
         ("EA-EUR", "ecb_policy"),
         ("EA-EUR", "ecb_liquidity"),
+        ("EA-EUR", "ecb_yield_curve"),
+        ("EA-EUR", "ecb_compounded"),
     ),
     "hkma_open_api": (("HK-HKD", "hkma_official"),),
     "bok_ecos_api": (

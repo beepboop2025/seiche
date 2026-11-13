@@ -1304,6 +1304,7 @@ def api_index() -> dict[str, Any]:
             "india_sdl": "/api/v2/india-sdl",
             "india_funding": "/api/v2/india-funding",
             "country_funding": "/api/v2/country-funding",
+            "rates": "/api/v2/rates",
             "gold_inventory_carry": "/api/v2/gift-city/gold-carry",
             "series_catalog": "/api/series/index.json",
             "realtime_venue": "/undertow/live/quotes.json",
@@ -1857,6 +1858,13 @@ def _public_openapi_document() -> dict[str, Any]:
                                 "schema": {"type": "string", "pattern": "^[A-Za-z]{2}$"}}],
                 "responses": {"200": object_response, "422": {"description": "Unsupported country or query parameter"}},
             }},
+            "/api/v2/rates": {"get": {"summary": "Catalog of stored official rate series with source clocks", "responses": {"200": object_response, "422": {"description": "No query parameters accepted"}}}},
+            "/api/v2/rates/series/{instrument_id}": {"get": {"summary": "One rate series: dated history with provenance", "parameters": [{"name": "instrument_id", "in": "path", "required": True, "schema": {"type": "string", "maxLength": 96}}, {"name": "days", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 400}}], "responses": {"200": object_response, "422": {"description": "Unknown instrument or parameter"}}}},
+            "/api/v2/rates/curves": {"get": {"summary": "Government curves with their latest dates and states", "responses": {"200": object_response}}},
+            "/api/v2/rates/curves/{curve_id}": {"get": {"summary": "One curve on a date, with slopes, comparison and exact forwards where the convention allows", "parameters": [{"name": "curve_id", "in": "path", "required": True, "schema": {"type": "string", "maxLength": 40}}, {"name": "date", "in": "query", "required": False, "schema": {"type": "string", "format": "date"}}, {"name": "compare", "in": "query", "required": False, "schema": {"type": "string", "format": "date"}}], "responses": {"200": object_response, "422": {"description": "Unknown curve or invalid date"}}}},
+            "/api/v2/rates/spreads": {"get": {"summary": "Defined spreads with latest value and own-history percentile", "parameters": [{"name": "window_days", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 250, "maximum": 7300, "default": 1095}}], "responses": {"200": object_response}}},
+            "/api/v2/rates/spreads/{spread_id}": {"get": {"summary": "One spread: history and regime context with the window stated", "parameters": [{"name": "spread_id", "in": "path", "required": True, "schema": {"type": "string", "maxLength": 40}}, {"name": "window_days", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 250, "maximum": 7300, "default": 1095}}, {"name": "days", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 400}}], "responses": {"200": object_response, "422": {"description": "Unknown spread or parameter"}}}},
+            "/api/v2/rates/funding-conditions": {"get": {"summary": "Overnight benchmark against policy anchor and corridor, side by side across currencies", "parameters": [{"name": "markets", "in": "query", "required": False, "schema": {"type": "string", "maxLength": 200}}, {"name": "window_days", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 250, "maximum": 7300, "default": 1095}}], "responses": {"200": object_response, "422": {"description": "Unknown market or parameter"}}}},
             "/api/v2/gift-city/gold-carry": {"post": {"summary": "Gold inventory financing scenario from caller assumptions", "requestBody": {"required": True, "content": {"application/json": {"schema": mcp_server.gift_city.CARRY_INPUT_SCHEMA}}}, "responses": {"200": object_response, "422": {"description": "Invalid scenario inputs"}}}},
             "/api/v2/market-workbench": {"get": {
                 "operationId": "getMarketWorkbench",
@@ -2695,6 +2703,97 @@ def country_funding_v2(request: Request, response: Response, country: str | None
         raise HTTPException(422, str(exc)) from exc
     response.headers["Cache-Control"] = "public, max-age=60"
     return result
+
+
+def _rates_params(request: Request, allowed: frozenset[str]) -> dict[str, str]:
+    """Plain 422 for unknown parameters, then the shared per-caller limiter."""
+    unknown = sorted(set(request.query_params) - allowed)
+    if unknown:
+        raise HTTPException(422, f"unknown query parameter(s): {', '.join(unknown)}")
+    if not _market_series_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "market series request limit exceeded", headers={"Retry-After": "60"})
+    return {key: request.query_params[key] for key in allowed if key in request.query_params}
+
+
+def _rates_int(params: dict[str, str], name: str, default: int) -> int:
+    raw = params.get(name)
+    if raw is None:
+        return default
+    if not re.fullmatch(r"[0-9]{1,6}", raw):
+        raise HTTPException(422, f"{name} must be a whole number")
+    return int(raw)
+
+
+def _rates_date(params: dict[str, str], name: str):
+    from datetime import date as _date
+    raw = params.get(name)
+    if raw is None:
+        return None
+    try:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw):
+            raise ValueError
+        return _date.fromisoformat(raw)
+    except ValueError:
+        raise HTTPException(422, f"{name} must be an ISO date YYYY-MM-DD") from None
+
+
+def _rates_read(response: Response, build):
+    from seiche import rates_desk
+    try:
+        result = build(rates_desk)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return result
+
+
+@app.get("/api/v2/rates")
+def rates_catalog_v2(request: Request, response: Response):
+    """What the rates desk can offer, measured from stored observations."""
+    _rates_params(request, frozenset())
+    return _rates_read(response, lambda desk: desk.catalog())
+
+
+@app.get("/api/v2/rates/series/{instrument_id}")
+def rates_series_v2(request: Request, response: Response, instrument_id: str):
+    params = _rates_params(request, frozenset({"days"}))
+    days = _rates_int(params, "days", 400)
+    return _rates_read(response, lambda desk: desk.series(instrument_id, days=days))
+
+
+@app.get("/api/v2/rates/curves")
+def rates_curves_v2(request: Request, response: Response):
+    _rates_params(request, frozenset())
+    return _rates_read(response, lambda desk: desk.curves())
+
+
+@app.get("/api/v2/rates/curves/{curve_id}")
+def rates_curve_v2(request: Request, response: Response, curve_id: str):
+    params = _rates_params(request, frozenset({"date", "compare"}))
+    on, compare = _rates_date(params, "date"), _rates_date(params, "compare")
+    return _rates_read(response, lambda desk: desk.curve(curve_id, on=on, compare=compare))
+
+
+@app.get("/api/v2/rates/spreads")
+def rates_spreads_v2(request: Request, response: Response):
+    params = _rates_params(request, frozenset({"window_days"}))
+    window = _rates_int(params, "window_days", 1095)
+    return _rates_read(response, lambda desk: desk.spreads(window_days=window))
+
+
+@app.get("/api/v2/rates/spreads/{spread_id}")
+def rates_spread_v2(request: Request, response: Response, spread_id: str):
+    params = _rates_params(request, frozenset({"window_days", "days"}))
+    window, days = _rates_int(params, "window_days", 1095), _rates_int(params, "days", 400)
+    return _rates_read(response, lambda desk: desk.spread(spread_id, window_days=window, days=days))
+
+
+@app.get("/api/v2/rates/funding-conditions")
+def rates_funding_conditions_v2(request: Request, response: Response):
+    """Comparative overnight funding conditions; levels are shown side by side, never ranked."""
+    params = _rates_params(request, frozenset({"markets", "window_days"}))
+    window = _rates_int(params, "window_days", 1095)
+    return _rates_read(response, lambda desk: desk.funding_conditions(markets=params.get("markets"), window_days=window))
 
 
 @app.post("/api/v2/gift-city/gold-carry")

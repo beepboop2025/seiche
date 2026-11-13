@@ -22,6 +22,12 @@ FUNDING_ROLES = {SemanticRole.UNSECURED_OVERNIGHT, SemanticRole.SECURED_OVERNIGH
                  SemanticRole.TERM_1W, SemanticRole.TERM_1M, SemanticRole.TERM_3M,
                  SemanticRole.TBILL_3M, SemanticRole.TBILL_6M, SemanticRole.TBILL_12M,
                  SemanticRole.CP_3M, SemanticRole.CD_3M, SemanticRole.TERM_FUNDING_RATE}
+# Benchmark distribution and compounded series belong to the rates routes
+# (/api/v2/rates); they are not central bank liquidity and stay off these desks.
+RATES_ONLY_ROLES = {SemanticRole.RATE_P01, SemanticRole.RATE_P25, SemanticRole.RATE_MEDIAN, SemanticRole.RATE_P75,
+                    SemanticRole.RATE_P99, SemanticRole.BENCHMARK_TRANSACTIONS, SemanticRole.BENCHMARK_ACTIVE_BANKS, SemanticRole.BENCHMARK_SUBMITTERS,
+                    SemanticRole.BENCHMARK_TOP5_VOLUME_SHARE, SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_TENOR,
+                    SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX}
 CAVEATS = [
     "Reference observations, not a calibrated country-risk score, executable quote or trading recommendation.",
     "Countries sharing a currency can share monetary-policy references while issuing different sovereign debt.",
@@ -208,7 +214,7 @@ def build(country, observations_by_market, *, now, include_history=False, regist
                                      if i.semantic_role in roles and i.instrument_id in funding]})
     sections.append({"id": "liquidity", "scope": "Euro area" if funding_pack.market_id == "EA-EUR" else profile.name,
                      "metrics": [funding[i.instrument_id] for i in funding_pack.instruments
-                                 if i.semantic_role not in POLICY_ROLES | FUNDING_ROLES | {SemanticRole.SOVEREIGN_YIELD}
+                                 if i.semantic_role not in POLICY_ROLES | FUNDING_ROLES | RATES_ONLY_ROLES | {SemanticRole.SOVEREIGN_YIELD}
                                  and i.instrument_id in funding]})
     curves = []
     for curve in CURVES:
