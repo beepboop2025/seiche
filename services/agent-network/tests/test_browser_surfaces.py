@@ -1,5 +1,6 @@
 """Public source, banking and history clients keep their native contracts."""
 import json
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
@@ -8,6 +9,31 @@ from seiche_agent_network import analytics, browser_surfaces as surfaces, demand
 from seiche_agent_network.extra_products import EXTRA_PRODUCTS
 from test_dataset_proxy import platform
 from test_hosted_surfaces import BASE, set_json
+
+
+@pytest.mark.parametrize('instant,cutoff,future', [
+    ('2026-11-13T18:29:59+00:00', '2026-11-13', '2026-11-14'),
+    ('2026-11-13T18:30:00+00:00', '2026-11-14', '2026-11-15'),
+])
+def test_banking_cutoff_uses_native_indian_reporting_day(monkeypatch, instant, cutoff, future):
+    from starlette.datastructures import QueryParams
+    from seiche_agent_network.models import NetworkError
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromisoformat(instant).astimezone(tz or timezone.utc)
+
+    monkeypatch.setattr(surfaces, 'datetime', FrozenDatetime)
+    for operation in ('coverage', 'monitoring/watchlist', 'institutions/example-bank',
+                      'monitoring/institutions/example-bank'):
+        _, params, _ = surfaces.banking_request(operation, QueryParams(as_of=cutoff))
+        assert params['as_of'] == cutoff
+        with pytest.raises(NetworkError):
+            surfaces.banking_request(operation, QueryParams(as_of=future))
+    # Other global source contracts retain their UTC policy.
+    with pytest.raises(ValueError):
+        surfaces._date({'as_of': '2026-11-14'}, 'as_of', not_future=True)
 
 
 def source_schema():
