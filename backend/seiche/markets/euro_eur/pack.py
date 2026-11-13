@@ -23,6 +23,7 @@ from seiche.markets.base import (
     SourceAdapterSpec,
 )
 from seiche.markets.calendars import target_holidays
+from seiche.markets.rates_reference import extend_rates_pack
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
@@ -44,7 +45,8 @@ _OPEN = ConnectorClassification.OFFICIAL_OPEN
 _ALLOWED = RedistributionStatus.ALLOWED
 
 
-PACK = MarketPack(
+# The ECB yield curves (YC dataset) are declared in seiche.markets.rates_reference.
+PACK = extend_rates_pack(MarketPack(
     market_id="EA-EUR",
     monetary_area_id="EA",
     display_name="Euro area",
@@ -110,4 +112,4 @@ PACK = MarketPack(
     calibration_id="ea-eur-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
-)
+))

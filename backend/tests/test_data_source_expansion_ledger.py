@@ -62,6 +62,7 @@ CANDIDATE_ADAPTER_KEYS = {
         ("EA-EUR", "ecb_benchmark"),
         ("EA-EUR", "ecb_policy"),
         ("EA-EUR", "ecb_liquidity"),
+        ("EA-EUR", "ecb_yield_curve"),
     ),
     "hkma_open_api": (("HK-HKD", "hkma_official"),),
     "bok_ecos_api": (

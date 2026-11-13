@@ -244,6 +244,11 @@ from seiche.markets.funding_reference import (
 )
 _SOURCE_URLS.update({key: value["source_url"] for key, value in _FUNDING_SOURCES.items()})
 _SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _FUNDING_SOURCES.items()})
+from seiche.markets.rates_reference import RATES_SOURCES as _RATES_SOURCES
+_SOURCE_URLS.update({key: value["source_url"] for key, value in _RATES_SOURCES.items()})
+_SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _RATES_SOURCES.items()})
+_SOURCE_ATTRIBUTIONS.update({key: {"attribution": value["attribution"], "terms_url": value["terms_url"]}
+                             for key, value in _RATES_SOURCES.items()})
 
 
 def market_source_reference(adapter_id: str) -> dict[str, str | None]:

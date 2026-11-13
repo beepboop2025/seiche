@@ -3157,10 +3157,15 @@ def build_official_adapters(
     adapters.extend(build_country_adapters(
         registry=markets, repository=repository, backfill=backfill, clock=clock,
     ))
+    from seiche.sources.rates_sources import build_rates_adapters
+    adapters.extend(build_rates_adapters(
+        registry=markets, repository=repository, backfill=backfill, clock=clock,
+    ))
     return tuple(adapters)
 
 
 from seiche.sources.country_funding import PRODUCTION_KEYS as _COUNTRY_PRODUCTION_KEYS
+from seiche.sources.rates_sources import PRODUCTION_KEYS as _RATES_PRODUCTION_KEYS
 
 from seiche import source_decisions as _source_decisions
 
@@ -3172,7 +3177,7 @@ _DECIDED_PRODUCTION_KEYS = frozenset(
     ) if _source_decisions.allows(decision)
 )
 
-PRODUCTION_ADAPTER_KEYS = _DECIDED_PRODUCTION_KEYS | _COUNTRY_PRODUCTION_KEYS | frozenset(
+PRODUCTION_ADAPTER_KEYS = _DECIDED_PRODUCTION_KEYS | _COUNTRY_PRODUCTION_KEYS | _RATES_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
         ("US-USD", "fed_h41"),

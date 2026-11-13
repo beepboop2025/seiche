@@ -1,0 +1,23 @@
+# Rates source fixtures
+
+Verbatim publisher responses, kept small, used by the offline rates tests
+(`backend/tests/test_rates_sources.py`, `backend/tests/test_rates_desk.py`). Tests never touch the network.
+
+## ECB yield curves (YC dataset)
+
+Retrieved 2026-11-13 (19:12Z) from the ECB Data API, `format=csvdata`, `startPeriod=2026-11-09`,
+`endPeriod=2026-11-12`:
+
+| File | Request |
+| --- | --- |
+| `ecb-yc-aaa-sr10y-2026-11-09-to-12.csv` | `https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y` |
+| `ecb-yc-aaa-sr2y-2026-11-09-to-12.csv` | `https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y` |
+| `ecb-yc-aaa-sr3m-2026-11-09-to-12.csv` | `https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_3M` |
+| `ecb-yc-all-sr10y-2026-11-09-to-12.csv` | `https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_C.SV_C_YM.SR_10Y` |
+
+`G_N_A` is the triple A sample, `G_N_C` all euro area central government bonds. Spot rates, Svensson model,
+continuous compounding, percent per annum (`UNIT=PCPA`, `UNIT_MULT=0`).
+
+Source: European Central Bank. Reuse of ECB information requires that it "must appear accurately and the ECB
+must be cited as the source" (`https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html`,
+read 2026-11-13).

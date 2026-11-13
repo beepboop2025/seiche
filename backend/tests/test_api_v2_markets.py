@@ -513,8 +513,9 @@ def test_global_money_market_atlas_omits_prohibited_source_metadata(
 
     assert "tenant_market_data" not in serialized
     assert secret not in serialized
-    assert euro["coverage"]["declared_adapters"] == 4
-    assert euro["coverage"]["public_projected_adapters"] == 3
+    # Four public ECB adapters (benchmark, policy, liquidity, yield curve) and one tenant adapter.
+    assert euro["coverage"]["declared_adapters"] == 5
+    assert euro["coverage"]["public_projected_adapters"] == 4
     assert euro["coverage"]["omitted_adapters_by_policy"] == 1
 
 

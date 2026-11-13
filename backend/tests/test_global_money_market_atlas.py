@@ -617,7 +617,8 @@ def test_prohibited_adapter_and_run_metadata_are_omitted_from_public_atlas():
     )
     assert market["coverage"]["omitted_by_policy"] == 1
     assert market["coverage"]["declared_adapters"] == len(pack.source_adapters)
-    assert market["coverage"]["public_projected_adapters"] == 3
+    # Every declared adapter except the tenant one is public.
+    assert market["coverage"]["public_projected_adapters"] == len(pack.source_adapters) - 1 == 4
     assert market["coverage"]["omitted_adapters_by_policy"] == 1
     assert not market["faults"]
 
