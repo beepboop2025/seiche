@@ -51,6 +51,13 @@ RATES_SOURCES = {
     },
 }
 
+# The same ECB terms (read 2026-11-13) govern the ECB adapters the EA-EUR pack
+# already declares; the rates routes carry them in every provenance block.
+EXISTING_SOURCE_TERMS = {
+    adapter: {"terms_url": ECB_TERMS_URL, "attribution": ECB_ATTRIBUTION, "terms_read_on": "2026-11-13"}
+    for adapter in ("ecb_benchmark", "ecb_policy", "ecb_liquidity")
+}
+
 
 @dataclass(frozen=True)
 class RateCurve:

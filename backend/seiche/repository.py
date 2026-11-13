@@ -101,6 +101,10 @@ class MarketRepository(Protocol):
 
     def canonical_coverage(self, market_id: str) -> list[dict]: ...
 
+    def instrument_observation_counts(
+        self, market_id: str, knowledge_time: str | datetime, *, instrument_ids: Iterable[str]
+    ) -> dict[tuple[str, str], dict]: ...
+
     def seal_market_snapshot(
         self,
         *,
@@ -200,6 +204,7 @@ class SQLiteMarketRepository:
     load_observation_page = staticmethod(store.load_observation_page)
     latest_observation_hashes = staticmethod(store.latest_observation_hashes)
     canonical_coverage = staticmethod(store.canonical_coverage)
+    instrument_observation_counts = staticmethod(store.instrument_observation_counts)
     seal_market_snapshot = staticmethod(store.seal_market_snapshot)
     promote_market_snapshots = staticmethod(store.promote_market_snapshots)
     load_staged_market_snapshot = staticmethod(store.load_staged_market_snapshot)
@@ -1297,6 +1302,33 @@ class PostgresMarketRepository:
             }
             for row in rows
         ]
+
+    def instrument_observation_counts(
+        self, market_id: str, knowledge_time: str | datetime, *, instrument_ids: Iterable[str]
+    ) -> dict[tuple[str, str], dict]:
+        identifiers = sorted(set(instrument_ids))
+        if not identifiers:
+            return {}
+        self._ensure_schema()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT instrument_id, source, COUNT(DISTINCT event_time), MIN(event_time),
+                          MAX(event_time), MAX(knowledge_time)
+                     FROM canonical_observations
+                    WHERE market_id=%s AND knowledge_time<=%s AND quality<>'unavailable'
+                      AND instrument_id = ANY(%s)
+                    GROUP BY instrument_id, source""",
+                (market_id.upper(), _utc(knowledge_time), identifiers),
+            ).fetchall()
+        return {
+            (row[0], row[1]): {
+                "observations": int(row[2]),
+                "event_start": row[3].isoformat() if row[3] else None,
+                "event_end": row[4].isoformat() if row[4] else None,
+                "latest_knowledge_time": row[5].isoformat() if row[5] else None,
+            }
+            for row in rows
+        }
 
     def seal_market_snapshot(
         self,
