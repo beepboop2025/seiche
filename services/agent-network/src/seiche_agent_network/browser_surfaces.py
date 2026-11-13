@@ -11,6 +11,7 @@ from html import escape
 import json
 from pathlib import Path
 import re
+from zoneinfo import ZoneInfo
 
 from . import data_catalog
 from .models import NetworkError
@@ -71,13 +72,13 @@ def _integer(params, field, minimum, maximum):
         raise ValueError()
 
 
-def _date(params, field, *, not_future=False):
+def _date(params, field, *, not_future=False, clock=timezone.utc):
     value = params.get(field)
     if value:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
             raise ValueError()
         parsed = date.fromisoformat(value)
-        if not_future and parsed > datetime.now(timezone.utc).date():
+        if not_future and parsed > datetime.now(clock).date():
             raise ValueError()
 
 
@@ -165,7 +166,9 @@ def banking_request(operation, query):
             dataset, basis = ("liquilens.institution_monitoring" if operation.startswith("monitoring/") else "liquilens.banking_filing"), "family"
         if "as_of" in params and not params["as_of"]:
             raise ValueError()
-        _date(params, "as_of", not_future=True)
+        # The native banking authority uses India's reporting day, which advances
+        # before UTC midnight. Accept the same cutoff the watchlist just served.
+        _date(params, "as_of", not_future=True, clock=ZoneInfo("Asia/Kolkata"))
     except (ValueError, TypeError, OverflowError):
         raise NetworkError("invalid_query", "Unsupported banking parameters", 400) from None
     return BANKING_ORIGIN + "/" + operation, params, data_catalog.Classification("liquilens", dataset, basis, "rest_json")
