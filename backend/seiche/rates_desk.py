@@ -916,6 +916,10 @@ def _funding(selected, window_days, repository, registry, cutoff) -> dict[str, A
             status = "partial"
         elif overnight_metric["status"] in _CURRENT and anchor_metric["status"] in _CURRENT:
             status = "ok"
+        elif {overnight_metric["status"], anchor_metric["status"]} <= _CURRENT | {"UNKNOWN"}:
+            # Freshness that cannot be judged (no publication receipt or validated
+            # calendar) is unknown, never stale; a stale leg still makes the market stale.
+            status = "unknown"
         else:
             status = "stale"
         if overnight_metric and overnight_metric.get("asof"):

@@ -74,7 +74,7 @@ def test_money_market_discovery_separates_catalog_from_dated_evidence():
     market_pack = card["market_pack_v2"]
     registered = {pack.market_id for pack in default_registry().list()}
 
-    assert market_pack["registered_market_packs"] == 40
+    assert market_pack["registered_market_packs"] == 41
     assert set(market_pack["registered_market_ids"]) == registered
     assert "not a claim" in market_pack["scope"]
     assert set(market_pack["availability_states"]) == {

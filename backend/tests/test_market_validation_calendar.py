@@ -50,9 +50,12 @@ def test_built_in_pack_calendar_gate_passes_when_horizon_is_available(
 
 
 def test_existing_packs_have_calendar_evidence_and_new_references_remain_unvalidated() -> None:
+    from seiche.markets.canada_cad import PACK as CANADA
     from seiche.markets.funding_reference import additional_reference_packs
     registered = {pack.market_id for pack in default_registry().list()}
-    references = {pack.market_id for pack in additional_reference_packs()}
+    # Canada is registered directly rather than through the reference builder, and like
+    # the references it has no validated Bank of Canada calendar: its gate must not pass.
+    references = {pack.market_id for pack in additional_reference_packs()} | {CANADA.market_id}
 
     assert set(REPRESENTATIVE_FIXTURES) == registered - references
     assert all(REPRESENTATIVE_FIXTURES.values())

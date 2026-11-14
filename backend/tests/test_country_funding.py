@@ -304,7 +304,7 @@ def test_reference_materialization_seals_observations_without_gauge(tmp_path, mo
         assert "no local gauge calibration" in gauge["reading"]["publication_reason"]
     materialize_global_tide(repository=repository, knowledge_time=NOW)
     tide = repository.load_latest_market_snapshot("GLOBAL", "tide")["payload"]
-    assert len(tide["data_coverage"]) == 19
+    assert len(tide["data_coverage"]) == 20
     assert not {row["market_id"] for row in tide["data_coverage"]} & {code + "-EUR" for code in EURO_COUNTRIES}
     with pytest.raises(ValueError, match="required component"):
         LocalCalibration("bad", "JP-JPY", ())

@@ -265,6 +265,32 @@ def test_funding_conditions_lists_markets_without_data_and_rejects_unknown(tmp_p
         rates_desk.funding_conditions(markets="ZZ-ZZZ", repository=repository, now=NOW)
 
 
+def test_funding_conditions_never_calls_unknown_freshness_stale(tmp_path, monkeypatch):
+    # Bank of Canada rows carry no publication receipt and no validated calendar, so their
+    # freshness is UNKNOWN: the market reads unknown, never stale. A euro leg past its
+    # staleness limit (DEAD) still makes its market stale.
+    from seiche.sources.bank_canada import parse_valet
+    repository = _store(tmp_path, monkeypatch)
+    document = FetchedDocument("https://www.bankofcanada.ca/valet/observations/fixture/json", "application/json",
+                               (FIXTURES / "boc-valet-2026-11-09-to-13.json").read_bytes(), "boc_valet")
+
+    async def fetch(_client):
+        return (document,)
+
+    adapter = FunctionalCanonicalAdapter(
+        pack=default_registry().get("CA-CAD"), adapter_id="boc_valet", source="boc_valet", fetcher=fetch,
+        parser=parse_valet, repository=repository, clock=lambda: CAPTURE, historical_backfill=True)
+    repository.save_observations(asyncio.run(adapter.collect()).observations)
+    repository.save_observations(_funding_rows())
+    result = rates_desk.funding_conditions(markets="CA-CAD,EA-EUR", repository=repository, now=NOW)
+    by_market = {m["market_id"]: m for m in result["markets"]}
+    canada, euro = by_market["CA-CAD"], by_market["EA-EUR"]
+    assert canada["overnight"]["status"] == canada["policy_anchor"]["status"] == "UNKNOWN"
+    assert canada["status"] == "unknown"
+    assert euro["overnight"]["status"] == "DEAD" and euro["status"] == "stale"
+    assert result["status"] == "partial"
+
+
 def test_rest_routes_serve_payloads_and_plain_422s(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from seiche import api
