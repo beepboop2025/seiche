@@ -43,6 +43,7 @@ from seiche.markets.world import (
     WORLD_MARKETS_STATUSES,
 )
 from seiche.public_faults import safe_failure_envelope, sanitize_public_fault_payload
+from seiche.mcp_text import render as mcp_text_render
 
 # Keep the current stable revision first and retain the two revisions used by
 # installed clients. MCP negotiation does not permit echoing an arbitrary
@@ -3721,7 +3722,10 @@ def _handle_tools_call(
         return _error(msg_id, INVALID_PARAMS, "tools/call name must be a string")
     if name in public_rights.LEGACY_TOOLS:
         payload = public_rights.legacy_unavailable(name)
-        return _result(msg_id, {"content": [{"type": "text", "text": payload["reason"]}],
+        # The presentation contract's text is appended after the refusal text.
+        legacy = mcp_text_render.legacy_block(payload)
+        return _result(msg_id, {"content": [{"type": "text", "text": payload["reason"]},
+                                            *([legacy] if legacy else [])],
                                "structuredContent": payload, "isError": True})
     entry = _visible_tools(public, identity).get(name)
     if entry is None:
@@ -3801,6 +3805,11 @@ def _handle_tools_call(
     # text remains the compatibility representation for older clients.
     if isinstance(payload, dict):
         result["structuredContent"] = payload
+        # The presentation contract's text, built only from the sanitized payload
+        # served above, is appended; it never replaces the JSON block.
+        block = mcp_text_render.result_block(name, payload)
+        if block is not None:
+            result["content"].append(block)
     return _result(msg_id, result)
 
 
