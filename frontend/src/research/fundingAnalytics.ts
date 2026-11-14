@@ -10,7 +10,7 @@ export const FUNDING_KEYS = ['SOFR', 'EFFR', 'IORB', 'TGCR', 'BGCR', 'WRESBAL', 
 const MMF_REMOTE_IDS: Record<string, string> = {MMF_REPO_TOT: 'MMF-MMF_RP_TOT-M', MMF_REPO_FED: 'MMF-MMF_RP_wFR-M', MMF_REPO_FICC: 'MMF-MMF_RP_wFICC-M'};
 export function fundingPoints(model: EconomicSeries | undefined, unit: string, divisor = 1, cutoff = Date.now()): Point[] {
   if (!model || model.unit !== unit) return [];
-  return model.points.map(p => ({x: Date.parse(p.date + 'T00:00:00Z'), y: p.value / divisor, label: p.date, note: `${model.key} · source state: ${model.state}`})).filter(p => p.x <= cutoff);
+  return model.points.map(p => ({x: Date.parse(p.date + 'T00:00:00Z'), y: p.value === null ? null : p.value / divisor, label: p.date, note: `${model.key} · ${model.source} · source state: ${model.state}`})).filter(p => p.x <= cutoff);
 }
 export function moneyFundBillions(model: EconomicSeries | undefined, cutoff = Date.now()): Point[] {
   const publishedColumn: Record<string, string> = {MMF_REPO_TOT:"total_repo_b", MMF_REPO_FED:"fed_repo_b", MMF_REPO_FICC:"ficc_repo_b"};
@@ -20,14 +20,14 @@ export function moneyFundBillions(model: EconomicSeries | undefined, cutoff = Da
   // Match assemble._vol_b: the raw OFR endpoint can retain whole dollars while
   // declaring the configured $B unit. Inspect the full history, not its latest
   // value or selected window, so zero balances cannot change the unit boundary.
-  const divisor = model.points.some(p => Math.abs(p.value) > 1e6) ? 1e9 : 1;
+  const divisor = model.points.some(p => Math.abs(p.value ?? 0) > 1e6) ? 1e9 : 1;
   return fundingPoints(model, '$B', divisor, cutoff);
 }
 export function treasuryCurve(models: Map<string, EconomicSeries>, cutoff = Date.now()): {points: Point[]; date: string | null} {
   const tenors: [string, number][] = [['DGS3M', .25], ['DGS2', 2], ['DGS10', 10], ['DGS30', 30]];
   const series = tenors.map(([key]) => models.get(key));
   if (series.some(s => !s || s.unit !== '%')) return {points: [], date: null};
-  const dates = series[0]!.points.map(p => p.date).filter(date => Date.parse(date + 'T00:00:00Z') <= cutoff && series.every(s => s!.points.some(p => p.date === date)));
+  const dates = series[0]!.points.map(p => p.date).filter(date => Date.parse(date + 'T00:00:00Z') <= cutoff && series.every(s => s!.points.some(p => p.date === date && p.value !== null)));
   const date = dates.at(-1) || null;
   return {date, points: date ? tenors.map(([key, tenor], i) => ({x: tenor, y: series[i]!.points.find(p => p.date === date)!.value, label: key, note: `Observed ${date}`})) : []};
 }
@@ -37,7 +37,7 @@ export const WITHHELD_CHARTS = {
   reserves: `Withheld: the FRED copy is not cleared for republication; the Federal Reserve's own H.4.1 series arrives in the next release. ${NO_PUBLIC_HISTORY}`,
   reverseRepo: `Withheld: the FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release. ${NO_PUBLIC_HISTORY}`,
   commercialPaper: `Withheld: the FRED copies of the commercial paper and three-month Treasury rates are not cleared for republication, and no direct source is served yet. ${NO_PUBLIC_HISTORY}`,
-  treasuryCurve: `Withheld: the FRED copies of the Treasury constant-maturity yields are not cleared for republication, and no direct source is served yet. ${NO_PUBLIC_HISTORY}`,
+  treasuryCurve: `Unavailable: no complete common-date Treasury curve could be verified from the permitted observations. ${NO_PUBLIC_HISTORY}`,
   balanceSheet: `Withheld: the FRED copy of H.4.1 total assets is not cleared for republication, and no direct source is served yet. ${NO_PUBLIC_HISTORY}`,
 } as const;
 export function fundingSpecs(models: Map<string, EconomicSeries>, days: number | null): ChartSpec[] {

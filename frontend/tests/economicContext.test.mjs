@@ -43,3 +43,9 @@ test("malformed or excessive histories stay outside the presentation model", () 
     assert.throws(() => seriesModel(value, entry));
   }
 });
+
+
+test("publisher nulls remain chart gaps and future null placeholders are excluded", () => {
+ const model = seriesModel({...payload, points:[["2026-09-21",1],["2026-09-22",null],["2026-09-23",4.2],["2026-09-24",null]]},entry);
+ assert.deepEqual(model.points,[{date:"2026-09-21",value:1},{date:"2026-09-22",value:null},{date:"2026-09-23",value:4.2}]);
+});

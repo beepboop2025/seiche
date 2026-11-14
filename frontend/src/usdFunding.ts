@@ -2,6 +2,7 @@ type Row = Record<string, unknown>;
 export type FundingCard = {
   id: string; label: string; value: number | null; unit: string;
   asof: string | null; cadence: string; source: string;
+  publishedAt: string | null; capturedAt: string | null;
   origin: "live" | "published" | "missing"; status: string;
   /** The source's terms URL, shown with its value when the source asks to be cited. */
   terms: string | null;
@@ -96,6 +97,8 @@ export function usdFundingCards(snapshot: unknown, market: unknown): FundingCard
       id, label, unit, cadence,
       value: chosen ? Number(chosen.value) / divisor : null,
       asof: observationDate(chosen?.asof),
+      publishedAt: text(chosen?.published_at) || null,
+      capturedAt: text(chosen?.knowledge_time || chosen?.fetched_at) || null,
       // A source that asks to be cited shows its citation wherever its value is shown.
       source: text(chosen?.attribution) || text(chosen?.source).replaceAll("_", " ") || "Source not supplied",
       origin: chosen ? useLive ? "live" : "published" : "missing",

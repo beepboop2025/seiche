@@ -153,6 +153,7 @@ test("an atlas larger than one series updates funding charts to the latest obser
 });
 
 test("the whole-atlas allowance remains bounded and cancels an oversized response", async t => {
+  t.mock.method(Date, "now", () => 9999999999999);
   let cancelled = false;
   const stream = new ReadableStream({
     start(controller) {controller.enqueue(new Uint8Array(8 * 1024 * 1024 + 1));},
@@ -195,8 +196,9 @@ test("charts without a public history say why, naming the direct source that is 
   const specs = fundingSpecs(new Map(), 365);
   assert.match(chartOf(specs, "reserve-balances").empty, /^Withheld: the FRED copy is not cleared for republication; the Federal Reserve's own H\.4\.1 series arrives in the next release\./);
   assert.match(chartOf(specs, "reverse-repo").empty, /^Withheld: the FRED copy is not cleared for republication; the New York Fed's own reverse repo series arrives in the next release\./);
-  for (const id of ["commercial-paper-premium", "treasury-curve", "fed-balance-sheet"])
+  for (const id of ["commercial-paper-premium", "fed-balance-sheet"])
     assert.match(chartOf(specs, id).empty, /^Withheld: the FRED cop(y|ies) .* not cleared for republication, and no direct source is served yet\. Missing data is not zero\.$/, id);
+  assert.match(chartOf(specs, "treasury-curve").empty, /^Unavailable: no complete common-date Treasury curve/);
   for (const id of ["funding-corridor", "funding-spreads", "treasury-cash", "overnight-repricing", "mmf-repo-allocation"])
     assert.equal(chartOf(specs, id).empty, undefined, id);
 });

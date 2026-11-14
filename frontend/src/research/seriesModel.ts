@@ -1,6 +1,6 @@
 import {dateOnly, record} from "./core";
 
-export interface Observation {date: string; value: number}
+export interface Observation {date: string; value: number | null}
 export interface EconomicSeries {
   key: string;
   label: string;
@@ -31,18 +31,18 @@ export function seriesModel(payload: unknown, entry: unknown): EconomicSeries {
   let previous = "";
   const points = payload.points.map((point: unknown): Observation => {
     const date = Array.isArray(point) && dateOnly(point[0]);
-    if (!Array.isArray(point) || point.length !== 2 || !date || date <= previous || date > asOf ||
-        typeof point[1] !== "number" || !Number.isFinite(point[1])) {
+    if (!Array.isArray(point) || point.length !== 2 || !date || date <= previous || (date > asOf && point[1] !== null) ||
+        (point[1] !== null && (typeof point[1] !== "number" || !Number.isFinite(point[1])))) {
       throw new Error("The observation history could not be verified.");
     }
     previous = date;
     return {date, value: point[1]};
   });
-  if (!points.length || points.at(-1)!.date !== asOf) {
+  if (!points.some(point => point.date === asOf && point.value !== null)) {
     throw new Error("The latest observation is absent from the history.");
   }
   const text = (value: unknown, fallback = "Not supplied") => typeof value === "string" ? value : fallback;
-  return {key: p.mnemonic, label: text(entry.label, p.mnemonic), unit: p.unit, points, asOf,
+  return {key: p.mnemonic, label: text(entry.label, p.mnemonic), unit: p.unit, points: points.filter(point => point.date <= asOf), asOf,
     state: text(p.staleness), cadence: text(entry.cadence), lag: text(entry.native_lag),
     source: text(p.source, ""), remote: text(p.remote_id, "")};
 }
