@@ -1136,12 +1136,12 @@ class WorkflowContracts(unittest.TestCase):
         self.assertEqual(
             build_system["requires"],
             [
-                "hatchling==1.32.0",
+                "hatchling==1.33.0",
                 "packaging==26.3",
                 "pathspec==1.1.1",
-                "pluggy==1.6.0",
-                "tomlkit==0.15.1",
-                "trove-classifiers==2026.6.1.19",
+                "pluggy==1.7.0",
+                "tomlkit==0.15.2",
+                "trove-classifiers==2026.9.21.13",
             ],
         )
         hatch = tomllib.loads(_read("backend/pyproject.toml"))["tool"]["hatch"]["build"]

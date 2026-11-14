@@ -850,7 +850,7 @@ def _verify_wheel(path: Path, contract: dict, epoch: int) -> tuple[str, bytes]:
         )
         for field, expected in {
             "Wheel-Version": "1.0",
-            "Generator": "hatchling 1.32.0",
+            "Generator": "hatchling 1.33.0",
             "Root-Is-Purelib": "true",
             "Tag": "py3-none-any",
         }.items():
