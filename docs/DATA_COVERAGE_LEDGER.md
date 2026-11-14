@@ -206,6 +206,8 @@ API reads sealed canonical observations only.
 |---|---|---|---|
 | `US-USD` local gauge | `policy_relative_overnight`: `SOFR SECURED_OVERNIGHT` minus `IORB POLICY_TARGET` | Implemented official; extensive history | Numeric. `corridor_pressure` lacks `POLICY_FLOOR`; Global Tide lacks basis; historical prediction is forward-only. |
 | `EA-EUR` local gauge | `policy_relative_overnight`: `ESTR UNSECURED_OVERNIGHT` minus `ECB_DFR POLICY_FLOOR` | ECB policy/benchmark/liquidity adapters implemented | Source-complete; canonical history and validation must accrue. |
+| `EA-EUR` sovereign curves | `SOVEREIGN_YIELD`: ECB YC triple A and all-issuer Svensson spot curves, 11 tenors each, daily since 2004-09-06 | `ecb_yield_curve` implemented (ECB terms read 2026-11-13) | Served by the `/api/v2/rates` curve, series and spread routes; no gauge component reads it. |
+| `EA-EUR` overnight distribution | `RATE_P25`, `RATE_P75`, `BENCHMARK_TRANSACTIONS`, `BENCHMARK_ACTIVE_BANKS`, `BENCHMARK_TOP5_VOLUME_SHARE` from the ECB EST dataset; `COMPOUNDED_OVERNIGHT_AVERAGE_TENOR` (1W to 12M) and `COMPOUNDED_OVERNIGHT_RATE_INDEX` | `ecb_benchmark` extended and `ecb_compounded` implemented (ECB terms read 2026-11-13) | Served by the `/api/v2/rates` routes and funding conditions; no gauge component reads these roles. |
 | `UK-GBP` local gauge | `policy_relative_overnight`: `SONIA UNSECURED_OVERNIGHT` minus `BOE_BANK_RATE POLICY_TARGET` | Policy and SONIA adapters implemented; SONIA served raw under OGL v3.0 with its attribution (owner decision 2026-11-08) | Source-complete; RONIA would add the optional secured/unsecured component. |
 | `JP-JPY` local gauge | `policy_relative_overnight`: `TONA UNSECURED_OVERNIGHT` minus `BOJ_BASIC_LOAN POLICY_CEILING` | BOJ rate/account adapters implemented | Source-complete; canonical history and validation must accrue. |
 | `KR-KRW` local gauge | Required policy-relative BOK call minus base rate; optional corridor | BOK policy and call adapters implemented but individually issued API key required; all BOK adapters are `METADATA_ONLY` while redistribution review remains open | Rows can be collected into the private canonical store, but the public gauge stays unavailable until terms review closes; corridor also waits for BOK facility rows; pack remains reference/forward-only. |
@@ -366,3 +368,7 @@ Run the consistency check with:
 ```bash
 pytest -q backend/tests/test_data_source_expansion_ledger.py
 ```
+
+## Bank of Canada Valet reference pack (14 November 2026)
+
+CA-CAD adds CORRA, its distribution and volume, policy bounds, five benchmark bond tenors and three Treasury bill tenors. Terms read 14 November 2026: https://www.bankofcanada.ca/terms/. Attribution and the notice that the original is freely available accompany values. Source dates are preserved, missing dates are not filled, revised values append vintages. Publication receipts and a validated Bank settlement calendar are unavailable, so publication time remains null and freshness UNKNOWN. This reference pack is not calibrated engine support.

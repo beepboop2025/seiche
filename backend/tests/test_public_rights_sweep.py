@@ -37,6 +37,7 @@ PATH_VALUES = {
     "market_id": "US-USD", "timestamp": "2026-11-03T00:00:00Z", "mnemonic": "HY_OAS",
     "date": "2026-10-30", "name": "composite", "slug": "latest", "country": "JP",
     "room_id": "room-1", "stream": "board", "request_id": "x", "member": "x", "sha256": "0" * 64,
+    "instrument_id": "US.NYFED.SOFR_MEDIAN", "curve_id": "US_TREASURY_PAR", "spread_id": "US_TREASURY_PAR_2S10S",
 }
 # Arguments for MCP tools that require some; everything else is called bare.
 TOOL_ARGUMENTS = {

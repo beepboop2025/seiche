@@ -333,6 +333,19 @@ def parse_fred_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     return tuple(points)
 
 
+# The rate and total volume keep this generic parser so their stored evidence
+# never changes; the distribution series added on 2026-11-13 use the strict EST
+# parser in seiche.sources.rates_sources.
+_ECB_BENCHMARK_LEGACY_LABELS = frozenset({"EA.ECB.ESTR", "EA.ECB.ESTR_VOLUME"})
+
+
+def parse_ecb_benchmark(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    if document.label in _ECB_BENCHMARK_LEGACY_LABELS:
+        return parse_ecb_csv(document)
+    from seiche.sources.rates_sources import parse_ecb_est
+    return parse_ecb_est(document)
+
+
 def parse_ecb_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     text = document.payload.decode("utf-8-sig")
     lines = text.splitlines()
@@ -2777,9 +2790,15 @@ def build_official_adapters(
             {
                 "EA.ECB.ESTR": "EST/B.EU000A2X2A25.WT",
                 "EA.ECB.ESTR_VOLUME": "EST/B.EU000A2X2A25.TT",
+                # Distribution published with the rate (strict parser).
+                "EA.ECB.ESTR_P25": "EST/B.EU000A2X2A25.R25",
+                "EA.ECB.ESTR_P75": "EST/B.EU000A2X2A25.R75",
+                "EA.ECB.ESTR_TRANSACTIONS": "EST/B.EU000A2X2A25.NT",
+                "EA.ECB.ESTR_ACTIVE_BANKS": "EST/B.EU000A2X2A25.NB",
+                "EA.ECB.ESTR_TOP5_SHARE": "EST/B.EU000A2X2A25.VL",
             }
         ),
-        parse_ecb_csv,
+        parse_ecb_benchmark,
     )
     add(
         "EA-EUR",
@@ -3157,10 +3176,17 @@ def build_official_adapters(
     adapters.extend(build_country_adapters(
         registry=markets, repository=repository, backfill=backfill, clock=clock,
     ))
+    from seiche.sources.rates_sources import build_rates_adapters
+    adapters.extend(build_rates_adapters(
+        registry=markets, repository=repository, backfill=backfill, clock=clock,
+    ))
+    from seiche.sources.bank_canada import build_adapters as build_boc_adapters
+    adapters.extend(build_boc_adapters(registry=markets, repository=repository, backfill=backfill, clock=clock))
     return tuple(adapters)
 
 
 from seiche.sources.country_funding import PRODUCTION_KEYS as _COUNTRY_PRODUCTION_KEYS
+from seiche.sources.rates_sources import PRODUCTION_KEYS as _RATES_PRODUCTION_KEYS
 
 from seiche import source_decisions as _source_decisions
 
@@ -3172,7 +3198,7 @@ _DECIDED_PRODUCTION_KEYS = frozenset(
     ) if _source_decisions.allows(decision)
 )
 
-PRODUCTION_ADAPTER_KEYS = _DECIDED_PRODUCTION_KEYS | _COUNTRY_PRODUCTION_KEYS | frozenset(
+PRODUCTION_ADAPTER_KEYS = frozenset({("CA-CAD", "boc_valet")}) | _DECIDED_PRODUCTION_KEYS | _COUNTRY_PRODUCTION_KEYS | _RATES_PRODUCTION_KEYS | frozenset(
     {
         ("US-USD", "fed_prates"),
         ("US-USD", "fed_h41"),

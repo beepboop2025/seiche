@@ -41,6 +41,7 @@ class MarketRegistry:
 def default_registry() -> MarketRegistry:
     # Imports are intentionally local and declarative: registry discovery must
     # never import source adapters or perform network I/O.
+    from seiche.markets.canada_cad import PACK as canada_cad
     from seiche.markets.australia_aud import PACK as australia_aud
     from seiche.markets.china_cny import PACK as china_cny
     from seiche.markets.euro_eur import PACK as euro_eur
@@ -57,6 +58,7 @@ def default_registry() -> MarketRegistry:
     return MarketRegistry(
         (
             us_usd,
+            canada_cad,
             euro_eur,
             uk_gbp,
             japan_jpy,

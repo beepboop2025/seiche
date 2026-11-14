@@ -67,11 +67,24 @@ MONEY_MARKET_SECTION_IDS = (
     "liquidity_buffers",
     "mmf_plumbing",
 )
+# Official rates research sections (REST twins under /api/v2/rates); each takes
+# only its own arguments.
+RATES_SECTION_ARGUMENTS = {
+    "rates_catalog": frozenset(),
+    "funding_conditions": frozenset({"markets", "window_days"}),
+    "curve": frozenset({"curve", "date", "compare"}),
+    "spread": frozenset({"spread", "window_days"}),
+    "rate_series": frozenset({"instrument"}),
+}
+RATES_ARGUMENTS = frozenset().union(*RATES_SECTION_ARGUMENTS.values())
+RATES_HISTORY_POINTS = 30
+
 MONEY_MARKET_SELECTORS = (
     "summary",
     "india",
     "india_states",
     "countries",
+    *RATES_SECTION_ARGUMENTS,
     "diagnostics",
     *MONEY_MARKET_SECTION_IDS,
     "sources",
@@ -1211,11 +1224,112 @@ def _money_market_unavailable(
     return out
 
 
+def _rates_text_arg(args: dict, name: str, limit: int) -> str | None:
+    value = args.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise ToolError(f"`{name}` must be a nonblank string of at most {limit} characters")
+    return value.strip()
+
+
+def _rates_date_arg(args: dict, name: str):
+    from datetime import date as _date
+    value = _rates_text_arg(args, name, 10)
+    if value is None:
+        return None
+    try:
+        if len(value) != 10:
+            raise ValueError
+        return _date.fromisoformat(value)
+    except ValueError:
+        raise ToolError(f"`{name}` must be an ISO date YYYY-MM-DD") from None
+
+
+def _rates_trim(data: dict) -> dict:
+    """Chartless MCP projection: keep only the latest points of any history."""
+    for key in ("history", "observations"):
+        if isinstance(data.get(key), list) and len(data[key]) > RATES_HISTORY_POINTS:
+            data[f"{key}_points_omitted"] = len(data[key]) - RATES_HISTORY_POINTS
+            data[key] = data[key][-RATES_HISTORY_POINTS:]
+    return data
+
+
+def _rates_section(selector: str, args: dict) -> dict[str, Any]:
+    """Official rates research sections; the same payloads as /api/v2/rates routes."""
+    from seiche import rates_desk
+    extra = sorted(key for key in args if key in RATES_ARGUMENTS - RATES_SECTION_ARGUMENTS[selector])
+    if extra or "country" in args or "view" in args or "metric_id" in args:
+        name = (extra or [key for key in ("country", "view", "metric_id") if key in args])[0]
+        raise ToolError(f"`{name}` is not supported with section='{selector}'")
+    window = args.get("window_days", rates_desk.DEFAULT_WINDOW_DAYS)
+    if isinstance(window, bool) or not isinstance(window, int):
+        raise ToolError("`window_days` must be an integer")
+    try:
+        if selector == "rates_catalog":
+            data = rates_desk.catalog()
+            totals = data["totals"]
+            plain = (f"{totals['instruments']} official rate series in {totals['markets']} markets with "
+                     f"{totals['observations']} stored observations; each carries its source, as-of date, "
+                     "capture time and freshness state.")
+        elif selector == "funding_conditions":
+            data = rates_desk.funding_conditions(markets=_rates_text_arg(args, "markets", 200), window_days=window)
+            plain = ("Overnight benchmarks against their policy anchor and corridor, side by side by currency, "
+                     f"with the spread's percentile in its own history over {window} days. Levels are not ranked.")
+        elif selector == "curve":
+            curve_id = _rates_text_arg(args, "curve", 40)
+            if curve_id is None:
+                if "date" in args or "compare" in args:
+                    raise ToolError("`date` and `compare` need a `curve` id")
+                data = rates_desk.curves()
+                plain = "Government curves with their latest observation dates and freshness states."
+            else:
+                data = rates_desk.curve(curve_id, on=_rates_date_arg(args, "date"),
+                                        compare=_rates_date_arg(args, "compare"))
+                plain = (f"{data['label']} on {data['asof']}: printed tenors only, slopes in basis points"
+                         + (", forwards from continuously compounded spot rates." if data["forwards"] else "."))
+        elif selector == "spread":
+            spread_id = _rates_text_arg(args, "spread", 40)
+            if spread_id is None:
+                data = rates_desk.spreads(window_days=window)
+                plain = f"Defined spreads with their latest value and percentile in {window} days of their own history."
+            else:
+                data = rates_desk.spread(spread_id, window_days=window)
+                latest = data.get("latest") or {}
+                plain = (f"{data['label']}: {latest.get('value_bp')} bp on {latest.get('asof')}; percentile "
+                         f"{data['regime'].get('percentile')} over {window} days of its own history (not a forecast).")
+        else:
+            instrument = _rates_text_arg(args, "instrument", 96)
+            if instrument is None:
+                raise ToolError("`instrument` is required with section='rate_series'")
+            data = rates_desk.series(instrument)
+            window_info = data["window"]
+            plain = (f"{data['instrument']['label']}: {window_info['observations']} observations from "
+                     f"{window_info['from']} to {window_info['through']}.")
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    data = _rates_trim(data)
+    provenance = data.get("provenance") or []
+    out = _money_market_base({}, {
+        "asof": data.get("asof") or max((item["asof"] for item in provenance if item.get("asof")), default=None),
+        "plain_language": plain, "coverage": data.get("totals") or data.get("window"),
+        "caveats": data.get("caveats", []),
+    }, selector, ok=data.get("status") != "unavailable")
+    out[selector] = data
+    out["sources"] = [{"publisher": item.get("publisher"), "url": item.get("source_url"),
+                       "terms_url": item.get("terms_url"), "attribution": item.get("attribution"),
+                       "asof": item.get("asof"), "fetched_at": item.get("fetched_at"),
+                       "staleness": item.get("staleness")} for item in provenance]
+    out["snapshot_generated_at"] = data.get("generated_at")
+    return out
+
+
 def tool_money_market(args: dict, _public: bool) -> Any:
     """Serve chartless funding desks from completed or canonical evidence."""
     if not isinstance(args, dict):
         raise ToolError("arguments must be an object")
-    unknown = sorted(str(key) for key in args if key not in {"section", "country", "view", "metric_id"})
+    unknown = sorted(str(key) for key in args
+                     if key not in {"section", "country", "view", "metric_id"} | RATES_ARGUMENTS)
     if unknown:
         raise ToolError(f"unknown argument(s): {', '.join(unknown)}")
     selector = args.get("section", "summary")
@@ -1223,6 +1337,11 @@ def tool_money_market(args: dict, _public: bool) -> Any:
         raise ToolError(
             "`section` must be one of: " + ", ".join(MONEY_MARKET_SELECTORS)
         )
+    if selector in RATES_SECTION_ARGUMENTS:
+        return _rates_section(selector, args)
+    misplaced = sorted(key for key in args if key in RATES_ARGUMENTS)
+    if misplaced:
+        raise ToolError(f"`{misplaced[0]}` is supported only with the rates sections")
 
     if "country" in args and selector != "countries":
         raise ToolError("`country` is supported only with section='countries'")
@@ -1875,6 +1994,10 @@ TOOLS: dict[str, tuple] = {
         "desk: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions "
         "and tails; repo-segment rates and volumes; CP-Treasury spreads; bills and "
         "cash curve; liquidity buffers and Fed facilities; and MMF repo plumbing. "
+        "Use section='rates_catalog', 'funding_conditions', 'curve', 'spread' or 'rate_series' for the official "
+        "rates research desk: stored series with source clocks; overnight benchmarks against policy anchor and "
+        "corridor across currencies; government curves with slopes and exact forwards where the convention "
+        "allows; spread percentiles in their own history with the window stated. "
         "Use section='india_states' for RBI's weekly state government securities (SDL) auctions by state "
         "(latest auction, 52-week issuance, cut-offs and bid cover). "
         "Use section='india' for the India funding, RBI liquidity, policy and sovereign-curve desk "
@@ -1914,6 +2037,34 @@ TOOLS: dict[str, tuple] = {
                 "metric_id": {
                     "type": "string", "minLength": 1, "maxLength": 128,
                     "description": "Exact ID from the India summary metric_catalog; required only for view=metric.",
+                },
+                "markets": {
+                    "type": "string", "maxLength": 200,
+                    "description": "funding_conditions only: comma list of market ids, for example US-USD,EA-EUR.",
+                },
+                "window_days": {
+                    "type": "integer", "minimum": 250, "maximum": 7300, "default": 1095,
+                    "description": "funding_conditions and spread only: own-history window in days for percentiles.",
+                },
+                "curve": {
+                    "type": "string", "maxLength": 40,
+                    "description": "curve only: curve id, for example EA_AAA_SPOT. Omit to list curves.",
+                },
+                "date": {
+                    "type": "string", "format": "date",
+                    "description": "curve only: ISO date; the latest curve date on or before it is used.",
+                },
+                "compare": {
+                    "type": "string", "format": "date",
+                    "description": "curve only: comparison ISO date, same rule as date.",
+                },
+                "spread": {
+                    "type": "string", "maxLength": 40,
+                    "description": "spread only: spread id, for example EA_AAA_2S10S. Omit to list spreads.",
+                },
+                "instrument": {
+                    "type": "string", "maxLength": 96,
+                    "description": "rate_series only: instrument id from section=rates_catalog.",
                 },
             },
             "additionalProperties": False,

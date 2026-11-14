@@ -244,6 +244,11 @@ from seiche.markets.funding_reference import (
 )
 _SOURCE_URLS.update({key: value["source_url"] for key, value in _FUNDING_SOURCES.items()})
 _SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _FUNDING_SOURCES.items()})
+from seiche.markets.rates_reference import RATES_SOURCES as _RATES_SOURCES
+_SOURCE_URLS.update({key: value["source_url"] for key, value in _RATES_SOURCES.items()})
+_SOURCE_PUBLISHERS.update({key: value["publisher"] for key, value in _RATES_SOURCES.items()})
+_SOURCE_ATTRIBUTIONS.update({key: {"attribution": value["attribution"], "terms_url": value["terms_url"]}
+                             for key, value in _RATES_SOURCES.items()})
 
 
 def market_source_reference(adapter_id: str) -> dict[str, str | None]:
@@ -1134,9 +1139,10 @@ _REVIEWED_DISCOVERY_LEDGER: tuple[dict[str, str | None], ...] = (
 # Preserve the dated review above; countries with declared adapters move out
 # of the active discovery queue without being labelled complete or supported.
 EXPANSION_LEDGER = tuple(item for item in _REVIEWED_DISCOVERY_LEDGER
-                         if item["market_id"] not in {country.market_id for country in COUNTRIES})
+                         if item["market_id"] not in {country.market_id for country in COUNTRIES} | {"CA-CAD"})
 _REGIONS.update({country.market_id: "Europe" for country in COUNTRIES if country.code in OTHER_EUROPE})
 _REGIONS["TW-TWD"] = "East Asia"
+_REGIONS["CA-CAD"] = "North America"
 
 
 def _validate_expansion_ledger(
@@ -1872,6 +1878,10 @@ def _role_explanation(role: SemanticRole) -> str:
         SemanticRole.INDUSTRIAL_PRODUCTION: "Real output of the industrial sector as an index of a base year; revised after first publication.",
         SemanticRole.GROSS_DOMESTIC_PRODUCT: "Nominal output of the whole economy at a seasonally adjusted annual rate; revised with every estimate.",
         SemanticRole.CONSUMER_PRICE_INDEX: "A consumer price index level of a base period, seasonally adjusted; revised each February.",
+        SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_TENOR: "The overnight benchmark compounded over the named calendar tenor, as the publisher computes it.",
+        SemanticRole.BENCHMARK_TRANSACTIONS: "How many transactions the benchmark was computed from on that date.",
+        SemanticRole.BENCHMARK_ACTIVE_BANKS: "How many reporting banks contributed transactions on that date.",
+        SemanticRole.BENCHMARK_TOP5_VOLUME_SHARE: "The share of benchmark volume from the five largest active banks; higher means more concentrated.",
     }
     return explanations.get(role, "Official local money-market observation.")
 

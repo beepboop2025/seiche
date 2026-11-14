@@ -1018,6 +1018,44 @@ def canonical_coverage(market_id: str) -> list[dict]:
     ]
 
 
+def instrument_observation_counts(
+    market_id: str,
+    knowledge_time: str | datetime,
+    *,
+    instrument_ids: Iterable[str],
+) -> dict[tuple[str, str], dict]:
+    """Distinct stored observation dates per instrument and source, knowable by the cutoff.
+
+    A read-only aggregate for catalogs that never loads rows. It reads only the
+    covering adapter index, so explicit missing-value markers (quality
+    'unavailable', which no current adapter writes) would count as dates here;
+    values served elsewhere are always validated row by row.
+    """
+
+    identifiers = tuple(sorted(set(instrument_ids)))
+    if not identifiers:
+        return {}
+    marks = ",".join("?" for _ in identifiers)
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            f"""SELECT instrument_id, source, COUNT(DISTINCT event_time), MIN(event_time),
+                       MAX(event_time), MAX(knowledge_time)
+                  FROM canonical_observations
+                 WHERE market_id=? AND knowledge_time<=? AND instrument_id IN ({marks})
+                 GROUP BY instrument_id, source""",
+            (market_id.upper(), _canonical_utc(knowledge_time), *identifiers),
+        ).fetchall()
+    return {
+        (row[0], row[1]): {
+            "observations": int(row[2]),
+            "event_start": row[3],
+            "event_end": row[4],
+            "latest_knowledge_time": row[5],
+        }
+        for row in rows
+    }
+
+
 def seal_market_snapshot(
     *,
     market_id: str,

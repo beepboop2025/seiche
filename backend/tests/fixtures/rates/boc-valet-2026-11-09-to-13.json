@@ -1,0 +1,358 @@
+{
+    "terms": {
+        "url": "https://www.bankofcanada.ca/terms/"
+    },
+    "seriesDetail": {
+        "AVG.INTWO": {
+            "label": "Canadian Overnight Repo Rate Average (CORRA)",
+            "description": "A measure of the cost of overnight general collateral funding in Canadian dollars using Government of Canada treasury bills and bonds as collateral for repurchase transactions (repos).",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "BD.CDN.10YR.DQ.YLD": {
+            "label": "Benchmark bond yield, 10-year",
+            "description": "The yield on the Government of Canada 10-year benchmark bond. This series represents the prevailing market interest rate for the 10-year Government of Canada bond and is used as a reference for financial market analysis and reporting.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "BD.CDN.2YR.DQ.YLD": {
+            "label": "Benchmark bond yield, 2-year",
+            "description": "The yield on the Government of Canada 2-year benchmark bond. This series reflects the prevailing interest rate for the 2-year term and is used to monitor short-term government borrowing costs.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "BD.CDN.3YR.DQ.YLD": {
+            "label": "Benchmark bond yield, 3-year",
+            "description": "The yield on the Government of Canada 3-year benchmark bond. This series measures the market interest rate for the Government of Canada’s 3-year bond, which serves as a reference rate for Canadian dollar-denominated debt securities.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "BD.CDN.5YR.DQ.YLD": {
+            "label": "Benchmark bond yield, 5-year",
+            "description": "The yield on the Government of Canada 5-year benchmark bond. This series reports the prevailing yield for the 5-year maturity point on the Canadian government bond yield curve.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "BD.CDN.7YR.DQ.YLD": {
+            "label": "Benchmark bond yield, 7-year",
+            "description": "The yield on the Government of Canada 7-year benchmark bond. This series represents the prevailing market yield for the 7-year maturity point on the Government of Canada yield curve.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "BR.CDN": {
+            "label": "Bank Rate",
+            "description": "The Bank Rate, which is the upper limit of the Bank of Canada’s operating band for the overnight interest rate.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "CORRA_NUMBER_OF_SUBMITTERS": {
+            "label": "CORRA: number of unique data submitters",
+            "description": "The number of unique data submitters used in the calculation of CORRA before trimming.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Number",
+                "frequency": "Business daily"
+            }
+        },
+        "CORRA_RATE_AT_PERCENTILE_25": {
+            "label": "CORRA: rate at 25th percentile of the trimmed trading volume",
+            "description": "The rate at the 25th volume-weighted percentile of the trimmed trading volume. This is one of the transparency metrics published alongside CORRA.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "CORRA_RATE_AT_PERCENTILE_75": {
+            "label": "CORRA: rate at 75th percentile of the trimmed trading volume",
+            "description": "The rate at the 75th volume-weighted percentile of the trimmed trading volume. This is one of the transparency metrics published alongside CORRA.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "CORRA_TOTAL_VOLUME": {
+            "label": "CORRA: total dollar trading volume of all trades eligible",
+            "description": "The total nominal value of CORRA transactions before trimming the bottom 25 percent.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Canadian dollars (CAD)",
+                "frequency": "Business daily"
+            }
+        },
+        "OPERATING.BAND.LO": {
+            "label": "Operating band, low",
+            "description": "The lower limit of the Bank of Canada’s operating band for the overnight interest rate. (V39076)",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "TB.CDN.180D.MID": {
+            "label": "Treasury bills, 6-month",
+            "description": "The mid-market yield for Government of Canada treasury bills with a 6-month maturity. Treasury bill yields presented are an average of sample secondary market yields taken throughout the business day. (V39066)",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "TB.CDN.1Y.MID": {
+            "label": "Treasury bills, 1-year",
+            "description": "The mid-market yield for Government of Canada treasury bills with a 1-year maturity. Treasury bill yields presented are an average of sample secondary market yields taken throughout the business day. (V39067)",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "TB.CDN.90D.MID": {
+            "label": "Treasury bills, 3-month",
+            "description": "The mid-market yield for Government of Canada treasury bills with a 3-month maturity. Treasury bill yields presented are an average of sample secondary market yields taken throughout the business day. (V39065)",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        },
+        "V39079": {
+            "label": "Target for the overnight rate (business daily)",
+            "description": "Also called the policy interest rate, the average rate that the Bank of Canada wants to see in the market for overnight money market financing. (V39079)",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        }
+    },
+    "observations": [
+        {
+            "d": "2026-11-09",
+            "AVG.INTWO": {
+                "v": "2.5200"
+            },
+            "BD.CDN.7YR.DQ.YLD": {
+                "v": "3.44"
+            },
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.63"
+            },
+            "BD.CDN.5YR.DQ.YLD": {
+                "v": "3.35"
+            },
+            "V39079": {
+                "v": "2.50"
+            },
+            "BD.CDN.3YR.DQ.YLD": {
+                "v": "3.23"
+            },
+            "CORRA_TOTAL_VOLUME": {
+                "v": "55445825045"
+            },
+            "BD.CDN.2YR.DQ.YLD": {
+                "v": "3.13"
+            },
+            "CORRA_NUMBER_OF_SUBMITTERS": {
+                "v": "15"
+            },
+            "TB.CDN.1Y.MID": {
+                "v": "2.91"
+            },
+            "CORRA_RATE_AT_PERCENTILE_25": {
+                "v": "2.5200"
+            },
+            "TB.CDN.180D.MID": {
+                "v": "2.73"
+            },
+            "CORRA_RATE_AT_PERCENTILE_75": {
+                "v": "2.5700"
+            },
+            "TB.CDN.90D.MID": {
+                "v": "2.56"
+            }
+        },
+        {
+            "d": "2026-11-10",
+            "CORRA_NUMBER_OF_SUBMITTERS": {
+                "v": "14"
+            },
+            "CORRA_TOTAL_VOLUME": {
+                "v": "55150144640"
+            },
+            "V39079": {
+                "v": "2.50"
+            },
+            "CORRA_RATE_AT_PERCENTILE_25": {
+                "v": "2.5200"
+            },
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.72"
+            },
+            "CORRA_RATE_AT_PERCENTILE_75": {
+                "v": "2.5700"
+            },
+            "BD.CDN.7YR.DQ.YLD": {
+                "v": "3.54"
+            },
+            "AVG.INTWO": {
+                "v": "2.5200"
+            },
+            "BD.CDN.5YR.DQ.YLD": {
+                "v": "3.46"
+            },
+            "TB.CDN.90D.MID": {
+                "v": "2.61"
+            },
+            "BD.CDN.3YR.DQ.YLD": {
+                "v": "3.34"
+            },
+            "BD.CDN.2YR.DQ.YLD": {
+                "v": "3.25"
+            },
+            "TB.CDN.180D.MID": {
+                "v": "2.79"
+            },
+            "TB.CDN.1Y.MID": {
+                "v": "3.00"
+            }
+        },
+        {
+            "d": "2026-11-11",
+            "V39079": {
+                "v": "2.50"
+            }
+        },
+        {
+            "d": "2026-11-12",
+            "TB.CDN.1Y.MID": {
+                "v": "3.07"
+            },
+            "CORRA_RATE_AT_PERCENTILE_75": {
+                "v": "2.5700"
+            },
+            "AVG.INTWO": {
+                "v": "2.5300"
+            },
+            "CORRA_RATE_AT_PERCENTILE_25": {
+                "v": "2.5200"
+            },
+            "TB.CDN.90D.MID": {
+                "v": "2.59"
+            },
+            "CORRA_NUMBER_OF_SUBMITTERS": {
+                "v": "14"
+            },
+            "TB.CDN.180D.MID": {
+                "v": "2.82"
+            },
+            "CORRA_TOTAL_VOLUME": {
+                "v": "57744287440"
+            },
+            "BD.CDN.5YR.DQ.YLD": {
+                "v": "3.53"
+            },
+            "V39079": {
+                "v": "2.50"
+            },
+            "BD.CDN.2YR.DQ.YLD": {
+                "v": "3.33"
+            },
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.78"
+            },
+            "BD.CDN.3YR.DQ.YLD": {
+                "v": "3.41"
+            },
+            "BD.CDN.7YR.DQ.YLD": {
+                "v": "3.61"
+            }
+        }
+    ]
+}
