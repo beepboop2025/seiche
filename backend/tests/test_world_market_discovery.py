@@ -87,6 +87,42 @@ def test_world_market_pages_are_real_canonical_dataset_surfaces():
         assert "not investment advice" in page.lower()
 
 
+def test_world_atlas_dataset_items_resolve_with_required_search_metadata():
+    graph = _json_ld(_page("index.html"))["@graph"]
+    by_id = {node["@id"]: node for node in graph if "@id" in node}
+    catalog = next(node for node in graph if node.get("@type") == "DataCatalog")
+    datasets = [node for node in graph if node.get("@type") == "Dataset"]
+    for item in catalog["dataset"]:
+        # Search parsers infer Dataset from this property, even for bare @id
+        # links. A reference must resolve within this document, not another URL.
+        dataset = by_id.get(item.get("@id"), item)
+        assert dataset.get("@type") == "Dataset", "unresolved catalog dataset"
+        datasets.append(dataset)
+        relative = dataset["url"].removeprefix("https://seiche.info/")
+        canonical_graph = _json_ld(
+            (PUBLIC / relative / "index.html").read_text()
+        )["@graph"]
+        canonical = next(
+            node for node in canonical_graph if node.get("@id") == dataset["@id"]
+        )
+        for field in ("name", "description", "creator"):
+            assert dataset[field] == canonical[field], (
+                f"catalog drift: {relative} {field}"
+            )
+        assert dataset["sameAs"] == canonical["url"]
+
+    assert len({dataset["@id"] for dataset in datasets}) == 5
+    for dataset in datasets:
+        assert isinstance(dataset.get("name"), str) and dataset["name"].strip()
+        description = dataset.get("description")
+        assert isinstance(description, str)
+        assert 50 <= len(description.strip()) <= 5000
+        creator = by_id[dataset["creator"]["@id"]]
+        assert creator["@type"] == "Organization" and creator["name"] == "Seiche"
+        # The software licence does not grant upstream dataset rights.
+        assert "AGPL" not in str(dataset.get("license", ""))
+
+
 def test_forex_page_names_the_complete_registered_reference_panel():
     page = _page("forex/index.html")
     ids = set(re.findall(r"fred\.stlouisfed\.org/series/([A-Z0-9]+)", page))
