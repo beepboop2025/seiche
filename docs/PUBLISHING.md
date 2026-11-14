@@ -1,5 +1,46 @@
 # Publishing Seiche release surfaces
 
+## 0.16.14 rates desk and MCP presentation successor
+
+The 15 November candidate adds official rates research (ECB government spot
+curves, the €STR distribution and compounded averages, Bank of Canada
+references) on `/api/v2/rates` and five `money_market_context` sections, opens
+the funding desk on dated observations, appends the evidence presentation text
+block to MCP results, shows Funding Pop as research only on the MCP and in
+alerts, hardens the desk bot's state writes, retries timed-out MCP Registry
+receipt reads, completes the `/markets/` Dataset metadata and moves three
+dependency pins. The package version is `0.16.14`. Version metadata is
+preparation only: require the exact signed runtime release (a new owner-signed
+Hetzner grant for this code), the normal full-suite and recovery gates, the
+immutable PyPI receipt and the registry receipt.
+
+The new rates adapters append to and backfill the existing production store.
+Never replace production observations with a development snapshot (#439). The
+desk bot ships through the fleet-bots sync and installer, not this runtime
+cutover (#412).
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r53`, for this successor.
+Preserve r52 on `e3dc734`. Corpus observations, counts, hashes and rights are
+unchanged. Sign r53 only after the exact new runtime and corpus evidence pass
+their ordinary checks; declaration is not publication. Sign r53 on the same
+commit as `v0.16.14`: the publication gate admits a receipt tag only on the
+workflow commit, the signed release commit or its reviewed descendant, so r52
+on `e3dc734` cannot serve this release. The runtime source and the publication
+source are the same commit, so no source bridge is used. Run a FULL publication
+from this source before any static-only publication.
+
+`ops/release/tests/test_native_migration_publication.py` pins a commit whose
+`backend/seiche` equals the checkout's. A commit cannot name itself, so the pin
+moves in its own commit after the last `backend/seiche` change, as it did for
+0.16.13; any later `backend/seiche` change, and any rewrite of the pinned
+commit (for example re-signing it), moves it again.
+
+The package build backend is hatchling 1.33.0 (#373). The `v0.16.14` PyPI
+build installs the pins in `backend/pyproject.toml`, and the release's own
+artifact verifier requires the wheel generator `hatchling 1.33.0`.
+
+
 ## 0.16.13 SDL desk and board-build successor
 
 The 12 November candidate adds the India state government securities (SDL)
