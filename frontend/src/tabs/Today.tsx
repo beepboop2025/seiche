@@ -157,7 +157,7 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
             rows={history}
             series={[{ label: "Seiche-lite", color: P.accent }]}
             height={260}
-            yLabel="stress index · 0–100"
+            yLabel="stress index · 0 to 100"
             refLine={{ value: 60, color: P.strain, label: "STRESS threshold" }}
             source="Seiche point-in-time light index · public macro inputs"
             asOf={history[history.length - 1]?.[0] as string}
@@ -213,7 +213,7 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
       <footer className="today-method">
         <div>
           <span>DATA CONTRACT</span>
-          <b>{quality.source_count ?? snap.provenance?.length ?? "—"} source series</b>
+          <b>{quality.source_count ?? snap.provenance?.length ?? "Unavailable"} source series</b>
           <b>{quality.fresh_share_pct != null ? `${fmt(quality.fresh_share_pct, 1)}% of dated active sources fresh` : "native lags shown"}</b>
           {quality.unclassified_source_count > 0 && <b>{quality.unclassified_source_count} table feeds carry fetch clocks only</b>}
         </div>

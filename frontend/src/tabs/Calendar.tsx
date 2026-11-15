@@ -10,7 +10,7 @@ function TurnCard({ t }: { t: Any }) {
     return (
       <div className="card span6">
         <h2>Turn Barometer</h2>
-        <div className="faults">unavailable — {t?.reason ?? "no forecast"}</div>
+        <div className="faults">unavailable: {t?.reason ?? "no forecast"}</div>
       </div>
     );
   }
@@ -36,7 +36,7 @@ function TurnCard({ t }: { t: Any }) {
         validation: n={v.n_turns} turns · LOO MAE {fmt(v.loo_mae_bp, 2)}bp vs naive {fmt(v.naive_mae_bp, 2)}bp ·
         skill {fmt(v.skill_vs_naive, 3)} {v.model_used ? "· model used" : ""}
       </div>
-      {v.note && <div className="crunch"><b>honesty note</b> — {v.note}</div>}
+      {v.note && <div className="crunch"><b>honesty note</b>: {v.note}</div>}
       <table className="mini">
         <thead><tr><th>recent turns</th><th>mode</th><th>slosh</th></tr></thead>
         <tbody>
@@ -79,7 +79,7 @@ function BillDesk({ rows }: { rows: Any[] }) {
   return (
     <div className="card span12">
       <h2>Bill Desk</h2>
-      <div className="sub">if you must park cash — latest auction stop per tenor + the next auction date</div>
+      <div className="sub">if you must park cash: latest auction stop per tenor + the next auction date</div>
       <table className="mini">
         <thead><tr><th>tenor</th><th>last high rate</th><th>last auction</th><th>next auction</th></tr></thead>
         <tbody>
@@ -88,7 +88,7 @@ function BillDesk({ rows }: { rows: Any[] }) {
               <td>{r.tenor}</td>
               <td className="num">{fmt(r.last_high_rate_pct, 3)}%</td>
               <td className="num">{r.last_auction}</td>
-              <td className="num">{r.next_auction ?? "—"}</td>
+              <td className="num">{r.next_auction ?? "Unavailable"}</td>
             </tr>
           ))}
         </tbody>
@@ -163,7 +163,7 @@ function EventHorizonTimeline({ snap }: { snap: Any }) {
       push(s.date, {
         kind: "settle",
         r: sized(((s.amount_b ?? 0) / (2 * flagB)) * 20),
-        detail: `$${fmt(s.amount_b, 0)}B auction settlement${(s.amount_b ?? 0) >= flagB ? " — heavy day" : ""}`,
+        detail: `$${fmt(s.amount_b, 0)}B auction settlement${(s.amount_b ?? 0) >= flagB ? ", heavy day" : ""}`,
       });
     for (const c of cal.crunch_windows ?? [])
       push(c.date, { kind: "crunch", r: 5, detail: c.reason ?? "calendar crunch window" });
@@ -185,7 +185,7 @@ function EventHorizonTimeline({ snap }: { snap: Any }) {
 
   return (
     <div className="card span12">
-      <h2>Event Horizon — next 42 business days</h2>
+      <h2>Event Horizon: next 42 business days</h2>
       <div className="sub">
         where the calendar pushes on the plumbing · marker size = the forcing's historical pop severity
         (Resonance per-mode recent median slosh; settlements vs the ${fmt(model.flagB, 0)}B heavy-day flag) ·
@@ -246,9 +246,9 @@ function EventHorizonTimeline({ snap }: { snap: Any }) {
             ))}
           </>
         ) : model.markers.length ? (
-          <>hover a marker — that day's forcing, with its size basis · business days skip weekends, holidays not modeled</>
+          <>hover a marker: that day's forcing, with its size basis · business days skip weekends, holidays not modeled</>
         ) : (
-          <>▮ no dated forcing inside the window — flat water ahead</>
+          <>▮ no dated forcing inside the window: flat water ahead</>
         )}
       </div>
       <Method>
@@ -283,7 +283,7 @@ function AuctionDigestCard({ e }: { e: Any }) {
         <div className="item"><div className="k">digestion index</div>
           <div className={`v ${di <= -0.5 ? "bad" : di < 0 ? "warn" : ""}`}><Roll v={di} d={2} /></div></div>
         <div className="item"><div className="k">Δ last print</div>
-          <div className="v">{dLast == null ? "—" : `${dLast > 0 ? "+" : ""}${fmt(dLast, 2)}`}</div></div>
+          <div className="v">{dLast == null ? "Unavailable" : `${dLast > 0 ? "+" : ""}${fmt(dLast, 2)}`}</div></div>
         <div className="item"><div className="k">recent auctions</div>
           <div className="v">{(e.recent_auctions ?? []).length}</div></div>
         <div className="item"><div className="k">asof</div>
@@ -310,7 +310,7 @@ function AuctionDigestCard({ e }: { e: Any }) {
               <td className="num" style={{ color: (a.btc_z ?? 0) <= -1 ? P.stress : (a.btc_z ?? 0) >= 1 ? P.calm : undefined }}>
                 {fmt(a.btc_z, 2)}
               </td>
-              <td className="num">{a.pd_share != null ? `${fmt(a.pd_share * 100, 1)}%` : "—"}</td>
+              <td className="num">{a.pd_share != null ? `${fmt(a.pd_share * 100, 1)}%` : "Unavailable"}</td>
               <td className="num" style={{ color: (a.pd_share_z ?? 0) >= 1 ? P.stress : undefined }}>
                 {fmt(a.pd_share_z, 2)}
               </td>

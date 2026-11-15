@@ -59,10 +59,10 @@ export default function UndertowCard() {
 
   return (
     <div className="card span12">
-      <h2>Undertow — the markets layer</h2>
+      <h2>Undertow: the markets layer</h2>
       <div className="sub">
         same lab, the other half of the question: Seiche watches the plumbing;
-        Undertow watches whether the market will still be there when you exit —
+        Undertow watches whether the market will still be there when you exit:
         cross-market liquidity tiers, exit cost at your size, and a sealed,
         hash-chained record that keeps its own misses, its chain heads
         anchored into Bitcoin twice a day (OpenTimestamps) so the "nobody can
@@ -89,13 +89,13 @@ export default function UndertowCard() {
             })}
           </div>
           <div className="coverage" style={{ marginTop: 8 }}>
-            published board · asof {board.asof ?? "—"}
+            published board · asof {board.asof ?? "Unavailable"}
             {regime ? <> · funding overlay {regime}</> : null}
             {rec && rec.sealed > 0 ? (
               <>
                 {" "}· sealed record {rec.hit}✓ {rec.miss}✗
                 {rec.hit_rate != null ? ` · hit rate ${Math.round(rec.hit_rate * 100)}%` : ""}
-                {rec.miss > 0 ? " — the misses stay published" : ""}
+                {rec.miss > 0 ? "; the misses stay published" : ""}
               </>
             ) : null}
             {anchor ? (
@@ -112,7 +112,7 @@ export default function UndertowCard() {
       )}
       {failed && (
         <div className="coverage" style={{ marginTop: 8 }}>
-          Undertow's published board could not be reached from here just now —
+          Undertow's published board could not be reached from here just now;
           nothing is drawn in its place. The links below still work.
         </div>
       )}

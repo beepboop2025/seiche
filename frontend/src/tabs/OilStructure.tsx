@@ -35,7 +35,7 @@ const SOURCES = {
 
 function signed(value: unknown, digits = 1, suffix = ""): string {
   const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
+  if (!Number.isFinite(number)) return "Unavailable";
   return `${number > 0 ? "+" : ""}${fmt(number, digits)}${suffix}`;
 }
 
@@ -81,7 +81,7 @@ function TankGeometry({ structure, live, stressReference }: { structure: Any; li
       <div className="os-tank-reading">
         <strong>{fmt(stocks, 3)}m</strong>
         <span>barrels · {fmt(fill, 1)}% of last working capacity</span>
-        <small>weekly observation through {live?.asof ?? "—"}</small>
+        <small>weekly observation through {live?.asof ?? "Unavailable"}</small>
       </div>
     </div>
   );
@@ -256,7 +256,7 @@ export default function OilStructure({ engine }: { engine: Any }) {
     <section className="oil-structure" aria-labelledby="oil-structure-title">
       <header className="os-header">
         <div><span className="oil-kicker oil-kicker--observed">MARKET STRUCTURE · EVIDENCE-GRADED</span><h2 id="oil-structure-title">The barrel has an address.<br /><em>The benchmark has an architecture.</em></h2></div>
-        <p>Cushing explains WTI deliverability. Chokepoints, freight and cargo programmes explain how a physical disruption reaches the world price—and then the money market.</p>
+        <p>Cushing explains WTI deliverability. Chokepoints, freight and cargo programmes explain how a physical disruption reaches the world price, and then the money market.</p>
       </header>
 
       <DeliveryGeometry structure={structure} live={live} stressReference={stressReferenceValue} />
@@ -270,7 +270,7 @@ export default function OilStructure({ engine }: { engine: Any }) {
         <article className="os-chart-panel">
           <div className="os-panel-head"><div><span>BENCHMARK BASIS / DAILY</span><h3>When WTI outruns Brent</h3></div><div className="os-panel-head__metric"><strong>{signed(spread.brent_minus_wti_usd_per_bbl, 2)}</strong><small>Brent − WTI · USD/bbl</small></div></div>
           <Chart rows={charts.brent_wti_spread?.rows ?? []} series={SPREAD_SERIES} height={250} yLabel="Brent minus WTI · USD per barrel" refLine={ZERO_LINE} source="EIA spot benchmarks via FRED · DCOILBRENTEU − DCOILWTICO" asOf={spread.asof} note="Below zero means WTI traded above Brent on the same observation date. This is spot basis, not a futures time-spread." />
-          <div className="os-spread-read"><strong>{spread.negative_days_last_60_observations ?? "—"}</strong><span>negative observations in the latest 60</span><small>5-observation average {signed(spread.average_5d_usd_per_bbl, 2)}</small></div>
+          <div className="os-spread-read"><strong>{spread.negative_days_last_60_observations ?? "Unavailable"}</strong><span>negative observations in the latest 60</span><small>5-observation average {signed(spread.average_5d_usd_per_bbl, 2)}</small></div>
         </article>
       </div>
 

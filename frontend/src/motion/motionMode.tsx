@@ -75,8 +75,8 @@ export function MotionToggle() {
       aria-label="motion mode"
       title={
         reduced
-          ? "motion: your OS asks for reduced motion — DESK is forced"
-          : "motion — CINEMA: the full living board · DESK: micro-interactions only"
+          ? "motion: your OS asks for reduced motion; DESK is forced"
+          : "motion (CINEMA: the full living board · DESK: micro-interactions only)"
       }
     >
       {(["cinema", "desk"] as const).map((m) => (

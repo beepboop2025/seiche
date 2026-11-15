@@ -396,10 +396,10 @@ export default function Corpus() {
       )}
 
       <div className="corpus-kpis corpus-transect" aria-label="Market atlas depth transect">
-        <a href="#canonical-market-series"><span>INDEXED OBSERVATIONS</span><strong>{seiche?.market_count ?? "—"} markets</strong><small>{seiche?.source_count === undefined ? "source count unavailable" : `${seiche.source_count} official source families`}</small></a>
-        <a href="#bis-observations-title"><span>BULK TRANSMISSION</span><strong>{bis?.flows ?? "—"} BIS flows</strong><small>{bis ? `${bis.bulk_flat ?? 0} bulk · ${bis.api_only ?? 0} API · ${bis.registry_only ?? 0} registry` : "inventory unavailable"}</small></a>
-        <a href="#corpus-datasets-title"><span>VERIFIED OBJECTS</span><strong>{engine?.verified_objects ?? engine?.objects ?? "—"} objects</strong><small>{engine?.attempts === undefined ? "attempt ledger unavailable" : `${engine.attempts.toLocaleString()} attempts · ${engine.recovered_objects ?? 0} recovered · ${engine.restricted?.collections ?? 0} restricted collections`}</small></a>
-        <a href="#corpus-exports-title"><span>EVIDENCE STATES</span><strong>{catalog?.evidence_classes?.length ?? "—"} states</strong><small>{catalog?.evidence_classes?.join(" · ") || "vocabulary unavailable"}</small></a>
+        <a href="#canonical-market-series"><span>INDEXED OBSERVATIONS</span><strong>{seiche?.market_count ?? "Unavailable"} markets</strong><small>{seiche?.source_count === undefined ? "source count unavailable" : `${seiche.source_count} official source families`}</small></a>
+        <a href="#bis-observations-title"><span>BULK TRANSMISSION</span><strong>{bis?.flows ?? "Unavailable"} BIS flows</strong><small>{bis ? `${bis.bulk_flat ?? 0} bulk · ${bis.api_only ?? 0} API · ${bis.registry_only ?? 0} registry` : "inventory unavailable"}</small></a>
+        <a href="#corpus-datasets-title"><span>VERIFIED OBJECTS</span><strong>{engine?.verified_objects ?? engine?.objects ?? "Unavailable"} objects</strong><small>{engine?.attempts === undefined ? "attempt ledger unavailable" : `${engine.attempts.toLocaleString()} attempts · ${engine.recovered_objects ?? 0} recovered · ${engine.restricted?.collections ?? 0} restricted collections`}</small></a>
+        <a href="#corpus-exports-title"><span>EVIDENCE STATES</span><strong>{catalog?.evidence_classes?.length ?? "Unavailable"} states</strong><small>{catalog?.evidence_classes?.join(" · ") || "vocabulary unavailable"}</small></a>
       </div>
 
       <div id="canonical-market-series"><MarketSeriesExplorer /></div>
@@ -430,7 +430,7 @@ export default function Corpus() {
               {seiche.markets.map((market) => (
                 <article key={market.market}>
                   <div><strong>{market.market}</strong><Status tone={evidenceTone(seiche.evidence_class)}>{seiche.evidence_class || "unknown"}</Status></div>
-                  <ul>{market.sources.map((source) => <li key={source.source}><code>{source.source}</code><span>{source.files === undefined && source.bytes === undefined ? "official source family" : `${source.files?.toLocaleString() ?? "—"} files · ${formatBytes(source.bytes)}`}</span></li>)}</ul>
+                  <ul>{market.sources.map((source) => <li key={source.source}><code>{source.source}</code><span>{source.files === undefined && source.bytes === undefined ? "official source family" : `${source.files?.toLocaleString() ?? "Unavailable"} files · ${formatBytes(source.bytes)}`}</span></li>)}</ul>
                 </article>
               ))}
             </div>

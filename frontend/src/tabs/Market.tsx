@@ -42,7 +42,7 @@ function PlaybookCard({ p }: { p: Any }) {
       <h2>Playbook</h2>
       <div className="sub">
         what happened the last {p.state?.n_matching_days} times the board read{" "}
-        <b>{p.state?.regime} × {p.state?.tell_bucket}</b> — native units, n shown, not advice
+        <b>{p.state?.regime} × {p.state?.tell_bucket}</b> (native units, n shown, not advice)
       </div>
       <table className="mini">
         <thead>
@@ -75,7 +75,7 @@ function PlaybookCard({ p }: { p: Any }) {
                 return (
                   <>
                     <td key={h + "m"} className="num" style={{ ...dim, color: c.median > 0 ? P.calm : c.median < 0 ? P.stress : undefined }}
-                        title={c.low_confidence ? "fewer than 8 non-overlapping windows — an anecdote, not a distribution" : undefined}>
+                        title={c.low_confidence ? "fewer than 8 non-overlapping windows: an anecdote, not a distribution" : undefined}>
                       {c.median > 0 ? "+" : ""}{fmt(c.median, 2)}
                     </td>
                     <td key={h + "i"} className="num dimsmall" style={dim}>{fmt(c.p25, 1)} / {fmt(c.p75, 1)}</td>
@@ -99,8 +99,8 @@ function ScuttlebuttCard({ s }: { s: Any }) {
     <div className="card span12">
       <h2>Scuttlebutt</h2>
       <div className="sub">
-        press attention on the plumbing ({bulk ? "GDELT downloadable Web NGrams" : "GDELT DOC"}, keyless) · which pipe the PRESS is staring at —
-        divergence from The Tell is itself worth a look · asof {s.asof ?? "—"}
+        press attention on the plumbing ({bulk ? "GDELT downloadable Web NGrams" : "GDELT DOC"}, keyless) · which pipe the PRESS is staring at;
+        divergence from The Tell is itself worth a look · asof {s.asof ?? "Unavailable"}
       </div>
       <div className="kv">
         {(s.topics ?? []).map((t: Any) => (
@@ -110,15 +110,15 @@ function ScuttlebuttCard({ s }: { s: Any }) {
               {t.attention === null
                 ? (bulk && t.current_share_pct !== null
                   ? `${fmt(t.current_share_pct, 3)}% share`
-                  : "—")
+                  : "Unavailable")
                 : fmt(t.attention, 0)}
               <span className="dimsmall">
                 {" "}{s.baseline_ready
-                  ? `z ${t.attention_z === null ? "—" : fmt(t.attention_z, 1)}`
+                  ? `z ${t.attention_z === null ? "Unavailable" : fmt(t.attention_z, 1)}`
                   : `${s.baseline_samples}/${s.baseline_required_samples} samples`}
                 {bulk
                   ? ` · ${t.matched_documents ?? 0}/${t.sample_documents ?? 0} docs`
-                  : ` · tone ${t.tone_delta === null ? "—" : (t.tone_delta > 0 ? "+" : "") + fmt(t.tone_delta, 1)}`}
+                  : ` · tone ${t.tone_delta === null ? "Unavailable" : (t.tone_delta > 0 ? "+" : "") + fmt(t.tone_delta, 1)}`}
               </span>
             </div>
           </div>
@@ -144,7 +144,7 @@ function ScuttlebuttCard({ s }: { s: Any }) {
           {s.refresh_note}
         </div>
       )}
-      <Method>{s.method} · context only — never weighted into the composite</Method>
+      <Method>{s.method} · context only, never weighted into the composite</Method>
     </div>
   );
 }

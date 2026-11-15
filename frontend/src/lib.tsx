@@ -6,12 +6,12 @@ export type Any = Record<string, any>;
 
 export const fmt = (v: number | null | undefined, d = 1, unit = "") =>
   v == null
-    ? "—"
+    ? "Unavailable"
     : `${v.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d })}${unit}`;
 
 /** English ordinal with the 11/12/13 exception handled explicitly. */
 export const ordinal = (n: number | null | undefined) => {
-  if (n == null) return "—";
+  if (n == null) return "Unavailable";
   const v = Math.round(n);
   const abs = Math.abs(v);
   const mod100 = abs % 100;
@@ -58,7 +58,7 @@ export function Num({ v, d = 1, unit = "", signed = false }:
   }, [v]);
 
   const sign = signed && shown != null && shown > 0 ? "+" : "";
-  return <>{shown == null ? "—" : `${sign}${fmt(shown, d, unit)}`}</>;
+  return <>{shown == null ? "Unavailable" : `${sign}${fmt(shown, d, unit)}`}</>;
 }
 
 /**
@@ -98,14 +98,14 @@ export function Roll({ v, d = 1, unit = "", dur = 950 }:
     return () => cancelAnimationFrame(raf.current);
   }, [v]);
 
-  return <span className={landed ? "roll-done" : ""}>{shown == null ? "—" : fmt(shown, d, unit)}</span>;
+  return <span className={landed ? "roll-done" : ""}>{shown == null ? "Unavailable" : fmt(shown, d, unit)}</span>;
 }
 
 export function Stat({ k, blk, unit, d = 2 }: { k: string; blk: Any; unit: string; d?: number }) {
   return (
     <div className="stat">
       <div className="k">{k}</div>
-      <div className="v">{blk ? <Roll v={blk.value} d={d} unit={unit} /> : "—"}</div>
+      <div className="v">{blk ? <Roll v={blk.value} d={d} unit={unit} /> : "Unavailable"}</div>
       <div className="asof">{blk?.asof ?? "no data"}</div>
     </div>
   );
@@ -115,7 +115,7 @@ export function Fault({ name, reason, span = 6 }: { name: string; reason?: strin
   return (
     <div className={`card span${span}`}>
       <h2>{name}</h2>
-      <div className="faults">ENGINE DOWN — {reason ?? "unknown"}</div>
+      <div className="faults">ENGINE DOWN: {reason ?? "unknown"}</div>
     </div>
   );
 }

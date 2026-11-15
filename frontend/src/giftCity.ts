@@ -121,10 +121,10 @@ export function stateTone(status: string): "good" | "warn" | "bad" {
   return "warn";
 }
 export function formatValue(value: unknown, digits = 4): string {
-  if (!Number.isInteger(digits) || digits < 0 || digits > 20) return "—";
+  if (!Number.isInteger(digits) || digits < 0 || digits > 20) return "Unavailable";
   if (typeof value === "number") return Number.isFinite(value)
-    ? new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits }).format(value) : "—";
-  if (typeof value !== "string" || value.length > 256 || !DECIMAL.test(value)) return "—";
+    ? new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits }).format(value) : "Unavailable";
+  if (typeof value !== "string" || value.length > 256 || !DECIMAL.test(value)) return "Unavailable";
   // Scenario results are exact decimal strings. Round and group without a
   // floating-point conversion, including totals beyond Number.MAX_SAFE_INTEGER.
   const negative = value.startsWith("-");

@@ -19,7 +19,7 @@ export type CountryFundingCollection = { schema: string;
 
 const number = (value: number | null | undefined, digits = 2) =>
   typeof value === "number" && Number.isFinite(value)
-    ? value.toLocaleString("en-GB", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
+    ? value.toLocaleString("en-GB", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "Unavailable";
 const words = (value: string) => value.replaceAll("_", " ");
 
 function Metrics({ metrics, caption }: { metrics: Metric[]; caption: string }) {
@@ -28,7 +28,7 @@ function Metrics({ metrics, caption }: { metrics: Metric[]; caption: string }) {
     <tbody>{metrics.length ? metrics.map(metric => <tr key={metric.id}>
       <th>{metric.source_url ? <a href={metric.source_url} target="_blank" rel="noreferrer">{words(metric.label)}</a> : words(metric.label)}</th>
       <td>{number(metric.value, metric.unit === "%" ? 4 : 2)}</td><td>{metric.unit}</td>
-      <td>{metric.observation_period || metric.asof || "—"}{metric.cadence === "P1M" && <small>Monthly reference</small>}</td>
+      <td>{metric.observation_period || metric.asof || "Unavailable"}{metric.cadence === "P1M" && <small>Monthly reference</small>}</td>
       <td>{metric.status === "UNKNOWN" ? "Publication time or calendar unknown" : words(metric.status)}
         {metric.asof && <small>Published: {metric.published_at || "unknown"}</small>}</td>
     </tr>) : <tr><td colSpan={5}>No series has been admitted for this section.</td></tr>}</tbody>
@@ -62,7 +62,7 @@ function CurveView({ curve }: { curve: Curve }) {
       <thead><tr><th>Spread</th><th>Level (bp)</th><th>Change (bp)</th><th>Movement</th><th>Dates</th></tr></thead>
       <tbody>{curve.spreads.map(spread => <tr key={spread.id}><th>{spread.id}</th><td>{number(spread.value_bp)}</td><td>{number(spread.change_bp)}</td>
         <td>{words(spread.movement)}<small>{words(spread.status)}{spread.reason && ` · ${spread.reason}`}</small></td>
-        <td>{spread.previous_asof || "—"} → {spread.asof || "—"}</td></tr>)}</tbody>
+        <td>{spread.previous_asof || "Unavailable"} → {spread.asof || "Unavailable"}</td></tr>)}</tbody>
     </table></div>}
   </div>;
 }

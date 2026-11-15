@@ -79,7 +79,7 @@ function BathymetryCard({ e }: { e: Any }) {
     <div className="card span7">
       <h2>Bathymetry</h2>
       <div className="sub">
-        the basin floor, measured from the water's motion — empirical Langevin potential of the pop
+        the basin floor, measured from the water's motion: empirical Langevin potential of the pop
         statistic, the quantum-dual relaxation spectrum, the entropy arrow, and the exact
         first-passage forecast (a Stack member with its own record)
       </div>
@@ -91,9 +91,9 @@ function BathymetryCard({ e }: { e: Any }) {
       <div className="kv">
         <div className="item"><div className="k">P(event, 5bd)</div>
           <div className={`v ${(e.p_event_5bd ?? 0) >= 0.35 ? "bad" : ""}`}>
-            {e.p_event_5bd != null ? `${fmt(e.p_event_5bd * 100, 1)}%` : "—"}</div></div>
+            {e.p_event_5bd != null ? `${fmt(e.p_event_5bd * 100, 1)}%` : "Unavailable"}</div></div>
         <div className="item"><div className="k">days to next event</div>
-          <div className="v">{e.mfpt_bd != null ? `~${fmt(e.mfpt_bd, 0)}bd` : e.mfpt_capped ? `>${e.mfpt_cap_bd}bd` : "—"}</div></div>
+          <div className="v">{e.mfpt_bd != null ? `~${fmt(e.mfpt_bd, 0)}bd` : e.mfpt_capped ? `>${e.mfpt_cap_bd}bd` : "Unavailable"}</div></div>
         <div className="item"><div className="k">relaxation τ (gap)</div>
           <div className={`v ${spec.tau_pctl >= 85 ? "bad" : ""}`}>{fmt(spec.tau_bd, 1)}d
             <span className="dimsmall"> ({ordinal(spec.tau_pctl)})</span></div></div>
@@ -112,7 +112,7 @@ function BathymetryCard({ e }: { e: Any }) {
       />
       {v.ok && (
         <div className="dimsmall">
-          walk-forward: AUROC {fmt(v.auroc, 2)} · Brier {fmt(v.brier, 4)} vs climatology {fmt(v.brier_climatology, 4)} ({v.n_scored} scored) — {v.verdict}
+          walk-forward: AUROC {fmt(v.auroc, 2)} · Brier {fmt(v.brier, 4)} vs climatology {fmt(v.brier_climatology, 4)} ({v.n_scored} scored); {v.verdict}
         </div>
       )}
       <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
@@ -128,12 +128,12 @@ function MerianCard({ e }: { e: Any }) {
     <div className="card span5">
       <h2>Merian Modes</h2>
       <div className="sub">
-        the seiche eigenmodes — Hankel-DMD (a Koopman-operator estimate) reads the basin's standing
+        the seiche eigenmodes: Hankel-DMD (a Koopman-operator estimate) reads the basin's standing
         waves out of the plumbing panel; a growing mode is instability before levels move
       </div>
       <div className="kv">
         <div className="item"><div className="k">instability g*</div>
-          <div className={`v ${hot ? "bad" : ""}`}>{inst.g_now != null ? `${inst.g_now > 0 ? "+" : ""}${fmt(inst.g_now, 4)}/bd` : "—"}
+          <div className={`v ${hot ? "bad" : ""}`}>{inst.g_now != null ? `${inst.g_now > 0 ? "+" : ""}${fmt(inst.g_now, 4)}/bd` : "Unavailable"}
             <span className="dimsmall"> ({ordinal(inst.pctl)})</span></div></div>
         <div className="item"><div className="k">panel</div>
           <div className="v">{e.n_series} pipes · rank {e.rank}</div></div>
@@ -145,7 +145,7 @@ function MerianCard({ e }: { e: Any }) {
             <tr key={i}>
               <td className="num">{m.period_bd != null ? `${fmt(m.period_bd, 0)}bd` : "non-osc"}</td>
               <td style={{ color: m.direction === "growing" ? P.stress : undefined }}>{m.direction}</td>
-              <td className="num">{m.efold_bd != null ? `${fmt(m.efold_bd, 0)}bd` : "—"}</td>
+              <td className="num">{m.efold_bd != null ? `${fmt(m.efold_bd, 0)}bd` : "Unavailable"}</td>
               <td className="num">{fmt((m.amp_share ?? 0) * 100, 0)}%</td>
               <td className="dimsmall">{m.label ?? ""}</td>
             </tr>
@@ -174,7 +174,7 @@ function GyreCard({ e }: { e: Any }) {
     <div className="card span7">
       <h2>The Gyre</h2>
       <div className="sub">
-        Takens embedding + empirical dynamic modeling — is the basin deterministic enough to predict
+        Takens embedding + empirical dynamic modeling: is the basin deterministic enough to predict
         at all, how fast does that skill decay, and does the water obey different rules at different states?
       </div>
       <div className="kv">
@@ -209,7 +209,7 @@ function GyreCard({ e }: { e: Any }) {
       />
       {fc.point_bp != null && (
         <div className="dimsmall">
-          5bd simplex forecast: {fmt(fc.point_bp, 1)}bp [{fmt(fc.p25_bp, 1)}, {fmt(fc.p75_bp, 1)}] — {fc.verdict}
+          5bd simplex forecast: {fmt(fc.point_bp, 1)}bp [{fmt(fc.p25_bp, 1)}, {fmt(fc.p75_bp, 1)}]; {fc.verdict}
         </div>
       )}
       <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
@@ -225,7 +225,7 @@ function RogueWaveCard({ e }: { e: Any }) {
     <div className="card span5">
       <h2>Rogue Wave</h2>
       <div className="sub">
-        the tail law — POT/GPD on the shared pop statistic: the honest instrument for the wave
+        the tail law (POT/GPD on the shared pop statistic): the honest instrument for the wave
         that is not in the sample yet · {e.n_clusters} declustered waves over {e.threshold_bp}bp
       </div>
       <div className="kv">
@@ -243,7 +243,7 @@ function RogueWaveCard({ e }: { e: Any }) {
               <td>{r.years}y</td>
               <td className="num" style={{ color: r.bp > (e.sample_max_bp ?? Infinity) ? P.strain : undefined }}>
                 {fmt(r.bp, 0)}bp</td>
-              <td className="num dimsmall">{r.ci95 ? `${fmt(r.ci95[0], 0)}–${fmt(r.ci95[1], 0)}` : "—"}</td>
+              <td className="num dimsmall">{r.ci95 ? `${fmt(r.ci95[0], 0)} to ${fmt(r.ci95[1], 0)}` : "Unavailable"}</td>
             </tr>
           ))}
         </tbody>
@@ -296,7 +296,7 @@ function MicroseismCard({ e }: { e: Any }) {
     <div className="card span5">
       <h2>Microseism</h2>
       <div className="sub">
-        the shock catalog nobody kept — a calendar-gated Hawkes process on every ≥{fmt(e.threshold_bp, 1)}bp
+        the shock catalog nobody kept: a calendar-gated Hawkes process on every ≥{fmt(e.threshold_bp, 1)}bp
         tremor asks whether shocks BREED shocks beyond the calendar's forcing; the branching ratio n is the
         basin's distance to criticality (at n=1 the chain reaction is self-sustaining)
       </div>
@@ -322,7 +322,7 @@ function MicroseismCard({ e }: { e: Any }) {
       {wf.ok && (
         <div className="dimsmall">
           walk-forward: Brier {fmt(wf.brier_hawkes, 4)} vs calendar {fmt(wf.brier_calendar, 4)} ·
-          AUROC {fmt(wf.auroc_hawkes, 2)} vs {fmt(wf.auroc_calendar, 2)} ({wf.n_scored} scored) — {wf.verdict}
+          AUROC {fmt(wf.auroc_hawkes, 2)} vs {fmt(wf.auroc_calendar, 2)} ({wf.n_scored} scored); {wf.verdict}
         </div>
       )}
       <table className="mini">
@@ -332,8 +332,8 @@ function MicroseismCard({ e }: { e: Any }) {
             <tr key={i}>
               <td className="num">{fmt(r.thr_bp, 1)}bp</td>
               <td className="num">{r.n_shocks}</td>
-              <td className="num">{r.branching != null ? fmt(r.branching, 2) : "—"}</td>
-              <td className="num">{r.half_life_bd != null ? `${fmt(r.half_life_bd, 1)}bd` : "—"}</td>
+              <td className="num">{r.branching != null ? fmt(r.branching, 2) : "Unavailable"}</td>
+              <td className="num">{r.half_life_bd != null ? `${fmt(r.half_life_bd, 1)}bd` : "Unavailable"}</td>
             </tr>
           ))}
         </tbody>
@@ -351,16 +351,16 @@ export default function Physics({ snap }: { snap: Any }) {
       <div className="card span12">
         <h2>The Physics Package</h2>
         <div className="sub">
-          the basin treated as the dynamical system it is named after — its <b>floor</b> (Bathymetry:
-          empirical Langevin potential, the Fokker–Planck↔Schrödinger spectrum, the entropy arrow,
+          the basin treated as the dynamical system it is named after: its <b>floor</b> (Bathymetry:
+          empirical Langevin potential, the Fokker-Planck↔Schrödinger spectrum, the entropy arrow,
           exact first-passage forecast), its <b>modes</b> (Merian: Koopman/DMD eigenmodes), its{" "}
-          <b>determinism</b> (Gyre: Takens embedding — is prediction possible at all?), its{" "}
+          <b>determinism</b> (Gyre: Takens embedding; is prediction possible at all?), its{" "}
           <b>tail law</b> (Rogue Wave: extreme value theory), and its <b>clustering law</b>{" "}
-          (Microseism: a calendar-gated Hawkes process — do shocks breed shocks?). Together with
+          (Microseism: a calendar-gated Hawkes process; do shocks breed shocks?). Together with
           Resonance (forced response) and Undertow (free decay) on the RESONANCE tab, this is the full
           physical examination. Every claim ships with walk-forward evidence or expanding percentiles
-          vs its own past — the formalism is quantum-mechanical where that is honest (Koopman
-          operators, the Fokker–Planck↔Schrödinger duality) and nowhere else.
+          vs its own past; the formalism is quantum-mechanical where that is honest (Koopman
+          operators, the Fokker-Planck↔Schrödinger duality) and nowhere else.
         </div>
       </div>
       <BathymetryCard e={deep.bathymetry} />

@@ -542,7 +542,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
           <span>through {asOf ?? lastDate ?? "unavailable"}</span>
           {latest && series.slice(0, 3).map((item, index) => (
             <span key={item.label} className="chart-evidence__latest">
-              {item.label} {latest[index + 1] == null ? "—" : fmt(Number(latest[index + 1]), 2)}
+              {item.label} {latest[index + 1] == null ? "Unavailable" : fmt(Number(latest[index + 1]), 2)}
             </span>
           ))}
         </div>
@@ -588,7 +588,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
           <>
             <time>{readout.date}</time>
             {series.map((item, index) => (
-              <span key={item.label}><i style={{ background: item.color }} />{item.label} <b>{readout.values[index] == null ? "—" : fmt(readout.values[index], 3)}</b></span>
+              <span key={item.label}><i style={{ background: item.color }} />{item.label} <b>{readout.values[index] == null ? "Unavailable" : fmt(readout.values[index], 3)}</b></span>
             ))}
           </>
         ) : (
