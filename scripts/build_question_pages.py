@@ -139,6 +139,11 @@ def outputs(catalog):
         shell = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(shell)
         result = {path: shell.unify_html(content, "/" + str(path.relative_to(PUBLIC)).removesuffix("index.html")) for path, content in result.items()}
+        # The icon trio and the operator line come from scripts/site_identity.py, like every static page.
+        spec = importlib.util.spec_from_file_location("site_identity", pathlib.Path(__file__).with_name("site_identity.py"))
+        identity = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(identity)
+        result = {path: identity.apply(content) for path, content in result.items()}
     return result
 
 
