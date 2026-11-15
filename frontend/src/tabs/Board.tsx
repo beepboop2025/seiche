@@ -50,7 +50,7 @@ function scalePaths(rows: (string | number | null)[][], nSeries: number, box: Bo
 }
 
 const signed = (v: number | null | undefined, d = 0) =>
-  v == null ? "—" : `${v > 0 ? "+" : ""}${fmt(v, d)}`;
+  v == null ? "Unavailable" : `${v > 0 ? "+" : ""}${fmt(v, d)}`;
 
 const fmtD = (ds?: string) => {
   if (!ds) return "";
@@ -78,12 +78,12 @@ function Surface({ tell, headline }: { tell: Any; headline: Any }) {
     : { word: "STRESSED", note: "priced in", color: "var(--stress)" };
   return (
     <div className="dive-layer">
-      <Kicker k="Surface · what markets price" sub="VIX, credit, rates vol — the screens everyone watches" />
+      <Kicker k="Surface · what markets price" sub="VIX, credit, rates vol: the screens everyone watches" />
       <div style={{ display: "flex", gap: 36, marginTop: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
         <div>
           <div className="dive-lbl">market-priced stress</div>
           <div className="dive-bignum">
-            {m == null ? "—" : <Num v={Math.round(m)} d={0} />}
+            {m == null ? "Unavailable" : <Num v={Math.round(m)} d={0} />}
             <span className="unit">{suffix(m)} pctl</span>
           </div>
         </div>
@@ -114,7 +114,7 @@ function TellBracket({ tell }: { tell: Any }) {
     <div className="tellbracket dive-layer" style={{ animationDelay: "0.08s" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap" }}>
         <div>
-          <div className="title">The Tell — surface vs. depth</div>
+          <div className="title">The Tell: surface vs. depth</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4 }}>
             <span className="value"><Num v={tell.tell} d={0} signed /></span>
             <span style={{ fontSize: 13, color: P.ink }}>{tell.reading}</span>
@@ -161,7 +161,7 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
         <RateCell k="SOFR" v={fmt(headline?.sofr_pct?.value, 2, "%")} note={headline?.sofr_pct?.asof?.slice(5) ?? ""} sharePath={seriesSharePath("sofr_pct")} />
         <RateCell k="EFFR" v={fmt(headline?.effr_pct?.value, 2, "%")} note={headline?.effr_pct?.asof?.slice(5) ?? ""} sharePath={seriesSharePath("effr_pct")} />
         <RateCell k="IORB" v={fmt(headline?.iorb_pct?.value, 2, "%")} note={headline?.iorb_pct?.asof?.slice(5) ?? ""} sharePath={seriesSharePath("iorb_pct")} />
-        <RateCell k="SOFR−IORB" v={spreadBp == null ? "—" : `${signed(spreadBp)}bp`} color={spreadColor}
+        <RateCell k="SOFR−IORB" v={spreadBp == null ? "Unavailable" : `${signed(spreadBp)}bp`} color={spreadColor}
           note={spreadBp == null ? "" : `P50 basis · ${spreadBp <= 0 ? "soft floor" : "above the floor"}`} sharePath={seriesSharePath("sofr_iorb_bp")} />
         <RateCell k="Tail z" v={fmt(tails?.ok ? tails.tail_index_z : null, 2)} note="P99−P50 blend" />
       </div>
@@ -171,7 +171,7 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
             <line x1={0} x2={880} y1={zeroY} y2={zeroY} stroke="rgba(233,233,237,0.14)" strokeDasharray="3 4" />
             <path d={sp.paths[0]} pathLength={1} className="draw" fill="none" stroke="var(--dim)" strokeWidth={1.3}
               style={{ animationDelay: "0.3s" }} />
-            <text x={0} y={94} fill="var(--ghost)" fontSize={9.5}>SOFR−IORB · P50 basis (tails engine daily series — not the tape's same-day print), two years · bp</text>
+            <text x={0} y={94} fill="var(--ghost)" fontSize={9.5}>SOFR−IORB · P50 basis (tails engine daily series, not the tape's same-day print), two years · bp</text>
             <text x={880} y={94} textAnchor="end" fill="var(--ghost)" fontSize={9.5}>last {signed(spreadBp)}bp</text>
           </svg>
           <ShareBar
@@ -191,13 +191,13 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
 }
 
 function WeatherMini({ e, gen }: { e: Any; gen?: string }) {
-  if (!e?.ok) return <div className="dive-lbl">Liquidity Weather unavailable — {e?.reason ?? "engine down"}</div>;
+  if (!e?.ok) return <div className="dive-lbl">Liquidity Weather unavailable: {e?.reason ?? "engine down"}</div>;
   const w = scalePaths(e.path ?? [], 3, { x0: 40, x1: 514, y0: 8, y1: 128 });
   const dates: string[] = (e.path ?? []).map((r: Any) => r[0]);
   const dot = (i: number) => (i === 0 ? "var(--strain)" : "var(--erosion)");
   return (
     <div>
-      <div style={{ fontSize: 12, color: P.ink }}>Liquidity Weather — six-week reserve path</div>
+      <div style={{ fontSize: 12, color: P.ink }}>Liquidity Weather: six-week reserve path</div>
       <AsOf asof={e.asof} generatedAt={gen} />
       <svg viewBox="0 0 520 148" style={{ width: "100%", height: "auto", display: "block", marginTop: 8, overflow: "visible" }}>
         {[8, 68, 128].map((y) => <line key={y} x1={40} x2={514} y1={y} y2={y} stroke="rgba(233,233,237,0.08)" />)}
@@ -217,7 +217,7 @@ function WeatherMini({ e, gen }: { e: Any; gen?: string }) {
           <div key={c.date} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12 }}>
             <span style={{ flex: "none", width: 7, height: 7, borderRadius: "50%", background: dot(i), alignSelf: "center" }} />
             <span style={{ color: "var(--text)", fontWeight: 500, whiteSpace: "nowrap" }}>{fmtD(c.date)}</span>
-            <span style={{ color: "var(--dim)" }}>{c.reason} — worst case ${fmt(c.worst_case_b, 0)}B</span>
+            <span style={{ color: "var(--dim)" }}>{c.reason}, worst case ${fmt(c.worst_case_b, 0)}B</span>
           </div>
         ))}
         {(e.crunch_windows ?? []).length === 0 && (
@@ -229,16 +229,16 @@ function WeatherMini({ e, gen }: { e: Any; gen?: string }) {
 }
 
 function KinkMini({ e, spreadBp, gen }: { e: Any; spreadBp: number | null; gen?: string }) {
-  if (!e?.ok) return <div className="dive-lbl">Kink Engine unavailable — {e?.reason ?? "engine down"}</div>;
+  if (!e?.ok) return <div className="dive-lbl">Kink Engine unavailable: {e?.reason ?? "engine down"}</div>;
   const below = e.distance_b < 0;
   const kinkPct = 85;
   const resPct = Math.max(4, Math.min(98, (e.current_reserves_b / e.kink_reserves_b) * kinkPct));
   const closing = below
     ? `Below the kink, every settlement day is a stress test the market grades in bp. The spread at ${signed(spreadBp)}bp says the water is ${spreadBp != null && spreadBp <= 0 ? "calm" : "choppy"}; the position of the floor says it is shallow.`
-    : `Reserves sit above the estimated kink — the basin has depth to spare, and settlement days should price as noise.`;
+    : `Reserves sit above the estimated kink: the basin has depth to spare, and settlement days should price as noise.`;
   return (
     <div>
-      <div style={{ fontSize: 12, color: P.ink }}>Kink Engine — reserve scarcity, located</div>
+      <div style={{ fontSize: 12, color: P.ink }}>Kink Engine: reserve scarcity, located</div>
       <AsOf asof={e.asof} generatedAt={gen} />
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 10 }}>
         <span style={{ fontSize: 34, fontWeight: 500, letterSpacing: "-0.02em", color: below ? "var(--erosion)" : "var(--calm)" }}>
@@ -271,7 +271,7 @@ function Plumbing({ weather, kink, tails, gen }: { weather: Any; kink: Any; tail
   const spreadBp = tails?.ok ? tails.spread?.sofr_iorb_bp : null;
   return (
     <div className="dive-layer" style={{ animationDelay: "0.24s" }}>
-      <Kicker k="Plumbing · the reserve basin" sub="where every squeeze started — weeks before the surface noticed" />
+      <Kicker k="Plumbing · the reserve basin" sub="where every squeeze started, weeks before the surface noticed" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 28, marginTop: 14 }}>
         <WeatherMini e={weather} gen={gen} />
         <KinkMini e={kink} spreadBp={spreadBp} gen={gen} />
@@ -314,18 +314,18 @@ function Positioning({ rv, wh, crowd, gen }: { rv: Any; wh: Any; crowd: Any; gen
       <Kicker k="Positioning · who is leaning on the water" sub="the leverage that turns a slosh into a wave · CFTC T+3, shown not hidden" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 28, marginTop: 14 }}>
         {rv?.ok ? (
-          <BigCell title="RV X-Ray" big={rv.pair_proxy_b == null ? "—" : `$${fmt(rv.pair_proxy_b, 0)}B`} asof={rv.asof} gen={gen}
-            sub={`${rvQuality ? `${rvQuality} · ` : ""}leveraged Treasury pair proxy · z ${fmt(rv.size_z, 2)} · DV01 ${rv.dv01_m_per_bp == null ? "—" : `$${fmt(rv.dv01_m_per_bp, 0)}M/bp`} · Δ13w ${rv.pair_change_13w_b == null ? "—" : `${signed(rv.pair_change_13w_b, 0)}B`}`} />
-        ) : <BigCell title="RV X-Ray" big="—" sub={rv?.reason ?? "engine down"} />}
+          <BigCell title="RV X-Ray" big={rv.pair_proxy_b == null ? "Unavailable" : `$${fmt(rv.pair_proxy_b, 0)}B`} asof={rv.asof} gen={gen}
+            sub={`${rvQuality ? `${rvQuality} · ` : ""}leveraged Treasury pair proxy · z ${fmt(rv.size_z, 2)} · DV01 ${rv.dv01_m_per_bp == null ? "Unavailable" : `$${fmt(rv.dv01_m_per_bp, 0)}M/bp`} · Δ13w ${rv.pair_change_13w_b == null ? "Unavailable" : `${signed(rv.pair_change_13w_b, 0)}B`}`} />
+        ) : <BigCell title="RV X-Ray" big="Unavailable" sub={rv?.reason ?? "engine down"} />}
         {wh?.ok ? (
           <BigCell title="Dealer Warehouse" bigColor={wh.total_pctl >= 90 ? "var(--strain)" : undefined} asof={wh.asof} gen={gen}
             big={<>{Math.round(wh.total_pctl)}<span style={{ fontSize: 14, color: "var(--dim)" }}>{suffix(wh.total_pctl)} pctl</span></>}
-            sub={`$${fmt(wh.total_net_b, 0)}B net UST inventory${wh.total_pctl >= 90 ? " — the shock absorber is nearly spent" : ""}${topBucket ? ` · ${String(topBucket.bucket).replace("Coupons ", "")} bucket at ${ord(topBucket.pctl)}` : ""}`} />
-        ) : <BigCell title="Dealer Warehouse" big="—" sub={wh?.reason ?? "engine down"} />}
+            sub={`$${fmt(wh.total_net_b, 0)}B net UST inventory${wh.total_pctl >= 90 ? ": the shock absorber is nearly spent" : ""}${topBucket ? ` · ${String(topBucket.bucket).replace("Coupons ", "")} bucket at ${ord(topBucket.pctl)}` : ""}`} />
+        ) : <BigCell title="Dealer Warehouse" big="Unavailable" sub={wh?.reason ?? "engine down"} />}
         {worstRow ? (
           <BigCell title="Crowding" big={`z ${fmt(worstRow.z, 2)}`} asof={crowd.asof} gen={gen}
-            sub={`${worstRow.contract} leveraged net at the ${ord(worstRow.pctl)} pctl of its history${Math.abs(worstRow.z ?? 0) >= 2 ? " — an unwind waiting for a reason" : ""}`} />
-        ) : <BigCell title="Crowding" big="—" sub={crowd?.reason ?? "engine down"} />}
+            sub={`${worstRow.contract} leveraged net at the ${ord(worstRow.pctl)} pctl of its history${Math.abs(worstRow.z ?? 0) >= 2 ? ": an unwind waiting for a reason" : ""}`} />
+        ) : <BigCell title="Crowding" big="Unavailable" sub={crowd?.reason ?? "engine down"} />}
       </div>
     </div>
   );
@@ -339,29 +339,29 @@ function Floor({ resonance, undertow, bathy, swell, gen }: { resonance: Any; und
   const fl = bathy?.ok ? bathy.floor : null;
   return (
     <div className="dive-layer" style={{ animationDelay: "0.4s", paddingBottom: 8 }}>
-      <Kicker k="The Floor · what the physics knows" sub="damping, resonance and the shape of the basin — fragility measured on days when nothing happens" />
+      <Kicker k="The Floor · what the physics knows" sub="damping, resonance and the shape of the basin: fragility measured on days when nothing happens" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 22, marginTop: 14 }}>
         {worst ? (
           <BigCell size={24} title="Resonance" big={`${fmt(worst.amplification, 2)}×`} asof={resonance.asof} gen={gen}
             bigColor={worst.amplification >= 3 ? "var(--strain)" : undefined}
             sub={`${modeWord} forcing now sloshes ${fmt(worst.amplification, 1)}× its old amplitude`} />
-        ) : <BigCell size={24} title="Resonance" big="—" sub={resonance?.reason ?? "engine down"} />}
+        ) : <BigCell size={24} title="Resonance" big="Unavailable" sub={resonance?.reason ?? "engine down"} />}
         {ut ? (
           <BigCell size={24} title="Undertow" asof={undertow.asof} gen={gen}
             big={<>AC1 {Math.round(ut.ac1_pctl)}<span style={{ fontSize: 13, color: "var(--dim)" }}>{suffix(ut.ac1_pctl)}</span></>}
             sub={stretch != null && stretch > 1.5
-              ? `recovery half-life stretched ${fmt(stretch, 1)}× — damping eroding`
-              : `recovery τ ${fmt(ut?.tau_bd, 1)}bd — damping ${ut?.mechanism ?? "steady"}`} />
-        ) : <BigCell size={24} title="Undertow" big="—" sub={undertow?.reason ?? "engine down"} />}
+              ? `recovery half-life stretched ${fmt(stretch, 1)}×, damping eroding`
+              : `recovery τ ${fmt(ut?.tau_bd, 1)}bd, damping ${ut?.mechanism ?? "steady"}`} />
+        ) : <BigCell size={24} title="Undertow" big="Unavailable" sub={undertow?.reason ?? "engine down"} />}
         {fl ? (
           <BigCell size={24} title="Bathymetry" big={<>{fmt(fl.barrier_kt, 2)} k<span style={{ fontSize: 13 }}>B</span>T</>} asof={bathy.asof} gen={gen}
             sub={`escape barrier from the measured floor · first passage ~${fmt(bathy.mfpt_bd, 0)}bd`} />
-        ) : <BigCell size={24} title="Bathymetry" big="—" sub="dynamics unavailable" />}
+        ) : <BigCell size={24} title="Bathymetry" big="Unavailable" sub="dynamics unavailable" />}
         {swell?.ok ? (
           <BigCell size={24} title="Swell, 5bd" big={`${fmt((swell.event_by_horizon?.h5 ?? 0) * 100, 1)}%`} asof={swell.asof} gen={gen}
             bigColor="var(--accent-bright)"
             sub={`P(funding event) from the forcing calendar · 42bd: ${fmt((swell.event_by_horizon?.h42 ?? 0) * 100, 0)}%`} />
-        ) : <BigCell size={24} title="Swell, 5bd" big="—" sub="forecast unavailable" />}
+        ) : <BigCell size={24} title="Swell, 5bd" big="Unavailable" sub="forecast unavailable" />}
       </div>
     </div>
   );
@@ -373,7 +373,7 @@ function Verdict({ composite, tell, kink }: { composite: Any; tell: Any; kink: A
   const gap = tell?.ok ? tell.tell : null;
   const surface = tell?.ok && tell.market_pctl < 30 ? "The surface prices calm" : "The surface is paying attention";
   const depth = below ? `; four layers down, the basin has lost $${fmt(Math.abs(kink.distance_b), 0)}B of depth and the calendar is loaded` : "";
-  const gapLine = gap != null ? ` That gap — ${signed(gap)} — is the reading.` : "";
+  const gapLine = gap != null ? ` That gap (${signed(gap)}) is the reading.` : "";
   return (
     <div className="verdict dive-layer" style={{ animationDelay: "0.46s" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
@@ -417,7 +417,7 @@ function AskDesk({ live }: { live: boolean }) {
   };
   return (
     <div className="dive-layer" style={{ marginTop: 4 }}>
-      <Kicker k="Ask the desk" sub="answers are restricted to the live board (every number cited to its engine) — not advice" />
+      <Kicker k="Ask the desk" sub="answers are restricted to the live board (every number cited to its engine), not advice" />
       <div className="tmcontrols" style={{ marginTop: 12 }}>
         <input
           type="text" value={q} placeholder='e.g. "why is the index elevated?" · "what should I watch this week?"'
@@ -471,8 +471,8 @@ function CompositeSpark({ history }: { history: Any }) {
     <div className="sparkbox">
       <div className="spark-read">
         {hov
-          ? `${hov[0]} · ${hov[1] == null ? "—" : fmt(hov[1] as number, 1)}`
-          : `seiche index · one year · last ${lastV == null ? "—" : fmt(lastV, 1)}`}
+          ? `${hov[0]} · ${hov[1] == null ? "Unavailable" : fmt(hov[1] as number, 1)}`
+          : `seiche index · one year · last ${lastV == null ? "Unavailable" : fmt(lastV, 1)}`}
       </div>
       <svg viewBox="0 0 320 100" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
         <path d={t.paths[0]} pathLength={1} className={reduced ? undefined : "draw"} fill="none"
@@ -512,7 +512,7 @@ function GlanceDecomp({ composite, history }: { composite: Any; history: Any }) 
    accepted so an older backend shape still renders. */
 function OddsTriplet({ swell, gen }: { swell: Any; gen?: string }) {
   if (!swell?.ok)
-    return <div className="dive-lbl" style={{ marginTop: 22 }}>P(funding event) — forecast unavailable · {swell?.reason ?? "engine down"}</div>;
+    return <div className="dive-lbl" style={{ marginTop: 22 }}>P(funding event): forecast unavailable · {swell?.reason ?? "engine down"}</div>;
   const eb = swell.event_by_horizon ?? {};
   const cells: { h: string; v: number | null }[] = [
     { h: "5bd", v: eb.h5 ?? null },
@@ -522,7 +522,7 @@ function OddsTriplet({ swell, gen }: { swell: Any; gen?: string }) {
   return (
     <div className="odds">
       <div className="odds-head">
-        <span className="dive-lbl">P(funding event) — forward odds from the forcing calendar</span>
+        <span className="dive-lbl">P(funding event): forward odds from the forcing calendar</span>
         <span className="asof-inline">
           {swell.asof ? `as of ${swell.asof}` : ""}
           {stalenessChip(swell.asof, gen)}
@@ -532,7 +532,7 @@ function OddsTriplet({ swell, gen }: { swell: Any; gen?: string }) {
         {cells.map((c) => (
           <div className="odd" key={c.h}>
             <div className="h">{c.h}</div>
-            <div className="p">{c.v == null ? "—" : <Roll v={c.v * 100} d={1} unit="%" />}</div>
+            <div className="p">{c.v == null ? "Unavailable" : <Roll v={c.v * 100} d={1} unit="%" />}</div>
           </div>
         ))}
       </div>
@@ -557,21 +557,21 @@ function Glance({ snap, onDescend }: { snap: Any; onDescend: () => void }) {
       <div className="glance-row dive-layer" style={{ animationDelay: "0.14s" }}>
         <div className="glance-fact">
           <div className="dive-lbl">SOFR−IORB · P50 basis</div>
-          <div className="dive-mid">{spreadBp == null ? "—" : <><Num v={spreadBp} d={0} signed />bp</>}</div>
+          <div className="dive-mid">{spreadBp == null ? "Unavailable" : <><Num v={spreadBp} d={0} signed />bp</>}</div>
           <div style={{ fontSize: 10, color: "var(--ghost)", marginTop: 3 }}>
-            tails engine daily series — not the tape's same-day print
+            tails engine daily series, not the tape's same-day print
           </div>
         </div>
         <div className="glance-fact">
           <div className="dive-lbl">reserves vs kink</div>
           <div className="dive-mid">
-            {kink?.ok ? <>${fmt(Math.abs(kink.distance_b), 0)}B {kink.distance_b < 0 ? "below" : "above"}</> : "—"}
+            {kink?.ok ? <>${fmt(Math.abs(kink.distance_b), 0)}B {kink.distance_b < 0 ? "below" : "above"}</> : "Unavailable"}
           </div>
         </div>
       </div>
       <OddsTriplet swell={swell} gen={gen} />
       <div className="glance-descend dive-layer" style={{ animationDelay: "0.2s" }}>
-        <button className="btn-accent" onClick={onDescend}>descend to the desk — the full dive</button>
+        <button className="btn-accent" onClick={onDescend}>descend to the desk: the full dive</button>
       </div>
     </div>
   );

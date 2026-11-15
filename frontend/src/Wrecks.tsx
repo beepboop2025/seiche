@@ -21,7 +21,7 @@ function Ladder({ board }: { board: Any[] }) {
         <td className="num" key={r.offset_bd}
             title={r.regime ? `${r.date}: ${Math.round(r.value)} ${r.regime}` : "no coverage"}
             style={{ color: r.regime ? REGIME_VAR[r.regime] : "var(--faint)" }}>
-          {r.value != null ? Math.round(r.value) : "—"}
+          {r.value != null ? Math.round(r.value) : "Unavailable"}
         </td>
       ))}
     </>
@@ -44,8 +44,8 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
     // PROOF tab: unavailability is information — print it.
     return variant === "card" ? (
       <div className="card span12">
-        <h2>Wrecks — the crypto record</h2>
-        <div className="faults">unavailable — not computed on this deployment</div>
+        <h2>Wrecks: the crypto record</h2>
+        <div className="faults">unavailable: not computed on this deployment</div>
       </div>
     ) : null;
   }
@@ -72,7 +72,7 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
               <td className="dimsmall">{ep.class === "external" ? "external" : "crypto-native"}</td>
               <Ladder board={ep.board ?? []} />
               <td className="num" style={{ color: ep.peak_regime ? REGIME_VAR[ep.peak_regime] : "var(--faint)" }}>
-                {ep.peak_regime ?? "—"}
+                {ep.peak_regime ?? "Unavailable"}
               </td>
             </tr>
           ))}
@@ -81,7 +81,7 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
       <div className="dimsmall" style={{ marginTop: 6 }}>
         cells = the final-vintage construction-PIT index, colored by regime · external wrecks with the board off CALM:{" "}
         <b>{w.summary?.external_with_board_elevated}</b> · crypto-native met by a quiet board:{" "}
-        <b>{w.summary?.crypto_native_board_quiet}</b> — the board earns no credit for crypto-native
+        <b>{w.summary?.crypto_native_board_quiet}</b>. The board earns no credit for crypto-native
         failures, and this table says so. Hover a row for its honest reading.
       </div>
       {(w.caveats ?? []).map((c: string, i: number) => (
@@ -96,7 +96,7 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
         <div className="free-kicker">THE CRYPTO RECORD · what the board read as crypto broke</div>
         <div className="dimsmall" style={{ marginBottom: 8 }}>
           Six labelled crypto stress episodes, reconstructed from final/current-vintage inputs dated
-          through T−21 to T−0 business days — no transform lookahead, but not an as-published vintage
+          through T−21 to T−0 business days: no transform lookahead, but not an as-published vintage
           replay. When the shock came from outside crypto (a pandemic, a bank
           run, a tariff cascade), the dollar-funding board was already off CALM. When crypto broke for
           its own reasons (Terra, FTX, a carry unwind), no lead is claimed.
@@ -107,9 +107,9 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
   }
   return (
     <div className="card span12">
-      <h2>Wrecks — the crypto record</h2>
+      <h2>Wrecks: the crypto record</h2>
       <div className="sub">
-        the six crypto shipwrecks reconstructed construction-PIT against the funding board — external
+        the six crypto shipwrecks reconstructed construction-PIT against the funding board: external
         wrecks test transmission, crypto-native wrecks test specificity; context, not validated leads · raw JSON at{" "}
         <span className="dimsmall">/api/wrecks</span>
       </div>

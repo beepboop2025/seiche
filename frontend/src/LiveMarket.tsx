@@ -20,13 +20,13 @@ type Relay = {
 };
 
 const px = (value: number | undefined) => {
-  if (value == null || !Number.isFinite(value)) return "—";
+  if (value == null || !Number.isFinite(value)) return "Unavailable";
   const digits = value >= 1000 ? 2 : value >= 10 ? 3 : 5;
   return value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 };
 
 const signed = (value: number | undefined, digits = 2, suffix = "") => {
-  if (value == null || !Number.isFinite(value)) return "—";
+  if (value == null || !Number.isFinite(value)) return "Unavailable";
   return `${value > 0 ? "+" : ""}${value.toFixed(digits)}${suffix}`;
 };
 

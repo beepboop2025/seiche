@@ -65,7 +65,7 @@ const compactUsd = (value: number): string => {
 };
 
 const compactUsdMaybe = (value: unknown, scale = 1): string => {
-  if (value == null || !Number.isFinite(Number(value))) return "—";
+  if (value == null || !Number.isFinite(Number(value))) return "Unavailable";
   return compactUsd(Number(value) * scale);
 };
 
@@ -175,7 +175,7 @@ function TransmissionLoop({ s, out, live }: { s: Scenario; out: ScenarioOutputs;
         <article>
           <span>06 · SLOW POLICY CHANNEL</span>
           <h3>Inflation → policy rate</h3>
-          <p>Energy reaches headline inflation first; persistence can reach core and the reaction function later. The chart below is descriptive—there is no estimated policy coefficient hiding behind it.</p>
+          <p>Energy reaches headline inflation first; persistence can reach core and the reaction function later. The chart below is descriptive; there is no estimated policy coefficient hiding behind it.</p>
           <div>
             <strong>{fmt(inflation.energy_cpi_yoy_pct, 1)}%</strong><small>energy CPI YoY</small>
             <strong>{fmt(inflation.core_cpi_yoy_pct, 1)}%</strong><small>core CPI YoY</small>
@@ -230,7 +230,7 @@ function BallastSection({ ballast }: { ballast: Any }) {
           <small>context only · never composite</small>
         </div>
         <div><span>WORST COMMODITY CHANNEL</span><strong>p{fmt(headline.worst_channel_percentile, 1)}</strong><small>{dominant.label ?? "insufficient history"}</small></div>
-        <div><span>DOMINANT PATH</span><strong>{String(dominant.channel ?? "—").replaceAll("_", " ")}</strong><small>own-history rank · no blended score</small></div>
+        <div><span>DOMINANT PATH</span><strong>{String(dominant.channel ?? "Unavailable").replaceAll("_", " ")}</strong><small>own-history rank · no blended score</small></div>
         <div><span>OBSERVED COVERAGE</span><strong>{fmt(headline.coverage_pct, 1)}%</strong><small>dark fields remain explicit</small></div>
       </div>
 
@@ -283,7 +283,7 @@ function BallastSection({ ballast }: { ballast: Any }) {
           <h3>Commercial crude inventory</h3>
           <strong>{fmt(inventory.stocks_million_bbl, 1)}m bbl</strong>
           <p>{Number(inventory.change_1w_million_bbl) > 0 ? "+" : ""}{fmt(inventory.change_1w_million_bbl, 2)}m bbl in one week · p{fmt(inventory.absolute_weekly_change_percentile_5y, 1)} absolute move</p>
-          <small>EIA period ending {inventory.asof ?? "date unavailable"} · normally available {inventory.available_asof ?? "date unavailable"} · {compactUsdMaybe(inventory.annual_sofr_carry_benchmark_usd)} annual SOFR carry benchmark—not a financed-book estimate.</small>
+          <small>EIA period ending {inventory.asof ?? "date unavailable"} · normally available {inventory.available_asof ?? "date unavailable"} · {compactUsdMaybe(inventory.annual_sofr_carry_benchmark_usd)} annual SOFR carry benchmark, not a financed-book estimate.</small>
         </article>
         <article>
           <span>PRICE OF CASH</span>
@@ -294,7 +294,7 @@ function BallastSection({ ballast }: { ballast: Any }) {
         </article>
         <article className="oil-ballast__coverage">
           <span>COVERAGE BOUNDARY</span>
-          <h3>What is lit—and what stays dark</h3>
+          <h3>What is lit, and what stays dark</h3>
           <ul>{boundaries.map((row: Any) => (
             <li key={row.layer}><span>{row.layer}</span><b>{String(row.status).replaceAll("_", " ")}</b></li>
           ))}</ul>
@@ -303,7 +303,7 @@ function BallastSection({ ballast }: { ballast: Any }) {
 
       <div className="oil-ballast__handoffs">
         <div><span>→ UNDERTOW</span><strong>What will this position cost to exit?</strong><small>{ballast.handoffs?.undertow?.boundary}</small></div>
-        <div><span>→ LIQUILENS</span><strong>Who has qualifying exposure—and through which funding channel?</strong><small>{ballast.handoffs?.liquilens?.boundary}</small></div>
+        <div><span>→ LIQUILENS</span><strong>Who has qualifying exposure, and through which funding channel?</strong><small>{ballast.handoffs?.liquilens?.boundary}</small></div>
       </div>
     </section>
   );
@@ -342,7 +342,7 @@ function ScatterPlot({ scatter }: { scatter: Any }) {
         <div><span>ρ</span><strong>{fmt(fit.correlation, 2)}</strong></div>
         <div><span>slope</span><strong>{fmt(fit.slope_bp_per_usd, 2)} bp / $</strong></div>
         <div><span>R²</span><strong>{fmt(fit.r_squared, 2)}</strong></div>
-        <div><span>n</span><strong>{fit.n ?? "—"}</strong></div>
+        <div><span>n</span><strong>{fit.n ?? "Unavailable"}</strong></div>
       </div>
       <div className="oil-svg-wrap">
         <svg
@@ -529,7 +529,7 @@ function CarryCurve({ s, out }: { s: Scenario; out: ScenarioOutputs }) {
   if (fundingRate == null || required == null) {
     return (
       <div className="oil-empty" role="status">
-        Funding rate unavailable — move the funding-rate control to set an explicit scenario assumption.
+        Funding rate unavailable: move the funding-rate control to set an explicit scenario assumption.
       </div>
     );
   }

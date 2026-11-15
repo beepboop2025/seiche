@@ -70,7 +70,7 @@ export default function CommandPalette({ onClose, onCommand }: {
 
         <div className="palette-list" ref={listRef}>
           {results.length === 0 && !coded && (
-            <div className="palette-empty">nothing matches "{query}" — try a tab name or a code like PRF</div>
+            <div className="palette-empty">nothing matches "{query}"; try a tab name or a code like PRF</div>
           )}
           {results.map((e, i) => (
             <button
@@ -92,7 +92,7 @@ export default function CommandPalette({ onClose, onCommand }: {
 
         <div className="palette-foot">
           <span>↑↓ move · ↵ go · [ ] depth</span>
-          <span>codes execute directly — <span className="palette-code" style={{ padding: "1px 5px" }}>ASOF 2019-09-12</span> replays the board</span>
+          <span>codes execute directly: <span className="palette-code" style={{ padding: "1px 5px" }}>ASOF 2019-09-12</span> replays the board</span>
         </div>
       </div>
     </div>

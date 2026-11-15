@@ -201,7 +201,7 @@ function renderBars(spec: ChartSpec, readout: HTMLElement) {
 function renderMatrix(spec: ChartSpec, readout: HTMLElement) {
   const rows = spec.matrix || [], columns = spec.columns || [];
   if (!rows.length || !columns.length) return null;
-  const height = Math.max(250, rows.length * 37 + 66), root = frame(`${spec.title}. ${spec.unit}. Missing values are labelled with a dash.`, height);
+  const height = Math.max(250, rows.length * 37 + 66), root = frame(`${spec.title}. ${spec.unit}. Missing values are labelled Unavailable.`, height);
   const left = narrow() ? 106 : 153, width = (chartWidth() - left - 27) / columns.length, step = (height - 60) / rows.length;
   const max = spec.domain?.[1] || Math.max(1, ...rows.flatMap(r => r.values.filter(finite)));
   label(root, 4, 22, spec.unit.length > 18 ? 'Disclosures' : spec.unit);
@@ -214,7 +214,7 @@ function renderMatrix(spec: ChartSpec, readout: HTMLElement) {
       const rect = svg('rect', {x: px + 2, y: py, width: width - 4, height: step - 5, rx: 3, fill: finite(value) ? COLORS[0] : '#212a37', 'fill-opacity': finite(value) ? .13 + .62 * Math.min(1, Math.max(0, value / max)) : 1, tabindex: 0, role: 'img', 'aria-label': `${r.label}, ${columns[j]}: ${finite(value) ? number(value, 3) + ' ' + spec.unit : 'Unavailable'}. ${r.notes?.[j] || ''}`});
       const describe = () => {readout.textContent = `${r.label} · ${columns[j]}: ${finite(value) ? number(value, 4) + ' ' + spec.unit : 'Unavailable'} · ${r.notes?.[j] || ''}`;};
       rect.addEventListener('pointerenter', describe); rect.addEventListener('focus', describe); root.append(rect);
-      label(root, px + width / 2, py + (step - 5) / 2 + 4, finite(value) ? number(value, 2) : '—', 'middle', ink);
+      label(root, px + width / 2, py + (step - 5) / 2 + 4, finite(value) ? number(value, 2) : 'Unavailable', 'middle', ink);
     });
   });
   return root;

@@ -92,7 +92,7 @@ function ResonanceCard({ e }: { e: Any }) {
     <div className="card span12">
       <h2>Resonance Engine</h2>
       <div className="sub">
-        the seiche made literal — does the same calendar forcing produce a bigger slosh than it used to?
+        the seiche made literal: does the same calendar forcing produce a bigger slosh than it used to?
         · score {fmt(e.score, 0)} · loudest: {e.worst_mode?.label} at {fmt(e.worst_mode?.amplification, 2)}×
       </div>
       <Chart
@@ -119,8 +119,8 @@ function ResonanceCard({ e }: { e: Any }) {
               <td className="num" style={{ color: d.amplification >= 2 ? P.stress : d.amplification >= 1.3 ? P.gold : undefined }}>
                 {fmt(d.amplification, 2)}×
               </td>
-              <td className="num dimsmall" title="amplification with the largest recent slosh removed — one-event sensitivity">
-                {d.amplification_ex_max == null ? "—" : `${fmt(d.amplification_ex_max, 2)}×`}
+              <td className="num dimsmall" title="amplification with the largest recent slosh removed: one-event sensitivity">
+                {d.amplification_ex_max == null ? "Unavailable" : `${fmt(d.amplification_ex_max, 2)}×`}
               </td>
               <td className="num">{fmt(d.decay_prior_d, 1)}d → {fmt(d.decay_recent_d, 1)}d</td>
               <td className="num">{fmt(d.score, 0)}</td>
@@ -142,7 +142,7 @@ function UndertowCard({ e }: { e: Any }) {
     <div className="card span12">
       <h2>Undertow</h2>
       <div className="sub">
-        critical slowing down — the free-decay half of the physics: a basin losing damping forgets
+        critical slowing down (the free-decay half of the physics): a basin losing damping forgets
         perturbations slowly (rising AC1 + variance, stretching recovery) even while levels look calm
         · score {fmt(e.score, 0)}
       </div>
@@ -150,21 +150,21 @@ function UndertowCard({ e }: { e: Any }) {
         <div className="item"><div className="k">spread AC1</div>
           <div className={`v ${sp.ac1_pctl >= 85 ? "bad" : ""}`}>{fmt(sp.ac1, 2)} <span className="dimsmall">({ordinal(sp.ac1_pctl)})</span></div></div>
         <div className="item"><div className="k">relaxation τ</div>
-          <div className="v">{sp.tau_bd != null ? `${fmt(sp.tau_bd, 1)}d` : "—"}</div></div>
+          <div className="v">{sp.tau_bd != null ? `${fmt(sp.tau_bd, 1)}d` : "Unavailable"}</div></div>
         <div className="item"><div className="k">spread var pctl</div>
           <div className={`v ${sp.var_pctl >= 85 ? "bad" : ""}`}>{ordinal(sp.var_pctl)}</div></div>
         <div className="item"><div className="k">tail AC1 pctl</div>
-          <div className={`v ${tl.ac1_pctl >= 85 ? "bad" : ""}`}>{tl.ac1_pctl != null ? `${ordinal(tl.ac1_pctl)}` : "—"}</div></div>
+          <div className={`v ${tl.ac1_pctl >= 85 ? "bad" : ""}`}>{tl.ac1_pctl != null ? `${ordinal(tl.ac1_pctl)}` : "Unavailable"}</div></div>
         <div className="item"><div className="k">recovery half-life</div>
           <div className={`v ${rec.stretch >= 1.5 ? "warn" : ""}`}>
-            {rec.halflife_prior_d != null ? `${fmt(rec.halflife_prior_d, 1)}d → ${fmt(rec.halflife_recent_d, 1)}d` : "—"}
+            {rec.halflife_prior_d != null ? `${fmt(rec.halflife_prior_d, 1)}d → ${fmt(rec.halflife_recent_d, 1)}d` : "Unavailable"}
             {rec.stretch != null && ` (${fmt(rec.stretch, 2)}×)`}
             {rec.low_n && <span className="dimsmall" title="too few pops in one of the eras"> †low-n</span>}
           </div></div>
         <div className="item"><div className="k">mechanism</div>
           <div className={`v ${sp.mechanism?.startsWith("both") || sp.mechanism?.startsWith("absorbers") ? "bad" : sp.mechanism?.startsWith("louder") ? "warn" : ""}`}
-               title="fluctuation-dissipation split: noise power D = Var·(1−AC1²) vs damping — louder shocks or weaker absorbers (diagnostic, not scored)">
-            {sp.mechanism ?? "—"}
+               title="fluctuation-dissipation split: noise power D = Var·(1−AC1²) vs damping; louder shocks or weaker absorbers (diagnostic, not scored)">
+            {sp.mechanism ?? "Unavailable"}
             {sp.noise_pctl != null && <span className="dimsmall"> (D {ordinal(sp.noise_pctl)})</span>}
           </div></div>
       </div>
@@ -198,7 +198,7 @@ function EdetectCard({ e }: { e: Any }) {
     <div className="card span12">
       <h2>E-Detector</h2>
       <div className="sub">
-        the changepoint tripwire — a Shiryaev–Roberts mixture e-process per stream, alarming at 1/α
+        the changepoint tripwire: a Shiryaev-Roberts mixture e-process per stream, alarming at 1/α
         with a nonasymptotic warranty: {e.arl_warranty} · asof {e.asof}
       </div>
       <div className="kv">
@@ -206,7 +206,7 @@ function EdetectCard({ e }: { e: Any }) {
           s == null ? (
             <div className="item" key={label}>
               <div className="k">{label}</div>
-              <div className="v dimsmall">stream not provided — detector not running</div>
+              <div className="v dimsmall">stream not provided: detector not running</div>
             </div>
           ) : !s.ok ? (
             <div className="item" key={label}>
@@ -253,7 +253,7 @@ function HydrophoneCard({ e }: { e: Any }) {
   return (
     <div className="card span7">
       <h2>Hydrophone Array</h2>
-      <div className="sub">absorption ratio — decoupled pipes absorb shocks; a densifying network transmits them</div>
+      <div className="sub">absorption ratio: decoupled pipes absorb shocks; a densifying network transmits them</div>
       <div className="kv">
         <div className="item"><div className="k">absorption</div><div className="v">{fmt(e.absorption, 3)}</div></div>
         <div className="item"><div className="k">percentile</div>
@@ -272,7 +272,7 @@ function EdgesCard({ e }: { e: Any }) {
   return (
     <div className="card span5">
       <h2>Lead-Lag Map</h2>
-      <div className="sub">which pipe is upstream right now — the map reorganizing is itself a signal</div>
+      <div className="sub">which pipe is upstream right now; the map reorganizing is itself a signal</div>
       <table className="mini">
         <thead><tr><th>leads</th><th></th><th>follows</th><th>lag</th><th>r</th></tr></thead>
         <tbody>
@@ -285,7 +285,7 @@ function EdgesCard({ e }: { e: Any }) {
           ))}
         </tbody>
       </table>
-      {(e.edges ?? []).length === 0 && <div className="allclear">▮ no edges above threshold — pipes decoupled</div>}
+      {(e.edges ?? []).length === 0 && <div className="allclear">▮ no edges above threshold: pipes decoupled</div>}
     </div>
   );
 }
@@ -296,7 +296,7 @@ function SonarCard({ e }: { e: Any }) {
     <div className="card span12">
       <h2>SONAR</h2>
       <div className="sub">
-        daily anomaly sweep across every series — {e.n_flagged} of {e.n_scanned} flagged beyond ±2.5 robust z
+        daily anomaly sweep across every series: {e.n_flagged} of {e.n_scanned} flagged beyond ±2.5 robust z
         {e.n_stale ? `, ${e.n_stale} held back as too old to have moved` : ""}
       </div>
       <table className="mini">
@@ -308,12 +308,12 @@ function SonarCard({ e }: { e: Any }) {
             <tr key={m.name} style={{ opacity: m.flag ? 1 : 0.55 }}>
               <td>{m.label}</td>
               <td className="num">{fmt(m.last, 2)} {m.unit}</td>
-              <td className="num">{m.chg_1d == null ? "—" : `${m.chg_1d > 0 ? "+" : ""}${fmt(m.chg_1d, 2)}`}</td>
+              <td className="num">{m.chg_1d == null ? "Unavailable" : `${m.chg_1d > 0 ? "+" : ""}${fmt(m.chg_1d, 2)}`}</td>
               <td className="num" style={{ color: Math.abs(m.level_z ?? 0) >= 2.5 ? P.stress : undefined }}>{fmt(m.level_z, 2)}</td>
               <td className="num" style={{ color: Math.abs(m.change_z ?? 0) >= 2.5 ? P.stress : undefined }}>{fmt(m.change_z, 2)}</td>
               <td className="num">{m.asof}</td>
               <td className="num" style={{ color: m.stale ? P.stress : undefined }}>
-                {m.age_d == null ? "—" : m.stale ? `${m.age_d}d stale` : `${m.age_d}d`}
+                {m.age_d == null ? "Unavailable" : m.stale ? `${m.age_d}d stale` : `${m.age_d}d`}
               </td>
             </tr>
           ))}
@@ -331,7 +331,7 @@ function StationKeepingCard({ e }: { e: Any }) {
       <h2>Station-Keeping</h2>
       <div className="sub">
         orbit-determination transfer: propagate the reserve system's expected state, watch the
-        residuals — a persistent innovation is a burn the model didn't know about
+        residuals: a persistent innovation is a burn the model didn't know about
         {e.any_active && <span style={{ color: P.strain }}> · BURN IN PROGRESS</span>}
       </div>
       <div className="kv">
@@ -541,7 +541,7 @@ function HydrophoneMap({ e, m, sonar }: { e: Any; m: Any; sonar: Any }) {
               className="fx-node"
               onMouseEnter={() =>
                 setReadout(
-                  `${p.name} · ${zz ? `current ${zz.kind} ${fmt(zz.z, 2)} (SONAR)` : "no direct SONAR scan — base size"} · coupling ${fmt(coupling[i], 2)}`,
+                  `${p.name} · ${zz ? `current ${zz.kind} ${fmt(zz.z, 2)} (SONAR)` : "no direct SONAR scan: base size"} · coupling ${fmt(coupling[i], 2)}`,
                 )
               }
               onMouseLeave={() => setReadout("")}
@@ -578,7 +578,7 @@ function HydrophoneMap({ e, m, sonar }: { e: Any; m: Any; sonar: Any }) {
           </>
         )}
       </div>
-      {edges.length === 0 && <div className="allclear">▮ no edges above threshold — pipes decoupled</div>}
+      {edges.length === 0 && <div className="allclear">▮ no edges above threshold: pipes decoupled</div>}
     </div>
   );
 }
@@ -589,7 +589,7 @@ function HydrophoneMapCard({ e, m, sonar }: { e: Any; m: Any; sonar: Any }) {
     <div className="card span7">
       <h2>Hydrophone Map</h2>
       <div className="sub">
-        the lead-lag table drawn as the network it is — pulses ride each edge from the pipe that leads
+        the lead-lag table drawn as the network it is: pulses ride each edge from the pipe that leads
         to the pipe that follows, at a speed scaled to the measured lag; the map reorganizing is itself a signal
       </div>
       <HydrophoneMap e={e} m={m} sonar={sonar} />
@@ -622,7 +622,7 @@ function SpilloverCard({ e }: { e: Any }) {
     <div className="card span5">
       <h2>Spillover</h2>
       <div className="sub">
-        when one harbor's funding tightens, where does the stress go — directional connectedness of the
+        when one harbor's funding tightens, where does the stress go? directional connectedness of the
         harbor panel · structural, not causal
       </div>
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
@@ -649,8 +649,8 @@ function SpilloverCard({ e }: { e: Any }) {
         <div style={{ flex: 1, minWidth: 170 }}>
           <div className="dimsmall" style={{ lineHeight: 1.6 }}>{e.verdict}</div>
           <div className="dimsmall" style={{ marginTop: 5 }}>
-            source <b style={{ color: P.strain }}>{e.source ?? "—"}</b> · sink{" "}
-            <b style={{ color: P.slate }}>{e.sink ?? "—"}</b> · {e.n_obs} obs · VAR({e.lag}), H={e.horizon}
+            source <b style={{ color: P.strain }}>{e.source ?? "Unavailable"}</b> · sink{" "}
+            <b style={{ color: P.slate }}>{e.sink ?? "Unavailable"}</b> · {e.n_obs} obs · VAR({e.lag}), H={e.horizon}
           </div>
         </div>
       </div>

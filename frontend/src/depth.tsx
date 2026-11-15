@@ -78,7 +78,7 @@ export function DepthDial() {
       className="sounding"
       role="radiogroup"
       aria-label="reading depth"
-      title="sounding — how much of the board to surface ( [ shallower · ] deeper )"
+      title="sounding: how much of the board to surface ( [ shallower · ] deeper )"
     >
       {DEPTHS.map((d) => (
         <button

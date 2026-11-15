@@ -13,10 +13,10 @@ const CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "CNY", "INR
 const WINDOWS = [{ days: 90, label: "90 days" }, { days: 365, label: "1 year" }, { days: 1095, label: "3 years" }, { days: 3650, label: "10 years" }];
 
 function number(value: number | null | undefined, digits = 4): string {
-  return value === null || value === undefined ? "—" : new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
+  return value === null || value === undefined ? "Unavailable" : new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
 }
 function change(value: number | null | undefined): string {
-  return value === null || value === undefined ? "—" : `${value > 0 ? "+" : ""}${number(value, 2)}%`;
+  return value === null || value === undefined ? "Unavailable" : `${value > 0 ? "+" : ""}${number(value, 2)}%`;
 }
 function clock(value: unknown): string {
   if (typeof value !== "string" || !value) return "not reported";
@@ -97,7 +97,7 @@ function FxTable({ rows, selected, onSelect }: { rows: FxRow[]; selected: string
     <thead><tr><th scope="col">Pair / evidence</th><th scope="col">Rate</th><th scope="col">Date</th><th scope="col">1 obs</th><th scope="col">5 obs</th><th scope="col">20 obs</th><th scope="col">60 obs</th><th scope="col">20 obs vol.</th></tr></thead>
     <tbody>{rows.map((row) => <tr key={row.quote_currency} className={row.quote_currency === selected ? "is-selected" : ""}>
       <th scope="row"><button type="button" aria-pressed={row.quote_currency === selected} onClick={() => onSelect(row.quote_currency)}>{row.pair}</button><small>{status(row.evidence_status)} · {status(row.status)}</small></th>
-      <td>{number(row.value, 5)}</td><td>{row.as_of ?? "unavailable"}</td><td>{change(row.change_1obs_pct)}</td><td>{change(row.change_5obs_pct)}</td><td>{change(row.change_20obs_pct)}</td><td>{change(row.change_60obs_pct)}</td><td>{row.realized_vol_20obs_pct === null ? "—" : `${number(row.realized_vol_20obs_pct, 2)}%`}</td>
+      <td>{number(row.value, 5)}</td><td>{row.as_of ?? "unavailable"}</td><td>{change(row.change_1obs_pct)}</td><td>{change(row.change_5obs_pct)}</td><td>{change(row.change_20obs_pct)}</td><td>{change(row.change_60obs_pct)}</td><td>{row.realized_vol_20obs_pct === null ? "Unavailable" : `${number(row.realized_vol_20obs_pct, 2)}%`}</td>
     </tr>)}</tbody>
   </table>{!rows.length && <p className="wb-empty">No pairs match this search.</p>}</div>;
 }

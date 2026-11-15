@@ -366,14 +366,14 @@ function AppInner() {
         <div className="kshort-backdrop" onClick={() => setHelp(false)}>
           <div className="kshort" role="dialog" aria-label="keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
             <h2>Keyboard shortcuts</h2>
-            <div className="row"><span>command line — function codes (BRD, FCT, SWELL…) or search</span><kbd>⌘K</kbd></div>
+            <div className="row"><span>command line: function codes (BRD, FCT, SWELL…) or search</span><kbd>⌘K</kbd></div>
             <div className="row"><span>command line (same)</span><kbd>/</kbd></div>
             <div className="row"><span>this panel</span><kbd>?</kbd></div>
             <div className="row"><span>sounding shallower / deeper (glance · desk · deep)</span><kbd>[ &nbsp; ]</kbd></div>
-            <div className="row"><span>jump to tab 1–9</span><kbd>Ctrl/⌘ 1–9</kbd></div>
-            <div className="row"><span>replay a date — type it in the command line</span><kbd>ASOF 2019-09-16</kbd></div>
+            <div className="row"><span>jump to tabs 1 to 9</span><kbd>Ctrl/⌘ 1 to 9</kbd></div>
+            <div className="row"><span>replay a date: type it in the command line</span><kbd>ASOF 2019-09-16</kbd></div>
             <div className="row"><span>close</span><kbd>Esc</kbd></div>
-            <div className="foot">hash routing is authoritative — any #tab in the URL wins.</div>
+            <div className="foot">hash routing is authoritative: any #tab in the URL wins.</div>
           </div>
         </div>
       )}
@@ -386,7 +386,7 @@ function AppInner() {
 
       {snap.faults?.length > 0 && tab !== "SYSTEM" && (
         <div className="faults">
-          {snap.faults.length} source fault(s): {snap.faults.map((f: Any) => f.source).join(", ")}{" — "}
+          {snap.faults.length} source fault(s): {snap.faults.map((f: Any) => f.source).join(", ")}{"; "}
           {faultImpact} (details in SYSTEM)
         </div>
       )}
@@ -469,7 +469,7 @@ function AppInner() {
       </aside>
 
       <div className="footer">
-        SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. ·
+        SEICHE: a standing wave in an enclosed basin, invisible until it sloshes over the edge. ·
         Not investment advice. The core board uses public APIs with their native lags (COT is T+3 by construction); global coverage labels credentialed, licensed, derived-only and unavailable inputs instead of hiding them. ·
         Composite weights are editorial and live in backend/seiche/config.py.
         <br />
@@ -492,7 +492,7 @@ function AppInner() {
         <br />
         <span className="company-line">Seiche · LIQUILENS PRIVATE LIMITED · registered company in India · DPIIT recognised startup, certificate DIPP290644</span>
         <br />
-        From the same lab: <a href="https://liquilens-undertow.com" style={{ color: "var(--dim)" }}>Undertow</a>, the cross-market liquidity terminal — exit cost at your size, tiers across nine segments, and a sealed record that keeps its own misses. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit. Live on the MARKET tab.
+        From the same lab: <a href="https://liquilens-undertow.com" style={{ color: "var(--dim)" }}>Undertow</a>, the cross-market liquidity terminal: exit cost at your size, tiers across nine segments, and a sealed record that keeps its own misses. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit. Live on the MARKET tab.
         <br />
         The full editorial wire: <a href="https://myquantdoesntspeakenglish.com/" style={{ color: "var(--dim)" }}>My Quant Doesn’t Speak English</a> consolidates every Seiche, LiquiLens and Undertow dispatch, plus original investigations.
         <br />

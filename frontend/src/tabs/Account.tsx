@@ -42,7 +42,7 @@ export default function Account() {
             one is set up by hand, free, usually within a day.
           </div>
           <div className="method">
-            Prefer to keep the lights on? <a href="/support">Support Seiche</a> — voluntary, never required.
+            Prefer to keep the lights on? <a href="/support">Support Seiche</a> (voluntary, never required).
           </div>
         </div>
         <div className="card span6">
@@ -102,7 +102,7 @@ export default function Account() {
           authenticates five private Agent Room preview tools. It does not unlock unavailable legacy tools. Keep it private; it lasts 30 days.
         </div>
         <div className="kv" style={{ flexDirection: "column", gap: 8 }}>
-          <div className="item"><div className="k">account</div><div className="v">{me.username ?? "—"} · {me.tier ?? ""}</div></div>
+          <div className="item"><div className="k">account</div><div className="v">{me.username ?? "Unavailable"} · {me.tier ?? ""}</div></div>
           <div className="item" style={{ width: "100%" }}>
             <div className="k">API key</div>
             <textarea readOnly value={token} onClick={(e) => (e.target as HTMLTextAreaElement).select()}

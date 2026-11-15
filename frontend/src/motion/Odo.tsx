@@ -17,7 +17,7 @@ import { fmt } from "../lib";
 const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 export default function Odo({ v, d = 0 }: { v: number | null | undefined; d?: number }) {
-  if (v == null) return <>—</>;
+  if (v == null) return <>Unavailable</>;
   const chars = fmt(v, d).split("");
   const n = chars.length;
   return (

@@ -18,7 +18,7 @@ export type IndiaDesk = { schema: string; headline: string; status: string; gene
 
 const number = (value: number | null | undefined, places = 2) =>
   typeof value === "number" && Number.isFinite(value)
-    ? value.toLocaleString("en-IN", { maximumFractionDigits: places, minimumFractionDigits: places }) : "—";
+    ? value.toLocaleString("en-IN", { maximumFractionDigits: places, minimumFractionDigits: places }) : "Unavailable";
 const words = (value: string) => value.replaceAll("_", " ");
 const label = (metric: Metric) => words(metric.label).replace(/^RBI /, "").replace(/ WEEKLY$/, " (weekly)");
 const status = (metric: Metric) => metric.status === "UNKNOWN" ? "Publication time unknown" : words(metric.status);
@@ -70,16 +70,16 @@ export default function IndiaFunding({ data }: { data?: IndiaDesk }) {
           <text x={x(node.tenor_years!)} y={y(node.value!) - 12} textAnchor="middle">{number(node.value, 2)}</text></g>)}
       </svg> : <p>No dated sovereign yields are available.</p>}
       <div className="india-scroll"><table><caption>Source observations; yields in per cent</caption><thead><tr><th>{monthly ? "Maturity" : "Approx. tenor"}</th><th>Yield</th><th>{monthly ? "Series" : "Security"}</th><th>Observation</th><th>Status</th></tr></thead>
-        <tbody>{curveNodes.map(node => <tr key={node.id}><th>{node.tenor_years}Y</th><td>{number(node.value, 4)}</td><td>{monthly ? "Month-end SGL" : node.security?.replace("bond:", "") || "—"}</td><td>{node.asof || "—"}</td><td>{status(node)}</td></tr>)}</tbody></table></div>
+        <tbody>{curveNodes.map(node => <tr key={node.id}><th>{node.tenor_years}Y</th><td>{number(node.value, 4)}</td><td>{monthly ? "Month-end SGL" : node.security?.replace("bond:", "") || "Unavailable"}</td><td>{node.asof || "Unavailable"}</td><td>{status(node)}</td></tr>)}</tbody></table></div>
       {!monthly && <p className="india-note">{data.curve.fixed_tenor_reason}</p>}
     </div>
     <h3>{monthly ? "Historical monthly spreads" : "Curve spreads and movement"}</h3><p>Long yield minus short yield. {monthly ? "Changes compare the two stated month ends; they do not describe today's market." : "Movement compares the two stated dates using the same securities."}</p>
     <div className="india-scroll"><table><caption>Positive spread change means steepening; negative means flattening</caption><thead><tr><th>Spread</th><th>Level, bp</th><th>Change, bp</th><th>Short / long change, bp</th><th>Movement</th><th>Compared dates</th></tr></thead>
-      <tbody>{spreads.map(spread => <tr key={spread.id}><th>{spread.id}</th><td>{number(spread.value_bp)}</td><td>{number(spread.change_bp)}</td><td>{number(spread.short_change_bp)} / {number(spread.long_change_bp)}</td><td>{words(spread.movement)}{spread.reason && <small>{spread.reason}</small>}</td><td>{spread.previous_asof || "—"} → {spread.asof || "—"}</td></tr>)}</tbody></table></div>
+      <tbody>{spreads.map(spread => <tr key={spread.id}><th>{spread.id}</th><td>{number(spread.value_bp)}</td><td>{number(spread.change_bp)}</td><td>{number(spread.short_change_bp)} / {number(spread.long_change_bp)}</td><td>{words(spread.movement)}{spread.reason && <small>{spread.reason}</small>}</td><td>{spread.previous_asof || "Unavailable"} → {spread.asof || "Unavailable"}</td></tr>)}</tbody></table></div>
     <h3>Funding evidence</h3><div className="india-sections" role="group" aria-label="Funding evidence section">
       {data.sections.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => setSection(item.id)}>{words(item.id)}</button>)}</div>
     <div className="india-scroll"><table><caption>{words(selected.id)} · source dates and units</caption><thead><tr><th>Series</th><th>Value</th><th>Unit</th><th>Observation</th><th>Status</th></tr></thead>
-      <tbody>{selected.metrics.map(metric => <tr key={metric.id}><th>{metric.source_url ? <a href={metric.source_url} target="_blank" rel="noreferrer">{label(metric)}</a> : label(metric)}{metric.security && <small>{metric.security}</small>}</th><td>{number(metric.value, metric.unit === "%" ? 4 : 2)}</td><td>{metric.unit}</td><td>{metric.asof || "—"}</td><td>{status(metric)}</td></tr>)}</tbody></table></div>
+      <tbody>{selected.metrics.map(metric => <tr key={metric.id}><th>{metric.source_url ? <a href={metric.source_url} target="_blank" rel="noreferrer">{label(metric)}</a> : label(metric)}{metric.security && <small>{metric.security}</small>}</th><td>{number(metric.value, metric.unit === "%" ? 4 : 2)}</td><td>{metric.unit}</td><td>{metric.asof || "Unavailable"}</td><td>{status(metric)}</td></tr>)}</tbody></table></div>
     <details><summary>Sources and interpretation</summary><ul>{data.caveats.map(note => <li key={note}>{note}</li>)}</ul>
       <ul>{data.sources.map(source => <li key={source.url}><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a></li>)}</ul>
       <p><a href="https://api.seiche.info/api/v2/india-funding">Read the India API</a> · MCP: money_market_context with section india.</p>
