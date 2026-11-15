@@ -55,6 +55,9 @@ SUPPORTED_PROTOCOL_VERSIONS = (
     "2025-03-26",
 )
 SERVER_NAME = "seiche"
+# Display title for MCP clients and directories: the repository's canonical title
+# (CITATION.cff, server.json). Plain punctuation; the wire name above is unchanged.
+SERVER_TITLE = "Seiche: World-markets evidence terminal"
 AGENT_MCP_TELEGRAM_URL = "https://t.me/seiche_desk_bot?start=agent_mcp"
 ARTICLE_FEED_URL = "https://seiche.info/articles/feed.json"
 ARTICLE_FEED_MAX_BYTES = 512 * 1024
@@ -3829,7 +3832,7 @@ def _handle_initialize(
             },
             "serverInfo": {
                 "name": SERVER_NAME,
-                "title": "Seiche — funding-stress terminal",
+                "title": SERVER_TITLE,
                 "version": _server_version(),
                 "websiteUrl": "https://seiche.info",
             },
