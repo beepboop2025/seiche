@@ -10,6 +10,7 @@ score, no ranking of raw levels across currencies.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import copy
 import logging
 import statistics
@@ -154,20 +155,34 @@ DISPLAY_LABELS = {
 _STATE_ORDER = ("DEAD", "STALE", "UNAVAILABLE", "UNKNOWN", "RESTRICTED", "AGING", "FRESH")
 _CURRENT = frozenset({"FRESH", "AGING"})
 
-_CACHE: dict[tuple, tuple[float, dict]] = {}
+_CACHE: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
 _CACHE_LOCK = threading.Lock()
 CACHE_SECONDS = 60.0
+CACHE_MAX_ENTRIES = 256
 
 
 def _cached(key: tuple, build):
+    """Reuse a recent identical read without letting callers grow the cache.
+
+    Callers validate and canonicalize every argument before they build a key, so a
+    key can only name a real view. Every insert purges expired entries, and the least
+    recently used entry is evicted beyond CACHE_MAX_ENTRIES.
+    """
     now = _monotonic.monotonic()
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
         if hit is not None and hit[0] > now:
+            _CACHE.move_to_end(key)
             return copy.deepcopy(hit[1])
     value = build()
     with _CACHE_LOCK:
+        purge_at = _monotonic.monotonic()
+        for stale in [cached for cached, (expires, _) in _CACHE.items() if expires <= purge_at]:
+            del _CACHE[stale]
         _CACHE[key] = (now + CACHE_SECONDS, value)
+        _CACHE.move_to_end(key)
+        while len(_CACHE) > CACHE_MAX_ENTRIES:
+            _CACHE.popitem(last=False)
     return copy.deepcopy(value)
 
 
@@ -809,7 +824,10 @@ def parse_markets(value: str | None, registry) -> list[str] | None:
     unknown = [item for item in identifiers if item not in known]
     if unknown:
         raise ValueError("unknown market id(s): " + ", ".join(unknown))
-    return list(dict.fromkeys(identifiers))
+    # One canonical order (the desk's own market order, then any other registered market
+    # alphabetically), so the same set always names one view and one cache entry.
+    order = {market_id: position for position, market_id in enumerate(FUNDING_LEGS)}
+    return sorted(set(identifiers), key=lambda market_id: (order.get(market_id, len(order)), market_id))
 
 
 def funding_conditions(*, markets: str | None = None, window_days: int = DEFAULT_WINDOW_DAYS,

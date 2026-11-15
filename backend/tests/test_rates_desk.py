@@ -291,6 +291,63 @@ def test_funding_conditions_never_calls_unknown_freshness_stale(tmp_path, monkey
     assert result["status"] == "partial"
 
 
+# ----------------------------------------------------------------------------- cache bounds
+
+def test_cache_never_grows_past_its_cap_and_evicts_the_least_recent(monkeypatch):
+    rates_desk.clear_cache()
+    monkeypatch.setattr(rates_desk, "CACHE_MAX_ENTRIES", 3)
+    for key in range(10):
+        rates_desk._cached(("probe", key), lambda key=key: {"key": key})
+        assert len(rates_desk._CACHE) <= 3
+    assert list(rates_desk._CACHE) == [("probe", 7), ("probe", 8), ("probe", 9)]
+    # A hit serves the stored value and refreshes recency; the next insert evicts the oldest.
+    assert rates_desk._cached(("probe", 7), lambda: {"key": "rebuilt"}) == {"key": 7}
+    rates_desk._cached(("probe", 10), lambda: {"key": 10})
+    assert list(rates_desk._CACHE) == [("probe", 9), ("probe", 7), ("probe", 10)]
+    rates_desk.clear_cache()
+
+
+def test_cache_purges_expired_entries_on_every_insert(monkeypatch):
+    from types import SimpleNamespace
+    rates_desk.clear_cache()
+    clock = [1000.0]
+    monkeypatch.setattr(rates_desk, "_monotonic", SimpleNamespace(monotonic=lambda: clock[0]))
+    rates_desk._cached(("probe", "old"), lambda: {"value": 1})
+    rates_desk._cached(("probe", "kept"), lambda: {"value": 2})
+    clock[0] += rates_desk.CACHE_SECONDS + 1
+    rates_desk._cached(("probe", "new"), lambda: {"value": 3})
+    assert list(rates_desk._CACHE) == [("probe", "new")]
+    rates_desk.clear_cache()
+
+
+def test_funding_cache_refuses_unknown_input_and_keeps_one_entry_per_market_set(tmp_path, monkeypatch):
+    _store(tmp_path, monkeypatch)
+    for bad in ("EA-EUR,ZZ-ZZZ", "ZZ-ZZZ", ",".join(["EA-EUR"] * 21), "X" * 201):
+        with pytest.raises(ValueError):
+            rates_desk.funding_conditions(markets=bad)
+    for window in (0, 249, 7301):
+        with pytest.raises(ValueError, match="window_days"):
+            rates_desk.funding_conditions(window_days=window)
+        with pytest.raises(ValueError, match="window_days"):
+            rates_desk.spreads(window_days=window)
+    assert len(rates_desk._CACHE) == 0
+    first = rates_desk.funding_conditions(markets="US-USD,EA-EUR")
+    second = rates_desk.funding_conditions(markets="ea-eur, us-usd,EA-EUR")
+    assert len(rates_desk._CACHE) == 1
+    assert [m["market_id"] for m in first["markets"]] == ["US-USD", "EA-EUR"]
+    assert [m["market_id"] for m in second["markets"]] == ["US-USD", "EA-EUR"]
+
+
+def test_spread_windows_beyond_the_cap_never_grow_the_cache(tmp_path, monkeypatch):
+    _store(tmp_path, monkeypatch)
+    monkeypatch.setattr(rates_desk, "CACHE_MAX_ENTRIES", 4)
+    for window in range(250, 262):
+        rates_desk.spreads(window_days=window)
+        assert len(rates_desk._CACHE) <= 4
+    assert len(rates_desk._CACHE) == 4
+    rates_desk.clear_cache()
+
+
 def test_rest_routes_serve_payloads_and_plain_422s(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from seiche import api
