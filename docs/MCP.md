@@ -96,7 +96,7 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
 }
 ```
 
-- Authentication is **header-only**. Put subscriber credentials in
+- Authentication is **header-only**. Put your free account token in
   `Authorization: Bearer ...`; a credential-looking query parameter never
   authenticates a caller. Through 2026-09-14 UTC, a query-only caller remains
   anonymous and receives `Warning`, `Deprecation`, and `Sunset` response
@@ -204,7 +204,7 @@ not maintain separate interpretations of the engines.
 ### Getting a token
 
 ```bash
-seiche user add desk_01 --tier pro \
+seiche user add desk_01 --access free \
   --credentials-file /secure/handoff/desk_01.json
 curl -sX POST https://api.seiche.info/api/auth/login \
   -H 'content-type: application/json' \
@@ -226,63 +226,34 @@ headers:
 | `X-MCP-Usage-Limit` | the daily quota (absent when unlimited) |
 | `X-MCP-Usage-Remaining` | calls left today |
 
-If the usage database is unavailable, a single billable request returns HTTP
+If the usage database is unavailable, a single metered request returns HTTP
 503 with a JSON-RPC error and `Retry-After: 5`; its tool is not executed.
 Batch requests retain HTTP 200 and per-message errors, so clients retry only
-failed message IDs and keep successful results. The remaining billable messages
+failed message IDs and keep successful results. The remaining metered messages
 in that batch do not repeat the storage wait. `GET /mcp/usage` also returns 503
 instead of an invented usage count. Quotas remain enforced after recovery.
 
-Check the meter any time: `GET /mcp/usage`. When the daily quota is reached, a
-`tools/call` returns an `isError` result pointing at the upgrade page — the
-agent can relay it. Only `tools/call` is billable; `initialize`, `tools/list`,
+Check the meter any time: `GET /mcp/usage`. When the daily allowance is reached, a
+`tools/call` returns an `isError` result that says when it resets (00:00 UTC);
+the agent can relay it. Only `tools/call` is metered; `initialize`, `tools/list`,
 and `ping` are free.
 
-Quotas are the commercial dials, tuned in `backend/seiche/config.py`
-(`MCP_DAILY_QUOTAS`, `MCP_ANON_DAILY`, `MCP_RATE_LIMIT_PER_MIN`): anonymous
-callers get a small daily cap, `pro` a working quota, `founder`/`enterprise`
-unlimited.
+Seiche is free: there is no paid tier, no upgrade and no payment hook. The
+daily allowances only keep the shared host responsive and live in
+`backend/seiche/config.py` (`MCP_ANON_DAILY`, `MCP_FREE_DAILY`,
+`MCP_RATE_LIMIT_PER_MIN`): an anonymous IP gets 200 tool calls per UTC day, a
+free signed-in account 5000, and an operator account (Seiche's own operator and
+internal monitors) is uncapped; every caller has the same 60 per minute burst
+ceiling. `GET /mcp/usage` reports the access level in `tier` (`anon`, `free` or
+`operator`); its `upgrade_url` key is kept for older clients and is always
+`null`. Voluntary support (https://seiche.info/support) never changes a limit.
 
-### Closing the funnel: payment → account
-
-A confirmed payment becomes a subscriber account and bearer token via
-`provision()` — either the operator CLI (the manual crypto path) or a signed
-webhook (a payment processor: BTCPay, NOWPayments, Stripe, …).
-
-Operator path, after you see a crypto payment land:
-
-```bash
-seiche provision --tier pro --email buyer@x.com --ref <txid> \
-  --credentials-file /secure/handoff/<txid>.json
-# stdout identifies the account and file only; it never contains credentials
-```
-
-The new file is reserved before the account is created, written as mode-`0600`
-JSON, flushed to disk, and never overwrites an existing path. It contains the
-username, one-time password, 30-day bearer token, expiry, and tier. Optional
-SMTP delivery is best-effort; the file is the authoritative handoff and should
-be removed after safe transfer.
-
-Webhook path — enable it by setting a shared secret, then have the processor
-(or a tiny adapter) POST a signed JSON body:
-
-```bash
-export SEICHE_PROVISION_SECRET=…            # fail-closed: no secret => 503
-```
-
-```
-POST /api/provision
-X-Seiche-Signature: <hex HMAC-SHA256 of the raw body, keyed by the secret>
-
-{ "tier": "pro", "email": "buyer@x.com", "payment_ref": "invoice_123",
-  "amount": 29, "currency": "USD" }
-```
-
-The call is **idempotent on `payment_ref`** — a retried webhook never
-double-grants and never re-issues a password. On first grant it returns the
-credentials (`username`, `password` shown once, `token`); on a replay it returns
-the recorded account with `"already": true`. `payment_ref` and every grant are
-recorded in the `provisions` table for audit.
+An account stores its level in `users.tier`. Values written before these levels
+existed still work without a data migration: `pro`, the old default, reads as
+`free` with the same 5000-call allowance, and `founder` and `enterprise` read as
+`operator`. To make an existing account uncapped without touching the database,
+list it in `SEICHE_OPERATOR_USERS` (comma-separated usernames) in the API
+environment; `seiche user add NAME --access operator` creates a new one.
 
 ## Tools
 
@@ -310,12 +281,12 @@ recorded in the `provisions` table for audit.
 | `positioning_book` | Implied stance + positions, walk-forward Sharpe, live record | unavailable in this release |
 | `ask_desk` | Natural-language Q&A grounded strictly in the live board (needs an LLM endpoint) | unavailable in this release |
 
-The free tier gives the **conclusion, credibility, and contextual transmission
+Anonymous callers get the **conclusion, credibility, and contextual transmission
 read** (regime, analogs, PROOF, data health, positioning, the USD desk, oil, FX
-and materials)
-— enough to be genuinely useful and to spread.
-The **edge** (forward odds, the Time Machine, positioning, the assistant) is the
-subscription. The split is one `is_public` flag per tool in `mcp_server.py`.
+and materials), enough to be genuinely useful and to spread. The remaining tools
+(forward odds, the Time Machine, positioning, the assistant) need a free account
+token where they are served; nothing is sold. The split is one `is_public` flag
+per tool in `mcp_server.py`.
 
 Every tool returns structured JSON (or markdown, for `desk_brief`) with explicit
 interpretation fields. The money-market tool keeps `plain_language`,

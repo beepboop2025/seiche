@@ -772,59 +772,6 @@ def _write_reserved_credentials(descriptor: int, payload: dict) -> None:
         os.fsync(stream.fileno())
 
 
-def cmd_provision(args) -> int:
-    """Turn a confirmed payment into a subscriber account + token (operator
-    path — the manual counterpart to the /api/provision webhook)."""
-    from seiche import provisioning
-
-    try:
-        destination, descriptor = _reserve_credentials_file(args.credentials_file)
-    except (OSError, ValueError) as exc:
-        print(f"{RED}cannot reserve credentials file: {exc}{END}", file=sys.stderr)
-        return 1
-    try:
-        res = provisioning.provision(args.tier, email=args.email,
-                                     username=args.username, payment_ref=args.ref)
-    except provisioning.ProvisionError as e:
-        _discard_reserved_credentials(destination, descriptor)
-        print(f"{RED}{e}{END}", file=sys.stderr)
-        return 1
-    except BaseException:
-        _discard_reserved_credentials(destination, descriptor)
-        raise
-    if res.get("already"):
-        _discard_reserved_credentials(destination, descriptor)
-        print(f"{YEL}already provisioned{END} for that reference — "
-              f"user '{res['username']}' ({res['tier']})")
-        return 0
-    handoff = {
-        "password": res["password"],
-        "tier": res["tier"],
-        "token": res["token"],
-        "token_expires_utc": res["token_expires_utc"],
-        "username": res["username"],
-    }
-    descriptor_to_write, descriptor = descriptor, -1
-    try:
-        _write_reserved_credentials(descriptor_to_write, handoff)
-    except OSError as exc:
-        print(
-            f"{RED}account was provisioned but the credential handoff failed: {exc}; "
-            f"inspect the mode-0600 file at {str(destination)!r}{END}",
-            file=sys.stderr,
-        )
-        return 1
-    print(f"provisioned '{res['username']}' ({res['tier']})")
-    print(f"credentials written once to {str(destination)!r} (mode 0600)")
-    if args.email:
-        print(
-            f"{DIM}email delivery was also attempted if SMTP is configured; "
-            f"the credential file is authoritative{END}",
-            file=sys.stderr,
-        )
-    return 0
-
-
 def cmd_notary(args) -> int:
     """The tamper-evident record ledger: prove no past call was altered."""
     from seiche import notary
@@ -861,6 +808,11 @@ def cmd_user(args) -> int:
     if args.action == "add":
         import secrets as _secrets
 
+        try:
+            access = accounts.canonical_access(args.tier)
+        except ValueError as exc:
+            print(f"{RED}{exc}{END}", file=sys.stderr)
+            return 2
         generated = not args.password
         credentials_file = getattr(args, "credentials_file", "")
         if generated and not credentials_file:
@@ -879,7 +831,7 @@ def cmd_user(args) -> int:
                 return 1
         password = args.password or _secrets.token_urlsafe(14)
         try:
-            accounts.add_user(args.username, password, tier=args.tier)
+            accounts.add_user(args.username, password, tier=access)
         except Exception:
             if destination is not None:
                 _discard_reserved_credentials(destination, descriptor)
@@ -889,7 +841,7 @@ def cmd_user(args) -> int:
             try:
                 _write_reserved_credentials(
                     descriptor_to_write,
-                    {"password": password, "tier": args.tier, "username": args.username},
+                    {"password": password, "tier": access, "username": args.username},
                 )
             except OSError as exc:
                 print(
@@ -898,12 +850,14 @@ def cmd_user(args) -> int:
                     file=sys.stderr,
                 )
                 return 1
-        print(f"user '{args.username}' ({args.tier}) provisioned")
+        print(f"user '{args.username}' ({access}) created")
         if destination is not None:
             print(f"credentials written once to {str(destination)!r} (mode 0600)")
     elif args.action == "list":
         for u in accounts.list_users():
-            print(f"{u['username']:24s} {u['tier']}")
+            level = accounts.access_level(u)
+            stored = "" if u["tier"] == level else f"  (stored {u['tier']})"
+            print(f"{u['username']:24s} {level}{stored}")
     return 0
 
 
@@ -1280,10 +1234,14 @@ def main() -> None:
     p.add_argument("--refresh", action="store_true", help="recompute (replays each episode ladder)")
     p.set_defaults(fn=cmd_wrecks)
 
-    p = sub.add_parser("user", help="subscriber accounts (add/list)")
+    p = sub.add_parser("user", help="free accounts (add/list)")
     p.add_argument("action", choices=["add", "list"])
     p.add_argument("username", nargs="?", default="")
-    p.add_argument("--tier", default="pro")
+    p.add_argument(
+        "--access", "--tier", dest="tier", default="free",
+        help="free (default) or operator (uncapped, not for sale); legacy "
+             "pro reads as free, founder and enterprise as operator",
+    )
     p.add_argument("--password", default="", help="omit to auto-generate")
     p.add_argument(
         "--credentials-file",
@@ -1322,18 +1280,6 @@ def main() -> None:
     p = sub.add_parser("notary", help="tamper-evident record ledger (status/verify/stamp)")
     p.add_argument("action", nargs="?", choices=["status", "verify", "stamp"], default="status")
     p.set_defaults(fn=cmd_notary)
-
-    p = sub.add_parser("provision", help="confirmed payment -> subscriber account + token")
-    p.add_argument("--tier", default="pro", help="pro | founder | enterprise")
-    p.add_argument("--email", default="", help="deliver credentials here (needs SMTP)")
-    p.add_argument("--username", default="", help="omit to auto-generate")
-    p.add_argument("--ref", default="", help="payment reference (txid/invoice) for idempotency")
-    p.add_argument(
-        "--credentials-file",
-        required=True,
-        help="new mode-0600 JSON handoff file; existing paths are never overwritten",
-    )
-    p.set_defaults(fn=cmd_provision)
 
     p = sub.add_parser("market-collect", help="run official market collectors once")
     p.add_argument("--market", action="append", help="market ID; repeat to select several")

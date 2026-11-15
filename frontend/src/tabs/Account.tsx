@@ -20,8 +20,8 @@ export default function Account() {
       .catch(() => {});
   }, []);
 
-  // The terminal is fully open. Accounts are optional: they can hold email
-  // alerts and, when provisioned, authenticate subscriber machine tools.
+  // The terminal is fully open and free. Accounts are optional and free: they
+  // hold email alerts and, where Agent Room is enabled, its private tools.
   // Placed after the hooks so the hook order stays unconditional.
   if (!token) {
     const doLogin = () => {
@@ -97,8 +97,8 @@ export default function Account() {
       <div className="card span6">
         <h2>API access</h2>
         <div className="sub">
-          The eight public MCP research tools need no key. Your bearer token identifies you for
-          alert preferences and authenticated refreshes; when subscriber access is provisioned, it also
+          The eight public MCP research tools need no key. Accounts are free. Your bearer token identifies
+          you for alert preferences and authenticated refreshes, and where Agent Room is enabled it also
           authenticates five private Agent Room preview tools. It does not unlock unavailable legacy tools. Keep it private; it lasts 30 days.
         </div>
         <div className="kv" style={{ flexDirection: "column", gap: 8 }}>

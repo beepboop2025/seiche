@@ -58,7 +58,7 @@ hermes gateway
 
 Works against any of the three Seiche MCP wirings: local stdio
 (`seiche-mcp`), same-box HTTP (`127.0.0.1:8787/mcp`), or the hosted endpoint
-(`https://api.seiche.info/mcp`, anonymous free tier or subscriber token).
+(`https://api.seiche.info/mcp`, anonymous or with a free account token).
 
 ## Anonymous tool contract
 

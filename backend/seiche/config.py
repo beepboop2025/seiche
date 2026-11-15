@@ -1396,23 +1396,30 @@ ALERT_RULES = {
 ALERT_WEBHOOK_ENV = "SEICHE_WEBHOOK_URL"   # optional POST target (Slack/TG/...)
 
 # ---------------------------------------------------------------------------
-# MCP metering (the hosted /mcp endpoint for AI agents). Anonymous callers get
-# the free public tools and a tight daily cap so agent-builders can try Seiche
-# with zero friction; subscribers authenticate with the same bearer token as
-# the API and get per-tier daily quotas. None = unlimited. These are the
-# commercial dials — tune them here.
+# MCP metering (the hosted /mcp endpoint for AI agents). Seiche is free: there
+# is no paid tier, no upgrade and no payment hook. These allowances only keep
+# the shared host responsive. Anonymous callers are counted per IP, a free
+# signed-in account per username, and operator accounts (Seiche's own operator
+# and internal monitors) are uncapped. No payment or voluntary support changes
+# any of them.
 # ---------------------------------------------------------------------------
 
-MCP_DAILY_QUOTAS = {          # tool-calls per UTC day, by subscriber tier
-    "pro": 5000,
-    "founder": None,          # unlimited
-    "enterprise": None,       # unlimited
-}
 MCP_ANON_DAILY = 200          # tool-calls per UTC day for an unauthenticated IP
+MCP_FREE_DAILY = 5000         # tool-calls per UTC day for a free signed-in account
 MCP_RATE_LIMIT_PER_MIN = 60   # per-caller burst ceiling (IP or username)
 MCP_MAX_BATCH = 25            # max JSON-RPC messages in one /mcp POST (anti-abuse)
-MCP_UPGRADE_URL = "https://seiche.info/support"  # shown when a quota is hit
+SUPPORT_URL = "https://seiche.info/support"  # voluntary support; it changes no limit
 
-# Tiers a paid subscription can be provisioned into (see provisioning.py). A
-# tier here must have a quota entry above (or be unlimited by omission).
-SUBSCRIBER_TIERS = ("pro", "founder", "enterprise")
+# Account access levels, stored in the users.tier column. "free" is every
+# signed-in account; "operator" is uncapped and is never sold. Values written
+# before these levels existed keep working with no data migration (tokens bind
+# the stored value, so rewriting rows would revoke them): "pro", the old
+# default of every account, reads as free with the same 5000-call allowance;
+# "founder" and "enterprise" read as operator.
+ACCESS_ANON = "anon"
+ACCESS_FREE = "free"
+ACCESS_OPERATOR = "operator"
+LEGACY_ACCESS = {"pro": ACCESS_FREE, "founder": ACCESS_OPERATOR, "enterprise": ACCESS_OPERATOR}
+# Optional comma-separated usernames that read as operator without touching the
+# database (for example the owner's account or an internal monitor).
+OPERATOR_USERS_ENV = "SEICHE_OPERATOR_USERS"
