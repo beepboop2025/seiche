@@ -34,7 +34,7 @@ export default function RatesDesk(){
  const query=new URLSearchParams();if(date)query.set('date',date);if(compare)query.set('compare',compare);
  const curvePath='/api/v2/rates/curves/'+encodeURIComponent(curveId)+(query.size?'?'+query:'');
  const {data:curve,error:curveError}=useDesk(curvePath);
- const spreadPath='/api/v2/rates/spreads/'+encodeURIComponent(spreadId)+'?days='+days;
+ const spreadPath='/api/v2/rates/spreads/'+encodeURIComponent(spreadId)+'?days='+encodeURIComponent(days);
  const {data:spread,error:spreadError}=useDesk(spreadPath);
  const nodes:PlotPoint[]=rows(curve?.nodes).map(p=>({x:p.tenor_years,label:p.tenor,value:p.value,comparison:p.comparison?.value,date:p.asof,source:rows(curve?.provenance)[0]?.publisher,status:p.status}));
  const history=useMemo(()=>historyPoints(spread?.history).filter(p=>(!from||p.label>=from)&&(!through||p.label<=through)).map(p=>({...p,source:rows(spread?.provenance).map(s=>s.publisher).join(' + ')})),[spread,from,through]);
