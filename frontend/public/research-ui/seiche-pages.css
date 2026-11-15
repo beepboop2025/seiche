@@ -57,3 +57,8 @@ html.research-interface body { background: var(--research-bg); color: var(--rese
 @media (prefers-reduced-motion: reduce) {
   html.research-interface * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* Company line: the operator, CIN, contact and legal links in every static page footer. */
+.company-line { flex-basis: 100%; width: 100%; margin: 16px 0 0; font-size: 12.5px; line-height: 1.6; opacity: .85; }
+.company-line a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.company-footer { padding: 24px clamp(20px, 4vw, 48px) 40px; border-top: 1px solid var(--research-line, #23272e); color: var(--research-muted, #9da2ab); }
