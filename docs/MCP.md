@@ -293,73 +293,18 @@ interpretation fields. The money-market tool keeps `plain_language`,
 `quant_read`, regime, strongest signal, countercase, coverage, freshness and
 caveats in every successful projection.
 
-## Machine-native support (x402) — dormant by design
+## No payment path
 
-Seiche's eight active public research tools require no payment. The legacy
-compute-heavy tools remain unavailable even when a payment or bearer is supplied. The
-codebase also carries a dormant
-[x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
-if it is ever enabled, an AI agent with a wallet can voluntarily chip in a
-few cents of USDC per call for the operator-cost tools — support in the
-currency agents hold, not a paywall, and never a condition for the public
-surface, which stays free forever.
+Seiche is free forever. No route or MCP tool can be gated by a payment: there is
+no paid tier, no upgrade, no pay-per-call rail (x402 or any other) and no
+provisioning webhook. The eight public research tools need no key; the legacy
+compute-heavy tools stay unavailable with or without a bearer token, and a
+payment header changes nothing. Voluntary support (https://seiche.info/support)
+never changes access or limits.
 
-The rail is **off by default** and fail-closed. The v2 code can be deployed
-without any x402 environment variables and does not validate or contact a
-facilitator at startup. Setting only `SEICHE_X402_PAY_TO` is deliberately not
-enough: a paid request then returns an explicit configuration error before any
-facilitator call. Prices live in `backend/seiche/config.py`
-(`X402_PRICES_USD`). Activation requires one coherent profile:
-
-| `SEICHE_X402_PROFILE` | exact network / asset / facilitator contract |
-|---|---|
-| `base-sepolia-testnet` | `eip155:84532`, Base Sepolia USDC, and `https://x402.org/facilitator`; no facilitator authorization value |
-| `base-mainnet-authenticated` | reserved and explicitly rejected until Seiche has a per-request signer for CDP's short-lived, method/host/path-bound JWTs |
-
-The testnet profile requires an EVM receiving address in
-`SEICHE_X402_PAY_TO`. Optional `SEICHE_X402_NETWORK`,
-`SEICHE_X402_ASSET`, and `SEICHE_X402_FACILITATOR` values must exactly match
-the selected profile. The public x402.org facilitator is accepted only by the
-Base Sepolia testnet profile. It cannot be paired with Base mainnet. Selecting
-the reserved mainnet profile returns a local configuration error before any
-facilitator contact; a static bearer credential is deliberately unsupported
-because one JWT cannot authenticate both the `/verify` and `/settle` paths.
-
-When a valid profile is active, anonymous `tools/list` identifies the five
-payable analysis tools. An unpaid `tools/call` returns the x402 v2
-`PaymentRequired` JSON body and the same document base64-encoded in
-`PAYMENT-REQUIRED`. The client retries with a base64 v2 payload in
-`PAYMENT-SIGNATURE`; only an exact requirements match is verified and settled.
-The successful response returns the base64 settlement receipt in
-`PAYMENT-RESPONSE`. Requirements use `x402Version: 2`, CAIP-2 networks, an
-atomic-unit `amount`, and a top-level resource object. Legacy v1 `X-PAYMENT`
-and `X-PAYMENT-RESPONSE` headers are not accepted or emitted.
-
-The release ships this code **dormant**. Production activation still requires
-the owner's receiving wallet, a per-request JWT signer and safe key rotation,
-plus legal/compliance authorization. A deployed code path is not evidence that
-mainnet charging is live.
-
-x402 never exposes or authorizes Agent Room. A wallet payment is not a bearer
-principal, room membership, signature, acceptance, or execution authority.
-
-With a payment header present, Seiche validates bearer-token state, the
-JSON-RPC request shape, method, tool, request ID and the tool's published input
-schema before calling the facilitator. Invalid arguments therefore cannot
-settle. The initial request without a payment header still receives the normal
-HTTP 402 requirements document.
-
-Settlement and tool execution are not atomic across the facilitator boundary.
-If a snapshot, upstream dependency or tool handler fails after settlement, the
-JSON-RPC result is an error and the response still carries the settlement
-receipt. Seiche has no application-level idempotency key, automatic rollback or
-automatic refund for that case. A client must not blindly repay or auto-retry;
-it should retain `PAYMENT-RESPONSE` and the transaction reference for manual
-operator reconciliation and, where appropriate, a refund.
-
-The separate Undertow PayPal webhook placeholder is also dormant. Its edge
-contract and mandatory activation checklist are documented in
-[`PAYPAL.md`](PAYPAL.md); it is not an active alternative payment rail.
+Undertow, a separate product, runs its own x402 service under
+`/undertow/x402/` on this host; it is not part of Seiche. Undertow's dormant
+PayPal webhook placeholder is documented in [`PAYPAL.md`](PAYPAL.md).
 
 ## Public vs. authenticated surface
 

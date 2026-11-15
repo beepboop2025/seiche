@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from seiche import accounts, api, mcp_server, usage, world_model_delivery, x402
+from seiche import accounts, api, mcp_server, usage, world_model_delivery
 
 
 @pytest.fixture()
@@ -507,26 +507,6 @@ def test_activation_logger_emits_info_without_root_configuration(monkeypatch):
     assert len(records) == 1
     assert records[0].levelno == logging.INFO
     assert records[0].getMessage().startswith("mcp_activation product=seiche ")
-
-
-@pytest.mark.parametrize("configured", [True, False])
-def test_legacy_paid_request_never_verifies_or_settles(client, monkeypatch, configured):
-    def forbidden(*args, **kwargs):
-        pytest.fail("restricted request must not verify or settle a payment")
-    monkeypatch.setenv("SEICHE_X402_PROFILE", "base-sepolia-testnet")
-    if configured:
-        monkeypatch.setenv("SEICHE_X402_PAY_TO", "0x000000000000000000000000000000000000dEaD")
-    else:
-        monkeypatch.delenv("SEICHE_X402_PAY_TO", raising=False)
-    monkeypatch.setattr(x402, "verify", forbidden)
-    monkeypatch.setattr(x402, "settle", forbidden)
-    response = client.post("/mcp", json=_rpc("tools/call", {"name": "funding_stress_forecast", "arguments": {}}), headers={"PAYMENT-SIGNATURE": "test-only-marker"})
-    assert response.status_code == 400
-    assert "PAYMENT-RESPONSE" not in response.headers
-    assert "PAYMENT-REQUIRED" not in response.headers
-    assert response.json()["id"] == 1
-    assert response.json()["error"]["data"]["category"] == "source_rights_restricted"
-
 
 
 def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):

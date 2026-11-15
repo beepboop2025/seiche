@@ -154,7 +154,7 @@ Authenticated hosted MCP adds five private Agent Room preview tools for
 identity-to-key binding, room creation, signed append, verified listing, and
 full-chain verification. The same protected operations have REST twins under
 `/api/agent-room/`. They are discussion and evidence primitives only: every
-record is non-executable, x402 cannot unlock them, and local stdio has no bearer
+record is non-executable, no payment can unlock them, and local stdio has no bearer
 principal with which to expose them. See the
 [Agent Room guide](https://github.com/beepboop2025/seiche/blob/main/docs/AGENT-ROOM.md).
 

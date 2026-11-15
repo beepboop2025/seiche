@@ -51,7 +51,6 @@ from seiche import (
     trade_safety,
     usage,
     world_model_delivery,
-    x402,
 )
 from seiche.config import (
     ALERT_RULES,
@@ -737,8 +736,6 @@ if not _mcp_activation_log.handlers:
     _mcp_activation_handler = logging.StreamHandler()
     _mcp_activation_handler.setFormatter(logging.Formatter("%(message)s"))
     _mcp_activation_log.addHandler(_mcp_activation_handler)
-
-_X402_CONFIGURATION_WIRE_ERROR = "payment service is temporarily unavailable"
 
 # CORS is applied once at the edge (Caddy on api.seiche.info); a second copy
 # here produced duplicate Access-Control-Allow-Origin headers that browsers
@@ -4555,154 +4552,6 @@ def mcp_http(
             ),
             status_code=413,
         )
-    # x402 v2 pay-per-call: anonymous caller + a priced analysis tool. A
-    # profile/pay-to value marks an activation attempt, but an incomplete or
-    # inconsistent profile is rejected before any facilitator call. Dormant
-    # deployments and unrelated free calls continue serving normally.
-    if x402.activation_attempted() and public:
-        pay_header = request.headers.get("PAYMENT-SIGNATURE")
-        # x402 is a single-request transport extension, not a batch payment.
-        # Keep malformed params/name values away from dict/hash lookups so the
-        # pre-settlement rejection path itself cannot raise.
-        single = body if isinstance(body, dict) else None
-        params = (single or {}).get("params")
-        params = params if isinstance(params, dict) else {}
-        candidate_tool = params.get("name")
-        tool = (
-            candidate_tool
-            if (
-                (single or {}).get("method") == "tools/call"
-                and isinstance(candidate_tool, str)
-            )
-            else None
-        )
-        # Retired tools remain unavailable even if a caller offers payment.
-        # Preserve the rights explanation before payment configuration/header
-        # checks, without reviving the tool in pricing or discovery.
-        if pay_header is not None and tool in mcp_server.public_rights.LEGACY_TOOLS:
-            return JSONResponse(
-                mcp_server.preflight_tool_call(single, public=public), status_code=400
-            )
-        priced = x402.price_usd(tool)
-        # A presented bearer token is an attempt to use subscriber auth, not
-        # permission to fall back to a wallet charge. Preserve that boundary
-        # even if the operator's x402 activation is currently misconfigured.
-        if priced is not None and authorization is not None and ident is None:
-            return JSONResponse(
-                mcp_server._error(
-                    single.get("id"),
-                    MCP_SERVER_ERROR,
-                    "invalid Authorization bearer token",
-                ),
-                status_code=401,
-                headers={"WWW-Authenticate": 'Bearer realm="seiche"'},
-            )
-        config_error = x402.configuration_error()
-        if config_error is not None and (pay_header is not None or priced is not None):
-            message_id = single.get("id") if single is not None else None
-            # Correlate repeated failures without retaining the diagnostic.
-            # Configuration errors can carry provider names, paths, or other
-            # implementation detail, so neither logs nor the public JSON-RPC
-            # boundary receive any fragment of the original text.
-            diagnostic = config_error.encode("utf-8", errors="replace")
-            diagnostic_sha256 = hashlib.sha256(diagnostic).hexdigest()
-            logging.getLogger("seiche.api").error(
-                "x402_activation_rejected product=seiche "
-                "failure_class=configuration_error diagnostic_sha256=%s "
-                "diagnostic_bytes=%d",
-                diagnostic_sha256,
-                len(diagnostic),
-                extra={
-                    "event": "x402_activation_rejected",
-                    "product": "seiche",
-                    "failure_class": "configuration_error",
-                    "diagnostic_sha256": diagnostic_sha256,
-                    "diagnostic_bytes": len(diagnostic),
-                },
-            )
-            return JSONResponse(
-                mcp_server._error(
-                    message_id,
-                    MCP_SERVER_ERROR,
-                    _X402_CONFIGURATION_WIRE_ERROR,
-                ),
-                status_code=503,
-                headers={"Cache-Control": "no-store", "Retry-After": "60"},
-            )
-        if pay_header is not None and priced is None:
-            return JSONResponse(
-                mcp_server._error(
-                    None,
-                    MCP_SERVER_ERROR,
-                    "PAYMENT-SIGNATURE covers exactly one tools/call for a priced "
-                    "analysis tool",
-                ),
-                status_code=400,
-            )
-        if priced is not None:
-            resource = "https://api.seiche.info/mcp"
-            reqs = x402.requirements(tool, resource)
-
-            def payment_challenge(error: str) -> JSONResponse:
-                challenge = x402.payment_required(tool, resource, error)
-                return JSONResponse(
-                    challenge,
-                    status_code=402,
-                    headers={
-                        "Cache-Control": "no-store",
-                        "PAYMENT-REQUIRED": x402.payment_required_header(challenge),
-                    },
-                )
-
-            if pay_header is None:
-                return payment_challenge(
-                    f"{tool} is a paid tool on the anonymous surface"
-                )
-            # Payment cannot make an invalid request valid. Run the pure MCP
-            # envelope/tool/input-schema preflight before verify or settle so
-            # malformed calls and deterministic dispatch preconditions cost
-            # the caller nothing.
-            preflight = mcp_server.preflight_tool_call(single, public=False)
-            if preflight is not None:
-                return JSONResponse(preflight, status_code=400)
-            payment = x402.decode_payment(pay_header)
-            if payment is None:
-                return payment_challenge(
-                    "PAYMENT-SIGNATURE header is malformed or is not x402 v2"
-                )
-            if not x402.payment_resource_matches(payment, tool, resource):
-                return payment_challenge(
-                    "payment resource does not match the requested Seiche resource"
-                )
-            ok, why = x402.verify(payment, reqs)
-            if not ok:
-                return payment_challenge(why)
-            settled, receipt = x402.settle(payment, reqs)
-            if not settled:
-                return payment_challenge(
-                    str(receipt.get("errorReason") or "settlement failed")
-                )
-            # Paid: this one call runs on the full surface, no quota charged.
-            # Settlement and handler execution cannot be one atomic operation;
-            # docs/MCP.md states the receipt/retry/refund boundary explicitly.
-            try:
-                # Paid anonymous calls unlock only priced analysis tools. They
-                # still have no bearer identity and therefore cannot discover
-                # or invoke Agent Room operations.
-                resp = mcp_server.dispatch(single, public=False)
-            except Exception:
-                resp = mcp_server._error(
-                    single.get("id"), mcp_server.INTERNAL_ERROR, "internal error"
-                )
-            _log_mcp_activation(single, resp, "paid", origin)
-            return JSONResponse(
-                resp,
-                headers={
-                    "Cache-Control": "no-store",
-                    "PAYMENT-RESPONSE": x402.settle_header(receipt),
-                },
-            )
-
     ukey = usage.key_for(ident, ip)
     limit = usage.quota_for(ident)
     responses: list[dict] = []
@@ -4740,15 +4589,6 @@ def mcp_http(
             mid = m.get("id") if isinstance(m, dict) else None
             resp = mcp_server._error(mid, mcp_server.INTERNAL_ERROR, "internal error")
         _log_mcp_activation(m, resp, "public" if public else "subscriber", origin)
-        if (
-            resp is not None
-            and x402.enabled()
-            and public
-            and isinstance(m, dict)
-            and m.get("method") == "tools/list"
-        ):
-            # advertise the payable tools to wallet-holding agents
-            resp = x402.annotate_tools_list(resp)
         if resp is not None:
             responses.append(resp)
 
