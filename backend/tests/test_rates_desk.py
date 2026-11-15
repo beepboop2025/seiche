@@ -348,6 +348,29 @@ def test_spread_windows_beyond_the_cap_never_grow_the_cache(tmp_path, monkeypatc
     rates_desk.clear_cache()
 
 
+def test_rates_routes_share_the_sibling_limit_and_its_429(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from seiche import api
+    _store(tmp_path, monkeypatch)
+    monkeypatch.setattr(api, "_market_series_limiter", api._RateLimiter(3))
+    client = TestClient(api.app)
+    for _ in range(3):
+        assert client.get("/api/v2/rates").status_code == 200
+    # The budget is the one the sibling /api/v2 data routes spend, so a sibling is refused too.
+    sibling = client.get("/api/v2/gift-city")
+    assert sibling.status_code == 429
+    for path in ("/api/v2/rates", "/api/v2/rates/series/EA.ECB.YC_AAA_SPOT_2Y", "/api/v2/rates/curves",
+                 "/api/v2/rates/curves/EA_AAA_SPOT", "/api/v2/rates/spreads", "/api/v2/rates/spreads/EA_AAA_2S10S",
+                 "/api/v2/rates/funding-conditions"):
+        limited = client.get(path)
+        assert limited.status_code == 429, path
+        assert limited.json() == sibling.json() == {"detail": "market series request limit exceeded"}
+        assert limited.headers["retry-after"] == sibling.headers["retry-after"] == "60"
+    # Query names are checked first, as on the siblings; another client keeps its own allowance.
+    assert client.get("/api/v2/rates?x=1").status_code == 422
+    assert client.get("/api/v2/rates", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 200
+
+
 def test_rest_routes_serve_payloads_and_plain_422s(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from seiche import api
