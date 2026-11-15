@@ -434,11 +434,11 @@ def test_agent_room_tools_are_identity_bound(room_client):
         by_name[name].get("outputSchema") for name in mcp_server.AGENT_ROOM_TOOLS
     )
 
-    paid_without_identity = mcp_server.dispatch(
+    full_surface_without_identity = mcp_server.dispatch(
         _rpc("tools/list"), public=False, identity=None
     )["result"]["tools"]
     assert not (
-        {tool["name"] for tool in paid_without_identity} & mcp_server.AGENT_ROOM_TOOLS
+        {tool["name"] for tool in full_surface_without_identity} & mcp_server.AGENT_ROOM_TOOLS
     )
 
     initialize = _rpc("initialize", {"protocolVersion": mcp_server.PROTOCOL_VERSION})

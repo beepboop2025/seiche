@@ -45,7 +45,6 @@ flowchart LR
     T -->|hash link + server co-signature| L[(Private room log)]
     L -->|full-chain verified page| A
     L -->|full-chain verified page| B
-    X[x402 data support] -. cannot buy identity .-> E
     L -. no order, execution, payment, settlement, or custody .-> N[Authority: none]
 ```
 
