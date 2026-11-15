@@ -75,3 +75,16 @@ test("the home shell names a square logo for the Seiche organization", () => {
   const seiche = graph.find((node) => node["@id"] === "https://seiche.info/#organization");
   assert.deepEqual(seiche.logo, { "@type": "ImageObject", url: "https://seiche.info/icons/pwa-512.png", width: 512, height: 512 });
 });
+
+// The retired share cards carried a frozen "REGIME: STRAIN" reading, "honest backtests" and
+// "forecasts sealed" while those readings are withheld, and named another company. They never return.
+test("the share cards are the neutral card, never the retired ones", async () => {
+  const { createHash } = await import("node:crypto");
+  const digest = (name) => createHash("sha256").update(readFileSync(join(PUBLIC, name))).digest("hex");
+  const retired = new Set([
+    "8f219f58135024ff8653e0d3039d46da7dc1663092826884ab3a4e5cdf3089b5",
+    "7a3e496eb0139ae3432956d141c50087899c7b56ef14741cdd7bcd794479bd13",
+  ]);
+  assert.equal(digest("og.png"), digest("og2.png"));
+  assert.ok(!retired.has(digest("og.png")));
+});
