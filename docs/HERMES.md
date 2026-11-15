@@ -101,8 +101,8 @@ config, and run:
 hermes gateway
 ```
 
-Lock `TELEGRAM_ALLOWED_USERS` down before wiring a subscriber token: an
-open bot with subscriber tools is your quota and your data, answering
+Lock `TELEGRAM_ALLOWED_USERS` down before wiring an account token: an
+open bot with signed-in tools is your quota and your data, answering
 strangers.
 
 ### 5. Bootstrap
@@ -149,7 +149,7 @@ local model, or Nous Portal.
   cheapest hardening.
 - `skills.guard_agent_created: true` safety-scans skills the agent writes
   for itself as the learning loop runs.
-- The bot token and any subscriber token live in `~/.hermes/.env`, never in
+- The bot token and any Seiche account token live in `~/.hermes/.env`, never in
   config committed anywhere.
 
 The public `market_workbench` tool accepts `provider` (`h10` or `ecb`), `base`, `quote`, `days` (30–3650), and optional `china_series`. It reads cached, dated reference FX and owner-accepted annual Palimpsest China evidence; the WORKBENCH tab and `/api/v2/market-workbench` use the same contract. It never collects during a request or creates executable quotes.

@@ -43,7 +43,6 @@ from seiche import (
     hetzner_runtime,
     mcp_server,
     methodology,
-    provisioning,
     public_view,
     standby,
     stateful_control,
@@ -62,8 +61,8 @@ from seiche.config import (
     EPISODES,
     MCP_MAX_BATCH,
     MCP_RATE_LIMIT_PER_MIN,
-    MCP_UPGRADE_URL,
     REGIMES,
+    SUPPORT_URL,
     WRECKS_BLOB_KEY,
 )
 from seiche.domain.observation import (
@@ -1089,12 +1088,13 @@ def _bearer_identity(authorization: str | None) -> dict | None:
 
 def require_board(authorization: str | None = Header(default=None)) -> dict | None:
     """Shared gate for every non-public endpoint. When the board gate is on
-    (SEICHE_BOARD_AUTH=1, the public box) a valid subscriber token is required;
-    in dev/tests (gate off) it is a no-op that simply surfaces the caller's
-    identity (or None) so handlers can honour `force` only for authed callers."""
+    (SEICHE_BOARD_AUTH=1) a valid token from a free account is required; a
+    sign-in is not a paywall. With the gate off (the default, and live today)
+    it is a no-op that simply surfaces the caller's identity (or None) so
+    handlers can honour `force` only for authed callers."""
     ident = _bearer_identity(authorization)
     if _board_gate_enabled() and ident is None:
-        raise HTTPException(401, "the board is a subscriber feature — sign in")
+        raise HTTPException(401, "sign in to use this endpoint")
     return ident
 
 
@@ -1326,7 +1326,7 @@ def _public_openapi_document() -> dict[str, Any]:
     """Small, stable contract for anonymous integrations only.
 
     ``app.openapi()`` is intentionally not used: the application also owns
-    subscriber and operator routes, and production must not enumerate those.
+    signed-in and operator routes, and production must not enumerate those.
     """
     object_response = {
         "description": "Successful JSON response",
@@ -1951,8 +1951,8 @@ async def overview(
 ):
     """The board as projected for publication: each engine, deep block and
     headline value is public only when every input it reads is an allowed
-    direct or open source; the rest is withheld metadata. Subscriber-gated
-    when SEICHE_BOARD_AUTH=1 (the public box). `force` (cache-bypass
+    direct or open source; the rest is withheld metadata. Sign-in gated
+    only when SEICHE_BOARD_AUTH=1. `force` (cache-bypass
     recompute) is honoured only for authenticated callers."""
     from seiche import public_rights
     snapshot = await assemble.snapshot(force=force and ident is not None)
@@ -2965,7 +2965,7 @@ def _raise_agent_room_http_error(exc: agent_room.AgentRoomError) -> None:
 
 
 def _charge_agent_room_mutation(ident: dict) -> None:
-    """Share the durable subscriber quota between REST and MCP mutations."""
+    """Share the durable account quota between REST and MCP mutations."""
 
     meter = usage.charge(
         usage.key_for(ident, "unused-for-authenticated-principal"),
@@ -2985,7 +2985,7 @@ def agent_room_register_key(
     response: Response,
     ident: dict = Depends(require_agent_room_identity),
 ):
-    """Bind only the authenticated subscriber identity to its client key."""
+    """Bind only the authenticated account identity to its client key."""
 
     _set_agent_room_headers(response)
     _charge_agent_room_mutation(ident)
@@ -3275,9 +3275,11 @@ class LoginBody(BaseModel):
 
 @app.post("/api/auth/login")
 async def login(body: LoginBody, request: Request):
-    """Subscriber login — returns a 30-day bearer token. Accounts are
-    provisioned by the operator (`seiche user add`); no self-signup yet.
-    Per-IP rate-limited with consecutive-failure backoff."""
+    """Account login: returns a 30-day bearer token. Accounts are free and
+    created by the operator (`seiche user add`); no self-signup yet. The
+    response's ``tier`` is the access level (``free`` or ``operator``); the
+    token keeps the stored value it binds. Per-IP rate-limited with
+    consecutive-failure backoff."""
     ip = _client_ip(request)
     locked = _login_guard.retry_after(ip)
     if locked:
@@ -3295,7 +3297,8 @@ async def login(body: LoginBody, request: Request):
         _login_guard.record_failure(ip)
         raise HTTPException(401, "invalid username or password")
     _login_guard.record_success(ip)
-    return accounts.issue_token(user["username"], user["tier"])
+    token = accounts.issue_token(user["username"], user["tier"])
+    return {**token, "tier": accounts.access_level(user)}
 
 
 DISPATCH_DIR = Path(__file__).parent / "dispatches"
@@ -3459,7 +3462,8 @@ async def me(authorization: str | None = Header(default=None)):
     ident = _bearer_identity(authorization)
     if ident is None:
         raise HTTPException(401, "not signed in")
-    return ident
+    # ``tier`` keeps its key and now carries the access level (free or operator).
+    return {"username": ident["username"], "tier": accounts.access_level(ident)}
 
 
 class AlertPrefsBody(BaseModel):
@@ -3496,11 +3500,10 @@ async def asof(
     date: str, response: Response, ident: dict | None = Depends(require_board)
 ):
     """Time Machine: the whole light board replayed as of a historical date.
-    Subscriber-gated when SEICHE_ASOF_AUTH=1 (the public box); open in dev."""
+    Sign-in gated only when SEICHE_ASOF_AUTH=1 (a free account); open
+    otherwise."""
     if accounts.asof_gate_enabled() and ident is None:
-        raise HTTPException(
-            401, "Time Machine replay is a subscriber feature — sign in"
-        )
+        raise HTTPException(401, "sign in to use Time Machine replay")
     if not _DATE_RE.match(date):
         raise HTTPException(422, "date must be YYYY-MM-DD")
     payload = await assemble.snapshot_asof(date)
@@ -4429,7 +4432,7 @@ def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
     text = (
         f"ERROR: daily MCP quota reached ({meter['used']}/{meter['limit']} "
         f"tool calls today). The free allowance resets at 00:00 UTC. Seiche has no "
-        f"paid tier; voluntary support does not change limits: {MCP_UPGRADE_URL}"
+        f"paid tier; voluntary support does not change limits: {SUPPORT_URL}"
     )
     return {
         "jsonrpc": "2.0",
@@ -4766,54 +4769,12 @@ def mcp_http(
     return JSONResponse(payload, headers=headers)
 
 
-@app.post("/api/provision")
-async def provision_webhook(
-    request: Request, x_seiche_signature: str | None = Header(default=None)
-):
-    """The payment -> account hook. A payment processor (BTCPay/NOWPayments/
-    Stripe) or an operator adapter POSTs a signed JSON body when a payment
-    confirms; Seiche provisions the subscriber and returns the credentials.
-    Fail-closed: disabled unless SEICHE_PROVISION_SECRET is set, and every call
-    must carry a valid HMAC-SHA256 signature of the raw body.
-
-    The signature must cover the exact bytes on the wire, so we read the raw
-    body ourselves rather than letting FastAPI parse it first."""
-    from starlette.concurrency import run_in_threadpool
-    import json as _json
-
-    if not provisioning.enabled():
-        raise HTTPException(503, "provisioning is not enabled on this server")
-    raw = await request.body()
-    if not provisioning.verify_signature(raw, x_seiche_signature):
-        raise HTTPException(401, "bad or missing signature")
-    try:
-        data = _json.loads(raw or b"{}")
-    except _json.JSONDecodeError:
-        raise HTTPException(400, "body must be JSON")
-    if not isinstance(data, dict):
-        raise HTTPException(400, "body must be a JSON object")
-    try:
-        # provision() does blocking SQLite + (optional) SMTP — keep it off the
-        # event loop so a slow mail server can't stall the API.
-        return await run_in_threadpool(
-            provisioning.provision,
-            data.get("tier", ""),
-            email=data.get("email", "") or "",
-            username=data.get("username", "") or "",
-            payment_ref=data.get("payment_ref", "") or "",
-            amount=data.get("amount"),
-            currency=data.get("currency", "") or "",
-        )
-    except provisioning.ProvisionError as exc:
-        raise HTTPException(422, str(exc))
-
-
 @app.get("/mcp/usage")
 def mcp_usage_report(
     request: Request, authorization: str | None = Header(default=None)
 ):
-    """The caller's meter for today — used by an agent (or a billing UI) to see
-    how much of the daily quota remains."""
+    """The caller's meter for today: how much of the free daily allowance
+    remains. Seiche is free; nothing here can be bought or upgraded."""
     ident = _bearer_identity(authorization)
     ip = _client_ip(request)
     ukey = usage.key_for(ident, ip)
@@ -4827,11 +4788,14 @@ def mcp_usage_report(
             headers={"Cache-Control": "no-store", "Retry-After": "5"},
         ) from None
     return {
-        "tier": ident["tier"] if ident else "anon",
+        # Wire-compatible keys. ``tier`` now carries the access level (anon,
+        # free or operator) and ``upgrade_url`` is always null: there is no
+        # paid tier and no upgrade.
+        "tier": accounts.access_level(ident),
         "used_today": used,
         "daily_limit": limit,
         "remaining": None if limit is None else max(0, limit - used),
-        "upgrade_url": MCP_UPGRADE_URL,
+        "upgrade_url": None,
     }
 
 

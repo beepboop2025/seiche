@@ -1,12 +1,14 @@
-"""MCP usage metering — the commercial meter for the hosted /mcp endpoint.
+"""MCP usage metering for the hosted /mcp endpoint.
 
-stdlib-only, SQLite-backed, matching the project ethos. One row per caller per
-UTC day; a tool call increments it and checks the caller's tier quota. Keys are
-``user:<username>`` for authenticated subscribers and ``ip:<addr>`` for
-anonymous callers, so the free public surface is capped without an account.
+Seiche is free: these allowances only keep the shared host responsive; no
+payment changes them. stdlib-only, SQLite-backed, matching the project ethos.
+One row per caller per UTC day; a tool call increments it and checks the
+caller's daily allowance. Keys are ``user:<username>`` for signed-in accounts
+and ``ip:<addr>`` for anonymous callers, so the public surface is metered
+without an account.
 
-Quotas live in config (MCP_DAILY_QUOTAS / MCP_ANON_DAILY) — those are the
-commercial dials. A quota of None means unlimited.
+Allowances live in config (MCP_ANON_DAILY / MCP_FREE_DAILY); operator accounts
+(see accounts.access_level) are uncapped. A quota of None means unlimited.
 """
 
 from __future__ import annotations
@@ -14,7 +16,8 @@ from __future__ import annotations
 import datetime
 import sqlite3
 
-from seiche.config import DB_PATH, MCP_ANON_DAILY, MCP_DAILY_QUOTAS
+from seiche import accounts
+from seiche.config import ACCESS_OPERATOR, DB_PATH, MCP_ANON_DAILY, MCP_FREE_DAILY
 
 
 def _today() -> str:
@@ -43,9 +46,9 @@ def quota_for(identity: dict | None) -> int | None:
     """The daily tool-call ceiling for a caller. None = unlimited."""
     if identity is None:
         return MCP_ANON_DAILY
-    # .get with a sentinel so an explicit None (unlimited) isn't overwritten.
-    tier = identity.get("tier", "pro")
-    return MCP_DAILY_QUOTAS.get(tier, MCP_ANON_DAILY)
+    if accounts.access_level(identity) == ACCESS_OPERATOR:
+        return None
+    return MCP_FREE_DAILY
 
 
 def key_for(identity: dict | None, ip: str) -> str:
