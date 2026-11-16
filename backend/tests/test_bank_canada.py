@@ -111,3 +111,76 @@ def test_dedup_revision_unit_normalization_and_unknown_publication(
     revised = asyncio.run(adapter.collect())
     assert sum(o.quality is QualityState.REVISED for o in revised.observations) == 1
     assert repository.save_observations(revised.observations) == 1
+
+
+def test_worker_materializes_collected_canada_reference_without_faulting(
+    tmp_path, monkeypatch, caplog
+):
+    # 0.16.14 cutover regression: with no registered local calibration every
+    # CA-CAD materialization raised KeyError in the market worker, so CA-CAD
+    # stayed in the fault set that switches off the collector heartbeat.
+    from seiche import market_runtime, store
+    from seiche.collectors import CollectorRun, CollectorRunStatus
+    from seiche.repository import SQLiteMarketRepository
+
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "canonical.sqlite")
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    repository = SQLiteMarketRepository()
+    now = datetime(2026, 11, 14, 1, tzinfo=UTC)
+
+    async def fetch(client):
+        return (document(payload()),)
+
+    # The long-lived worker collects without historical backfill.
+    adapter = FunctionalCanonicalAdapter(
+        pack=PACK,
+        adapter_id="boc_valet",
+        source="boc_valet",
+        fetcher=fetch,
+        parser=parse_valet,
+        repository=repository,
+        clock=lambda: now,
+    )
+    batch = asyncio.run(adapter.collect())
+    assert repository.save_observations(batch.observations) == 43
+    run = CollectorRun(
+        "CA-CAD",
+        "boc_valet",
+        CollectorRunStatus.SUCCESS,
+        now.isoformat(),
+        now.isoformat(),
+        len(batch.observations),
+        1,
+        (now + timedelta(days=1)).isoformat(),
+    )
+    registry = market_runtime.default_registry()
+    published = {}
+    market_runtime._completed_run_handler(
+        repository=repository,
+        registry=registry,
+        backfill=False,
+        materialize=True,
+        record_forward=True,
+        published_snapshots=published,
+    )(run.to_dict())
+    # A fault carried from an earlier cycle is retried at the cycle boundary.
+    # Any market left in this set closes the worker heartbeat gate.
+    faulted_markets = {"CA-CAD"}
+    snapshots = market_runtime._materialize_after_runs(
+        [run],
+        repository=repository,
+        registry=registry,
+        cutoff=datetime.now(UTC).replace(microsecond=0),
+        record_forward=True,
+        faulted_markets=faulted_markets,
+    )
+    assert "materialization failed" not in caplog.text
+    assert set(published.get("CA-CAD", ())) == {"overview", "gauge"}
+    assert faulted_markets == set()
+    assert {"CA-CAD", "GLOBAL"} <= set(snapshots)
+    gauge = repository.load_latest_market_snapshot("CA-CAD", "gauge")["payload"]
+    assert gauge["calibration_id"] == PACK.calibration_id
+    assert gauge["calibration_maturity"] == "REFERENCE_ONLY"
+    assert gauge["status"] == "UNAVAILABLE" and gauge["reading"]["index"] is None
+    assert gauge["components"] == []
+    assert gauge["evidence_eligibility"]["eligible"] is False

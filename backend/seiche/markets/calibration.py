@@ -436,13 +436,16 @@ _CALIBRATIONS = {
 }
 
 
+from seiche.markets.canada_cad import PACK as _CANADA_CAD_PACK
 from seiche.markets.funding_reference import additional_reference_packs
 
 # A versioned reference publication is explicit about having no calibrated
 # gauge. It must never inherit another country's weights or thresholds.
+# CA-CAD is a reference pack registered outside additional_reference_packs();
+# without its own entry every CA-CAD materialization raises KeyError.
 _CALIBRATIONS.update({
     pack.market_id: LocalCalibration(pack.calibration_id, pack.market_id, (), "REFERENCE_ONLY")
-    for pack in additional_reference_packs()
+    for pack in (_CANADA_CAD_PACK, *additional_reference_packs())
 })
 
 
