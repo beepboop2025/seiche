@@ -14,6 +14,7 @@ from seiche.markets.base import (
     ValidationOutcome,
     ValidationResult,
 )
+from seiche.markets.calibration import get_local_calibration
 from seiche.markets.registry import default_registry
 from seiche.markets.us_usd import legacy as us_legacy
 
@@ -44,6 +45,18 @@ def test_reference_registry_is_monetary_area_aware() -> None:
     assert "BG" in euro.jurisdiction_codes
     assert euro.support_status is PackSupportStatus.REFERENCE
     assert registry.get("CN-CNY").monetary_area_id != registry.get("HK-HKD").monetary_area_id
+
+
+def test_every_registered_pack_has_its_declared_local_calibration() -> None:
+    # The market worker materializes each collected pack through this lookup.
+    # In 0.16.14 CA-CAD had no entry, so every worker cycle raised KeyError,
+    # kept the collector heartbeat off and failed strict readiness.
+    for pack in default_registry().list():
+        calibration = get_local_calibration(pack.market_id)
+        assert (calibration.market_id, calibration.calibration_id) == (
+            pack.market_id,
+            pack.calibration_id,
+        )
 
 
 def test_pack_calendars_replace_generic_monday_friday() -> None:
