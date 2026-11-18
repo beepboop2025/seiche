@@ -2,6 +2,7 @@
 proof, the notary, and the falsifier list. Synthetic board payloads only, no
 network, no filesystem outside tmp_path."""
 
+import re
 import json
 
 import pytest
@@ -123,9 +124,12 @@ def test_engine_text_with_an_em_dash_is_normalized_not_rejected():
 def test_page_is_self_contained():
     text = _page()
     assert "@import" not in text
-    assert "<script" not in text
+    # The family shell is the one thing the page loads: three same-origin stylesheets and the
+    # same-origin context module. Nothing inline runs, and nothing third-party is fetched.
+    assert re.findall(r"<script\b[^>]*>", text) == ['<script type="module" src="/research-ui/context.js">']
     assert 'src="http' not in text
-    assert 'rel="stylesheet"' not in text
+    assert re.findall(r'<link rel="stylesheet" href="([^"]+)">', text) == [
+        "/research-ui/research.css", "/research-ui/family-tokens.css", "/research-ui/seiche-pages.css"]
     # the styles ship inline, sharing the methodology page's variables
     assert "--accent-soft" in text and "<style>" in text
 
