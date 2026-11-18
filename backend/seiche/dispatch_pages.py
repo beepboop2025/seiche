@@ -33,6 +33,24 @@ import sys
 from pathlib import Path
 
 SITE = "https://seiche.info"
+
+
+def _release_version() -> str:
+    """The release these pages are built from: assemble.VERSION, read as text.
+
+    This module stays stdlib only, so the constant is read rather than imported
+    (seiche.assemble pulls in every engine). It is the same bare semver the MCP
+    handshake serves, so the page can never name an older release than the one
+    that rendered it.
+    """
+    source = (Path(__file__).resolve().parent / "assemble.py").read_text(encoding="utf-8")
+    match = re.search(r'^VERSION = "(\d+\.\d+\.\d+)"$', source, re.M)
+    if not match:
+        raise SystemExit("dispatch pages: assemble.VERSION is not a bare semver")
+    return match.group(1)
+
+
+RELEASE_VERSION = _release_version()
 # Old letters carry HAS-PAID (pre open-access naming, gated nothing), new
 # ones HAS-DESK; this renderer reads the whole archive so it accepts both.
 MARKERS = ("<!--HAS-DESK-->", "<!--HAS-PAID-->")
@@ -817,14 +835,13 @@ same product; the callable contract remains the MCP server above.
 
 ## Current packages and agent integrations
 
-Reviewed 18 October 2026: Seiche Python/MCP 0.16.5 provides compact funding
-context and exact metric retrieval with compatible diagnostics. Python 3.12 or
-later is required. Package publication, hosted deployment identity and source
-observation freshness remain separate evidence states.
+Seiche Python/MCP {RELEASE_VERSION} is the release this page was built from.
+Python 3.12 or later is required. Package publication, hosted deployment
+identity and source observation freshness remain separate evidence states.
 
-- [Seiche 0.16.5 on PyPI](https://pypi.org/project/seiche/0.16.5/)
-- [Accepted release source](https://github.com/beepboop2025/seiche/tree/793dc42b391141c20aee911f6d18f000bd3feb8a)
-- [Current release and discovery hub](https://beepboop2025.github.io/financial-evidence-skills/distribution/): Financial Evidence Python 0.1.13, npm AI SDK 0.1.2, MCP/API setup and existing marketplace listings. NoiseFloor local Python/MCP is 0.4.2; its hosted service remains 0.4.0.
+- [Seiche on PyPI](https://pypi.org/project/seiche/): the published packages, by version
+- [Release source](https://github.com/beepboop2025/seiche/tree/v{RELEASE_VERSION}): the signed tag this release was built from
+- [Current release and discovery hub](https://beepboop2025.github.io/financial-evidence-skills/distribution/): the Financial Evidence Python package, the npm AI SDK, NoiseFloor, MCP/API setup and existing marketplace listings. The hub states each current package version.
 - [Seiche Glama repository listing](https://glama.ai/mcp/servers/beepboop2025/seiche) and [separate hosted connector](https://glama.ai/mcp/connectors/io.github.beepboop2025/seiche)
 - [Dated technical usage](https://liquilens.in/usage/2026-10-17/): application windows end 17 October 2026 at 23:18 UTC. Unclassified calls can include operator checks and monitoring; customer adoption and revenue remain unverified.
 

@@ -182,3 +182,29 @@ def test_page_chrome_has_no_dashes(repo):
     assert "—" not in chrome and "–" not in chrome
     sm = render_sitemap([meta])
     assert "—" not in sm and "–" not in sm
+
+
+def test_package_block_names_this_release_and_no_other_products_version():
+    """The block is rendered by the release it describes, so it cannot name an older one.
+
+    Until 0.16.15 it was typed by hand ("Reviewed 18 October 2026 ... 0.16.5") and stayed
+    there through nine releases. Other products' versions were typed in beside it and went
+    stale the same way; the distribution hub states those, so this page no longer does.
+    """
+    import re
+
+    from seiche import assemble, dispatch_pages
+
+    assert dispatch_pages.RELEASE_VERSION == assemble.VERSION
+    preamble = dispatch_pages._LLMS_PREAMBLE
+    start = preamble.index("## Current packages and agent integrations")
+    block = preamble[start:preamble.index("## Related products", start)]
+    assert f"Seiche Python/MCP {assemble.VERSION} is the release this page was built from." in block
+    assert f"https://github.com/beepboop2025/seiche/tree/v{assemble.VERSION}" in block
+    assert "https://pypi.org/project/seiche/)" in block
+    assert "Reviewed 18 October 2026" not in block
+    # The only version numbers in the block are this release's own.
+    assert set(re.findall(r"\b\d+\.\d+\.\d+\b", block)) == {assemble.VERSION}
+    assert "The hub states each current package version." in block
+    # The dated usage record keeps its own date.
+    assert "application windows end 17 October 2026" in block
