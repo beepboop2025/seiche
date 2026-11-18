@@ -2,13 +2,37 @@
 proof, the notary, and the falsifier list. Synthetic board payloads only, no
 network, no filesystem outside tmp_path."""
 
-import re
+from html.parser import HTMLParser
 import json
 
 import pytest
 
 from seiche import skeptic
 from seiche.dispatch_daily import lint_letter
+
+
+class _LoadedAssets(HTMLParser):
+    """Every script and stylesheet a page loads. The parser lower-cases tag and attribute names,
+    so an upper-case tag cannot slip past the way it would past a pattern match."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scripts: list[dict] = []
+        self.stylesheets: list[str | None] = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "script":
+            self.scripts.append(attributes)
+        elif tag == "link" and (attributes.get("rel") or "").lower() == "stylesheet":
+            self.stylesheets.append(attributes.get("href"))
+
+
+def _loaded_assets(text: str) -> _LoadedAssets:
+    assets = _LoadedAssets()
+    assets.feed(text)
+    assets.close()
+    return assets
 
 # A board payload shaped like /api/overview, trimmed to the fields the page
 # reads. Values are synthetic but shaped exactly like the live ones, including
@@ -126,9 +150,10 @@ def test_page_is_self_contained():
     assert "@import" not in text
     # The family shell is the one thing the page loads: three same-origin stylesheets and the
     # same-origin context module. Nothing inline runs, and nothing third-party is fetched.
-    assert re.findall(r"<script\b[^>]*>", text) == ['<script type="module" src="/research-ui/context.js">']
+    assets = _loaded_assets(text)
+    assert assets.scripts == [{"type": "module", "src": "/research-ui/context.js"}]
     assert 'src="http' not in text
-    assert re.findall(r'<link rel="stylesheet" href="([^"]+)">', text) == [
+    assert assets.stylesheets == [
         "/research-ui/research.css", "/research-ui/family-tokens.css", "/research-ui/seiche-pages.css"]
     # the styles ship inline, sharing the methodology page's variables
     assert "--accent-soft" in text and "<style>" in text
