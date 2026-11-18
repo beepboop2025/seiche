@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   verify-pypi:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -251,7 +251,7 @@ jobs:
 
   registry:
     needs: verify-pypi
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: mcp-registry
     permissions:
