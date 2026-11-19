@@ -18,8 +18,8 @@ export const AGENT_SCENARIOS = Object.freeze({
     ],
     packet: {
       transport: "mcp",
-      tool: "trade_safety_risk_context",
-      parameters: { include: ["regime", "freshness", "provenance"] },
+      tool: "money_market_context",
+      parameters: { section: "summary" },
       response_contract: {
         cache_only: true,
         executable: false,

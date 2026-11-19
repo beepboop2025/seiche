@@ -724,10 +724,14 @@ _LLMS_PREAMBLE = f"""# Seiche
 > 22 registered public FX reference series, three dollar indexes, and capital-market
 > transmission through Treasury, credit, volatility, dealer, positioning and
 > commodity evidence. Where a public observation is exposed, its source-native
-> publication lag and rights state remain explicit. Seiche publishes a live funding regime, forward event
-> odds, historical analogs and a final-vintage construction-PIT diagnostic with the misses kept
-> next to the hits. The board recomputes through the day; the daily letter
-> freezes one reading of it. Cite it as "Seiche" and link {SITE}. Everything
+> publication lag and rights state remain explicit. Its legacy funding board (the funding
+> regime, forward event odds, historical analogs and a final-vintage construction-PIT
+> diagnostic) is published as a source-rights projection: a reading appears only when
+> every input it reads is a qualified source, and anything else is withheld, never
+> reconstructed and never a calm or zero reading. Legacy forecasts, backtests and derived
+> narratives are unavailable for every caller of the MCP tools pending source-rights
+> qualification, except Funding Pop, served research only with its skill. The dated
+> letters in the dispatch archive each froze one reading of the board. Cite it as "Seiche" and link {SITE}. Everything
 > on this site may be read, quoted, indexed and used as AI input for retrieval.
 > The crawler policy permits search and AI input. Model training is excluded except
 > for Google's combined grounding/training use of Seiche's original text on three
@@ -748,11 +752,12 @@ https://liquilens-undertow.com.
 Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
-is at https://github.com/beepboop2025/seiche. Agents can query the live board
+is at https://github.com/beepboop2025/seiche. Agents can query Seiche
 over MCP at https://api.seiche.info/mcp. Eight public research tools answer without authentication: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts, backtests, composites and dependent tools are unavailable for every caller, except Funding Pop, which money_market_context serves research only with its skill. Restricted observations must not be reconstructed. Five private Agent Room tools require bearer identity and grant no execution authority. Only reuse-qualified series can be downloaded as CSV with provenance headers; the catalog is at
-https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
-a final/current-vintage construction-PIT diagnostic, hits and misses both, and
-the eligibility flags beside it. It is not validated-backtest evidence. Its
+https://api.seiche.info/api/series/index.json. The PROOF scoreboard, a
+final/current-vintage construction-PIT diagnostic with hits, misses and the
+eligibility flags beside it, is withheld pending source-rights qualification.
+It is not validated-backtest evidence. Its
 stated competence boundary is narrower: stress that builds inside the plumbing
 can be investigated historically; shocks that arrive from outside it cannot be
 claimed as early warnings.
@@ -881,7 +886,7 @@ identity and source observation freshness remain separate evidence states.
 - [Methodology]({SITE}/methodology): versioned methods page with citations, changelog and cite-as block
 - [Skeptic pack]({SITE}/skeptic): the leakage audit, the orthogonal event-capture test, the construction-PIT replay and the notary, with the commands to check each one
 - [Ampleness check]({SITE}/ampleness): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
-- [Live board]({SITE}/): the current funding stress reading
+- [Live board]({SITE}/): the current funding stress reading where its inputs are source-rights qualified; otherwise withheld
 - [Reviewed investigations]({SITE}/investigations/): long-form reporting with reproducible charts, explicit counter-cases and falsifiers
 - [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
 - [Daily articles]({SITE}/articles/): one evidence-led argument every day, with historical replays when the tape is quiet
