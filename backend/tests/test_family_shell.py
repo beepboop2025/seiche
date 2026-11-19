@@ -89,6 +89,63 @@ def test_each_generated_page_keeps_one_heading_and_the_family_accent(pages, name
     assert page.count("</body>") == 1 and page.rstrip().endswith("</html>")
 
 
+def _declarations(block: str) -> dict[str, str]:
+    """Custom properties in one CSS block, name to value."""
+    return {name: value.strip() for name, value in re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;}]+)", block)}
+
+
+def _family_token(value: str) -> str | None:
+    """The family token a value points at: var(--research-x, ...) gives --research-x."""
+    match = re.match(r"var\((--research-[a-z-]+)", value)
+    return match.group(1) if match else None
+
+
+def test_no_page_token_disagrees_with_the_mapping_that_outranks_it():
+    """research.css declares these names again on html.research-interface, which outranks :root.
+
+    A page token that pointed somewhere else would be dead text: the family's value is the one a
+    reader sees. That is how commands came to be set in the reading font. Each shared name must
+    point at the family token the family points it at, so the page reads the same with the family
+    stylesheets and without them.
+    """
+    if not PUBLIC.is_dir():
+        pytest.skip("the frontend tree is not part of this install")
+    css = (PUBLIC / "research-ui" / "research.css").read_text(encoding="utf-8")
+    family = _declarations(re.search(r"html\.research-interface\s*\{(.*?)\}", css, re.S).group(1))
+    page = _declarations(family_shell.ROOT_TOKENS)
+    shared = sorted(set(page) & set(family))
+    assert {"--bg", "--panel", "--text", "--dim", "--faint", "--accent", "--accent-soft", "--accent-bright",
+            "--mono"} <= set(shared)
+    for name in shared:
+        assert _family_token(page[name]) == _family_token(family[name]), (
+            f"{name}: the page points at {page[name]}, the family at {family[name]}")
+    assert _family_token(family["--mono"]) == "--research-font"  # the reading font, not a monospace
+
+
+def test_copyable_blocks_use_a_monospace_token_the_family_cannot_override(pages):
+    """Commands and citations are copied by hand, so they are set in a real monospace."""
+    page_only = _declarations(family_shell.ROOT_TOKENS)
+    assert _family_token(page_only["--code"]) == "--research-code"
+    if PUBLIC.is_dir():
+        for sheet in STYLESHEETS:
+            css = (PUBLIC / sheet.lstrip("/")).read_text(encoding="utf-8")
+            for name in ("--code", "--edge"):
+                assert not re.search(rf"(?<![a-z-]){re.escape(name)}\s*:", css), f"{sheet} declares {name}"
+    rules = {
+        "skeptic.html": (r"\.cmd\s*\{[^}]*\}",),
+        "methodology.html": (r"\.cite\s*\{[^}]*\}", r"code, \.mono\s*\{[^}]*\}"),
+    }
+    for name, patterns in rules.items():
+        for pattern in patterns:
+            rule = re.search(pattern, pages[name])
+            assert rule, f"{name}: {pattern} is not styled"
+            assert "font-family:var(--code)" in rule.group(0), f"{name}: {rule.group(0)[:60]}"
+    for name, page in pages.items():
+        assert "--code:var(--research-code," in page, name
+        assert not re.search(r"white-space:pre[^}]*font-family:var\(--mono\)|font-family:var\(--mono\)[^}]*white-space:pre", page), (
+            f"{name}: a preformatted block is set in the reading font")
+
+
 def test_the_pages_survive_the_real_pipeline_order(tmp_path, pages):
     """Written where the publish pipeline writes them, each page is what the renderer returned."""
     snapshot: dict = {}

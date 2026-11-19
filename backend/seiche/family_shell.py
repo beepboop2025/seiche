@@ -37,16 +37,28 @@ HEADER = (
     '<a class="research-skip" href="#main">Skip to content</a><header class="research-header"><div class="research-mast"><a class="research-identity" href="/"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14"/><path d="M7 17c5-8 9 8 14 0s7-5 8-2M7 23c5-8 9 8 14 0s7-5 8-2"/></svg><span><strong>Seiche</strong></span></a><nav class="research-network" aria-label="Products"><a href="https://liquilens.in/">LiquiLens</a><a href="/" aria-current="page">Seiche</a><a href="https://liquilens-undertow.com/">Undertow</a></nav><a class="research-api" href="/developers">API &amp; MCP</a></div><nav class="research-tabs" aria-label="Seiche sections"><a href="/#today">Today</a><a href="/money-markets/">Money markets</a><a href="/gift-city/">GIFT City</a><a href="/#geography">India geography</a><a href="/#workbench">Workbench</a><a href="/#corpus">Market atlas</a><a href="/#research">Research</a><a href="/markets/">World markets</a><a href="/articles/">Published research</a><a href="/use-cases">Use cases</a><a href="/guide">Guide</a><a href="https://liquilens.in/investors/">Company &amp; investors</a></nav></header>'
 )
 
-# A generated page's own palette, as family tokens. The fallbacks are the family
-# values, used only when the family stylesheets fail to load. One accent for every
-# product: no page sets a Seiche colour of its own.
+# A generated page's own palette, as family tokens. One accent for every product:
+# no page sets a Seiche colour of its own.
+#
+# research.css declares most of these names again on html.research-interface, and
+# that selector outranks :root, so for those names the family's mapping is the one
+# a reader sees. Each one here therefore points at the same family token the
+# family points it at (backend/tests/test_family_shell.py holds the two together);
+# the literal after the comma is used only when the family stylesheets fail to
+# load. In the family, --mono is the reading font: numerals and labels are set in
+# it with tabular figures.
+#
+# --edge and --code are this page's own names. The family does not declare them,
+# so they hold. --code is the real monospace, for the blocks a reader copies:
+# commands and citations.
 ROOT_TOKENS = (
     ":root { --bg:var(--research-bg,#000); --panel:var(--research-surface,#0b0d15); "
     "--edge:var(--research-line,#1c1f2b); --text:var(--research-text,#edeef4);\n"
     "        --dim:var(--research-muted,#9aa0b6); --faint:var(--research-muted,#787f95); "
     "--accent:var(--research-accent,#abc7ff);\n"
-    "        --accent-soft:var(--research-accent,#abc7ff); --accent-bright:var(--research-text,#edeef4);\n"
-    "        --mono:var(--research-code,ui-monospace,Menlo,Consolas,monospace);\n"
+    "        --accent-soft:var(--research-accent,#abc7ff); --accent-bright:var(--research-accent,#abc7ff);\n"
+    "        --mono:var(--research-font,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif);\n"
+    "        --code:var(--research-code,ui-monospace,'SF Mono',Menlo,Consolas,monospace);\n"
     "        color-scheme:dark; }"
 )
 

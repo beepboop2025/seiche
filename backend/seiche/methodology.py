@@ -317,7 +317,7 @@ h3 { font-weight:600; font-size:13.5px; margin:18px 0 4px; }
 p { margin:12px 0; }
 .dim { color:var(--dim); }
 .faint { color:var(--faint); font-size:12px; }
-code, .mono { font-family:var(--mono); font-size:.9em; }
+code, .mono { font-family:var(--code); font-size:.9em; }
 code { background:var(--panel); padding:1px 6px; border-radius:5px;
        color:var(--accent-bright); }
 table { border-collapse:collapse; width:100%; margin:14px 0; font-size:13px; }
@@ -326,7 +326,7 @@ th { color:var(--faint); font-weight:500; font-size:11px;
      letter-spacing:.08em; text-transform:uppercase; }
 td.num { font-family:var(--mono); }
 .cite { background:var(--panel); border:1px solid var(--edge); border-radius:10px;
-        padding:14px 16px; font-family:var(--mono); font-size:12.5px;
+        padding:14px 16px; font-family:var(--code); font-size:12.5px;
         white-space:pre-wrap; word-break:break-word; margin:14px 0; }
 ul { margin:12px 0 12px 20px; }
 li { margin:6px 0; }

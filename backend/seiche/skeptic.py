@@ -73,7 +73,7 @@ _EXTRA_CSS = """
        padding:14px 16px; margin:14px 0; }
 .gap strong { color:var(--accent-soft); }
 .cmd { background:var(--panel); border:1px solid var(--edge); border-radius:10px;
-       padding:14px 16px; font-family:var(--mono); font-size:12.5px;
+       padding:14px 16px; font-family:var(--code); font-size:12.5px;
        line-height:1.6; white-space:pre; overflow-x:auto; margin:14px 0; }
 .limit { border-left:2px solid var(--edge); padding:2px 0 2px 14px;
          margin:14px 0; color:var(--dim); font-size:13px; }
