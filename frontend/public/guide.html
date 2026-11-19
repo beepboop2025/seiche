@@ -106,13 +106,15 @@
 <h2>Why this exists</h2>
 <p>There are two shelves in liquidity intelligence. On one sit the official dashboards: FRED, the NY Fed, OFR, the FDIC. Raw series, no synthesis. On the other sits a Bloomberg terminal at roughly $32k a year for one seat. Between the shelves, nothing we've found that states a view and grades it in public. That gap is why this lab exists.</p>
 <p>The gap matters more now. With the ON RRP buffer drained, Treasury settlement lands on bank reserves directly. In the week of 29 July 2026, reserves fell $80.6B and the TGA rebuild took $73.4B of it; the ledger summed six legs to the dollar. That is not a forecast. It is the mechanism, on tape.</p>
-<p>One lab, three altitudes. Seiche reads the plumbing: reserves against a fitted demand curve, repo, the month end turn, a daily letter that calls the regime. <a href="https://liquilens.in">LiquiLens</a> ranks the institutions standing on that plumbing: 532,073 US bank quarters of free FDIC call report data, with a current-amended construction-PIT diagnostic reporting 73.1% recall on 554 failures since 2008 and a 21.6-month median lead. <a href="https://liquilens-undertow.com">Undertow</a> maps the markets those institutions make, who provides depth in each segment and what an exit at position size costs today.</p>
+<p>One lab, three altitudes. Seiche reads the plumbing: reserves against a fitted demand curve, repo, the month end turn, a daily letter that calls the regime. <a href="https://liquilens.in">LiquiLens</a> ranks the institutions standing on that plumbing: 532,073 US bank quarters of free FDIC call report data, with a current-amended construction-PIT diagnostic reporting 73.1% recall on 554 failures since 2008 and a 21.6-month median lead, as published on 19 November 2026; the current record is at <a href="https://liquilens.in/us/">liquilens.in/us</a>. <a href="https://liquilens-undertow.com">Undertow</a> maps the markets those institutions make, who provides depth in each segment and what an exit at position size costs today.</p>
 <p>Every layer grades itself where you can read it. Seiche's clean leak-audit variant reports 61.5% event recall and 16.7% run precision, but the API marks the historical evidence <code>FINAL_VINTAGE_CONSTRUCTION_PIT</code> and <code>validated_backtest=false</code>. Treat those figures as a historical diagnostic, not a validated backtest. The reserve-demand nowcast currently runs 30 days ahead of the latest NY Fed print; across 18 releases, 8 landed inside the official 68% band and 10 agreed on direction, so the site grades it "directionally useful, not yet precise".</p>
 <p>Data receipt captured 9 August 2026 at 14:36 UTC: ten market packs contain 87,000 canonical observations across 28 role series and 220 forward market-pack validation records. This remains a dated ten-pack snapshot even though the current catalog registers 11 packs; the live endpoint carries the accrued count. At that snapshot the US pack was VALIDATING, nine were REFERENCE, none was SUPPORTED or evidence-eligible, and Global Tide was UNAVAILABLE. The public notary has 145 entries. The independent LiquiLens Lab receipt is a different scope: one sealed ten-product replay pass contains 421,620 evaluations across 5,273 canonical events with 82,556 robustness audit records; Seiche has 31 genuine prospective forward score records, while 0 of 7 requested products is eligible for retrospective backtesting.</p>
 <p>Everything runs on free public data: the Fed's H.4.1, NY Fed operations, OFR repo, Treasury cash, FDIC call reports. Pull the same series and check our arithmetic. Seiche stays free, a public good on voluntary support. Read the misses before you weight today's letter.</p>
 
 <h2>The one thing to look at first</h2>
-<p>Top of every page is a single number and a one word regime. That is the whole board boiled down. If you read nothing else, read the regime word.</p>
+<p><b>What is served today.</b> The board is published as a source-rights projection. A reading appears only when every input it reads is a qualified source in that snapshot; anything else is withheld pending source-rights qualification, is never reconstructed, and is not a calm, zero or last-known reading. That can include the number and the regime word below. Some readings are withheld in every snapshot of this release; this page marks them. Over MCP, legacy forecasts, backtests and derived narratives are unavailable to every caller. Funding Pop (the Riptide card on FORECAST) is the one exception, shown research only with its skill.</p>
+<p>The tabs in the site header are the ones to use now: <b>Today</b> (the official rates desk, with the board's reading under "Editorial context and its countercase" when it is served), <b>Money markets</b> (the USD funding desk and the global money-market atlas; the site opens here), <b>GIFT City</b> (India-UAE funding, reference FX and gold research), <b>India geography</b> (district evidence with its sources and dates), <b>Workbench</b> (official reference FX, same-date currency crosses and dated histories), <b>Market atlas</b> (registered markets down to exact observations), <b>Research</b> (the connected Palimpsest source registry beside Seiche funding context), <b>World markets</b>, <b>Published research</b> and <b>Use cases</b>. The board tabs described further down are not in the header; reach them by direct link, for example <a href="/#board">seiche.info/#board</a>.</p>
+<p>The board boils down to a single number and a one word regime, shown on Today and on BOARD when its inputs are qualified. If you read nothing else, read the regime word. If it is withheld, there is no reading; never treat that as calm.</p>
 <div class="regimes">
   <div class="rg calm"><span class="tag">CALM</span><p>The water is flat. Nothing is building.</p></div>
   <div class="rg erosion"><span class="tag">EROSION</span><p>Small cracks. Worth watching, not acting.</p></div>
@@ -123,32 +125,32 @@
 
 <h2>How to use it, in three steps</h2>
 <ol class="steps">
-  <li><span><b>Read the regime</b> at the top. That is the headline.</span></li>
-  <li><span>Open <b>BOARD</b> to see which parts of the plumbing are driving it. Each row is one signal, with a bar showing how loud it is right now.</span></li>
-  <li><span>Open <b>FORECAST</b> to see the odds of a stress spike on each of the next few weeks, lined up against the calendar days that usually cause trouble.</span></li>
+  <li><span><b>Read the regime</b> on Today or BOARD, when it is served. That is the headline.</span></li>
+  <li><span>Open <b>BOARD</b> to see which parts of the plumbing are driving it. Each row is one signal, with a bar showing how loud it is right now. A signal whose inputs are not qualified is withheld.</span></li>
+  <li><span>Open <b>FORECAST</b> to see the odds of a stress spike on each of the next few weeks, lined up against the calendar days that usually cause trouble. Each panel appears only where its inputs are qualified, and none of it is a validated forecast.</span></li>
 </ol>
 <p class="sub">That is enough to use Seiche well. The rest is depth for when you want it.</p>
 
 <h2>Pick your depth</h2>
-<p>Next to the number at the top is a three-position switch: <b>GLANCE · DESK · DEEP</b>. It is the same board at three depths. <b>Glance</b> shows only the verdict and the one chart that matters, for a ten-second read. <b>Desk</b> is the working view. <b>Deep</b> adds the fine print: how every number is computed, under each panel. Your choice is remembered, and the <code>[</code> and <code>]</code> keys step shallower and deeper. On any chart, drag to zoom into a period, hold <code>ctrl</code> (or pinch on a trackpad or phone) and scroll to zoom around the cursor, and double-click to reset.</p>
+<p>The board has three depths: <b>GLANCE · DESK · DEEP</b>. It is the same board at each depth. <b>Glance</b> shows only the verdict and the one chart that matters, for a ten-second read. <b>Desk</b> is the working view. <b>Deep</b> adds the fine print: how every number is computed, under each panel. Your choice is remembered, and the <code>[</code> and <code>]</code> keys step shallower and deeper; you can also type GLANCE, DESK or DEEP in the command line (<code>/</code>). On any chart, drag to zoom into a period, hold <code>ctrl</code> (or pinch on a trackpad or phone) and scroll to zoom around the cursor, and double-click to reset.</p>
 
 <h2>What each tab shows you</h2>
 <dl class="tabs">
-  <div><dt>Dispatches</dt><dd>The plain-English write ups. Start here if you would rather read a short letter than a dashboard.</dd></div>
-  <div><dt>Board</dt><dd>The main screen. The overall reading, broken into the signals behind it.</dd></div>
-  <div><dt>Forecast</dt><dd>The odds of a funding stress spike over the next six weeks, day by day.</dd></div>
+  <div><dt>Dispatches</dt><dd>The archive of plain-English write ups, the latest dated 24 September 2026. Derived narratives are withheld pending source-rights qualification.</dd></div>
+  <div><dt>Board</dt><dd>The main screen. The overall reading, broken into the signals behind it. Signals whose inputs are not qualified are withheld.</dd></div>
+  <div><dt>Forecast</dt><dd>The odds of a funding stress spike over the next six weeks, day by day, where the inputs are qualified. Panels that are not, such as Sea Room, are withheld.</dd></div>
   <div><dt>Physics</dt><dd>The deep version. It treats the funding system like a body of water and measures how much self-calming ability it has left.</dd></div>
-  <div><dt>Helm</dt><dd>Plain-language positions this reading would imply, with an honest running score, including the times it was wrong.</dd></div>
-  <div><dt>Market</dt><dd>The raw rates and spreads, if you want the source numbers.</dd></div>
-  <div><dt>Global</dt><dd>Whether the US, Europe, the UK, India and the crypto dollar are all moving together.</dd></div>
-  <div><dt>FX×Materials</dt><dd>The Estuary: whether currency weakness, FX settlement and physical inventory are asking for cash before SOFR and commercial paper show it. The Passage map only earns a lead/lag link if it survives history that was not used to choose it; daily and monthly clocks, observed data and scenarios stay separate.</dd></div>
-  <div><dt>Oil×Funding</dt><dd>The barrel's balance sheet in both directions: rates into the oil curve; oil into cargo credit, margin cash, rupee liquidity and OMC commercial paper; then the slower inflation, policy and dollar-recycling channels. Observed evidence is kept separate from editable scenarios.</dd></div>
+  <div><dt>Helm</dt><dd>Withheld pending source-rights qualification. It reads the Book and the forecast ensemble, both withheld. When served, it gives plain-language positions this reading would imply, with an honest running score, including the times it was wrong.</dd></div>
+  <div><dt>Market</dt><dd>The raw rates and spreads, if you want the source numbers. The Tell, Scuttlebutt and Playbook panels are withheld pending source-rights qualification.</dd></div>
+  <div><dt>Global</dt><dd>Whether the US, Europe, the UK, India and the crypto dollar are all moving together. Most of its readings, including Global Basin, Stablecoin Moorings and Far Basin, are withheld pending source-rights qualification.</dd></div>
+  <div><dt>FX×Materials</dt><dd>Withheld pending source-rights qualification. The Estuary: whether currency weakness, FX settlement and physical inventory are asking for cash before SOFR and commercial paper show it. The Passage map only earns a lead/lag link if it survives history that was not used to choose it; daily and monthly clocks, observed data and scenarios stay separate.</dd></div>
+  <div><dt>Oil×Funding</dt><dd>Withheld pending source-rights qualification. The barrel's balance sheet in both directions: rates into the oil curve; oil into cargo credit, margin cash, rupee liquidity and OMC commercial paper; then the slower inflation, policy and dollar-recycling channels. Observed evidence is kept separate from editable scenarios.</dd></div>
   <div><dt>Calendar</dt><dd>The upcoming dates that historically strain funding: tax days, quarter ends, big auction settlements.</dd></div>
   <div><dt>Positioning</dt><dd>Where large leveraged traders are crowded, from public futures data.</dd></div>
   <div><dt>Resonance</dt><dd>Whether the same routine calendar pressure is producing a bigger wave than it used to. A bigger wave from the same push means rising fragility.</dd></div>
-  <div><dt>Time Machine</dt><dd>Run a construction-PIT reconstruction for a past date using final/current-vintage observations dated on or before it. This is not the publication vintage visible then.</dd></div>
-  <div><dt>Proof</dt><dd>The historical diagnostic: hits, misses and eligibility flags shown together. It is not currently validated-backtest evidence.</dd></div>
-  <div><dt>Referee</dt><dd>Someone else's famous claims about global liquidity, tested on the part of their data anyone can rebuild, with the answer published whichever way it comes out.</dd></div>
+  <div><dt>Time Machine</dt><dd>Withheld pending source-rights qualification. When served, it runs a construction-PIT reconstruction for a past date using final/current-vintage observations dated on or before it. This is not the publication vintage visible then.</dd></div>
+  <div><dt>Proof</dt><dd>The historical diagnostic: hits, misses and eligibility flags shown together. It is not currently validated-backtest evidence. Its backtest and model-score panels are withheld pending source-rights qualification.</dd></div>
+  <div><dt>Referee</dt><dd>Withheld pending source-rights qualification. When served, it shows someone else's famous claims about global liquidity, tested on the part of their data anyone can rebuild, with the answer published whichever way it comes out.</dd></div>
   <div><dt>System</dt><dd>Data health. Which feeds are fresh, stale or down right now.</dd></div>
 </dl>
 
@@ -157,7 +159,7 @@
 <table>
   <thead><tr><th>Name on the board</th><th>What it is really telling you</th></tr></thead>
   <tbody>
-    <tr><td class="n">Composite / regime</td><td>The overall stress reading, one number, one word.</td></tr>
+    <tr><td class="n">Composite / regime</td><td>The overall stress reading, one number, one word. Shown only when every input it reads is qualified; otherwise withheld.</td></tr>
     <tr><td class="n">Kink</td><td>How close we are to the point where bank cash gets scarce, and how many days away at the current drain rate.</td></tr>
     <tr><td class="n">Liquidity Weather</td><td>A six week forecast of how much cash is in the banking system, and which days land on thin ice.</td></tr>
     <tr><td class="n">Tail Seismograph</td><td>An early tremor detector: are the worst overnight lending rates starting to detach from the normal ones.</td></tr>
@@ -167,25 +169,25 @@
     <tr><td class="n">Undertow</td><td>Is the system slowly losing its ability to calm itself down after everyday bumps.</td></tr>
     <tr><td class="n">Swell Forecast</td><td>The odds of a funding stress spike on each of the next 42 business days.</td></tr>
     <tr><td class="n">Hydrophone Array</td><td>How tightly connected the plumbing is right now, and which pipe moves first.</td></tr>
-    <tr><td class="n">Global Basin</td><td>Are the world's funding systems moving as one tide.</td></tr>
-    <tr><td class="n">The Estuary / Passage</td><td>Are FX settlement and physical-market cash demands running ahead of the funding stress already priced, and did that historical route survive an untouched holdout sample.</td></tr>
-    <tr><td class="n">Oil × Funding</td><td>How a barrel's price, time in transit, hedge and financing rate become cash demand, and how the money-market rate runs backward into the oil curve.</td></tr>
-    <tr><td class="n">Stablecoin Moorings</td><td>The crypto dollar's tie line to the US Treasury bill market, and the 24/7 canary when normal markets are closed.</td></tr>
-    <tr><td class="n">ML Lab</td><td>A learned probability of a stress event, kept honest by being scored against a dumb baseline and told when it loses.</td></tr>
+    <tr><td class="n">Global Basin</td><td>Are the world's funding systems moving as one tide. Withheld pending source-rights qualification.</td></tr>
+    <tr><td class="n">The Estuary / Passage</td><td>Are FX settlement and physical-market cash demands running ahead of the funding stress already priced, and did that historical route survive an untouched holdout sample. Withheld pending source-rights qualification.</td></tr>
+    <tr><td class="n">Oil × Funding</td><td>How a barrel's price, time in transit, hedge and financing rate become cash demand, and how the money-market rate runs backward into the oil curve. Withheld pending source-rights qualification.</td></tr>
+    <tr><td class="n">Stablecoin Moorings</td><td>The crypto dollar's tie line to the US Treasury bill market, and the 24/7 canary when normal markets are closed. Withheld pending source-rights qualification.</td></tr>
+    <tr><td class="n">ML Lab</td><td>A learned probability of a stress event, kept honest by being scored against a dumb baseline and told when it loses. Withheld pending source-rights qualification.</td></tr>
     <tr><td class="n">Station-Keeping</td><td>Watches for moves in the system's cash that the normal seasonal model cannot explain, and flags them early.</td></tr>
-    <tr><td class="n">Riptide</td><td>When a spike happens, is it just harmless calendar noise or the start of a real squeeze.</td></tr>
+    <tr><td class="n">Riptide</td><td>When a spike happens, is it just harmless calendar noise or the start of a real squeeze. Served as Funding Pop, research only, with its skill.</td></tr>
     <tr><td class="n">Breakwater</td><td>How close the Fed is to stepping in, read from its own track record of when it acted before.</td></tr>
     <tr><td class="n">Bathymetry</td><td>Maps the shape of the basin floor from the water's motion. The full physics read, for the deep dive.</td></tr>
     <tr><td class="n">Microseism</td><td>Faint pre quake tremors clustering ahead of stress.</td></tr>
     <tr><td class="n">Thermohaline</td><td>The deep, slow current of dollars held offshore, over 14 trillion of it.</td></tr>
-    <tr><td class="n">Far Basin</td><td>A policy fear signal from public censorship data, kept quarantined and out of the main reading until it earns a place.</td></tr>
+    <tr><td class="n">Far Basin</td><td>A policy fear signal from public censorship data, kept quarantined and out of the main reading until it earns a place. Withheld pending source-rights qualification.</td></tr>
   </tbody>
 </table>
 </div>
 
 <h2>Why you can trust it</h2>
 <ul class="plain">
-  <li><span><b>It shows its work.</b> Every signal comes with the method and the source, and Time Machine lets you rerun a dated construction-PIT reconstruction with its vintage limit attached.</span></li>
+  <li><span><b>It shows its work.</b> Every signal comes with the method and the source. Time Machine, which reruns a dated construction-PIT reconstruction with its vintage limit attached, is withheld pending source-rights qualification.</span></li>
   <li><span><b>It cannot quietly rewrite history.</b> Every daily reading is sealed the day it is made into a tamper proof record. A bad call stays on the record.</span></li>
   <li><span><b>It forbids cheating.</b> A test in the code mechanically blocks the common trick of letting future data leak into a backtest, which is what makes most impressive looking track records fake.</span></li>
   <li><span><b>It fails loud.</b> If a data feed goes stale or dies, the board says so and lowers its own confidence, rather than pretending everything is fine.</span></li>
