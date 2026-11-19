@@ -840,12 +840,12 @@ same product; the callable contract remains the MCP server above.
 
 ## Current packages and agent integrations
 
-Seiche Python/MCP {RELEASE_VERSION} is the release this page was built from.
+Seiche Python/MCP {RELEASE_VERSION} is the release version of the source this page was built from.
 Python 3.12 or later is required. Package publication, hosted deployment
 identity and source observation freshness remain separate evidence states.
 
 - [Seiche on PyPI](https://pypi.org/project/seiche/): the published packages, by version
-- [Release source](https://github.com/beepboop2025/seiche/tree/v{RELEASE_VERSION}): the signed tag this release was built from
+- [Release source](https://github.com/beepboop2025/seiche/tree/v{RELEASE_VERSION}): the signed tag for that release
 - [Current release and discovery hub](https://beepboop2025.github.io/financial-evidence-skills/distribution/): the Financial Evidence Python package, the npm AI SDK, NoiseFloor, MCP/API setup and existing marketplace listings. The hub states each current package version.
 - [Seiche Glama repository listing](https://glama.ai/mcp/servers/beepboop2025/seiche) and [separate hosted connector](https://glama.ai/mcp/connectors/io.github.beepboop2025/seiche)
 - [Dated technical usage](https://liquilens.in/usage/2026-10-17/): application windows end 17 October 2026 at 23:18 UTC. Unclassified calls can include operator checks and monitoring; customer adoption and revenue remain unverified.

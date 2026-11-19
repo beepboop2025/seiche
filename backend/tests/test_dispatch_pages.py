@@ -199,7 +199,8 @@ def test_package_block_names_this_release_and_no_other_products_version():
     preamble = dispatch_pages._LLMS_PREAMBLE
     start = preamble.index("## Current packages and agent integrations")
     block = preamble[start:preamble.index("## Related products", start)]
-    assert f"Seiche Python/MCP {assemble.VERSION} is the release this page was built from." in block
+    assert f"Seiche Python/MCP {assemble.VERSION} is the release version of the source this page was built from." in block
+    assert "the signed tag for that release" in block and "this release was built from" not in block
     assert f"https://github.com/beepboop2025/seiche/tree/v{assemble.VERSION}" in block
     assert "https://pypi.org/project/seiche/)" in block
     assert "Reviewed 18 October 2026" not in block
