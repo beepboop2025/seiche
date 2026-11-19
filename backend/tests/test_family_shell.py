@@ -89,6 +89,13 @@ def test_each_generated_page_keeps_one_heading_and_the_family_accent(pages, name
     assert page.count("</body>") == 1 and page.rstrip().endswith("</html>")
 
 
+def _rules(page: str) -> list[tuple[str, str]]:
+    """Each rule in the page's own style blocks: (selector, body with all whitespace removed)."""
+    css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", page, re.S))
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return [(selector.strip(), re.sub(r"\s+", "", body)) for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
+
+
 def _declarations(block: str) -> dict[str, str]:
     """Custom properties in one CSS block, name to value."""
     return {name: value.strip() for name, value in re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;}]+)", block)}
@@ -142,8 +149,13 @@ def test_copyable_blocks_use_a_monospace_token_the_family_cannot_override(pages)
             assert "font-family:var(--code)" in rule.group(0), f"{name}: {rule.group(0)[:60]}"
     for name, page in pages.items():
         assert "--code:var(--research-code," in page, name
-        assert not re.search(r"white-space:pre[^}]*font-family:var\(--mono\)|font-family:var\(--mono\)[^}]*white-space:pre", page), (
-            f"{name}: a preformatted block is set in the reading font")
+        preformatted = [(selector, body) for selector, body in _rules(page)
+                        if re.search(r"white-space:pre(?:-wrap|-line)?(?:;|$)", body)]
+        for selector, body in preformatted:
+            # However the rule is spaced, and whether or not it names a font at all: a block that
+            # keeps its line breaks is one a reader copies, so it is set in --code explicitly.
+            assert "font-family:var(--code)" in body, f"{name}: {selector} keeps its spacing but is not set in --code"
+    assert sum(1 for page in pages.values() for _selector, body in _rules(page) if "white-space:pre" in body) >= 2
 
 
 def test_the_pages_survive_the_real_pipeline_order(tmp_path, pages):
