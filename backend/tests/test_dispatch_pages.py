@@ -226,3 +226,4 @@ def test_llms_preamble_states_the_served_scope_not_the_withheld_board():
     # The PROOF scoreboard's route is a legacy path, so the index cannot call it published.
     assert "/api/public" in public_rights.LEGACY_PATHS
     assert "The PROOF scoreboard publishes" not in preamble
+    assert "The misses are published beside the hits" not in preamble

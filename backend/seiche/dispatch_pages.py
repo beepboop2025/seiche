@@ -745,8 +745,8 @@ series and no view. A terminal that has a view runs about $32k a seat each
 year. Between them, nothing free that holds an opinion and grades itself.
 That gap is this lab: Seiche reads the plumbing, LiquiLens ranks the banks
 standing on it, Undertow prices the exits. All of it runs on free public
-data. The misses are published beside the hits. Read those first. The
-sibling boards: LiquiLens at https://liquilens.in and Undertow at
+data. The misses are kept beside the hits; the scoreboard that shows them is
+withheld pending source-rights qualification. The sibling boards: LiquiLens at https://liquilens.in and Undertow at
 https://liquilens-undertow.com.
 
 Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
