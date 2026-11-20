@@ -382,3 +382,45 @@ async def test_expired_credential_is_observable_and_never_claims_fresh(tmp_path,
                                  transport=httpx.MockTransport(lambda request: httpx.Response(503)))
     assert report["freshness"] == "unknown" and report["upstream_auth"]["status"] == "expired"
     assert report["upstream_auth"]["expires_at"] == NOW.isoformat().replace("+00:00", "Z")
+
+
+async def test_native_call_budget_preserves_current_source_and_failed_attempt():
+    from seiche_agent_network.freshness import _seiche_health
+
+    board = {"authority": "production", "generated_at": stamp(), "faults": [], "provenance": [row()]}
+    calls = []
+
+    class NativeResult:
+        isError = False
+        def model_dump(self, **_):
+            return {"structuredContent": board, "isError": self.isError}
+
+    class Session:
+        async def call_tool(self, name, args):
+            calls.append(name)
+            return NativeResult()
+
+    def reply(request):
+        assert str(request.url) == "https://api.seiche.info/api/health"
+        return httpx.Response(200, json=board)
+
+    timestamp = NOW.timestamp()
+    previous = None
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
+        for offset, expected in [(0, "native_mcp"), (600, "public_api"), (1799, "public_api"), (1800, "native_mcp")]:
+            summary = {"transport": "available", "tool": "data_health"}
+            await _seiche_health(Session(), client, summary, previous, lambda: timestamp + offset)
+            assert summary["health_source"] == expected
+            assert summary["last_native_health"]["status"] == "ok"
+            if expected == "public_api":
+                assert summary["tool"] is None and summary["coverage"]["inspected_rows"] == 1
+            previous = summary["last_native_health"]
+        assert calls == ["data_health", "data_health"]
+        failed = {"status": "error", "attempted_at_unix": timestamp}
+        summary = {}
+        await _seiche_health(Session(), client, summary, failed, lambda: timestamp + 60)
+        assert summary["transport"] == "tool_error" and summary["freshness"] == "unknown"
+        assert "last_native_health_call_failed" in summary["reasons"]
+        board["authority"] = "standby"
+        with pytest.raises(ValueError, match="Production source health unavailable"):
+            await _seiche_health(Session(), client, {}, previous, lambda: timestamp + 1850)
