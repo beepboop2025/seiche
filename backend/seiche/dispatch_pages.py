@@ -33,6 +33,24 @@ import sys
 from pathlib import Path
 
 SITE = "https://seiche.info"
+
+
+def _release_version() -> str:
+    """The release these pages are built from: assemble.VERSION, read as text.
+
+    This module stays stdlib only, so the constant is read rather than imported
+    (seiche.assemble pulls in every engine). It is the same bare semver the MCP
+    handshake serves, so the page can never name an older release than the one
+    that rendered it.
+    """
+    source = (Path(__file__).resolve().parent / "assemble.py").read_text(encoding="utf-8")
+    match = re.search(r'^VERSION = "(\d+\.\d+\.\d+)"$', source, re.M)
+    if not match:
+        raise SystemExit("dispatch pages: assemble.VERSION is not a bare semver")
+    return match.group(1)
+
+
+RELEASE_VERSION = _release_version()
 # Old letters carry HAS-PAID (pre open-access naming, gated nothing), new
 # ones HAS-DESK; this renderer reads the whole archive so it accepts both.
 MARKERS = ("<!--HAS-DESK-->", "<!--HAS-PAID-->")
@@ -706,10 +724,14 @@ _LLMS_PREAMBLE = f"""# Seiche
 > 22 registered public FX reference series, three dollar indexes, and capital-market
 > transmission through Treasury, credit, volatility, dealer, positioning and
 > commodity evidence. Where a public observation is exposed, its source-native
-> publication lag and rights state remain explicit. Seiche publishes a live funding regime, forward event
-> odds, historical analogs and a final-vintage construction-PIT diagnostic with the misses kept
-> next to the hits. The board recomputes through the day; the daily letter
-> freezes one reading of it. Cite it as "Seiche" and link {SITE}. Everything
+> publication lag and rights state remain explicit. Its legacy funding board (the funding
+> regime, forward event odds, historical analogs and a final-vintage construction-PIT
+> diagnostic) is published as a source-rights projection: a reading appears only when
+> every input it reads is a qualified source, and anything else is withheld, never
+> reconstructed and never a calm or zero reading. Legacy forecasts, backtests and derived
+> narratives are unavailable for every caller of the MCP tools pending source-rights
+> qualification, except Funding Pop, served research only with its skill. The dated
+> letters in the dispatch archive each froze one reading of the board. Cite it as "Seiche" and link {SITE}. Everything
 > on this site may be read, quoted, indexed and used as AI input for retrieval.
 > The crawler policy permits search and AI input. Model training is excluded except
 > for Google's combined grounding/training use of Seiche's original text on three
@@ -723,18 +745,19 @@ series and no view. A terminal that has a view runs about $32k a seat each
 year. Between them, nothing free that holds an opinion and grades itself.
 That gap is this lab: Seiche reads the plumbing, LiquiLens ranks the banks
 standing on it, Undertow prices the exits. All of it runs on free public
-data. The misses are published beside the hits. Read those first. The
-sibling boards: LiquiLens at https://liquilens.in and Undertow at
+data. The misses are kept beside the hits; the scoreboard that shows them is
+withheld pending source-rights qualification. The sibling boards: LiquiLens at https://liquilens.in and Undertow at
 https://liquilens-undertow.com.
 
 Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
-is at https://github.com/beepboop2025/seiche. Agents can query the live board
+is at https://github.com/beepboop2025/seiche. Agents can query Seiche
 over MCP at https://api.seiche.info/mcp. Eight public research tools answer without authentication: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts, backtests, composites and dependent tools are unavailable for every caller, except Funding Pop, which money_market_context serves research only with its skill. Restricted observations must not be reconstructed. Five private Agent Room tools require bearer identity and grant no execution authority. Only reuse-qualified series can be downloaded as CSV with provenance headers; the catalog is at
-https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
-a final/current-vintage construction-PIT diagnostic, hits and misses both, and
-the eligibility flags beside it. It is not validated-backtest evidence. Its
+https://api.seiche.info/api/series/index.json. The PROOF scoreboard, a
+final/current-vintage construction-PIT diagnostic with hits, misses and the
+eligibility flags beside it, is withheld pending source-rights qualification.
+It is not validated-backtest evidence. Its
 stated competence boundary is narrower: stress that builds inside the plumbing
 can be investigated historically; shocks that arrive from outside it cannot be
 claimed as early warnings.
@@ -817,14 +840,13 @@ same product; the callable contract remains the MCP server above.
 
 ## Current packages and agent integrations
 
-Reviewed 18 October 2026: Seiche Python/MCP 0.16.5 provides compact funding
-context and exact metric retrieval with compatible diagnostics. Python 3.12 or
-later is required. Package publication, hosted deployment identity and source
-observation freshness remain separate evidence states.
+Seiche Python/MCP {RELEASE_VERSION} is the release version of the source this page was built from.
+Python 3.12 or later is required. Package publication, hosted deployment
+identity and source observation freshness remain separate evidence states.
 
-- [Seiche 0.16.5 on PyPI](https://pypi.org/project/seiche/0.16.5/)
-- [Accepted release source](https://github.com/beepboop2025/seiche/tree/793dc42b391141c20aee911f6d18f000bd3feb8a)
-- [Current release and discovery hub](https://beepboop2025.github.io/financial-evidence-skills/distribution/): Financial Evidence Python 0.1.13, npm AI SDK 0.1.2, MCP/API setup and existing marketplace listings. NoiseFloor local Python/MCP is 0.4.2; its hosted service remains 0.4.0.
+- [Seiche on PyPI](https://pypi.org/project/seiche/): the published packages, by version
+- [Release source](https://github.com/beepboop2025/seiche/tree/v{RELEASE_VERSION}): the signed tag for that release
+- [Current release and discovery hub](https://beepboop2025.github.io/financial-evidence-skills/distribution/): the Financial Evidence Python package, the npm AI SDK, NoiseFloor, MCP/API setup and existing marketplace listings. The hub states each current package version.
 - [Seiche Glama repository listing](https://glama.ai/mcp/servers/beepboop2025/seiche) and [separate hosted connector](https://glama.ai/mcp/connectors/io.github.beepboop2025/seiche)
 - [Dated technical usage](https://liquilens.in/usage/2026-10-17/): application windows end 17 October 2026 at 23:18 UTC. Unclassified calls can include operator checks and monitoring; customer adoption and revenue remain unverified.
 
@@ -864,7 +886,7 @@ observation freshness remain separate evidence states.
 - [Methodology]({SITE}/methodology): versioned methods page with citations, changelog and cite-as block
 - [Skeptic pack]({SITE}/skeptic): the leakage audit, the orthogonal event-capture test, the construction-PIT replay and the notary, with the commands to check each one
 - [Ampleness check]({SITE}/ampleness): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
-- [Live board]({SITE}/): the current funding stress reading
+- [Live board]({SITE}/): the current funding stress reading where its inputs are source-rights qualified; otherwise withheld
 - [Reviewed investigations]({SITE}/investigations/): long-form reporting with reproducible charts, explicit counter-cases and falsifiers
 - [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
 - [Daily articles]({SITE}/articles/): one evidence-led argument every day, with historical replays when the tape is quiet
