@@ -2083,21 +2083,23 @@ def _observation_value_is_public(pack, observation) -> bool:
     )
 
 
-def _observation_is_publicly_derivable(pack, observation) -> bool:
-    """Allow only rows whose adapter and row policies permit public derivation."""
+_DERIVABLE_RIGHTS = frozenset((RedistributionStatus.ALLOWED, RedistributionStatus.DERIVED_ONLY))
 
-    instrument = pack.instrument_map.get(observation.instrument_id)
-    if instrument is None or observation.source in RETIRED_SOURCES:
-        return False
-    adapter = pack.adapter_map.get(instrument.source_adapter_id)
-    derivable = {
-        RedistributionStatus.ALLOWED,
-        RedistributionStatus.DERIVED_ONLY,
-    }
+
+def _derivable_instrument_ids(pack) -> list[str]:
+    adapters = pack.adapter_map
+    return [
+        instrument.instrument_id
+        for instrument in pack.instruments
+        if adapters[instrument.source_adapter_id].redistribution_status in _DERIVABLE_RIGHTS
+    ]
+
+
+def _observation_is_publicly_derivable(observation, eligible_ids: frozenset[str]) -> bool:
     return (
-        adapter is not None
-        and adapter.redistribution_status in derivable
-        and observation.redistribution_status in derivable
+        observation.instrument_id in eligible_ids
+        and observation.source not in RETIRED_SOURCES
+        and observation.redistribution_status in _DERIVABLE_RIGHTS
     )
 
 
@@ -2519,16 +2521,7 @@ def global_money_markets_v2(response: Response):
     read_faults: list[dict[str, str]] = []
     packs = default_registry().list()
     instruments_by_market = {
-        pack.market_id: [
-            instrument.instrument_id
-            for instrument in pack.instruments
-            if pack.adapter_map[instrument.source_adapter_id].redistribution_status
-            in {
-                RedistributionStatus.ALLOWED,
-                RedistributionStatus.DERIVED_ONLY,
-            }
-        ]
-        for pack in packs
+        pack.market_id: _derivable_instrument_ids(pack) for pack in packs
     }
     # PostgreSQL can read these selected histories in one connection/query.
     # Keep compatibility with repositories exposing only the single-market
@@ -2572,8 +2565,9 @@ def global_money_markets_v2(response: Response):
                     "detail": "canonical repository read failed",
                 }
             )
+        eligible_ids = frozenset(instruments_by_market[pack.market_id])
         observations_by_market[pack.market_id] = [
-            row for row in rows if _observation_is_publicly_derivable(pack, row)
+            row for row in rows if _observation_is_publicly_derivable(row, eligible_ids)
         ]
 
     try:
