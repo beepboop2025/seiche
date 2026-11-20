@@ -322,7 +322,8 @@ class ContainerContracts(unittest.TestCase):
             line for line in self.dockerfile.splitlines() if line.startswith("FROM ")
         ]
         self.assertEqual(len(from_lines), 4)
-        for line in from_lines:
+        self.assertEqual(from_lines[-1], "FROM scratch AS runtime")
+        for line in from_lines[:-1]:
             self.assertRegex(line, r"@sha256:[0-9a-f]{64}(?:\s+AS\s+[\w-]+)?$")
         self.assertNotIn("COPY . ", self.dockerfile)
         self.assertNotRegex(self.dockerfile, r"(?m)^ADD\s")
@@ -342,7 +343,8 @@ class ContainerContracts(unittest.TestCase):
                 r"(?m)^FROM (\S+) AS ([\w-]+)$", self.dockerfile
             )
         )
-        self.assertEqual(bases["runtime-base"], bases["runtime"])
+        self.assertTrue(bases["runtime-base"].startswith("cgr.dev/chainguard/python:latest@sha256:"))
+        self.assertEqual(bases["runtime"], "scratch")
         self.assertIn('"ca-certificates-bundle=20260909-r3"', self.dockerfile)
         self.assertIn('assert packages(root) == expected', self.dockerfile)
         self.assertIn(
@@ -356,11 +358,14 @@ class ContainerContracts(unittest.TestCase):
         ):
             self.assertIn(f'"{package}={fixed}"', self.dockerfile)
             self.assertIn(f'"{package}": ("{old}", "{fixed}")', self.dockerfile)
-            self.assertIn(f"('{package}', '{old}')", self.dockerfile)
+
+        self.assertIn('python_old = "3.14.8_git20261001-r0"', self.dockerfile)
+        self.assertIn('python_fixed = "3.14.10_git20261111-r0"', self.dockerfile)
+        self.assertIn('"python-3.14-runtime": python_fixed', self.dockerfile)
         self.assertIn('"unexpected pinned security inventory"', self.dockerfile)
         self.assertIn('f"var/lib/db/sbom/{name}-{new}.spdx.json").is_file()', self.dockerfile)
         self.assertIn(
-            "ca-certificates-bundle-20260909-r2.spdx.json').unlink()",
+            'assert not (root / "var/lib/db/sbom/ca-certificates-bundle-20260909-r2.spdx.json").exists()',
             self.dockerfile,
         )
         self.assertIn('"unexpected runtime shell"', self.dockerfile)
@@ -411,7 +416,7 @@ class ContainerContracts(unittest.TestCase):
         )
         self.assertIn(f"ARG SOURCE={REPOSITORY}", self.dockerfile)
         runtime_image = re.search(
-            r"(?m)^FROM (\S+)@(sha256:[0-9a-f]{64}) AS runtime$",
+            r"(?m)^FROM (\S+)@(sha256:[0-9a-f]{64}) AS runtime-base$",
             self.dockerfile,
         )
         self.assertIsNotNone(runtime_image)

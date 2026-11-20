@@ -33,7 +33,7 @@ concurrency:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       PUBLICATION_SOURCE_SHA: ${{ inputs.release_sha || github.sha }}

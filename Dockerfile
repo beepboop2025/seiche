@@ -16,9 +16,8 @@ FROM cgr.dev/chainguard/python:latest@sha256:1e64347fb2a3f1a57a8839fa05df8f0cb8c
 
 FROM cgr.dev/chainguard/python:latest-dev@sha256:85c70fe9ec4313b5c8b1adcb4f0e7fa45d171ae203d2c64c69c4ea3eb96fb7dc AS python-build
 
-# Patch the signed CA, Brotli, Expat and pip-wheel packages without advancing these Python 3.14
-# images to Python 3.15. apk verifies the existing repository keys and updates
-# its real package database. Remove this step once both pins include the fixes.
+# Apply reviewed vendor package updates on the pinned Python 3.14 ABI. apk
+# verifies the existing repository keys and updates its real package database.
 USER 0
 COPY --from=runtime-base / /runtime-root/
 RUN python - <<'PYCA'
@@ -29,7 +28,9 @@ import subprocess
 
 expected_hash = "5961c0a3c65459931c023e0075c09733f09aea4ca439cb85bc4a08bb4f3f568b"
 brotli_packages = ("libbrotlicommon1", "libbrotlidec1", "libbrotlienc1")
-security_packages = {"libexpat1": ("2.8.5-r0", "2.10.0-r0"),
+python_old = "3.14.8_git20261001-r0"
+python_fixed = "3.14.10_git20261111-r0"
+common_updates = {"libexpat1": ("2.8.5-r0", "2.10.0-r0"),
                      "py3-pip-wheel": ("26.2.1-r2", "26.2.2-r2")}
 def packages(root):
     records = (root / "usr/lib/apk/db/installed").read_text().split("\n\n")
@@ -38,6 +39,12 @@ def packages(root):
 
 for root in (pathlib.Path("/"), pathlib.Path("/runtime-root")):
     before = packages(root)
+    python_packages = ["python-3.14", "python-3.14-base"]
+    if root == pathlib.Path("/"):
+        python_packages.extend(["python-3.14-dev", "python-3.14-base-dev"])
+    security_packages = common_updates | dict.fromkeys(python_packages, (python_old, python_fixed))
+    # The fixed Python now uses a separate runtime dependency package.
+    assert "python-3.14-runtime" not in before
     assert all(before.get(name) == "1.2.0-r5" for name in brotli_packages), "unexpected pinned Brotli inventory"
     assert all(before.get(name) == old for name, (old, new) in security_packages.items()), "unexpected pinned security inventory"
     # The distroless root's ldconfig APK hook needs a shell during the update.
@@ -51,15 +58,21 @@ for root in (pathlib.Path("/"), pathlib.Path("/runtime-root")):
                         "ca-certificates-bundle=20260909-r3",
                         "libbrotlicommon1=1.2.0-r7", "libbrotlidec1=1.2.0-r7",
                         "libbrotlienc1=1.2.0-r7",
-                        "libexpat1=2.10.0-r0", "py3-pip-wheel=26.2.2-r2"], check=True)
+                        "libexpat1=2.10.0-r0", "py3-pip-wheel=26.2.2-r2",
+                        *[f"{name}={python_fixed}" for name in [*python_packages, "python-3.14-runtime"]]], check=True)
     finally:
         if shell is not None:
             shell.unlink()
     if shell is not None:
         assert not shell.exists() and not shell.is_symlink(), "runtime shell retained"
     expected = before | {"ca-certificates-bundle": "20260909-r3", **dict.fromkeys(brotli_packages, "1.2.0-r7"),
-                         **{name: new for name, (old, new) in security_packages.items()}}
-    assert packages(root) == expected, "security update changed another package"
+                         **{name: new for name, (old, new) in security_packages.items()},
+                         "python-3.14-runtime": python_fixed}
+    actual = packages(root)
+    assert packages(root) == expected, {
+        name: (expected.get(name), actual.get(name)) for name in expected.keys() | actual.keys()
+        if expected.get(name) != actual.get(name)
+    }
     bundle = root / "etc/ssl/certs/ca-certificates.crt"
     assert hashlib.sha256(bundle.read_bytes()).hexdigest() == expected_hash, "unexpected CA bundle"
     assert not (root / "var/lib/db/sbom/ca-certificates-bundle-20260909-r2.spdx.json").exists()
@@ -90,15 +103,12 @@ RUN python -m pip install ./backend \
     && mkdir -p /home/nonroot/runtime/app/backend/data
 
 
-FROM cgr.dev/chainguard/python:latest@sha256:1e64347fb2a3f1a57a8839fa05df8f0cb8c2c050ac85f3ee6b24d442ae282fd9 AS runtime
+FROM scratch AS runtime
 
-# Copy the fully apk-managed root, including its updated package inventory.
-# COPY overlays files, so repeat apk's deletion of the superseded package SBOM.
+# Import the fully updated distroless root once. Overlaying it onto the old
+# root would resurrect files and SBOM entries that apk removed.
 COPY --from=python-build /runtime-root/ /
-USER 0
-RUN ["/usr/bin/python", "-c", "import pathlib; pathlib.Path('/var/lib/db/sbom/ca-certificates-bundle-20260909-r2.spdx.json').unlink()"]
-RUN ["/usr/bin/python", "-c", "import pathlib; [pathlib.Path('/var/lib/db/sbom/' + name + '-1.2.0-r5.spdx.json').unlink() for name in ('libbrotlicommon1', 'libbrotlidec1', 'libbrotlienc1')]"]
-RUN ["/usr/bin/python", "-c", "import pathlib; [pathlib.Path('/var/lib/db/sbom/' + name + '-' + version + '.spdx.json').unlink() for name, version in (('libexpat1', '2.8.5-r0'), ('py3-pip-wheel', '26.2.1-r2'))]"]
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # The pinned distroless base includes CPython's package bootstrap module even
 # though it includes no pip executable. Remove that bootstrap as root during
@@ -124,7 +134,7 @@ LABEL org.opencontainers.image.title="Seiche" \
       org.opencontainers.image.base.name="cgr.dev/chainguard/python:latest" \
       org.opencontainers.image.base.digest="sha256:1e64347fb2a3f1a57a8839fa05df8f0cb8c2c050ac85f3ee6b24d442ae282fd9"
 
-ENV PATH="/home/nonroot/venv/bin:${PATH}" \
+ENV PATH="/home/nonroot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin" \
     PYTHONPATH=/app/backend \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
