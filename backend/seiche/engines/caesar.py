@@ -48,6 +48,9 @@ Honesty notes:
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+from threading import Lock
+
 import numpy as np
 import pandas as pd
 from scipy import sparse
@@ -64,6 +67,7 @@ CAESAR_CLIM_WINDOW = 250    # rolling window of the climatology benchmark
 CAESAR_BURN_IN = 60         # prefix slice that seeds the recursions
 _EPS = 1e-6                 # floor keeping log(-e) finite in the FZ loss
 _NM_MAXITER = 400
+_cacheable_fit = ContextVar("caesar_cacheable_fit", default=False)
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +124,15 @@ def _caviar_recurse(beta: np.ndarray, y: np.ndarray, q0: float) -> np.ndarray:
     return q
 
 
+def _check_solver_result(result) -> None:
+    # A finite fallback remains valid for this build. Retry the numerical
+    # optimization on the next live build if the solver returned a nonfinite result.
+    if _cacheable_fit.get() and (
+        not np.isfinite(result.fun) or not np.isfinite(result.x).all()
+    ):
+        _cacheable_fit.set(False)
+
+
 def _qr_lp(X: np.ndarray, y: np.ndarray, theta: float) -> np.ndarray:
     """Koenker–Bassett quantile regression as an LP: with residuals split
     r = u − v, u,v >= 0, the pinball loss min sum theta*u + (1−theta)*v is
@@ -141,6 +154,7 @@ def _qr_lp(X: np.ndarray, y: np.ndarray, theta: float) -> np.ndarray:
     )
     if res.status != 0:
         raise RuntimeError(f"quantile LP failed (status {res.status})")
+    _check_solver_result(res)
     return np.asarray(res.x[:p], dtype=float)
 
 
@@ -168,6 +182,9 @@ def _fit_caviar_once(y: np.ndarray, theta: float, q0: float,
         try:
             beta_new = _qr_lp(X, y[1:], theta)
         except RuntimeError:
+            # A transient LP refusal can still produce a finite fallback.
+            if _cacheable_fit.get():
+                _cacheable_fit.set(False)
             break
         q_new = _caviar_recurse(beta_new, y, q0)
         loss = _pinball(y[1:], q_new[1:], theta)
@@ -270,6 +287,7 @@ def _fit_es_gap(y: np.ndarray, qhat: np.ndarray, theta: float, r0: float,
 
         res = minimize(fg, g, jac=True, method="L-BFGS-B", bounds=bounds,
                        options={"maxiter": 200})
+        _check_solver_result(res)
         g_new = res.x if np.all(np.isfinite(res.x)) else g
         r_new = _gap_recurse(g_new, y, qhat, r0)
         loss = _gap_loss(r_new[1:], c[1:])
@@ -339,6 +357,7 @@ def _fit_joint(p0: np.ndarray, y: np.ndarray, theta: float,
         options={"maxiter": _NM_MAXITER, "maxfev": _NM_MAXITER + 50,
                  "xatol": 1e-4, "fatol": 1e-6},
     )
+    _check_solver_result(res)
     if np.all(np.isfinite(res.x)) and res.fun < f0:
         return res.x
     return p0
@@ -402,6 +421,35 @@ def _walk_level(y: np.ndarray, theta: float) -> dict:
     return {"q": q_fc, "e": e_fc, "qc": qc_fc, "ec": ec_fc}
 
 
+# A running board repeatedly fits the same daily observations. Cache only the
+# numerical paths, so dates, scores and caller-owned frames are rebuilt each time.
+# A new process starts cold on every code or dependency upgrade.
+_latest_walks = None
+_latest_walks_lock = Lock()
+
+
+def _live_walks(y: np.ndarray, dates: pd.DatetimeIndex) -> dict:
+    global _latest_walks
+    key = (y.tobytes(), dates.asi8.tobytes(), str(dates.dtype))
+    with _latest_walks_lock:
+        if _latest_walks is not None and _latest_walks[0] == key:
+            return _latest_walks[1]
+        token = _cacheable_fit.set(True)
+        try:
+            walks = {level: _walk_level(y, 1.0 - level) for level in CAESAR_LEVELS}
+            cacheable = _cacheable_fit.get()
+        finally:
+            _cacheable_fit.reset(token)
+        # NaNs before the first forecast are expected. Never retain an invalid
+        # forecast or a partial run if a solver raises between levels.
+        if cacheable and np.isfinite(y).all() and all(
+            np.isfinite(path[CAESAR_T0:]).all()
+            for walk in walks.values() for path in walk.values()
+        ):
+            _latest_walks = (key, walks)
+        return walks
+
+
 def _wilson(k: int, n: int, z: float = 1.959964) -> tuple[float, float]:
     if n <= 0:
         return (float("nan"), float("nan"))
@@ -422,7 +470,7 @@ def _fz_point(y: float, q: float, e: float, theta: float) -> float:
 # Public entry
 # ---------------------------------------------------------------------------
 
-def analyze(spread_bp: pd.Series) -> dict:
+def analyze(spread_bp: pd.Series, *, reuse_live_fit: bool = False) -> dict:
     """CAESar (VaR, ES) bands for the NEXT business day's pop, at the 95% and
     99% levels, with walk-forward skill vs climatology stated. Input:
     SOFR−IORB spread in bp, daily DatetimeIndex. No composite score — context,
@@ -441,10 +489,11 @@ def analyze(spread_bp: pd.Series) -> dict:
     wf_frames: dict[str, pd.DataFrame] = {}
     ratios: dict[str, float | None] = {}
     reliability: list[dict] = []
+    live_walks = _live_walks(y, pop.index) if reuse_live_fit else None
     for q_level in CAESAR_LEVELS:
         lab = f"q{int(round(q_level * 100))}"
         theta = 1.0 - q_level
-        wf = _walk_level(y, theta)
+        wf = live_walks[q_level] if live_walks is not None else _walk_level(y, theta)
 
         # --- out-of-sample scoring vs climatology (FZ loss, same as fitting) ---
         l_model = np.array([_fz_point(y[t + 1], wf["q"][t], wf["e"][t], theta) for t in scored])
