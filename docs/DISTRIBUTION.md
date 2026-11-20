@@ -150,19 +150,15 @@ The distribution contract checks all of the following before publication:
   the ZIP, gzip, and tar metadata before PyPI publication; the same reusable
   verifier runs again over immutable PyPI bytes before MCP publication.
 
-The Python 3.14 container pins predate the certificate-bundle fix for
-[CVE-2026-111943](https://support.chainguard.dev/hc/en-us/articles/57499369353755-ACTION-REQUIRED-Update-all-Chainguard-Images-to-remove-eMudhra-Intermediate-CA-Data).
-The Docker build uses APK signature verification and the configured vendor
-repository to install
-`ca-certificates-bundle=20260909-r3` in the builder and copied runtime root.
-It verifies the published bundle SHA-256 and rejects any other package-version
-change. A temporary shell from the pinned builder lets the runtime root execute
-its existing APK hook; it is removed before that root is copied into the final
-image. The real APK database and replacement package SBOM remain in the image;
-the superseded r2 SBOM is removed as part of that package replacement. This
-keeps the existing Python version and distroless runtime while the normal
-vulnerability and container smoke gates remain mandatory. Remove this temporary
-package patch when both pinned Python bases contain the fixed bundle.
+The pinned Python 3.14 container roots receive signed Chainguard APK updates for
+the certificate bundle, Brotli, Expat, pip wheel and Python. The build applies
+Python 3.14.10 packages at `3.14.10_git20261111-r0` for CVE-2026-119170 and
+verifies the exact builder and runtime inventories, including Python's new
+runtime dependency. It checks the certificate bundle checksum and replacement
+package SBOMs. The final stage copies the complete patched distroless root into
+an empty image so files removed by APK stay removed. The scan and non-root smoke
+test run against that resulting image. The original certificate bundle fix is
+[documented by Chainguard](https://support.chainguard.dev/hc/en-us/articles/57499369353755-ACTION-REQUIRED-Update-all-Chainguard-Images-to-remove-eMudhra-Intermediate-CA-Data).
 
 PyPI is immutable. Creating a GitHub Release therefore verifies the existing
 PyPI artifacts and then publishes the MCP Registry record. It never attempts to
