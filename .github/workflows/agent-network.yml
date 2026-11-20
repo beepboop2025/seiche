@@ -33,3 +33,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - run: node --test services/agent-network/edge/worker.test.mjs
+  proxy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Exercise recovery with the Ubuntu Caddy binary
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/proxy-restart"
+          cd "$RUNNER_TEMP/proxy-restart"
+          sudo apt-get update -qq
+          apt-get download caddy
+          dpkg-deb -x caddy_*.deb distribution
+          export PATH="$PWD/distribution/usr/bin:$PATH"
+          caddy version
+          cd "$GITHUB_WORKSPACE"
+          python3 -m unittest discover -s services/agent-network/tests -p test_caddy_restart.py -v
