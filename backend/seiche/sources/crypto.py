@@ -20,6 +20,7 @@ import httpx
 import pandas as pd
 
 from seiche import store
+from seiche.public_faults import safe_failure_envelope
 from seiche.sources._async_store import run_store
 from seiche.config import (
     ALL_SERIES,
@@ -149,20 +150,23 @@ async def fetch_all(client: httpx.AsyncClient, products: list[str], faults: list
     """Candles for every product + the stablecoin board, fault-isolated."""
     out: dict = {"candles": {}}
 
-    async def one(p: str):
+    async def collect(target: dict, key: str, acquisition):
         try:
-            out["candles"][p.replace("-", "_")] = await fetch_candles(client, p)
-        except SourceFault as e:
+            target[key] = await acquisition
+        except SourceFault as exc:
             if faults is not None:
-                faults.append({"source": e.source, "detail": e.detail})
+                faults.append({"source": exc.source, "detail": exc.detail})
+        except Exception as exc:
+            if faults is None:
+                raise
+            failure = safe_failure_envelope(exc)
+            faults.append({"source": "crypto", "component": key,
+                           "detail": failure["reason"], "category": failure["category"]})
 
-    async def stables():
-        try:
-            out["stable"] = await fetch_stablecoins(client)
-        except SourceFault as e:
-            if faults is not None:
-                faults.append({"source": e.source, "detail": e.detail})
-
-    await asyncio.gather(*(one(p) for p in products), stables())
+    candles = [
+        collect(out["candles"], product.replace("-", "_"), fetch_candles(client, product))
+        for product in products
+    ]
+    await asyncio.gather(*candles, collect(out, "stable", fetch_stablecoins(client)))
     out["fetched_at"] = utcnow_iso()
     return out
