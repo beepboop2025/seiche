@@ -490,7 +490,7 @@ function clamp(value: number, low: number, high: number): number {
 
 function fmt(value: number | null | undefined, unit?: string | null, signed = false): string {
   const number = finite(value);
-  if (number === null) return "—";
+  if (number === null) return "Unavailable";
   const abs = Math.abs(number);
   const digits = abs >= 1000 ? 0 : abs >= 100 ? 1 : abs >= 10 ? 2 : 3;
   const prefix = signed && number > 0 ? "+" : "";
@@ -750,7 +750,7 @@ function ClearingLadder({ market }: { market: MoneyMarket }) {
       <dl className="mm-ladder__stats">
         <div><dt>own-history position</dt><dd>{percentile === null ? "insufficient history" : "p" + percentile.toFixed(1) + " · " + pressureLabel(percentile)}</dd></div>
         <div><dt>robust deviation</dt><dd>{z === null ? "insufficient history" : fmt(z, "z", true)}</dd></div>
-        <div><dt>sample</dt><dd>{contextBenchmark?.n_observations ?? "—"} native observations</dd></div>
+        <div><dt>sample</dt><dd>{contextBenchmark?.n_observations ?? "Unavailable"} native observations</dd></div>
       </dl>
     </figure>
   );
@@ -826,16 +826,16 @@ function MetricTable({ metrics, caption }: { metrics: MoneyMarketMetric[]; capti
                         ? "raw withheld"
                         : (metric.availability || "").toUpperCase() === "RESTRICTED"
                           ? "withheld"
-                          : "—"}
+                          : "Unavailable"}
                   </strong>
                   <StatusPill value={statusLabel(metric)} />
                 </td>
                 <td>
-                  <strong>{publicValue ? fmt(change.value, metric.change_unit || metric.unit, true) : "—"}</strong>
+                  <strong>{publicValue ? fmt(change.value, metric.change_unit || metric.unit, true) : "Unavailable"}</strong>
                   <span>{change.label}</span>
                 </td>
                 <td>
-                  <strong>{percentile === null ? "—" : "p" + percentile.toFixed(1)}</strong>
+                  <strong>{percentile === null ? "Unavailable" : "p" + percentile.toFixed(1)}</strong>
                   <span>{z === null ? "z unavailable" : fmt(z, "z", true)}</span>
                 </td>
                 <td>
@@ -1063,7 +1063,7 @@ function PressureSonar({
                 <button type="button" onClick={() => onOpen(market.market_id)}>
                   <span>{String(index + 1).padStart(2, "0")}</span>
                   <b>{market.currency}</b>
-                  <i>{percentile === null ? "—" : "p" + percentile.toFixed(1)}</i>
+                  <i>{percentile === null ? "Unavailable" : "p" + percentile.toFixed(1)}</i>
                   <small>{pressureLabel(percentile)}</small>
                 </button>
               </li>
@@ -1324,7 +1324,7 @@ function MomentumTable({ market }: { market: MoneyMarket }) {
                 <td>{fmt(metric.change_5_observations, metric.change_unit || metric.unit, true)}</td>
                 <td>{fmt(metric.change_20_observations, metric.change_unit || metric.unit, true)}</td>
                 <td>{fmt(ownZ(metric), "z", true)}</td>
-                <td>{ownPercentile(metric) === null ? "—" : "p" + ownPercentile(metric)?.toFixed(1)}</td>
+                <td>{ownPercentile(metric) === null ? "Unavailable" : "p" + ownPercentile(metric)?.toFixed(1)}</td>
                 <td>{fmt(metric.change_vol_20_annualized, metric.change_vol_unit)}</td>
               </tr>
             ))}
@@ -1427,7 +1427,7 @@ export function ChinaDesk({
 
       <section className="mm-china-interpretation">
         <article><span>01 / PRICE</span><h3>Is unsecured cash repricing?</h3><p>{isPublicValue(unsecuredRate) ? `${unsecuredRate?.label || "The unsecured fixing"} is public in the canonical pack; its native changes appear in the Market Lab.` : "The exact fixing and its rate changes stay withheld under the canonical source terms, so Seiche leaves the direction open."}</p></article>
-        <article><span>02 / COLLATERAL</span><h3>Does secured funding confirm it?</h3><p>{isPublicValue(securedRate) ? "The FDR007 fixing is public, but it still cannot be subtracted from a different-tenor unsecured contract as if the two matched." : "FDR007, a fixing calculated from underlying DR007 transactions, is registered as secured seven-day evidence, but its exact quote is rights-restricted. Missing confirmation is shown as missing—not as an easy collateral market."}</p></article>
+        <article><span>02 / COLLATERAL</span><h3>Does secured funding confirm it?</h3><p>{isPublicValue(securedRate) ? "The FDR007 fixing is public, but it still cannot be subtracted from a different-tenor unsecured contract as if the two matched." : "FDR007, a fixing calculated from underlying DR007 transactions, is registered as secured seven-day evidence, but its exact quote is rights-restricted. Missing confirmation is shown as missing, not as an easy collateral market."}</p></article>
         <article><span>03 / EXTERNAL VALVE</span><h3>Is pressure escaping through CNY?</h3><p>{cny && cny.change60 !== null
           ? `USD/CNY moved ${signedPercent(cny.change60)} over the last 60 ECB observations${cny.change60From ? ` (${cny.change60From} to ${cny.asof})` : ""}, so ${renminbiMove(cny.change60)}. `
             + (cny.vol20 === null
@@ -1496,7 +1496,7 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
         <div>
           <span>METRIC COVERAGE</span>
           <strong>{fmt(engine.coverage?.coverage_pct, "%")}</strong>
-          <small>{engine.coverage?.available_metrics ?? "—"} / {engine.coverage?.total_metrics ?? "—"} cards available</small>
+          <small>{engine.coverage?.available_metrics ?? "Unavailable"} / {engine.coverage?.total_metrics ?? "Unavailable"} cards available</small>
         </div>
         <div>
           <span>DESK CLOCK</span>
@@ -1519,7 +1519,7 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
             onClick={() => setSectionId(item.id)}
           >
             <span>{item.label}</span>
-            <small>{item.available_metrics ?? "—"}/{item.total_metrics ?? item.metrics.length}</small>
+            <small>{item.available_metrics ?? "Unavailable"}/{item.total_metrics ?? item.metrics.length}</small>
           </button>
         ))}
       </nav>
@@ -1949,7 +1949,7 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
         <div className="mm-hero__index" aria-hidden="true">CASH / MM</div>
         <div className="mm-hero__copy">
           <span>SEICHE MONEY MARKETS / GLOBAL CASH INTELLIGENCE</span>
-          <h1>Where cash is tightening—and why.</h1>
+          <h1>Where cash is tightening, and why.</h1>
           <p>
             {clearingScope}, one evidence discipline. Seiche reads rates, collateral, liquidity and currency pressure in local conventions, then compares every market only with its own history.
           </p>
@@ -1959,7 +1959,7 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
           <span>ATLAS CLOCK</span>
           <strong>{shortDate(atlas?.generated_at)}</strong>
           <small>
-            {atlas?.coverage?.live_benchmarks ?? "—"} / {atlas?.coverage?.declared_markets ?? "—"} declared benchmarks live
+            {atlas?.coverage?.live_benchmarks ?? "Unavailable"} / {atlas?.coverage?.declared_markets ?? "Unavailable"} declared benchmarks live
             {(atlas?.coverage?.derived_context_benchmarks || 0) > 0 ? " · " + atlas?.coverage?.derived_context_benchmarks + " derived-only" : ""}
           </small>
         </div>
@@ -2095,7 +2095,7 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
           {(view === "world" || view === "lab") && <section className={`mm-selector${view === "lab" ? " mm-selector--lab" : ""}`} aria-labelledby="mm-selector-title">
             <div className="mm-selector__lead">
               <span id="mm-selector-title">{view === "lab" ? "MARKET LAB SELECTOR" : "CHOOSE A CLEARING BASIN"}</span>
-              <p>{view === "lab" ? "Change the local market without leaving the analytical workspace." : "Tiles share a 0–100 own-history ladder. Raw rates remain local quotes and are never ranked as universal stress."}</p>
+              <p>{view === "lab" ? "Change the local market without leaving the analytical workspace." : "Tiles share a 0 to 100 own-history ladder. Raw rates remain local quotes and are never ranked as universal stress."}</p>
             </div>
             <div className="mm-region-tabs" role="group" aria-label="Filter markets by region">
               {["ALL", ...regions].map((item) => (
@@ -2248,7 +2248,7 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
           {view === "notes" && <>
           <section className="mm-notes-intro">
             <div><span>THE EVIDENCE ROOM</span><h2>Trust the analysis without leaving Seiche.</h2></div>
-            <p>Publishers, clocks, rights limits, formulas and missing observations live here as product data—not as outbound reading assignments.</p>
+            <p>Publishers, clocks, rights limits, formulas and missing observations live here as product data, not as outbound reading assignments.</p>
             <label><span>INSPECT MARKET</span><select value={selected.market_id} onChange={(event) => setMarketId(event.target.value)}>{atlas.markets.map((market) => <option value={market.market_id} key={market.market_id}>{market.currency} · {market.display_name}</option>)}</select></label>
           </section>
           <section className="mm-evidence" aria-labelledby="mm-evidence-title">
@@ -2295,7 +2295,7 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
             <div className="mm-audit-boundary">
               <div>
                 <span>ATLAS CAVEATS / EVIDENCE RIGHTS</span>
-                <h3>What this desk may—and may not—show</h3>
+                <h3>What this desk may (and may not) show</h3>
                 <p>Restrictions change display rights, not the meaning of zero. A withheld or unavailable value never becomes a calm print.</p>
               </div>
               <div className="mm-audit-boundary__caveats">
@@ -2366,17 +2366,17 @@ export default function MoneyMarkets({ snap, boardWithheld = false }: Props) {
                 </div>
                 <div className="mm-table-wrap">
                   <table className="mm-table mm-table--ledger mm-table--expansion">
-                    <caption>Global expansion queue — official-source metadata only</caption>
+                    <caption>Global expansion queue: official-source metadata only</caption>
                     <thead><tr><th scope="col">Market</th><th scope="col">Region</th><th scope="col">Candidate benchmark</th><th scope="col">Official source</th><th scope="col">Rights / integration limit</th><th scope="col">Stage</th></tr></thead>
                     <tbody>
                       {visibleExpansion.map((row, index) => {
                         return (
                           <tr key={row.market_id || String(index)}>
                             <th scope="row">
-                              <b>{row.currency || "—"} · {row.market || row.market_id || "planned market"}</b>
+                              <b>{row.currency || "Unavailable"} · {row.market || row.market_id || "planned market"}</b>
                               <span>{row.market_id || "not assigned"}</span>
                             </th>
-                            <td>{row.region || "—"}</td>
+                            <td>{row.region || "Unavailable"}</td>
                             <td>
                               <b>{row.benchmark || "to validate"}</b>
                               <span>{row.benchmark_kind || "benchmark taxonomy pending"}</span>

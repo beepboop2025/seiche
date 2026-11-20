@@ -37,13 +37,13 @@ const PRESSURE_SERIES: ChartSeries[] = [
 const GAP_SERIES: ChartSeries[] = [{ label: "daily passage gap", color: C.cash }];
 
 const signed = (value: unknown, digits = 1, unit = "") => {
-  if (value == null || !Number.isFinite(Number(value))) return "—";
+  if (value == null || !Number.isFinite(Number(value))) return "Unavailable";
   const n = Number(value);
   return `${n > 0 ? "+" : n < 0 ? "−" : ""}${fmt(Math.abs(n), digits)}${unit}`;
 };
 
 const compactUsd = (value: number | null | undefined) => {
-  if (value == null || !Number.isFinite(value)) return "—";
+  if (value == null || !Number.isFinite(value)) return "Unavailable";
   const sign = value < 0 ? "−" : "";
   const abs = Math.abs(value);
   if (abs >= 1e12) return `${sign}$${fmt(abs / 1e12, 2)}tn`;
@@ -53,7 +53,7 @@ const compactUsd = (value: number | null | undefined) => {
 };
 
 const compactValue = (value: unknown) => {
-  if (value == null || !Number.isFinite(Number(value))) return "—";
+  if (value == null || !Number.isFinite(Number(value))) return "Unavailable";
   const n = Number(value);
   if (Math.abs(n) >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 1 });
   if (Math.abs(n) >= 100) return fmt(n, 1);
@@ -75,7 +75,7 @@ function ScoreLine({ label, value, tone, note }: { label: string; value: number 
     <div className="est-scoreline">
       <div><span>{label}</span><small>{note}</small></div>
       <div className="est-scoreline__track"><i className={tone} style={{ width: `${Math.max(0, Math.min(100, value ?? 0))}%` }} /></div>
-      <strong>{value == null ? "—" : fmt(value, 1)}</strong>
+      <strong>{value == null ? "Unavailable" : fmt(value, 1)}</strong>
     </div>
   );
 }
@@ -100,7 +100,7 @@ function PassageMap({ passage }: { passage: Any }) {
           <span className="est-kicker">SEICHE DIFFERENTIATOR · DISCOVERY → HOLDOUT</span>
           <h2 id="est-passage-title">The Passage</h2>
         </div>
-        <p>What moved upstream, where it historically landed, how long it took—and whether the relationship survived data it never saw.</p>
+        <p>What moved upstream, where it historically landed, how long it took, and whether the relationship survived data it never saw.</p>
       </div>
       <div className="est-passage__legend" aria-label="Passage evidence legend">
         <span><i className="earned" /> earned in holdout</span>
@@ -261,9 +261,9 @@ function AnalogLedger({ data }: { data: Any }) {
         <p>Prior daily states that looked like today before the funding outcome was revealed.</p>
       </div>
       <div className="est-analog-headline">
-        <div><span>EVENT WITHIN {data.horizon_bd}bd</span><strong>{fmt(data.event_rate_pct, 1)}%</strong><small>Wilson 95% {data.event_rate_ci95_pct?.[0]}–{data.event_rate_ci95_pct?.[1]}%</small></div>
+        <div><span>EVENT WITHIN {data.horizon_bd}bd</span><strong>{fmt(data.event_rate_pct, 1)}%</strong><small>Wilson 95% {data.event_rate_ci95_pct?.[0]} to {data.event_rate_ci95_pct?.[1]}%</small></div>
         <div><span>UNCONDITIONAL RATE</span><strong>{fmt(data.base_rate_pct, 1)}%</strong><small>{data.base_trials} non-overlapping trials</small></div>
-        <div><span>LIFT</span><strong>{data.lift == null ? "—" : `${fmt(data.lift, 2)}×`}</strong><small>threshold ≥ {data.event_threshold_bp}bp widening</small></div>
+        <div><span>LIFT</span><strong>{data.lift == null ? "Unavailable" : `${fmt(data.lift, 2)}×`}</strong><small>threshold ≥ {data.event_threshold_bp}bp widening</small></div>
         <div><span>NEIGHBORS</span><strong>{data.k}</strong><small>minimum 28 calendar days apart</small></div>
       </div>
       <div className="est-table-scroll">
@@ -394,10 +394,10 @@ function DollarSystem({ data, structure }: { data: Any; structure: Any }) {
         <p>Spot is only the surface. Dollar access, settlement method and offshore liabilities determine whether a move becomes a cash event.</p>
       </div>
       <div className="est-system__metrics">
-        <div><span>SWAP LINES</span><strong>{data?.swap_lines?.outstanding_usd_m == null ? "—" : `$${fmt(data.swap_lines.outstanding_usd_m, 0)}M`}</strong><small>13w {signed(data?.swap_lines?.change_13w_usd_m, 0, "M")} · {data?.swap_lines?.asof}</small></div>
-        <div><span>FIMA REPO</span><strong>{data?.fima_repo?.outstanding_usd_m == null ? "—" : `$${fmt(data.fima_repo.outstanding_usd_m, 0)}M`}</strong><small>foreign officials borrowing dollars · {data?.fima_repo?.asof}</small></div>
-        <div><span>FOREIGN-OFFICIAL RRP</span><strong>{data?.foreign_official_rrp?.outstanding_usd_b == null ? "—" : `$${fmt(data.foreign_official_rrp.outstanding_usd_b, 1)}B`}</strong><small>13w {signed(data?.foreign_official_rrp?.change_13w_usd_b, 1, "B")} · {data?.foreign_official_rrp?.asof}</small></div>
-        <div><span>OFFSHORE USD CREDIT</span><strong>{data?.offshore_dollar_credit?.outstanding_usd_t == null ? "—" : `$${fmt(data.offshore_dollar_credit.outstanding_usd_t, 2)}T`}</strong><small>{data?.offshore_dollar_credit?.asof} · quarterly / lagged</small></div>
+        <div><span>SWAP LINES</span><strong>{data?.swap_lines?.outstanding_usd_m == null ? "Unavailable" : `$${fmt(data.swap_lines.outstanding_usd_m, 0)}M`}</strong><small>13w {signed(data?.swap_lines?.change_13w_usd_m, 0, "M")} · {data?.swap_lines?.asof}</small></div>
+        <div><span>FIMA REPO</span><strong>{data?.fima_repo?.outstanding_usd_m == null ? "Unavailable" : `$${fmt(data.fima_repo.outstanding_usd_m, 0)}M`}</strong><small>foreign officials borrowing dollars · {data?.fima_repo?.asof}</small></div>
+        <div><span>FOREIGN-OFFICIAL RRP</span><strong>{data?.foreign_official_rrp?.outstanding_usd_b == null ? "Unavailable" : `$${fmt(data.foreign_official_rrp.outstanding_usd_b, 1)}B`}</strong><small>13w {signed(data?.foreign_official_rrp?.change_13w_usd_b, 1, "B")} · {data?.foreign_official_rrp?.asof}</small></div>
+        <div><span>OFFSHORE USD CREDIT</span><strong>{data?.offshore_dollar_credit?.outstanding_usd_t == null ? "Unavailable" : `$${fmt(data.offshore_dollar_credit.outstanding_usd_t, 2)}T`}</strong><small>{data?.offshore_dollar_credit?.asof} · quarterly / lagged</small></div>
       </div>
       <div className="est-settlement">
         <div className="est-settlement__headline"><span>APRIL 2025 STRUCTURAL BENCHMARK</span><strong>{fmt(structure?.gross_obligations_usd_t_per_day, 1)}T</strong><small>USD gross FX obligations settled per day</small></div>
@@ -456,7 +456,7 @@ export default function Estuary({ snap }: { snap: Any }) {
           <article><header><h3>Dollar regimes</h3><span>DAILY</span></header><Chart rows={charts.dollar?.rows ?? []} series={DOLLAR_SERIES} height={230} yLabel="Fed dollar indexes · Jan 2006 = 100" source="Federal Reserve H.10 via FRED" asOf={e.fx?.broad?.asof} note="A rise means a stronger dollar against the relevant trade-weighted currency set." sharePath={worldMarketSharePath("forex")} /></article>
           <article><header><h3>Physical-market breadth</h3><span>MONTHLY COMPARISON</span></header><Chart rows={charts.materials?.rows ?? []} series={MATERIAL_SERIES} height={230} yLabel="each series indexed to 100 in-window" source="EIA + IMF via FRED" note="Daily energy is sampled to month-end to compare with monthly IMF benchmarks. This chart is not the daily Passage." /></article>
           <article><header><h3>Funding landing zones</h3><span>DAILY</span></header><Chart rows={charts.funding?.rows ?? []} series={FUNDING_SERIES} height={230} yLabel="spread · basis points" source="NY Fed + Federal Reserve via FRED" note="CP uses 3m AA commercial paper minus 3m Treasury on actual CP print dates." sharePath={worldMarketSharePath("money-markets")} /></article>
-          <article><header><h3>Daily upstream vs funding</h3><span>DAILY PROXY</span></header><Chart rows={pressureRows} series={PRESSURE_SERIES} height={230} yLabel="pressure percentile · 0–100" source="Seiche from H.10 / EIA / Fed" note={charts.daily_gap?.note} /></article>
+          <article><header><h3>Daily upstream vs funding</h3><span>DAILY PROXY</span></header><Chart rows={pressureRows} series={PRESSURE_SERIES} height={230} yLabel="pressure percentile · 0 to 100" source="Seiche from H.10 / EIA / Fed" note={charts.daily_gap?.note} /></article>
           <article className="wide"><header><h3>The daily gap</h3><span>UPSTREAM − FUNDING</span></header><Chart rows={gapRows} series={GAP_SERIES} height={210} yLabel="passage gap · points" refLine={{ value: 0, color: C.muted, label: "in sync" }} source="Seiche daily proxy" note="Positive = upstream ahead; negative = funding ahead. The headline also carries slower monthly materials breadth and can differ." /></article>
         </div>
       </section>

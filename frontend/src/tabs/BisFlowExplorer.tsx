@@ -272,7 +272,7 @@ export default function BisFlowExplorer({ flows, knowledgeTime, generatedAt }: P
                 <span>{bisDomain(flow)}</span>
                 <code>{flow.flow_id}</code>
                 <strong>{flow.name ?? flow.topic ?? "Unnamed flow"}</strong>
-                <small>tier {flow.priority_tier ?? "—"} · Seiche {flow.product_scores?.seiche ?? "—"}/100</small>
+                <small>tier {flow.priority_tier ?? "Unavailable"} · Seiche {flow.product_scores?.seiche ?? "Unavailable"}/100</small>
               </button>
             ))}
             {visibleFlows.length === 0 && <p>No registered flow matches this filter.</p>}
@@ -314,7 +314,7 @@ export default function BisFlowExplorer({ flows, knowledgeTime, generatedAt }: P
                   {state.revisions.runs.map((run, index) => (
                     <article key={run.capture_id ?? `${run.completed_at}:${index}`}>
                       <span>{index === 0 ? "latest" : `−${index}`}</span>
-                      <strong>{run.row_count?.toLocaleString() ?? "—"} rows</strong>
+                      <strong>{run.row_count?.toLocaleString() ?? "Unavailable"} rows</strong>
                       <small>{run.insert_count ?? 0} new · {run.revision_count ?? 0} revised · {run.deletion_count ?? 0} deleted</small>
                       <time>{shortClock(run.completed_at)}</time>
                       {run.normalized_sha256 && <code title={run.normalized_sha256}>{run.normalized_sha256.slice(0, 10)}…</code>}

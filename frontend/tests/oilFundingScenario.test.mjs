@@ -194,7 +194,7 @@ test("RV X-Ray screens render coverage beside current values", async () => {
   assert.match(positioning, /rvMetricQualityLabel\(e, "pair_proxy_b"\)/);
   assert.match(positioning, /Chart gaps mark incomplete contract coverage/);
   assert.match(positioning, /Shock outputs are withheld unless every required current aggregate/);
-  assert.match(positioning, /s\.mtm_loss_b == null \? "—"/);
+  assert.match(positioning, /s\.mtm_loss_b == null \? "Unavailable"/);
   assert.match(positioning, /pair_change_13w_b > 50 \? "warn"/);
   assert.match(board, /pair proxy \$\{pairQuality\}/);
   assert.match(board, /score withheld/);

@@ -22,26 +22,26 @@ function RiptideCard({ r }: { r: Any }) {
     <div className="card span12">
       <h2>Riptide ★</h2>
       <div className="sub">
-        the pop prognosis — the morning the spread pops: chop (calendar mechanics) or current
+        the pop prognosis (the morning the spread pops): chop (calendar mechanics) or current
         (genuine scarcity)? discriminators: RRP co-sign, calendar, damping state
       </div>
       {lv ? (
         <div className="tellhero">
           <div className={`tellvalue ${(lv.p_sticky ?? 0) >= 0.5 ? "hot" : ""}`}>
-            {lv.p_sticky != null ? `${fmt(lv.p_sticky * 100, 0)}%` : "—"}
+            {lv.p_sticky != null ? `${fmt(lv.p_sticky * 100, 0)}%` : "Unavailable"}
           </div>
           <div>
             <div className="tellreading">{lv.verdict}</div>
             <div className="coverage">
               {lv.pop_bp}bp pop on {lv.date} ({lv.bucket?.replace("_", "-")}, {lv.age_bd}bd ago) ·
-              P(escalates to ≥10bp) {lv.p_escalates != null ? `${fmt(lv.p_escalates * 100, 0)}%` : "—"} ·
+              P(escalates to ≥10bp) {lv.p_escalates != null ? `${fmt(lv.p_escalates * 100, 0)}%` : "Unavailable"} ·
               RRP co-sign <b style={{ color: lv.rrp_cosigned ? undefined : P.stress }}>
                 {lv.rrp_cosigned ? "present (choreography)" : "ABSENT (scarcity)"}</b>
             </div>
           </div>
         </div>
       ) : (
-        <div className="allclear">▮ flat water — no live pop in the last {5} business days; that IS the reading</div>
+        <div className="allclear">▮ flat water: no live pop in the last {5} business days; that IS the reading</div>
       )}
       <table className="mini">
         <thead><tr><th>pop</th><th>size</th><th>bucket</th><th>RRP co-z</th><th>stuck</th><th>escalated</th></tr></thead>
@@ -53,14 +53,14 @@ function RiptideCard({ r }: { r: Any }) {
               <td>{p.bucket?.replace("_", "-")}</td>
               <td className="num">{fmt(p.rrp_co_z, 1)}</td>
               <td style={{ color: p.stuck ? P.stress : undefined }}>{p.stuck ? "yes" : "no"}</td>
-              <td style={{ color: p.escalated ? P.stress : undefined }}>{p.escalated == null ? "—" : p.escalated ? "yes" : "no"}</td>
+              <td style={{ color: p.escalated ? P.stress : undefined }}>{p.escalated == null ? "Unavailable" : p.escalated ? "yes" : "no"}</td>
             </tr>
           ))}
         </tbody>
       </table>
       <div className="coverage">
         sticky base rate {fmt((r.sticky_base?.rate ?? 0) * 100, 0)}%
-        {r.sticky_base?.ci95 ? ` (CI ${fmt(r.sticky_base.ci95[0] * 100, 0)}–${fmt(r.sticky_base.ci95[1] * 100, 0)}%)` : ""} over {r.n_resolved} resolved pops ·
+        {r.sticky_base?.ci95 ? ` (CI ${fmt(r.sticky_base.ci95[0] * 100, 0)} to ${fmt(r.sticky_base.ci95[1] * 100, 0)}%)` : ""} over {r.n_resolved} resolved pops ·
         walk-forward: AUROC {fmt(v.auroc, 2)} · Brier {fmt(v.brier, 4)} vs base {fmt(v.brier_base, 4)}
       </div>
       <Method>{(r.caveats ?? []).join(" · ")} · {r.method}</Method>
@@ -75,15 +75,15 @@ function BreakwaterCard({ b }: { b: Any }) {
     <div className="card span12">
       <h2>The Breakwater ★</h2>
       <div className="sub">
-        the rescuer modeled — every Fed intervention is a confession of where its pain threshold sat;
+        the rescuer modeled: every Fed intervention is a confession of where its pain threshold sat;
         nobody else instruments the goalie
       </div>
       <div className="tellhero">
         <div className={`tellvalue ${(b.rescue_proximity ?? 0) >= 90 ? "hot" : ""}`}>{fmt(b.rescue_proximity, 0)}%</div>
         <div>
           <div className="tellreading">
-            rescue proximity — board at the {ordinal(b.current?.spread_pctl)} pctl vs revealed threshold
-            median {ordinal(t.median_pctl)} (range {fmt(t.min_pctl, 0)}–{fmt(t.max_pctl, 0)}, n={t.n})
+            rescue proximity: board at the {ordinal(b.current?.spread_pctl)} pctl vs revealed threshold
+            median {ordinal(t.median_pctl)} (range {fmt(t.min_pctl, 0)} to {fmt(t.max_pctl, 0)}, n={t.n})
           </div>
           <div className="coverage">{b.reading} · {b.posture}</div>
         </div>
@@ -93,11 +93,11 @@ function BreakwaterCard({ b }: { b: Any }) {
         <tbody>
           {(b.interventions ?? []).filter((r: Any) => r.in_sample).map((r: Any) => (
             <tr key={r.date}>
-              <td>{r.date} — {r.label}{r.dating && r.dating !== "public record" && <span className="dimsmall"> †{r.dating}</span>}</td>
+              <td>{r.date}: {r.label}{r.dating && r.dating !== "public record" && <span className="dimsmall"> †{r.dating}</span>}</td>
               <td>{r.kind}</td>
               <td className="num">{ordinal(r.spread_pctl_before)}</td>
               <td className="num">{fmt(r.spread_max20_bp, 1)}bp</td>
-              <td className="num">{r.srf_max20_b != null ? `$${fmt(r.srf_max20_b, 1)}B` : "—"}</td>
+              <td className="num">{r.srf_max20_b != null ? `$${fmt(r.srf_max20_b, 1)}B` : "Unavailable"}</td>
             </tr>
           ))}
         </tbody>
@@ -126,7 +126,7 @@ function SwellCard({ s }: { s: Any }) {
     <div className="card span12">
       <h2>Swell Forecast ★</h2>
       <div className="sub">
-        the funding-stress forward curve — P(SOFR−IORB pop ≥ x bp) for each of the next {s.horizon_bd} business
+        the funding-stress forward curve: P(SOFR−IORB pop ≥ x bp) for each of the next {s.horizon_bd} business
         days, from the public forcing calendar + the basin's damping state · a marine forecast for the plumbing
       </div>
       <div className="tellhero">
@@ -135,7 +135,7 @@ function SwellCard({ s }: { s: Any }) {
           <div className="tellreading">
             P(funding event within 5bd) · 10bd {fmt((hz.h10 ?? 0) * 100, 0)}% · 21bd {fmt((hz.h21 ?? 0) * 100, 0)}% ·
             {" "}{s.horizon_bd}bd {fmt((hz[`h${s.horizon_bd}`] ?? 0) * 100, 0)}%
-            <span className="dimsmall"> (h≥10 assume day-independence — upper bounds; only 5bd is validated)</span>
+            <span className="dimsmall"> (h≥10 assume day-independence: upper bounds; only 5bd is validated)</span>
           </div>
           <div className="coverage">
             peak day <b style={{ color: P.strain }}>{s.peak?.date}</b> ({s.peak?.bucket?.replace("_", "-")},
@@ -149,7 +149,7 @@ function SwellCard({ s }: { s: Any }) {
           </div>
           <div className="coverage" style={{ color: beats ? P.calm : P.erosion }}>
             {v.ok
-              ? `walk-forward: AUROC ${fmt(v.auroc, 2)} · Brier ${fmt(v.brier, 4)} vs climatology ${fmt(v.brier_climatology, 4)} — ${v.verdict}`
+              ? `walk-forward: AUROC ${fmt(v.auroc, 2)} · Brier ${fmt(v.brier, 4)} vs climatology ${fmt(v.brier_climatology, 4)}; ${v.verdict}`
               : v.reason ?? "validation not run"}
           </div>
         </div>
@@ -176,13 +176,13 @@ function SwellCard({ s }: { s: Any }) {
             <tr key={b.bucket}>
               <td>
                 <span style={{ color: BUCKET_COLORS[b.bucket] }}>▮</span> {b.label}
-                {b.low_n && <span className="dimsmall" title="few observations — rate shrunk toward its parent bucket's evidence"> †low-n</span>}
+                {b.low_n && <span className="dimsmall" title="few observations: rate shrunk toward its parent bucket's evidence"> †low-n</span>}
               </td>
               <td className="num">{b.n}</td>
               <td className="num">{fmt(b.p2 * 100, 1)}%</td>
               <td className="num">{fmt(b.p5 * 100, 1)}%</td>
               <td className="num" style={{ color: b.p10 >= 0.1 ? P.stress : undefined }}>{fmt(b.p10 * 100, 1)}%</td>
-              <td className="num dimsmall">{b.ci95_10bp ? `${fmt(b.ci95_10bp[0] * 100, 0)}–${fmt(b.ci95_10bp[1] * 100, 0)}%` : "—"}</td>
+              <td className="num dimsmall">{b.ci95_10bp ? `${fmt(b.ci95_10bp[0] * 100, 0)} to ${fmt(b.ci95_10bp[1] * 100, 0)}%` : "Unavailable"}</td>
               <td className="num">{fmt(b.p20 * 100, 1)}%</td>
             </tr>
           ))}
@@ -199,7 +199,7 @@ function SwellCard({ s }: { s: Any }) {
                 <td>{r.bin}</td>
                 <td className="num">{fmt(r.mean_pred * 100, 1)}%</td>
                 <td className="num">{fmt(r.realized * 100, 1)}%</td>
-                <td className="num dimsmall">{r.realized_ci95 ? `${fmt(r.realized_ci95[0] * 100, 0)}–${fmt(r.realized_ci95[1] * 100, 0)}%` : "—"}</td>
+                <td className="num dimsmall">{r.realized_ci95 ? `${fmt(r.realized_ci95[0] * 100, 0)} to ${fmt(r.realized_ci95[1] * 100, 0)}%` : "Unavailable"}</td>
                 <td className="num dimsmall">{r.n}</td>
               </tr>
             ))}
@@ -242,7 +242,7 @@ function PotentialSVG({ floor, popNow }: { floor: Any; popNow: number | null }) 
       <polyline points={pts} fill="none" stroke={P.slate} strokeWidth={1.6} />
       {ball && <circle cx={ball.x} cy={ball.y} r={4.5} fill={P.erosion} stroke={P.bg} strokeWidth={1} />}
       <text x={PAD + 2} y={H - PAD - 2} fill={P.faint} fontSize={10} fontFamily="Inter, sans-serif">
-        V(x) — the basin floor · ● today
+        V(x): the basin floor · ● today
       </text>
     </svg>
   );
@@ -259,13 +259,13 @@ function BathymetryCard({ b }: { b: Any }) {
     <div className="card span12">
       <h2>Bathymetry ★</h2>
       <div className="sub">
-        the basin floor mapped from the water's motion — empirical Langevin potential, the
-        Fokker–Planck↔Schrödinger energy spectrum, entropy production (the arrow of time), and the
+        the basin floor mapped from the water's motion: empirical Langevin potential, the
+        Fokker-Planck↔Schrödinger energy spectrum, entropy production (the arrow of time), and the
         Kramers escape problem solved as a forecast
       </div>
       <div className="tellhero">
         <div className={`tellvalue ${(b.p_event_5bd ?? 0) >= 0.5 ? "hot" : ""}`}>
-          {b.p_event_5bd != null ? `${fmt(b.p_event_5bd * 100, 0)}%` : "—"}
+          {b.p_event_5bd != null ? `${fmt(b.p_event_5bd * 100, 0)}%` : "Unavailable"}
         </div>
         <div>
           <div className="tellreading">
@@ -275,7 +275,7 @@ function BathymetryCard({ b }: { b: Any }) {
               ? <b style={{ color: P.stress }}>state already in the event bin</b>
               : mfpt != null
                 ? <b>{fmt(mfpt, 0)}bd</b>
-                : <span className="dimsmall">beyond {b.mfpt_cap_bd}bd — the well holds</span>}
+                : <span className="dimsmall">beyond {b.mfpt_cap_bd}bd: the well holds</span>}
           </div>
           <div className="coverage">
             state x = {fmt(b.state_now?.pop_bp, 1)}bp · well at {fmt(fl.well_bp, 1)}bp ·
@@ -288,7 +288,7 @@ function BathymetryCard({ b }: { b: Any }) {
           </div>
           <div className="coverage" style={{ color: beats ? P.calm : P.erosion }}>
             {v.ok
-              ? `walk-forward: AUROC ${fmt(v.auroc, 2)} · Brier ${fmt(v.brier, 4)} vs climatology ${fmt(v.brier_climatology, 4)} — ${v.verdict}`
+              ? `walk-forward: AUROC ${fmt(v.auroc, 2)} · Brier ${fmt(v.brier, 4)} vs climatology ${fmt(v.brier_climatology, 4)}; ${v.verdict}`
               : v.reason ?? "validation not run"}
           </div>
         </div>
@@ -328,7 +328,7 @@ export function TideTablesCard({ t }: { t: Any }) {
     <div className="card span12">
       <h2>Tide Tables ★</h2>
       <div className="sub">
-        what happened next, the last {odds.n} times the water looked like this —
+        what happened next, the last {odds.n} times the water looked like this:
         {t.k} nearest analogs over all history (window {t.window_d}bd), no labels, no look-ahead
       </div>
       <div className="tellhero">
@@ -336,7 +336,7 @@ export function TideTablesCard({ t }: { t: Any }) {
         <div>
           <div className="tellreading">
             of nearest analogs saw a funding event within 5bd
-            {odds.ci95 ? ` (CI ${fmt(odds.ci95[0] * 100, 0)}–${fmt(odds.ci95[1] * 100, 0)}%)` : ""}
+            {odds.ci95 ? ` (CI ${fmt(odds.ci95[0] * 100, 0)} to ${fmt(odds.ci95[1] * 100, 0)}%)` : ""}
           </div>
           <div className="coverage">
             base rate {fmt(odds.base_rate * 100, 0)}% · lift {fmt(odds.lift, 1)}× ·
@@ -345,7 +345,7 @@ export function TideTablesCard({ t }: { t: Any }) {
           </div>
           <div className="coverage" style={{ color: beats ? P.calm : P.stress }}>
             hindcast: {skill.ok
-              ? `Brier ${fmt(skill.brier, 3)} vs climatology ${fmt(skill.brier_climatology, 3)} · AUROC ${fmt(skill.auroc, 2)} — ${skill.verdict}`
+              ? `Brier ${fmt(skill.brier, 3)} vs climatology ${fmt(skill.brier_climatology, 3)} · AUROC ${fmt(skill.auroc, 2)}; ${skill.verdict}`
               : skill.reason ?? "not run"}
           </div>
         </div>
@@ -376,7 +376,7 @@ export function TideTablesCard({ t }: { t: Any }) {
                 {a.max_move_5bd_bp > 0 ? "+" : ""}{fmt(a.max_move_5bd_bp, 1)}bp
               </td>
               <td>{a.event_within_5bd ? <b style={{ color: P.stress }}>yes</b> : <span className="dimsmall">no</span>}</td>
-              <td className="dimsmall">{a.episode ?? "—"}</td>
+              <td className="dimsmall">{a.episode ?? "Unavailable"}</td>
             </tr>
           ))}
         </tbody>
@@ -394,7 +394,7 @@ function SeaStateCard({ e }: { e: Any }) {
     <div className="card span6">
       <h2>Sea State</h2>
       <div className="sub">
-        the regime estimated, not asserted — a 2-state hidden Markov model (Hamilton filter, strictly
+        the regime estimated, not asserted: a 2-state hidden Markov model (Hamilton filter, strictly
         causal) on the spread residual publishes FILTERED P(rough water); the composite's regime words
         are editorial, this is their statistical counterpart
       </div>
@@ -417,7 +417,7 @@ function SeaStateCard({ e }: { e: Any }) {
       {v.ok && (
         <div className="dimsmall">
           walk-forward: AUROC {fmt(v.auroc_p_rough, 2)} vs climatology {fmt(v.auroc_climatology, 2)}
-          {" "}({v.n_scored} scored) — {v.verdict}
+          {" "}({v.n_scored} scored); {v.verdict}
         </div>
       )}
       <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
@@ -434,15 +434,15 @@ function SeaRoomCard({ e }: { e: Any }) {
     <div className="card span6">
       <h2>Sea Room</h2>
       <div className="sub">
-        guaranteed coverage for the fleet's probability — adaptive conformal sets over
+        guaranteed coverage for the fleet's probability: adaptive conformal sets over
         {" {event, no-event}"} whose long-run coverage tracks {fmt((cov.target ?? 0.9) * 100, 0)}% even
-        under regime drift (Gibbs–Candès ACI; label feedback honestly delayed 5bd)
+        under regime drift (Gibbs-Candès ACI; label feedback honestly delayed 5bd)
       </div>
       <div className="kv">
         <div className="item"><div className="k">today's set</div>
           <div className={`v ${alarm ? "bad" : ""}`}>
             {t.set === "no_event" ? "{no event}" : t.set === "event" ? "{event}" :
-             t.set === "both" ? "{event, no event}" : t.set === "empty" ? "∅ (nonconforming)" : "—"}</div></div>
+             t.set === "both" ? "{event, no event}" : t.set === "empty" ? "∅ (nonconforming)" : "Unavailable"}</div></div>
         <div className="item"><div className="k">realized coverage</div>
           <div className="v">{fmt((cov.realized ?? 0) * 100, 1)}%
             <span className="dimsmall"> vs {fmt((cov.target ?? 0) * 100, 0)}% target · {cov.n_resolved_sets} resolved</span></div></div>
@@ -597,11 +597,11 @@ function SwellCurveCard({ s }: { s: Any }) {
           <>
             h+{hover! + 1}bd · <b>{hv.date}</b> · {String(hv.bucket).replace("_", "-")} ·
             P(≥10bp by then) <b>{fmt(m.main[hover!], 1)}%</b> · that day alone p10 {fmt((hv.p10 ?? 0) * 100, 1)}% ·
-            envelope {fmt(m.lower[hover!], 1)}–{fmt(m.upper[hover!], 1)}%
+            envelope {fmt(m.lower[hover!], 1)} to {fmt(m.upper[hover!], 1)}%
             {(hv.settle_b ?? 0) > 0 && <> · ${fmt(hv.settle_b, 0)}B settles</>}
           </>
         ) : (
-          <>hover the curve — per-day readout · band = ≥5bp…≥20bp cumulative envelope (day-independence, the engine's own h≥10 caveat — an upper bound)</>
+          <>hover the curve: per-day readout · band = ≥5bp…≥20bp cumulative envelope (day-independence, the engine's own h≥10 caveat: an upper bound)</>
         )}
       </div>
       <Method>
@@ -621,7 +621,7 @@ function SwellCurveCard({ s }: { s: Any }) {
    ------------------------------------------------------------------------- */
 function QuantOddsStrip({ deep }: { deep: Any }) {
   const mk = deep.markov, ou = deep.oujump, mc = deep.montecarlo;
-  const pct = (v: number | null | undefined, d = 2) => (v == null ? "—" : `${fmt(v * 100, d)}%`);
+  const pct = (v: number | null | undefined, d = 2) => (v == null ? "Unavailable" : `${fmt(v * 100, d)}%`);
   const tone = (v: number) =>
     v >= 0.5 ? P.stress : v >= 0.2 ? P.strain : v >= 0.05 ? P.erosion : undefined;
   const chips: { k: string; v: number | null; s: string }[] = [];
@@ -652,9 +652,9 @@ function QuantOddsStrip({ deep }: { deep: Any }) {
   if (!chips.length) return null;
   return (
     <div className="card span12">
-      <h2>Quant Odds — one tail, three estimators</h2>
+      <h2>Quant Odds: one tail, three estimators</h2>
       <div className="sub">
-        the stress tail read three independent ways — they answer slightly different questions (regime
+        the stress tail read three independent ways; they answer slightly different questions (regime
         entry · level at the endpoint · any touch along the path), so honest disagreement is the point
       </div>
       <div className="fx-chips">
@@ -670,7 +670,7 @@ function QuantOddsStrip({ deep }: { deep: Any }) {
       </div>
       <Method>
         markov: empirical transition counts · oujump: analytic OU+jump fit · montecarlo: seeded path
-        simulation — all from the deep layer's published blocks, no recomputation
+        simulation: all from the deep layer's published blocks, no recomputation
       </Method>
     </div>
   );
@@ -693,7 +693,7 @@ function CaesarCard({ e }: { e: Any }) {
     <div className="card span12">
       <h2>CAESar</h2>
       <div className="sub">
-        tomorrow's tail from the tail's own dynamics — CAViaR extended to a joint (VaR, ES) estimator;
+        tomorrow's tail from the tail's own dynamics: CAViaR extended to a joint (VaR, ES) estimator;
         bands for the next business day's pop (SOFR−IORB vs its 5bd median) · {e.n_origins} scored
         origins · asof {e.asof}
       </div>
@@ -727,7 +727,7 @@ function CaesarCard({ e }: { e: Any }) {
                 <td className="num" style={{ color: r.exceedance_rate > (r.nominal ?? 0) * 1.6 ? P.stress : undefined }}>
                   {fmt(r.exceedance_rate, 3)}
                 </td>
-                <td className="num dimsmall">{r.wilson95 ? `${fmt(r.wilson95[0], 3)}–${fmt(r.wilson95[1], 3)}` : "—"}</td>
+                <td className="num dimsmall">{r.wilson95 ? `${fmt(r.wilson95[0], 3)} to ${fmt(r.wilson95[1], 3)}` : "Unavailable"}</td>
                 <td className="num dimsmall">{r.n_origins}</td>
               </tr>
             ))}

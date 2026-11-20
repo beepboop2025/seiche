@@ -2,7 +2,7 @@ import { Any, fmt } from "../lib";
 import SourceClocks from "../desk/SourceClocks";
 
 function clock(value: unknown): string {
-  return typeof value === "string" && value ? value.slice(0, 16).replace("T", " ") + " UTC" : "—";
+  return typeof value === "string" && value ? value.slice(0, 16).replace("T", " ") + " UTC" : "Unavailable";
 }
 
 export default function System({ snap, live }: { snap: Any; live: boolean }) {
@@ -20,7 +20,7 @@ export default function System({ snap, live }: { snap: Any; live: boolean }) {
           <h2>Faults</h2>
           {snap.faults.map((f: Any, i: number) => (
             <div className="crunch" key={i}>
-              <b>{f.source}{f.series ? ` / ${f.series}` : ""}</b> — {String(f.detail ?? f.reason ?? "Collection failed").slice(0, 160)}
+              <b>{f.source}{f.series ? ` / ${f.series}` : ""}</b>: {String(f.detail ?? f.reason ?? "Collection failed").slice(0, 160)}
               {f.cache_used === true && <span> · Cached observations retained with their original dates.</span>}
               {f.cache_used === false && <span> · No usable cached observations.</span>}
             </div>

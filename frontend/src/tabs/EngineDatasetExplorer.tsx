@@ -72,12 +72,12 @@ function formatBytes(value: number | undefined): string {
 
 function dataClassBoundary(value: string): string {
   switch (value) {
-    case "train_candidate": return "candidate only — not training approval";
-    case "evaluation_only": return "evaluation use only — never training input";
-    case "research_only": return "research only — never execution input";
-    case "context_feature": return "context candidate — acceptance still required";
-    case "outcome_label": return "label candidate — temporal review still required";
-    case "entity_reference": return "reference data — no signal permission";
+    case "train_candidate": return "candidate only, not training approval";
+    case "evaluation_only": return "evaluation use only, never training input";
+    case "research_only": return "research only, never execution input";
+    case "context_feature": return "context candidate, acceptance still required";
+    case "outcome_label": return "label candidate, temporal review still required";
+    case "entity_reference": return "reference data, no signal permission";
     default: return "classification is descriptive, not permission";
   }
 }
@@ -175,9 +175,9 @@ function RestrictedDetail({ row }: { row: RestrictedCollection }) {
   return (
     <>
       <div className="engine-detail-grid">
-        <div><span>COLLECTION</span><strong>{row.object_count?.toLocaleString() ?? "—"} objects</strong><small>{formatBytes(row.total_bytes)}</small></div>
+        <div><span>COLLECTION</span><strong>{row.object_count?.toLocaleString() ?? "Unavailable"} objects</strong><small>{formatBytes(row.total_bytes)}</small></div>
         <div><span>ROWS</span><strong>{row.row_count?.toLocaleString() ?? "not reported"}</strong><small>{row.formats?.join(" · ") || "formats not reported"}</small></div>
-        <div><span>EVENT RANGE</span><strong>{row.event_from ?? "—"}</strong><small>through {row.event_to ?? "—"}</small></div>
+        <div><span>EVENT RANGE</span><strong>{row.event_from ?? "Unavailable"}</strong><small>through {row.event_to ?? "Unavailable"}</small></div>
       </div>
       <p className="engine-restricted-note">{row.notes || "Metadata is public; values, schema, previews, and downloads remain withheld."}</p>
       <div className="engine-detail-links">
@@ -390,7 +390,7 @@ export default function EngineDatasetExplorer({ dataClasses, groups, engines, re
                   <th scope="row"><button type="button" onClick={(event) => void openDetail(row, event.currentTarget)}><code>{row.dataset_id}</code><span>{row.collection_kind.replaceAll("_", " ")}</span><small>Inspect immutable object →</small></button></th>
                   <td>{row.collection_kind === "acquired_object" ? <><code>{row.group}</code><strong>{row.data_class}</strong><small>{row.media_format.toUpperCase()} · {row.structural_profile_available ? "structure available" : "metadata only"}</small></> : <><strong>{row.title || row.dataset_id}</strong><code>{row.data_class || "restricted"}</code><small>{row.formats?.join(" · ") || "formats withheld"}</small></>}</td>
                   <td><RightsLattice rights={row.rights} /></td>
-                  <td>{row.collection_kind === "acquired_object" ? <><span><time dateTime={row.acquired_date}>{row.acquired_date}</time></span><code title={row.content_sha256}>{row.content_sha256.slice(0, 12)}…</code><small>{dataClassBoundary(row.data_class)}</small></> : <><span>{row.publisher || "publisher not reported"}</span><strong>{row.row_count === undefined ? "values withheld" : `${row.row_count.toLocaleString()} rows cataloged`}</strong><small>{row.event_from || "—"} → {row.event_to || "—"}</small></>}</td>
+                  <td>{row.collection_kind === "acquired_object" ? <><span><time dateTime={row.acquired_date}>{row.acquired_date}</time></span><code title={row.content_sha256}>{row.content_sha256.slice(0, 12)}…</code><small>{dataClassBoundary(row.data_class)}</small></> : <><span>{row.publisher || "publisher not reported"}</span><strong>{row.row_count === undefined ? "values withheld" : `${row.row_count.toLocaleString()} rows cataloged`}</strong><small>{row.event_from || "Unavailable"} → {row.event_to || "Unavailable"}</small></>}</td>
                 </tr>
               ))}</tbody>
             </table>

@@ -25,7 +25,7 @@ export default function LivePulse({ snap }: { snap: Record<string, any> }) {
         aria-hidden="true"
       />
       <span className="livepulse-txt">
-        data as of {asOf != null && !Number.isNaN(asOf) ? utcHMS(asOf) : "—"} UTC · refresh in {mm}:{ss}
+        data as of {asOf != null && !Number.isNaN(asOf) ? utcHMS(asOf) : "Unavailable"} UTC · refresh in {mm}:{ss}
       </span>
     </span>
   );
