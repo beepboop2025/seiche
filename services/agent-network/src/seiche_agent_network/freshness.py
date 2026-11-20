@@ -49,6 +49,8 @@ RETIRED_IDENTITIES = {
 }
 UNDERTOW_VENUES = frozenset({"binance", "bitfinex", "coinbase", "gemini", "kraken", "okx"})
 UNDERTOW_MAX_AGE = 7200
+SEICHE_NATIVE_INTERVAL_SECONDS = 1800
+SEICHE_PUBLIC_HEALTH = "https://api.seiche.info/api/health"
 ADMISSION_CACHE_SECONDS = 3600
 _NY = ZoneInfo("America/New_York")
 
@@ -543,7 +545,47 @@ async def _undertow_admission(session, *, cache_path, timeout, clock=time.time):
             os.close(lock_fd)
 
 
-async def probe_product(product, *, timeout=30, admission_cache_path=None, clock=time.time, transport=None):
+def _previous_native_health(report_path):
+    try:
+        report = read_private_json(report_path, limit=4 * 1024**2)
+        if report.get("schema") == "seiche-agent-network.freshness.v1":
+            for row in report["products"]:
+                if row.get("product") == "seiche":
+                    return row.get("last_native_health")
+    except (OSError, ValueError, AttributeError, KeyError, TypeError, RecursionError):
+        pass
+    return None
+
+
+async def _seiche_health(session, client, summary, previous, clock):
+    now = clock()
+    if isinstance(previous, dict) and previous.get("status") in ("ok", "error"):
+        attempted = previous.get("attempted_at_unix")
+        if type(attempted) in (int, float) and 0 <= now - attempted < SEICHE_NATIVE_INTERVAL_SECONDS:
+            summary.update(last_native_health={"attempted_at_unix": attempted, "status": previous["status"]},
+                           health_source="public_api", tool=None)
+            response = await client.get(SEICHE_PUBLIC_HEALTH)
+            response.raise_for_status()
+            board = response.json()
+            if (board.get("authority") != "production" or not _clock(board.get("generated_at"))
+                    or not isinstance(board.get("provenance"), list) or not isinstance(board.get("faults"), list)):
+                raise ValueError("Production source health unavailable")
+            summary.update(inspect_result("seiche", "data_health", board, now=now))
+            if previous["status"] == "error":
+                summary.update(transport="tool_error", public_clock_freshness=summary["freshness"], freshness="unknown")
+                summary["reasons"].append("last_native_health_call_failed")
+            return
+    attempt = {"attempted_at_unix": now, "status": "error"}
+    summary.update(last_native_health=attempt, health_source="native_mcp")
+    value = await session.call_tool("data_health", {})
+    summary.update(inspect_result("seiche", "data_health", value, now=now))
+    if value.isError:
+        summary["transport"] = "tool_error"
+    else:
+        attempt["status"] = "ok"
+
+
+async def probe_product(product, *, timeout=30, admission_cache_path=None, previous_native_health=None, clock=time.time, transport=None):
     if product not in PRODUCTS:
         raise ValueError("Only fixed public product endpoints may be probed")
     started = time.monotonic()
@@ -562,7 +604,10 @@ async def probe_product(product, *, timeout=30, admission_cache_path=None, clock
                         summary["transport"] = "available"
                         available = {tool.name for tool in tools.tools}
                         name = next((name for name in PREFERRED_TOOLS[product] if name in available), None)
-                        if name:
+                        if product == "seiche" and name == "data_health":
+                            summary["tool"] = name
+                            await _seiche_health(session, client, summary, previous_native_health, clock)
+                        elif name:
                             summary["tool"] = name
                             args = {"offset": 0, "limit": 12} if name == "research_catalog" else {}
                             value = await session.call_tool(name, args)
@@ -590,7 +635,8 @@ async def probe_product(product, *, timeout=30, admission_cache_path=None, clock
                                 summary["reasons"] = ["computational_tools_have_no_hosted_source_observation_clock"]
     except Exception:
         # Connection/SDK errors may embed endpoints or server text; retain no raw errors.
-        summary = {"product": product, "tool": summary.get("tool"), "transport": "unavailable",
+        summary = {**{key: summary[key] for key in ("health_source", "last_native_health") if key in summary},
+                   "product": product, "tool": summary.get("tool"), "transport": "unavailable",
                    "reasons": ["probe_failed_or_timed_out"], "freshness": "unknown",
                    "clocks": [], "source_age_seconds": None}
     if product == "undertow":
@@ -620,7 +666,9 @@ async def probe_products(output_path, *, timeout=30):
     if not 1 <= timeout <= 60:
         raise ValueError("Probe timeout must be between 1 and 60 seconds")
     cache = Path(output_path).with_name("undertow-admission-cache.json")
-    rows = await asyncio.gather(*(probe_product(product, timeout=timeout, admission_cache_path=cache) for product in PRODUCTS))
+    previous = _previous_native_health(output_path)
+    rows = await asyncio.gather(*(probe_product(product, timeout=timeout, admission_cache_path=cache,
+                                                previous_native_health=previous) for product in PRODUCTS))
     report = {"schema": "seiche-agent-network.freshness.v1", "evaluated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
               "products": rows, "traffic_class": "synthetic", "raw_payloads_retained": False,
               "interpretation": "Transport availability and scoped source-clock checks; not trade execution approval or complete product coverage"}
