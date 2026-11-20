@@ -121,3 +121,22 @@ def test_unqualified_empty_payload_is_not_ready(product):
     except (ValueError, KeyError, TypeError):
         return
     assert result["all_sources_fresh"] is False
+
+
+def test_explicit_anonymous_projection_preserves_unknown_and_age_violations():
+    payload = bank_board()
+    payload["access"] = {"tier": "anonymous", "withheld": [{"depth": "radar.full", "requires": "registered"}]}
+    del payload["rows"][0]["freshness"]
+    del payload["current_disclosures"]["rows"][0]["freshness_limit_days"]
+    result = inspect("liquilens", payload, NOW)
+    assert result["status"] == "partial"
+    assert result["unverified_current_row_count"] == 2
+    assert result["current_view_violation_count"] == 0
+    assert result["all_inspected_current_rows_fresh"] is False
+    assert all(row["fresh"] is None for row in result["inspected_current_rows"])
+    payload["rows"][0]["as_of"] = "2023-01-01"
+    payload["current_disclosures"]["rows"][0]["period_end"] = "2027-01-01"
+    assert inspect("liquilens", payload, NOW)["current_view_violation_count"] == 2
+    payload["rows"][0]["as_of"] = NOW.date().isoformat()
+    payload["access"]["withheld"] = []
+    assert inspect("liquilens", payload, NOW)["current_view_violation_count"] == 2
