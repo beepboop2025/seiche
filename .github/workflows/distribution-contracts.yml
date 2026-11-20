@@ -114,7 +114,7 @@ jobs:
     # Owner PRs and main use the credential-free native Railway build gate.
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'beepboop2025'
     name: Offline listings, datasets, and public clients
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       PYTHONPATH: ${{ github.workspace }}/backend
@@ -369,7 +369,7 @@ jobs:
     # Owner PRs and main use the credential-free native Railway build gate.
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'beepboop2025'
     name: Native dataset metadata schemas
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -569,7 +569,7 @@ jobs:
     # Owner PRs and main use the credential-free native Railway build gate.
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'beepboop2025'
     name: Reproducible Seiche package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -684,7 +684,7 @@ jobs:
     # Owner PRs and main use the credential-free native Railway build gate.
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'beepboop2025'
     name: Isolated OpenBB provider package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
@@ -793,7 +793,8 @@ jobs:
           done
 
   contracts-and-container:
-    runs-on: ubuntu-latest
+    # The pinned Python 3.12.12 build is available for Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
