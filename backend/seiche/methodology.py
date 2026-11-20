@@ -24,6 +24,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from seiche import family_shell
 from seiche.config import ALL_SERIES, COMPOSITE_WEIGHTS, DB_PATH, REGIMES, ECB_FX_SERIES, CBUAE_FX_SERIES, CBUAE_DONIA_SERIES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -299,12 +300,7 @@ _WEIGHT_WHY = {
     "buffers": "RRP buffer emptiness; zero means no shock absorber left",
 }
 
-_CSS = """
-:root { --bg:#000; --panel:#0b0d15; --edge:#1c1f2b; --text:#edeef4;
-        --dim:#9aa0b6; --faint:#787f95; --accent:#9c8fe8;
-        --accent-soft:#bbaffe; --accent-bright:#d9d4ff;
-        --mono:ui-monospace,Menlo,Consolas,monospace;
-        color-scheme:dark; }
+_CSS = "\n" + family_shell.ROOT_TOKENS + """
 * { box-sizing:border-box; margin:0; padding:0; }
 body { background:var(--bg); color:var(--text);
        font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -321,7 +317,7 @@ h3 { font-weight:600; font-size:13.5px; margin:18px 0 4px; }
 p { margin:12px 0; }
 .dim { color:var(--dim); }
 .faint { color:var(--faint); font-size:12px; }
-code, .mono { font-family:var(--mono); font-size:.9em; }
+code, .mono { font-family:var(--code); font-size:.9em; }
 code { background:var(--panel); padding:1px 6px; border-radius:5px;
        color:var(--accent-bright); }
 table { border-collapse:collapse; width:100%; margin:14px 0; font-size:13px; }
@@ -330,7 +326,7 @@ th { color:var(--faint); font-weight:500; font-size:11px;
      letter-spacing:.08em; text-transform:uppercase; }
 td.num { font-family:var(--mono); }
 .cite { background:var(--panel); border:1px solid var(--edge); border-radius:10px;
-        padding:14px 16px; font-family:var(--mono); font-size:12.5px;
+        padding:14px 16px; font-family:var(--code); font-size:12.5px;
         white-space:pre-wrap; word-break:break-word; margin:14px 0; }
 ul { margin:12px 0 12px 20px; }
 li { margin:6px 0; }
@@ -384,7 +380,7 @@ def render_methodology_html(board_version: str | None = None) -> str:
     )
 
     return f"""<!doctype html>
-<html lang="en">
+{family_shell.HTML_OPEN}
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -392,15 +388,15 @@ def render_methodology_html(board_version: str | None = None) -> str:
 <meta name="description" content="How Seiche computes its funding stress reading: composite weights, point-in-time rules, the PROOF scoreboard, the reserve-demand kink, and one subsection per engine. Versioned, with citations and a changelog.">
 <link rel="canonical" href="{METHODOLOGY_URL}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<style>{_CSS}</style>
+{family_shell.STYLE}<style>{_CSS}</style>
 </head>
-<body>
+<body>{family_shell.HEADER}
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
   <div class="faint"><a href="/">back to the board</a> &middot; <a href="/guide">plain English guide</a></div>
 </div>
 
-<h1>Methodology</h1>
+{family_shell.heading("Methodology")}
 <p class="faint mono">{e(version_line)}</p>
 <p class="dim">This page is generated from the code that computes the board:
 the weights come from the config file, the engine subsections come from the
@@ -509,7 +505,7 @@ bulk export; the catalog marks them.</p>
 
 <p class="faint">Free public data with native lags. Not investment advice.
 Seiche is free open source software (AGPL-3.0-or-later) and a public good.</p>
-</body>
+{family_shell.CONTEXT}</body>
 </html>
 """
 

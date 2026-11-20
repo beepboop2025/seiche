@@ -37,7 +37,7 @@ import json
 import urllib.request
 from pathlib import Path
 
-from seiche import rubric
+from seiche import family_shell, rubric
 from seiche.dispatch_daily import lint_letter
 from seiche.methodology import _CSS, METHODOLOGY_URL, REPO_URL, SITE, _no_dashes
 
@@ -207,7 +207,8 @@ def claim3_verdict(c3: dict) -> str:
 
 def _dark_page(reason: str) -> str:
     body = (
-        "<p>The referee analysis is not available today: "
+        family_shell.heading("The Referee")
+        + "<p>The referee analysis is not available today: "
         f"{e(_no_dashes(reason))}. The page publishes only what the engine "
         "computed; when the inputs are dark this notice is the whole "
         "content, by design.</p>"
@@ -217,7 +218,7 @@ def _dark_page(reason: str) -> str:
 
 def _shell(title: str, body: str) -> str:
     return f"""<!doctype html>
-<html lang="en">
+{family_shell.HTML_OPEN}
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -232,11 +233,11 @@ intervals, walk forward tests and both causal directions published.">
 <meta property="og:title" content="{e(title)} | Seiche">
 <meta property="og:url" content="{REFEREE_URL}">
 <meta property="og:image" content="{SITE}/og.png">
-<style>{_CSS}{_EXTRA_CSS}</style>
+{family_shell.STYLE}<style>{_CSS}{_EXTRA_CSS}</style>
 </head>
-<body>
+<body>{family_shell.HEADER}
 {body}
-</body>
+{family_shell.CONTEXT}</body>
 </html>
 """
 
@@ -370,7 +371,7 @@ same way:</p>
     spacing_txt = ", ".join(str(s) for s in spacings) if spacings else "not available"
 
     body = f"""
-<h1>The Referee</h1>
+{family_shell.heading("The Referee")}
 <p class="faint">Version {e(REFEREE_VERSION)}. Data through {e(blk["asof"])}.
 Window {e(blk["window"][0])} to {e(blk["window"][1])}, {blk["n_months"]} months.</p>
 {evidence_html}

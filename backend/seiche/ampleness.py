@@ -44,6 +44,7 @@ import json
 import urllib.request
 from pathlib import Path
 
+from seiche import family_shell
 from seiche.dispatch_daily import lint_letter
 from seiche.methodology import _CSS, METHODOLOGY_URL, REPO_URL, SITE, _no_dashes
 
@@ -1310,7 +1311,7 @@ def render_ampleness_html(snap: dict) -> str:
         for day, note in CHANGELOG)
 
     page = f"""<!doctype html>
-<html lang="en">
+{family_shell.HTML_OPEN}
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1318,15 +1319,15 @@ def render_ampleness_html(snap: dict) -> str:
 <meta name="description" content="Are reserves still ample? The indicator set the Fed's own framing rests on, assembled from the live board: reserves and their share of GDP, the fitted reserve demand kink and the NY Fed's RDE print, SOFR and EFFR against IORB, the share of repo printing above the ceiling, SRF and discount window take-up, the ON RRP buffer, and the projected kink crossing dates. Each with a threshold, a verdict, and what 2018-19 says that level meant.">
 <link rel="canonical" href="{AMPLENESS_URL}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<style>{_CSS}{_EXTRA_CSS}</style>
+{family_shell.STYLE}<style>{_CSS}{_EXTRA_CSS}</style>
 </head>
-<body>
+<body>{family_shell.HEADER}
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
   <div class="faint"><a href="/">back to the board</a> &middot; <a href="/methodology">methodology</a> &middot; <a href="/skeptic">skeptic pack</a> &middot; <a href="/guide">plain English guide</a></div>
 </div>
 
-<h1>The ampleness check</h1>
+{family_shell.heading("The ampleness check")}
 <p class="faint mono">{e(version_line)}</p>
 <p class="dim">There is only one argument in this corner of the market:
 <span class="q">are reserves still ample, or is the system drifting toward
@@ -1396,7 +1397,7 @@ skeptic asks before any of this are answered in the
 
 <p class="faint">Free public data with native lags. Not investment advice.
 Seiche is free open source software (AGPL-3.0-or-later) and a public good.</p>
-</body>
+{family_shell.CONTEXT}</body>
 </html>
 """
     issues = lint_letter(page)

@@ -38,6 +38,7 @@ import json
 import urllib.request
 from pathlib import Path
 
+from seiche import family_shell
 from seiche.dispatch_daily import lint_letter
 from seiche.methodology import _CSS, METHODOLOGY_URL, REPO_URL, SITE, _no_dashes
 
@@ -72,7 +73,7 @@ _EXTRA_CSS = """
        padding:14px 16px; margin:14px 0; }
 .gap strong { color:var(--accent-soft); }
 .cmd { background:var(--panel); border:1px solid var(--edge); border-radius:10px;
-       padding:14px 16px; font-family:var(--mono); font-size:12.5px;
+       padding:14px 16px; font-family:var(--code); font-size:12.5px;
        line-height:1.6; white-space:pre; overflow-x:auto; margin:14px 0; }
 .limit { border-left:2px solid var(--edge); padding:2px 0 2px 14px;
          margin:14px 0; color:var(--dim); font-size:13px; }
@@ -681,7 +682,7 @@ def render_skeptic_html(snap: dict) -> str:
         for day, note in CHANGELOG)
 
     page = f"""<!doctype html>
-<html lang="en">
+{family_shell.HTML_OPEN}
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -689,15 +690,15 @@ def render_skeptic_html(snap: dict) -> str:
 <meta name="description" content="The two questions a skeptical economist asks first, answered with the board's own numbers: the leak audit that prices what look-ahead would have bought, the orthogonal test that reruns event capture with the target's own variables removed, the final-vintage construction-PIT replay, the hash-chained notary, and what would falsify the whole board.">
 <link rel="canonical" href="{SKEPTIC_URL}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<style>{_CSS}{_EXTRA_CSS}</style>
+{family_shell.STYLE}<style>{_CSS}{_EXTRA_CSS}</style>
 </head>
-<body>
+<body>{family_shell.HEADER}
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
   <div class="faint"><a href="/">back to the board</a> &middot; <a href="/methodology">methodology</a> &middot; <a href="/guide">plain English guide</a></div>
 </div>
 
-<h1>The skeptic pack</h1>
+{family_shell.heading("The skeptic pack")}
 <p class="faint mono">{e(version_line)}</p>
 <p class="dim">Two questions open every serious conversation about a board like
 this one. <span class="q">Isn't this just autocorrelation?</span> and
@@ -740,7 +741,7 @@ the two engines behind it.</p>
 
 <p class="faint">Free public data with native lags. Not investment advice.
 Seiche is free open source software (AGPL-3.0-or-later) and a public good.</p>
-</body>
+{family_shell.CONTEXT}</body>
 </html>
 """
     issues = lint_letter(page)
