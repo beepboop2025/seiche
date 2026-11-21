@@ -28,3 +28,13 @@ def test_isolated_services_keep_their_existing_edge_body_caps():
         handler = config.split('handle_path /agents/' + service + '/* {\n', 1)[1].split('handle_path ', 1)[0]
         assert re.search(r'request_body\s*\{\s*max_size 64KiB\s*\}', handler)
         assert '@agent_small_body' not in handler
+
+
+def test_restart_retry_budget_only_applies_to_the_three_public_reads():
+    config = Path(__file__).parents[1].joinpath('ops/caddy-route.example').read_text()
+    general = config.split('handle_path /agents/* {\n', 1)[1]
+    matcher = re.search(r'@agent_restart_reads\s*\{\s*method GET\s+path ([^\n]+)\s*\}', general)
+    assert matcher and set(matcher.group(1).split()) == {'/healthz', '/v1/context/contract', '/v1/context/snapshot'}
+    route = re.search(r'reverse_proxy @agent_restart_reads 127\.0\.0\.1:18796\s*\{([^}]+)\}', general)
+    assert route and 'lb_try_duration 6s' in route.group(1) and 'lb_try_interval 250ms' in route.group(1)
+    assert config.count('lb_try_duration') == 1
