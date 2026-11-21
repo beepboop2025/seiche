@@ -65,12 +65,19 @@ def inspect(product, payload, now):
     elif product == "liquilens":
         if not isinstance(payload.get("rows"), list) or not isinstance(payload.get("excluded_stale"), list):
             raise ValueError("unrecognized institution board")
+        access = payload.get("access", {})
+        limited_view = access.get("tier") == "anonymous" and any(
+            isinstance(scope, dict) and scope.get("depth") == "radar.full" and scope.get("requires") == "registered"
+            for scope in access.get("withheld", [])
+        )
         rows = []
         for value in payload["rows"]:
             policy = value.get("freshness", {})
             maximum = {"quarterly": 183, "annual": 400}.get(policy.get("cadence"))
             age = (today - _date(value.get("as_of"))).days
             current = maximum is not None and 0 <= age <= maximum and policy.get("current_eligible") is True
+            if limited_view and "freshness" not in value and 0 <= age <= 400:
+                current = None
             rows.append({"source_id": value["slug"], "observed_at": value["as_of"], "fresh": current})
         disclosures = payload.get("current_disclosures", {})
         if not isinstance(disclosures.get("rows"), list):
@@ -81,11 +88,15 @@ def inspect(product, payload, now):
             maximum = value.get("freshness_limit_days")
             age = (today - _date(value.get("period_end"))).days
             current = maximum in {183, 400} and 0 <= age <= maximum
+            if limited_view and "freshness_limit_days" not in value and 0 <= age <= 400:
+                current = None
             rows.append({"source_id": value["slug"], "observed_at": value["period_end"], "fresh": current})
         result.update(
             checked_at=payload.get("as_of"),
             inspected_current_rows=rows,
-            current_view_violation_count=sum(not r["fresh"] for r in rows),
+            current_view_violation_count=sum(r["fresh"] is False for r in rows),
+            unverified_current_row_count=sum(r["fresh"] is None for r in rows),
+            source_policy_visibility="limited_anonymous_view" if limited_view else "expected_in_response",
             historical_corpus_rows_excluded=len(payload["excluded_stale"]),
             all_inspected_current_rows_fresh=bool(rows) and all(r["fresh"] for r in rows),
             scope="published vetted dossiers and observed disclosure reviews; not the complete institution universe",

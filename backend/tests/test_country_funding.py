@@ -188,7 +188,9 @@ def test_rows_stored_by_the_retired_fred_mirror_are_never_served(tmp_path, monke
     assert metric["value"] == 5.28 and metric["source"] == OECD_ADAPTER
     # The series route redacts each row through this same value policy.
     assert not api._observation_value_is_public(pack, retired)
-    assert not api._observation_is_publicly_derivable(pack, retired)
+    eligible_ids = frozenset(api._derivable_instrument_ids(pack))
+    assert not api._observation_is_publicly_derivable(retired, eligible_ids)
+    assert api._observation_is_publicly_derivable(current, eligible_ids)
     assert api._observation_value_is_public(pack, current)
 
 
