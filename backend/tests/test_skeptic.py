@@ -170,6 +170,15 @@ def test_leak_audit_prints_the_table_and_the_refused_gain():
     assert "hashed identically both times" in text
 
 
+def test_leak_audit_table_has_a_labeled_keyboard_scroll_region():
+    text = _page()
+    region = '<div class="leak-audit-scroll" role="region" aria-label="Leakage audit results" tabindex="0">'
+    assert text.count(region) == 1
+    contents, close, _ = text.split(region)[1].partition("</table></div>")
+    assert contents.startswith("<table>") and close and contents.count("<th>") == 7
+    assert region not in _page({})
+
+
 def test_leak_audit_degrades_when_the_engine_is_dark():
     snap = json.loads(json.dumps(_SNAP))
     snap["deep"]["leakaudit"] = {"ok": False, "reason": "insufficient scored history"}
