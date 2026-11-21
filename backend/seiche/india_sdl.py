@@ -61,7 +61,8 @@ def _day(rows: list[dict]) -> dict:
             "not_accepted": sum(1 for r in rows if r.get("cutoff_yield_pct") is None and not r.get("allotted_cr"))}
 
 
-def _security(r: dict) -> dict:
+def _security(r: dict, releases: dict) -> dict:
+    release = releases[str(r["prid"])]
     return {"auction_date": r["auction_date"], "security": r["security"], "tenor_as_printed": r["tenor_as_printed"],
             "residual_years": (r["maturity_year"] - int(r["auction_date"][:4])) if r.get("maturity_year") else None,
             "notified_cr": r["notified_cr"], "competitive_bids_cr": r["competitive_bids_cr"],
@@ -69,7 +70,9 @@ def _security(r: dict) -> dict:
             if r.get("competitive_bids_cr") is not None and r.get("notified_cr") else None,
             "cutoff_yield_pct": r["cutoff_yield_pct"], "cutoff_price_rs": r["cutoff_price_rs"],
             "weighted_avg_yield_pct": r["weighted_avg_yield_pct"], "allotted_cr": r["allotted_cr"],
-            "release": f"https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid={r['prid']}"}
+            "release": f"https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid={r['prid']}",
+            "release_date": release["release_date"], "retrieved_utc": release["retrieved_utc"],
+            "source_sha256": release["sha256"]}
 
 
 def states() -> list[str]:
@@ -95,14 +98,14 @@ def read(state: str | None = None, include_history: bool = False) -> dict:
         mine = [r for r in rows if r["state"] == wanted]
         recent = [r for r in mine if r["auction_date"] > since]
         return {**head, "state": wanted, "last_52_weeks": {**_day(recent), "auction_days": len({r["auction_date"] for r in recent})},
-                "securities": [_security(r) for r in sorted(mine, key=lambda r: r["auction_date"], reverse=True)
+                "securities": [_security(r, pack["releases"]) for r in sorted(mine, key=lambda r: r["auction_date"], reverse=True)
                                [: (len(mine) if include_history else 40)]],
                 "securities_total": len(mine)}
     table = []
     for name in states():
         mine = [r for r in rows if r["state"] == name]
         recent = [r for r in mine if r["auction_date"] > since]
-        last = max(mine, key=lambda r: (r["auction_date"], r["allotted_cr"] or 0))
+        last = max(mine, key=lambda r: (r["auction_date"], r["allotted_cr"] or 0, r["security"]))
         table.append({"state": name, "last_auction": last["auction_date"], "last_security": last["security"],
                       "last_cutoff_yield_pct": last["cutoff_yield_pct"],
                       "issued_52w_cr": round(sum(r["allotted_cr"] or 0 for r in recent), 3),
