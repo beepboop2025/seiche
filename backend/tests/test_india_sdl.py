@@ -36,6 +36,9 @@ def test_one_state_is_read_case_insensitively_and_unknown_states_are_refused():
     one = sdl.read("rajasthan")
     assert one["state"] == "RAJASTHAN" and one["securities"]
     assert all(s["release"].startswith("https://www.rbi.org.in/") for s in one["securities"])
+    for security in one["securities"]:
+        assert security["auction_date"] <= security["release_date"] <= security["retrieved_utc"][:10]
+        assert len(security["source_sha256"]) == 64
     assert one["securities"] == sorted(one["securities"], key=lambda s: s["auction_date"], reverse=True)
     with pytest.raises(ValueError):
         sdl.read("Atlantis")
