@@ -69,6 +69,8 @@ FALLBACK_REPLAY_DATE = "2025-09-15"
 SECTION_KEYS = ("leak_audit", "orthogonal", "point_in_time", "notary", "falsifiers")
 
 _EXTRA_CSS = """
+.leak-audit-scroll { max-width:100%; overflow-x:auto; }
+.leak-audit-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .gap { background:var(--panel); border:1px solid var(--edge); border-radius:10px;
        padding:14px 16px; margin:14px 0; }
 .gap strong { color:var(--accent-soft); }
@@ -216,7 +218,7 @@ def _leak_section(deep: dict) -> tuple[str, bool]:
                     f"({lg_txt}), which is the pleasant version of this result: the "
                     f"chronological-transform discipline is also the better instrument.</p>")
 
-    body = ["<table>",
+    body = ['<div class="leak-audit-scroll" role="region" aria-label="Leakage audit results" tabindex="0"><table>',
             "<tr><th>toggle</th><th>what breaks</th><th>AUROC</th><th>recall</th>"
             "<th>run precision</th><th>LG AUROC</th><th>LG recall</th></tr>"]
     for r in rows:
@@ -234,7 +236,7 @@ def _leak_section(deep: dict) -> tuple[str, bool]:
             f"<tr><td>{cells[0]}</td><td>{cells[1]}</td>"
             + "".join(f"<td{num}>{c}</td>" for c in cells[2:])
             + "</tr>")
-    body.append("</table>")
+    body.append("</table></div>")
 
     tail = []
     if la.get("reading"):
