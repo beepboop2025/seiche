@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, timedelta
-from functools import lru_cache
-import json
+from seiche import sdl_publication
 from pathlib import Path
 
 PACK = Path(__file__).resolve().parent / "india_sdl_auctions.json"
@@ -36,13 +35,13 @@ CAVEATS = [
 ]
 
 
-@lru_cache(maxsize=1)
 def _pack() -> dict:
-    pack = json.loads(PACK.read_text())
+    pack = sdl_publication.published(PACK)
     if pack.get("schema") != "seiche.india-sdl-auctions.v1":
         raise ValueError("unexpected SDL pack schema")
     cols = pack["columns"]
-    pack["_rows"] = [dict(zip(cols, row)) for row in pack["rows"]]
+    if "_rows" not in pack:
+        pack["_rows"] = [dict(zip(cols, row)) for row in pack["rows"]]
     return pack
 
 
@@ -87,7 +86,8 @@ def read(state: str | None = None, include_history: bool = False) -> dict:
     latest = days[-1]
     since = (date.fromisoformat(latest) - timedelta(days=WINDOW_DAYS)).isoformat()
     head = {"schema": SCHEMA, "status": "available", "asof": latest, "source": pack["source"], "caveats": CAVEATS,
-            "redistribution": "allowed with attribution to RBI"}
+            "redistribution": "allowed with attribution to RBI",
+            "economic_context_url": "https://api.liquilens.in/api/experimental/v1/ontology/economy"}
     if state is not None:
         wanted = state.strip().upper()
         if wanted not in states():
