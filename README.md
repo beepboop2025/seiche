@@ -61,11 +61,11 @@ LiquiLens, Seiche and Undertow are connected research products from **LIQUILENS 
 
 [![sealed record](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.seiche.info%2Fapi%2Fbadge%2Frecord)](https://api.seiche.info/api/notary)
 
-> A **seiche** is a standing wave in an enclosed body of water — invisible from the
+> A **seiche** is a standing wave in an enclosed body of water, invisible from the
 > shore, until it sloshes over the edge. Funding stress behaves the same way.
 
 **Seiche is a free, open source (AGPL-3.0-or-later) money-, foreign-exchange and
-capital-market evidence terminal** organized around the dollar funding system —
+capital-market evidence terminal** organized around the dollar funding system,
 US money markets, 22 public H.10 currency reference series, the Treasury
 capital-market complex, the global basins connected through swap lines, and the
 offshore-dollar crypto basin moored to the T-bill market through stablecoins. The core US board and
@@ -75,8 +75,8 @@ market-pack catalog can also declare licensed or tenant sources, but public
 outputs obey each source's redistribution policy and never expose restricted raw
 values.
 
-Seiche publishes a construction-PIT historical diagnostic—with misses and
-eligibility limits kept visible—and is now accruing a separate as-published
+Seiche publishes a construction-PIT historical diagnostic, with misses and
+eligibility limits kept visible, and is now accruing a separate as-published
 forward record that can be verified instead of reconstructed. Licensed terminals
 provide much broader real-time data and execution workflows, while OFR and NY Fed
 dashboards provide authoritative source views. Seiche is a narrower, opinionated
@@ -156,37 +156,37 @@ Eight research tools remain anonymous and free. Legacy derived tools are unavail
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.
 
-## v2 "Deep Water" — an accountable engine fleet, layered analytics, one terminal
+## v2 "Deep Water": an accountable engine fleet, layered analytics, one terminal
 
 > **v2.3 "Letters of Marque"** (built in tandem across two sessions) adds the
 > forecast layer and the layer that makes every other layer accountable:
-> **Undertow** (critical slowing down — the basin's damping, measured on
-> ordinary days), the **Swell Forecast** (the funding-stress forward curve —
+> **Undertow** (critical slowing down: the basin's damping, measured on
+> ordinary days), the **Swell Forecast** (the funding-stress forward curve:
 > P(pop ≥ x bp) by date, six weeks out, from the public forcing calendar),
-> **The Stack** (walk-forward ensemble of every event forecaster — rule, ML,
-> analogs, Swell — plus The Tell, with a disagreement gauge), **The Book**
-> (HELM tab — explicit daily positions on 2y/10y duration proxies, S&P and
+> **The Stack** (walk-forward ensemble of every event forecaster: rule, ML,
+> analogs and Swell, plus The Tell, with a disagreement gauge), **The Book**
+> (HELM tab: explicit daily positions on 2y/10y duration proxies, S&P and
 > BTC over a T-bill base, walk-forward P&L with costs, block-bootstrap Sharpe
 > CIs and mandatory benchmarks, verdict printed even when it loses), a
 > **hash-chained as-published track record** shipped inside the static
 > publish (nobody, including the operator, can quietly rewrite a bad month),
-> and the **Far Basin** — Palimpsest's censorship-fear channel
+> and the **Far Basin**, Palimpsest's censorship-fear channel
 > (palimpsest.info), a policy confession signal no market data vendor
 > carries, honestly quarantined until it accrues testable history.
 
 | Engine | Question it answers |
 |---|---|
 | **Kink Engine** | Where does reserve scarcity start, and how many days away is it at the current drain rate? (live hockey-stick fit of SOFR−IORB vs reserves/GDP) |
-| **Liquidity Weather** | What does the reserve path look like 6 weeks out — and which auction-settlement days land on thin ice? (TGA seasonal model + Fed drift + settlement calendar + backtested error bands) |
-| **Tail Seismograph** | Are the P99 tails of SOFR/TGCR/BGCR detaching from the median — the first tell of every squeeze? |
+| **Liquidity Weather** | What does the reserve path look like 6 weeks out, and which auction-settlement days land on thin ice? (TGA seasonal model + Fed drift + settlement calendar + backtested error bands) |
+| **Tail Seismograph** | Are the P99 tails of SOFR/TGCR/BGCR detaching from the median, the first tell of every squeeze? |
 | **USD Money Market Desk** ★ | Seven institutional-depth sections over the US cash system: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions and tails; repo-segment rates and volumes; CP−Treasury spreads; bills; liquidity buffers and Fed facilities; and MMF repo plumbing. Cross-source arithmetic uses exact common dates, repo aggregates require a fixed component set, and the descriptive NORMAL/WATCH/STRAIN/STRESS label uses a dependence-robust family-wise adjustment rather than an uncalibrated maximum. |
 | **Global Money Market Atlas** ★ | A licence-aware, native-frequency catalog and available-evidence comparison across 20 registered monetary systems and 21 national sovereign-reference packs, plus a dated source-audited discovery ledger of 43 additional monetary areas across seven regions. Registration and discovery are not live coverage. Each available market is compared only with its own history and can be `LIVE_REFERENCE`/`STALE_REFERENCE`, `DERIVED_CONTEXT`, `POLICY_ONLY`, or `DECLARED_UNAVAILABLE`; no global stress score is manufactured from unlike rate levels. |
 | **Echo Engine** | Does today's 30-day trajectory rhyme with the run-up to any historical stress episode? |
-| **Tide Tables** ★ | What happened next, every time the water looked like this? Markets rhyme, so forecast like a tide table: the k nearest analogs of today's trailing state trajectory over ALL history (labeled or not, expanding-z — no look-ahead) publish their actual forward spread paths as a fan, the share followed by a funding event within 5bd (Wilson CI vs climatology), a NOVELTY gauge ("the board has never looked like this" is its own signal, and flags the fan as extrapolation), and a walk-forward hindcast that says honestly whether analogs beat the base rate. |
+| **Tide Tables** ★ | What happened next, every time the water looked like this? Markets rhyme, so forecast like a tide table: the k nearest analogs of today's trailing state trajectory over ALL history (labeled or not, expanding-z, no look-ahead) publish their actual forward spread paths as a fan, the share followed by a funding event within 5bd (Wilson CI vs climatology), a NOVELTY gauge ("the board has never looked like this" is its own signal, and flags the fan as extrapolation), and a walk-forward hindcast that says honestly whether analogs beat the base rate. |
 | **RV X-Ray** | How big is the leveraged Treasury RV complex, and what does a 5/15/30bp shock do to it? |
 | **Crowding** | Where are leveraged funds most crowded relative to their own history (UST curve, SOFR/FF futures, S&P)? |
 | **Auction Digestion** | Is the market choking on Treasury supply? |
-| **Warehouse** | How full is the primary-dealer balance sheet — the shock absorber of last resort? (NY Fed PD stats by maturity bucket) |
+| **Warehouse** | How full is the primary-dealer balance sheet, the shock absorber of last resort? (NY Fed PD stats by maturity bucket) |
 | **Resonance Engine** ★ | *The seiche made literal:* does the same calendar forcing (month-end, quarter-end, year-end, tax dates) produce a bigger slosh than it used to? Amplification = damping loss = fragility rising while levels look calm. |
 | **Undertow** ★ | The free-decay half of the resonance physics: critical slowing down (Scheffer et al.), measured continuously. Rising lag-1 autocorrelation + variance of the detrended spread/tail and a stretching recovery half-life after everyday pops = the basin losing damping on days when NOTHING is happening. Expanding percentiles only; weighted into the composite as structural evidence. |
 | **Swell Forecast** ★ | A 42-business-day funding-stress forward curve: P(SOFR−IORB pop ≥ 2/5/10/20bp) by date, built from the public forcing calendar (turn/tax/settlement days each keep their full expanding distribution of historical pops), lifted by the live damping state and announced coupon settlements. It compounds to P(event by horizon), is walk-forward scored vs climatology on final-vintage history with the reliability table printed, and self-demotes to "trust the dates, not the levels" when the levels stop earning it. |
@@ -194,81 +194,81 @@ and release invariants.
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
 | **The Estuary / Passage** ★ | Where FX settlement and physical inventory become money-market cash demand. Twenty-two H.10 currencies, advanced/emerging dollar indices, daily energy and monthly IMF commodity breadth are normalized into an upstream-pressure reading, then compared with SOFR−IORB and commercial-paper spreads. Its differentiator, **The Passage**, chooses each candidate target and lag on the first 60% of aligned history and calls it `earned` only if direction and magnitude survive the untouched final 40%; unstable stories print `not earned`. De-clustered analog outcomes, BIS PvP settlement structure and an editable cash-conversion lab keep statistical evidence, structural benchmarks and scenarios visibly separate. Context only, never a composite input. |
 | **Oil × Funding** ★ | The barrel's balance sheet, in both directions: WTI/Brent, CP−bill and SOFR−IORB evidence; live Cushing stocks and Brent−WTI basis kept separate from dated capacity, benchmark and chokepoint references; a rolling change-on-change coupling diagnostic; the observed mechanical carry hurdle; energy/core CPI into IORB; broad foreign-official dollar-parking proxies for the recycling channel; and an editable, explicitly scenario-only lab for cargo credit, margin calls, RBI liquidity absorption and OMC commercial-paper demand. Context only, never a composite input. |
-| **[Ballast](docs/BALLAST.md)** ★ | The energy-futures cash ledger inside Oil × Funding. Exact CFTC contract codes for WTI and Henry Hub join weekly open interest, trader classes and paying-side concentration to public benchmark moves and contract multipliers; EIA commercial crude stocks supply the physical-collateral leg; SOFR−IORB and CP−bill show a separate funding-amplifier overlay. The output is a bounded gross mark-displacement proxy—not an observed margin call—and the headline takes the worst own-history commodity/physical percentile without blending or letting funding alone manufacture a commodity alert. Typed handoffs route exit cost to Undertow and named-institution exposure to LiquiLens. Context only, never a composite input. |
-| **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
-| **ML Lab** | Learned P(funding event within 5bd): walk-forward with a 5bd boundary embargo, benchmarked against climatology AND the rule-based index, reliability table + decision-utility scoring published. Verdict at build: ranks better than the rule (OOS AUROC 0.826 vs 0.806; 0.812 on the orthogonal feature set) but probability levels don't beat climatology — use for ranking/alerting, not literal odds. The verdict self-updates. |
-| **Station-Keeping** ★ | Orbit-determination transfer: propagate the reserve system's expected state (fiscal seasonal, calendar buckets, trailing drift), CUSUM the innovation residuals, flag unmodeled "burns" — debt-ceiling cash games, RMP pace changes — often before they're narrated. Doubles as the Weather model's health monitor. |
-| **Riptide** ★ | The pop prognosis — the one morning the whole desk asks the same question, answered: *chop or current?* Every declustered spread pop becomes a trial; the discriminators (RRP co-sign — a pop WITHOUT its mechanical quarter-end co-move is genuine scarcity, the 2025 signature; calendar bucket; damping state) feed a deliberately tiny walk-forward logistic that classifies the live pop as calendar mechanics or the start of a squeeze, with P(sticky) and P(escalates) scored pop-by-pop against the base rate on final-vintage history. Speaks only when there is a live pop; flat water is itself the reading. |
-| **The Breakwater** ★ | The rescuer modeled — the feature no forecaster ships: the Fed is not weather, it is a PLAYER, and every intervention in the public record is a confession of where its pain threshold sat that day. A zero-parameter revealed-preference catalog (repo ops '19, QE '20, SRF '21, BTFP '23, QT taper '24, RMPs '25) compared with the final/current-vintage construction-PIT board for the day before each announcement yields a diagnostic threshold and a live **rescue proximity** gauge — which cuts both ways, and the engine says so: a forecast miss after an intervention is a save, not a false alarm. |
-| **Bathymetry** ★ | The basin floor mapped from the water's motion — the physics program end to end. The daily pop statistic is treated as a diffusion and its dynamics are RECONSTRUCTED from the data (Kramers–Moyal / empirical Langevin): drift → the **effective potential** (the well the spread rests in, its restoring stiffness, and the escape barrier printed in units of thermal energy k_BT); the binned transition operator → the **quantum-dual energy spectrum** (Fokker–Planck ↔ Schrödinger: stationary density = ground state, eigenvalue moduli = energy levels, spectral gap = inverse of the slowest relaxation time — critical slowing down measured operator-theoretically, corroborating Undertow by an independent estimator); stationary probability currents → **entropy production** (Schnakenberg, nats/day — the arrow of time: a calm basin relaxes, a stressed one is pumped); and absorbing-boundary **first passage** → P(funding event within h bd | today's state) and the expected business days to the next event, Kramers' escape problem solved exactly on the measured landscape, no simulation. Expanding counts only, walk-forward scored vs climatology on final-vintage history, and the daily probability joins the Stack as its own member with its own record. |
-| **The Stack** ★ | One P(funding event, 5bd) from the whole fleet: rule index, ML Lab, Tide Tables, Swell and Bathymetry calibrated per-member and blended walk-forward (with regime dummies, ~10 params on purpose). Publishes the equal-weight mean instead whenever the fitted stack fails to beat it OOS, publishes member DISPERSION — when the fleet disagrees, conviction drops — and wraps today's number in a **Venn–Abers calibrated band** [p0, p1] with finite-sample validity guarantees: not "our probability is 7%" but "the calibrated probability is provably between these bounds". |
-| **The Book** ★ | The signal made accountable (HELM tab): a FROZEN rulebook maps the ensemble to explicit daily long/short/flat weights (2y/10y UST duration proxies, S&P 500, BTC over T-bill cash; hysteresis bands, a disagreement gate, vol targeting, per-sleeve cost haircuts), then walk-forward P&L — signal t earns returns t+1, enforced in one place and unit-tested — with stationary-block-bootstrap Sharpe CIs, Newey–West t-stats, per-episode attribution, doubled-cost rerun, and benchmarks through the identical pipeline. If it doesn't beat the static mix after costs, the page says so in bold. Every day's positions land in a **hash-chained as-published ledger** carried by the published site — tamper-evident by construction. Paper proxy; not advice. |
-| **Merian Modes** ★ | *(v2.6 "Bathysphere")* The seiche eigenmodes, estimated instead of assumed. Merian's formula gives a real basin's standing-wave period from its geometry; we go the other way — Hankel-DMD (a finite-dimensional estimate of the Koopman operator: classical dynamics in the Hilbert-space clothes of Koopman–von Neumann mechanics) reads the funding basin's actual modes out of the plumbing panel: period, growth rate, current excitation. A mode with \|λ\| > 1 is a growing oscillation — instability visible before levels move; the ~21bd mode is the month-end forcing seen a second, independent way. The linear mode-propagation forecast is scored vs persistence and self-demotes (modes are structure, not a crystal ball). |
+| **[Ballast](docs/BALLAST.md)** ★ | The energy-futures cash ledger inside Oil × Funding. Exact CFTC contract codes for WTI and Henry Hub join weekly open interest, trader classes and paying-side concentration to public benchmark moves and contract multipliers; EIA commercial crude stocks supply the physical-collateral leg; SOFR−IORB and CP−bill show a separate funding-amplifier overlay. The output is a bounded gross mark-displacement proxy, not an observed margin call, and the headline takes the worst own-history commodity/physical percentile without blending or letting funding alone manufacture a commodity alert. Typed handoffs route exit cost to Undertow and named-institution exposure to LiquiLens. Context only, never a composite input. |
+| **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary (crypto trades when funding markets sleep). |
+| **ML Lab** | Learned P(funding event within 5bd): walk-forward with a 5bd boundary embargo, benchmarked against climatology AND the rule-based index, reliability table + decision-utility scoring published. Verdict at build: ranks better than the rule (OOS AUROC 0.826 vs 0.806; 0.812 on the orthogonal feature set) but probability levels don't beat climatology, use for ranking/alerting, not literal odds. The verdict self-updates. |
+| **Station-Keeping** ★ | Orbit-determination transfer: propagate the reserve system's expected state (fiscal seasonal, calendar buckets, trailing drift), CUSUM the innovation residuals, flag unmodeled "burns", debt-ceiling cash games, RMP pace changes, often before they're narrated. Doubles as the Weather model's health monitor. |
+| **Riptide** ★ | The pop prognosis, the one morning the whole desk asks the same question, answered: *chop or current?* Every declustered spread pop becomes a trial; the discriminators (RRP co-sign, a pop WITHOUT its mechanical quarter-end co-move is genuine scarcity, the 2025 signature; calendar bucket; damping state) feed a deliberately tiny walk-forward logistic that classifies the live pop as calendar mechanics or the start of a squeeze, with P(sticky) and P(escalates) scored pop-by-pop against the base rate on final-vintage history. Speaks only when there is a live pop; flat water is itself the reading. |
+| **The Breakwater** ★ | The rescuer modeled, the feature no forecaster ships: the Fed is not weather, it is a PLAYER, and every intervention in the public record is a confession of where its pain threshold sat that day. A zero-parameter revealed-preference catalog (repo ops '19, QE '20, SRF '21, BTFP '23, QT taper '24, RMPs '25) compared with the final/current-vintage construction-PIT board for the day before each announcement yields a diagnostic threshold and a live **rescue proximity** gauge, which cuts both ways, and the engine says so: a forecast miss after an intervention is a save, not a false alarm. |
+| **Bathymetry** ★ | The basin floor mapped from the water's motion, the physics program end to end. The daily pop statistic is treated as a diffusion and its dynamics are RECONSTRUCTED from the data (Kramers-Moyal / empirical Langevin): drift → the **effective potential** (the well the spread rests in, its restoring stiffness, and the escape barrier printed in units of thermal energy k_BT); the binned transition operator → the **quantum-dual energy spectrum** (Fokker-Planck ↔ Schrödinger: stationary density = ground state, eigenvalue moduli = energy levels, spectral gap = inverse of the slowest relaxation time, critical slowing down measured operator-theoretically, corroborating Undertow by an independent estimator); stationary probability currents → **entropy production** (Schnakenberg, nats/day, the arrow of time: a calm basin relaxes, a stressed one is pumped); and absorbing-boundary **first passage** → P(funding event within h bd | today's state) and the expected business days to the next event, Kramers' escape problem solved exactly on the measured landscape, no simulation. Expanding counts only, walk-forward scored vs climatology on final-vintage history, and the daily probability joins the Stack as its own member with its own record. |
+| **The Stack** ★ | One P(funding event, 5bd) from the whole fleet: rule index, ML Lab, Tide Tables, Swell and Bathymetry calibrated per-member and blended walk-forward (with regime dummies, ~10 params on purpose). Publishes the equal-weight mean instead whenever the fitted stack fails to beat it OOS, publishes member DISPERSION, when the fleet disagrees, conviction drops, and wraps today's number in a **Venn-Abers calibrated band** [p0, p1] with finite-sample validity guarantees: not "our probability is 7%" but "the calibrated probability is provably between these bounds". |
+| **The Book** ★ | The signal made accountable (HELM tab): a FROZEN rulebook maps the ensemble to explicit daily long/short/flat weights (2y/10y UST duration proxies, S&P 500, BTC over T-bill cash; hysteresis bands, a disagreement gate, vol targeting, per-sleeve cost haircuts), then walk-forward P&L, signal t earns returns t+1, enforced in one place and unit-tested, with stationary-block-bootstrap Sharpe CIs, Newey-West t-stats, per-episode attribution, doubled-cost rerun, and benchmarks through the identical pipeline. If it doesn't beat the static mix after costs, the page says so in bold. Every day's positions land in a **hash-chained as-published ledger** carried by the published site, tamper-evident by construction. Paper proxy; not advice. |
+| **Merian Modes** ★ | *(v2.6 "Bathysphere")* The seiche eigenmodes, estimated instead of assumed. Merian's formula gives a real basin's standing-wave period from its geometry; we go the other way, Hankel-DMD (a finite-dimensional estimate of the Koopman operator: classical dynamics in the Hilbert-space clothes of Koopman-von Neumann mechanics) reads the funding basin's actual modes out of the plumbing panel: period, growth rate, current excitation. A mode with \|λ\| > 1 is a growing oscillation, instability visible before levels move; the ~21bd mode is the month-end forcing seen a second, independent way. The linear mode-propagation forecast is scored vs persistence and self-demotes (modes are structure, not a crystal ball). |
 | **The Gyre** ★ | *(v2.6)* Is prediction possible at all? Takens delay embedding + empirical dynamic modeling (Sugihara): simplex-projection skill by horizon (chaos decays, noise never had skill), a phase-randomized surrogate gate for determinism beyond linear autocorrelation, the S-map θ test for state-dependent (nonlinear) dynamics, and the S-map Jacobian's local expansion rate \|λ\| as a live "the water is locally unstable" gauge. Tide Tables asks WHICH history rhymes; the Gyre asks whether the basin's dynamics are deterministic enough to rhyme at all. |
-| **Rogue Wave** ★ | *(v2.6)* The tail law. Extreme value theory is literally the mathematics of rogue waves: peaks-over-threshold GPD (probability-weighted moments, bootstrap CIs, threshold-sensitivity table printed) on the SAME declustered pop statistic as PROOF. Swell's empirical exceedance curves stop dead at the largest pop in the sample; the GPD is the honest instrument for the wave that is NOT in the sample yet — the once-a-decade pop in bp, P(pop ≥ 25bp within a quarter), and whether the tail is getting heavier as the buffers drain (annual expanding ξ refits). |
-| **Far Basin** ★ | The policy-fear channel: Palimpsest (palimpsest.info) measures what the Chinese state rushes to delete — the DDTI deletion-threat index, newly-targeted terms, the Generative Firewall Index — CI-published, keyless, mirrored on GitHub raw. A confession channel one basin further out, carried by no market data vendor. Honest scope: days old as a public series, so it accrues locally and stays QUARANTINED (context only, never in the composite, never a model feature) until it clears 250 daily observations. |
-| **Seiche Index** | One 0–100 number with full decomposition and a regime call: CALM / EROSION / STRAIN / STRESS. |
+| **Rogue Wave** ★ | *(v2.6)* The tail law. Extreme value theory is literally the mathematics of rogue waves: peaks-over-threshold GPD (probability-weighted moments, bootstrap CIs, threshold-sensitivity table printed) on the SAME declustered pop statistic as PROOF. Swell's empirical exceedance curves stop dead at the largest pop in the sample; the GPD is the honest instrument for the wave that is NOT in the sample yet, the once-a-decade pop in bp, P(pop ≥ 25bp within a quarter), and whether the tail is getting heavier as the buffers drain (annual expanding ξ refits). |
+| **Far Basin** ★ | The policy-fear channel: Palimpsest (palimpsest.info) measures what the Chinese state rushes to delete, the DDTI deletion-threat index, newly-targeted terms, the Generative Firewall Index, CI-published, keyless, mirrored on GitHub raw. A confession channel one basin further out, carried by no market data vendor. Honest scope: days old as a public series, so it accrues locally and stays QUARANTINED (context only, never in the composite, never a model feature) until it clears 250 daily observations. |
+| **Seiche Index** | One 0 to 100 number with full decomposition and a regime call: CALM / EROSION / STRAIN / STRESS. |
 
 ★ = methods invented for this tool.
 
 **The desk assistant**: `seiche ask "why is the index elevated?"` (or the Ask box on
-BOARD) answers strictly from a deterministic context pack of the live board — every
+BOARD) answers strictly from a deterministic context pack of the live board: every
 number cited to its engine and as-of date, "not on the board" instead of improvisation.
 Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint via
 `SEICHE_LLM_BASE_URL`; with neither configured it returns the context pack itself.
 
 **The analytics layers on top:**
 
-- **The Tell** — plumbing percentile minus market-priced-stress percentile (VIX, HY/IG
+- **The Tell**: plumbing percentile minus market-priced-stress percentile (VIX, HY/IG
   OAS, rates vol). Positive = the basin is sloshing and the screens haven't noticed.
   The whole thesis in one tradeable number.
-- **The Estuary** — upstream FX/material pressure minus the funding pressure already
+- **The Estuary**: upstream FX/material pressure minus the funding pressure already
   priced in SOFR and commercial paper. A positive Passage gap says the cash burden is
   running ahead of its usual landing zones; the discovery/holdout map then shows which
   links actually survived unseen history. Monthly physical breadth is never filled
   forward into the daily evidence, and the cash lab never pretends user assumptions
   are observed exposures.
-- **The Navigator** — an LLM forecaster made accountable: one committed
+- **The Navigator**: an LLM forecaster made accountable, with one committed
   P(funding event, 5bd) per data-day, grounded strictly in the live board,
   written into the hash-chained record. An LLM cannot be honestly backtested
   (it has read the history), so its FORWARD record is its only evidence and
   its weight stays zero until that record earns a hearing. `seiche navigator`.
-- **The Communiqué** — FOMC statements read as vintage-stamped data: frozen
+- **The Communiqué**: FOMC statements read as vintage-stamped data, where frozen
   deterministic lexicons score policy direction, balance-sheet bias and
   funding-stress vocabulary per statement; the change vs the previous
   statement is the signal, and the Time Machine replays text as it stood.
-- **The TED bridge** — the ML Lab pretrains on the TED spread's 1990–2018
+- **The TED bridge**: the ML Lab pretrains on the TED spread's 1990 to 2018
   funding-stress record (2008/2011/2016) in the same feature slots,
   down-weighted, and publishes the transfer gain vs the SOFR-only model
   either way.
-- **The Stack + The Book** — the rule index, ML Lab, Tide Tables analogs, the
+- **The Stack + The Book**: the rule index, ML Lab, Tide Tables analogs, the
   Swell curve and Bathymetry's first-passage odds all emit P(funding event, 5bd); the Stack calibrates and blends them
   walk-forward (publishing the equal-weight mean whenever the fitted blend can't
   beat it), publishes member **dispersion** as a first-class ambiguity signal, and
   the Book converts the result into explicit daily paper positions with costs,
   benchmarks and bootstrap CIs. Every view's daily forecast and every position is
-  appended to the hash-chained PIT record — a track record no reconstruction can
+  appended to the hash-chained PIT record, a track record no reconstruction can
   polish.
-- **Turn Barometer** — forecasts the *next* month/quarter-end turn's severity with
+- **Turn Barometer**: forecasts the *next* month/quarter-end turn's severity with
   leave-one-out cross-validation, always benchmarked against a naive forecast. When
   the model can't beat naive, it says so and publishes naive instead.
-- **Playbook** — what S&P/VIX/OAS/yields did the last N times the board looked like
+- **Playbook**: what S&P/VIX/OAS/yields did the last N times the board looked like
   this, in native units, with n printed. Decision support, not advice.
-- **PROOF** — the construction-PIT diagnostic lab: the index rebuilt with expanding-window statistics
+- **PROOF**: the construction-PIT diagnostic lab, where the index is rebuilt with expanding-window statistics
   only (causal truncation is unit-tested, but source history is final/current-vintage), recall/precision with Wilson 95%
   intervals, run-level precision (alert days are serially correlated; runs are the
-  honest trials), episode-by-episode lead times *including the ones it missed* —
+  honest trials), episode-by-episode lead times *including the ones it missed*,
   and the **orthogonal signal test**: the same event-capture with the target's own
   variable family (spread/tails) removed from the signal. At build: orthogonal
-  recall 69% [CI 42–87] vs 62% full, with the structural components alone at the
-  98th–100th percentile 42 days before the Sep/Dec-2025 squeezes. The claim is
+  recall 69% [CI 42 to 87] vs 62% full, with the structural components alone at the
+  98th to 100th percentile 42 days before the Sep/Dec-2025 squeezes. The claim is
   causal structure, not autocorrelation.
-- **Time Machine** — final/current-vintage construction-PIT reconstruction using observations dated on or before any date since ~2018; it does not recreate the publication vintage visible then. Reconstructed to
+- **Time Machine**: final/current-vintage construction-PIT reconstruction using observations dated on or before any date since ~2018; it does not recreate the publication vintage visible then. Reconstructed to
   **Sep 12 2019**, the board reads EROSION with reserves $576B below the kink and
-  flags **Sep 16 2019** — the exact day the repo market broke — as a crunch window.
+  flags **Sep 16 2019**, the exact day the repo market broke, as a crunch window.
 
 Principles: **no naked numbers** (every value carries source + as-of + staleness),
-**fail-loud** (a dead feed shows as DEAD and reduces published coverage — it never
+**fail-loud** (a dead feed shows as DEAD and reduces published coverage; it never
 silently vanishes), **honest lags** (COT is T+3 by construction; shown, not hidden),
 and **honest scope** (a registered market with no qualifying public benchmark stays
 visible as unavailable; a policy rate or restricted input is never relabelled as a
@@ -321,7 +321,7 @@ model, training, scoring, execution or redistribution permission. See
   metric carries its source, as-of date, cadence and plain-language explanation;
   meaningful cards add native-series changes, a one-year robust z-score and a
   three-year empirical percentile. Derived spreads use exact common observation
-  dates—there is no forward-fill across unrelated source clocks. The headline
+  dates; there is no forward-fill across unrelated source clocks. The headline
   displays both the raw most-extreme channel and a conservative Bonferroni-
   adjusted desk-wide rank; reserve and ON-RRP stock levels remain visible
   context but cannot manufacture a funding-stress label by themselves.
@@ -352,8 +352,8 @@ non-reversible own-history statistics, while its raw level and history remain
 withheld. `POLICY_ONLY` means an official policy anchor is visible but no eligible
 traded benchmark is available; policy is not used as a substitute. A declared
 unavailable market remains an evidence gap, not a calm reading. Changes and
-history windows follow each adapter's **native cadence**—weekly or monthly series
-are never padded into daily data—and cross-market comparison uses own-history
+history windows follow each adapter's **native cadence** (weekly or monthly series
+are never padded into daily data), and cross-market comparison uses own-history
 normalization rather than unlike rate levels.
 
 Seiche's AGPL-3.0-or-later license covers the code. It does not override upstream terms:
@@ -405,7 +405,7 @@ seiche nbs-intake status  # verify the public-only signed China revision head
 ## For AI agents (MCP)
 
 Seiche is also a [Model Context Protocol](https://modelcontextprotocol.io)
-server — any MCP-capable agent (Claude Code, Codex, your own) can read the live
+server: any MCP-capable agent (Claude Code, Codex, your own) can read the live
 board as tools. Where a data feed hands an agent raw macro numbers, Seiche hands
 it the conclusion: a regime read, forward event odds, historical analogs, and a
 historical diagnostic whose status, misses, and eligibility flags stay attached.
@@ -478,7 +478,7 @@ anti-noise rules, construction-PIT episode replays, and a PROOF-grounded answer 
 "can I trust this". Walkthrough: **[docs/HERMES.md](docs/HERMES.md)**.
 
 Alerts dedupe per state in SQLite, notify via macOS notification and optional
-webhook (`SEICHE_WEBHOOK_URL` — Slack/Telegram/ntfy style `{"text": ...}`).
+webhook (`SEICHE_WEBHOOK_URL`, Slack/Telegram/ntfy style `{"text": ...}`).
 A launchd template lives in `ops/com.seiche.watch.plist`.
 
 ## Production deployment
@@ -502,7 +502,7 @@ production background warmer owns snapshot construction; deployment probes
 only observe whether it has published a result.
 
 Put a TLS reverse proxy in front. The box already serving another site
-(e.g. Palimpsest) just adds a vhost — nginx:
+(e.g. Palimpsest) just adds a vhost (nginx):
 
 ```nginx
 server {
