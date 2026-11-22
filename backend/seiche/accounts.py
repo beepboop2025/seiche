@@ -1,17 +1,20 @@
-"""Subscriber accounts — stdlib-only auth for the gated endpoints.
+"""Free accounts: stdlib-only auth for the optional signed-in endpoints.
 
-The public window (api.seiche.info) serves the live board to everyone; the
-Time Machine replay is the subscriber feature. Design matches the project's
-ethos: no new dependencies, fail loud, nothing clever.
+Seiche is free. The public window (api.seiche.info) serves the live board to
+everyone; an account holds email alert preferences, authenticated refreshes
+and Agent Room keys, and can sign in where an operator turns a sign-in gate on.
+No account is sold and no payment changes what an account can do. Design
+matches the project's ethos: no new dependencies, fail loud, nothing clever.
 
   * passwords: hashlib.scrypt (n=2^14, r=8, p=1), per-user 16-byte salt;
   * tokens: HMAC-SHA256 over "username|tier|expiry" with a secret that lives
     in DATA_DIR/auth_secret (created 0600 on first use) or SEICHE_AUTH_SECRET;
+    the "tier" field stores the access level (see config.LEGACY_ACCESS);
   * the gate is OPT-IN: SEICHE_ASOF_AUTH=1 turns it on (the box); dev and
     tests run open unless they say otherwise.
 
-Accounts are provisioned by the operator (`seiche user add NAME`), not by
-self-signup — payments come later; this is the lock, not the till.
+Accounts are created by the operator (`seiche user add NAME`), not by
+self-signup.
 """
 
 from __future__ import annotations
@@ -26,7 +29,15 @@ import stat
 import threading
 import time
 
-from seiche.config import DATA_DIR, DB_PATH
+from seiche.config import (
+    ACCESS_ANON,
+    ACCESS_FREE,
+    ACCESS_OPERATOR,
+    DATA_DIR,
+    DB_PATH,
+    LEGACY_ACCESS,
+    OPERATOR_USERS_ENV,
+)
 
 _SCRYPT = dict(n=2**14, r=8, p=1)
 TOKEN_TTL_S = 30 * 24 * 3600  # 30 days
@@ -56,7 +67,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                    username TEXT PRIMARY KEY,
                    salt_hex TEXT NOT NULL,
                    hash_hex TEXT NOT NULL,
-                   tier TEXT NOT NULL DEFAULT 'pro',
+                   tier TEXT NOT NULL DEFAULT 'free',
                    created_utc REAL NOT NULL
                )""")
         # idempotent migration: subscriber alert prefs
@@ -278,15 +289,15 @@ def _hash(password: str, salt: bytes) -> str:
 def add_user(
     username: str,
     password: str,
-    tier: str = "pro",
+    tier: str = ACCESS_FREE,
     *,
     conn: sqlite3.Connection | None = None,
 ) -> None:
     """Insert a new account, never replace an existing identity.
 
-    ``conn`` is used by the payment provisioner to make the account insert
-    part of its ``BEGIN IMMEDIATE`` transaction.  Other callers retain the
-    simple one-call API and get a transaction owned by this function.
+    ``tier`` is the stored access level (see ``canonical_access``). ``conn``
+    lets a caller make the insert part of its own transaction; other callers
+    get a transaction owned by this function.
     """
     if not username or not username.replace("_", "").replace("-", "").isalnum():
         raise ValueError("username must be alphanumeric (plus - _)")
@@ -343,6 +354,48 @@ def list_users() -> list[dict]:
     with _conn() as conn:
         rows = conn.execute("SELECT username, tier, created_utc FROM users").fetchall()
     return [{"username": u, "tier": t, "created_utc": c} for u, t, c in rows]
+
+
+# ---- access levels ------------------------------------------------------------
+# Seiche is free. An access level only sets how many MCP tool calls a caller may
+# make per UTC day; nothing sells or upgrades it.
+
+
+def operator_usernames() -> frozenset[str]:
+    """Usernames that read as operator from ``SEICHE_OPERATOR_USERS``."""
+    raw = os.getenv(OPERATOR_USERS_ENV, "")
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
+def access_level(identity: dict | None) -> str:
+    """``anon``, ``free`` or ``operator`` for a caller, with no data migration.
+
+    The stored value is read as written: ``free`` and ``operator`` as
+    themselves, legacy ``pro`` as free, legacy ``founder`` and ``enterprise``
+    as operator. Any other stored value is a signed-in account and reads as
+    free. A username listed in ``SEICHE_OPERATOR_USERS`` reads as operator.
+    """
+    if identity is None:
+        return ACCESS_ANON
+    if identity.get("username") in operator_usernames():
+        return ACCESS_OPERATOR
+    stored = str(identity.get("tier") or ACCESS_FREE).strip().lower()
+    if stored in (ACCESS_FREE, ACCESS_OPERATOR):
+        return stored
+    return LEGACY_ACCESS.get(stored, ACCESS_FREE)
+
+
+def canonical_access(value: str | None) -> str:
+    """The level to store for a NEW account: ``free`` or ``operator``.
+
+    Legacy names are accepted so old operator scripts keep working, and are
+    stored as the level they read as. Anything else is refused.
+    """
+    level = (value or ACCESS_FREE).strip().lower()
+    level = LEGACY_ACCESS.get(level, level)
+    if level not in (ACCESS_FREE, ACCESS_OPERATOR):
+        raise ValueError("access must be 'free' or 'operator'")
+    return level
 
 
 # ---- tokens -----------------------------------------------------------------
