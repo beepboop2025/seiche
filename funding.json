@@ -1,0 +1,70 @@
+{
+  "version": "v1.0.0",
+  "entity": {
+    "type": "organisation",
+    "role": "owner",
+    "name": "LIQUILENS PRIVATE LIMITED",
+    "email": "mrinal@liquilens.in",
+    "description": "Registered private limited company in Jaipur, India (CIN U62011RJ2026PTC116792; DPIIT DIPP290644) maintaining Seiche, an AGPL-3.0 open-source money-markets, FX, and capital-market transmission evidence terminal.",
+    "webpageUrl": {
+      "url": "https://seiche.info/"
+    }
+  },
+  "projects": [
+    {
+      "guid": "seiche",
+      "name": "Seiche",
+      "description": "Open-source research software for USD funding stress, SOFR-IORB, repo, central-bank reference FX, and capital-market transmission with explicit source clocks, provenance, Python/R clients, OpenBB integration, and keyless MCP.",
+      "webpageUrl": {
+        "url": "https://seiche.info/"
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/beepboop2025/seiche",
+        "wellKnown": "https://raw.githubusercontent.com/beepboop2025/seiche/main/funding.json"
+      },
+      "licenses": [
+        "spdx:AGPL-3.0-or-later"
+      ],
+      "tags": [
+        "open-data",
+        "economics",
+        "money-markets",
+        "central-banks",
+        "provenance",
+        "python",
+        "mcp"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "github-sponsors",
+        "type": "payment-provider",
+        "address": "https://github.com/sponsors/beepboop2025",
+        "description": "GitHub Sponsors supporting Seiche public collectors, provenance archive, and AGPL-3.0 open-source maintenance."
+      },
+      {
+        "guid": "institutional-grant",
+        "type": "other",
+        "address": "https://seiche.info/",
+        "description": "Open-source infrastructure and public-data grant inquiries via mrinal@liquilens.in."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "seiche-public-infrastructure",
+        "status": "active",
+        "name": "Seiche AGPL-3.0 collectors, provenance verification, and public API/MCP",
+        "description": "Supports open-source official-source ingestion across NY Fed, ECB, RBI, BIS, and Treasury feeds, schema-validated releases, Python/R SDKs, and keyless public MCP access.",
+        "amount": 25000,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "institutional-grant",
+          "github-sponsors"
+        ]
+      }
+    ]
+  }
+}
