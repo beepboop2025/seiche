@@ -483,7 +483,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
         "servers": [
             {
                 "name": "io.github.beepboop2025/seiche",
-                "title": "Seiche — world-markets evidence terminal",
+                "title": "Seiche: World-markets evidence terminal",
                 "description": (
                     "Money, FX and capital-market evidence with source clocks, "
                     "canonical citations and explicit limits."
@@ -501,7 +501,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
             },
             {
                 "name": "io.github.beepboop2025/seiche-market-corpus",
-                "title": "Seiche Market Atlas — structured evidence corpus",
+                "title": "Seiche Market Atlas: structured evidence corpus",
                 "description": (
                     "Rights-aware dataset receipts, bounded BIS records and "
                     "canonical Seiche market discovery with explicit evidence clocks."
