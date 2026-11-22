@@ -3,8 +3,11 @@
 // CIN, a contact address and the privacy and terms links inside a footer.
 //
 // Left out on purpose: 404.html; articles/ and dispatches/ (written at publish time by
-// backend/seiche/dispatch_pages.py); and the three Google-Extended pages held to reviewed bytes by
-// docs/google-extended-reviewed-pages.json, which change only through the owner's dated re-review.
+// backend/seiche/dispatch_pages.py); methodology.html, skeptic.html, ampleness.html and referee.html
+// (written at publish time by backend/seiche/methodology.py, skeptic.py, ampleness.py and referee.py,
+// before the publish job runs these tests, so a committed checkout never holds them); and the three
+// Google-Extended pages held to reviewed bytes by docs/google-extended-reviewed-pages.json, which
+// change only through the owner's dated re-review.
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -14,7 +17,9 @@ const FRONTEND = new URL("..", import.meta.url).pathname;
 const PUBLIC = join(FRONTEND, "public");
 const REVIEWED = JSON.parse(readFileSync(join(FRONTEND, "..", "docs", "google-extended-reviewed-pages.json"), "utf8"))
   .pages.map((page) => page.source_file.replace(/^frontend\/public\//, ""));
-const SKIP = (name) => name === "404.html" || /^(research-ui|articles|dispatches)\//.test(name) || REVIEWED.includes(name);
+const PUBLISH_TIME = new Set(["methodology.html", "skeptic.html", "ampleness.html", "referee.html"]);
+const SKIP = (name) => name === "404.html" || /^(research-ui|articles|dispatches)\//.test(name)
+  || PUBLISH_TIME.has(name) || REVIEWED.includes(name);
 
 const ICONS = '<!-- SITE-ICONS:START --><link rel="icon" type="image/svg+xml" href="/favicon.svg">'
   + '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest">'
