@@ -21,7 +21,8 @@ const ICONS = '<!-- SITE-ICONS:START --><link rel="icon" type="image/svg+xml" hr
   + "<!-- SITE-ICONS:END -->";
 const COMPANY = /<!-- COMPANY-LINE:START --><p class="company-line">([\s\S]*?)<\/p><!-- COMPANY-LINE:END -->/g;
 const ICON_LINK = /<link\b[^>]*\brel=["'](?:shortcut icon|icon|apple-touch-icon|manifest)["'][^>]*>/gi;
-const meta = (head, attr, key) => new RegExp(`<meta\\b(?=[^>]*\\b${attr}=["']${key.replace(/[.:]/g, "\\$&")}["'])[^>]*\\bcontent=["']([^"']+)["']`, "i").exec(head)?.[1];
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const meta = (head, attr, key) => new RegExp(`<meta\\b(?=[^>]*\\b${escapeRegExp(attr)}=["']${escapeRegExp(key)}["'])[^>]*\\bcontent=["']([^"']+)["']`, "i").exec(head)?.[1];
 
 const walk = (dir) => readdirSync(dir).flatMap((name) => {
   const path = join(dir, name);
