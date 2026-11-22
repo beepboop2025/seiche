@@ -11,7 +11,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from seiche import assemble
+from seiche import assemble, public_rights
 from seiche.markets.registry import default_registry
 
 REPO = Path(__file__).resolve().parents[2]
@@ -98,7 +98,12 @@ def test_money_market_discovery_separates_catalog_from_dated_evidence():
         "/api/trade-safety/risk-context"
     )
     assert access["public_trade_safety_mcp_tool"] is None
-    assert access["trade_safety_status"] == "unavailable_pending_source_rights"
+    # Owner decision for 0.16.15: the REST route is a served source-rights
+    # projection (a reading appears only when every input it reads is
+    # qualified); the MCP tool stays unavailable.
+    assert access["trade_safety_status"] == "served_as_source_rights_projection"
+    assert "/api/trade-safety/risk-context" in public_rights.PROJECTED_PATHS
+    assert "trade_safety_risk_context" in public_rights.LEGACY_TOOLS
     assert access["world_markets_api"].endswith("/api/v2/world-markets")
     assert access["public_world_markets_mcp_tool"] == "world_markets_context"
 
