@@ -130,7 +130,7 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
             year. Between them, nothing free that holds an opinion and grades itself.
             That gap is this lab: Seiche reads the plumbing, LiquiLens ranks financial
             institutions standing on it, Undertow prices the exits. All of it runs on free public
-            data. The misses are published beside the hits. Read those first.
+            data. The hits-and-misses scoreboard is withheld pending source-rights qualification.
           </p>
           <p className="descent-line">
             One number for the state of dollar funding, composed from the Fed's own
