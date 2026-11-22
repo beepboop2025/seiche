@@ -33,3 +33,25 @@ html.research-interface .audience-hero h1{font-size:clamp(43px,4.8vw,67px);line-
 .audience-hero a:focus-visible,.audience-paths a:focus-visible,.audience-connect a:focus-visible{outline:var(--research-focus-width) solid var(--research-focus);outline-offset:var(--research-focus-offset)}
 @media(max-width:1000px){.audience-hero{gap:35px!important}.audience-preview{padding:20px}.audience-paths{gap:20px}html.research-interface .audience-hero h1{font-size:52px}}
 @media(max-width:700px){.audience-hero{grid-template-columns:1fr!important;gap:30px!important;padding-top:37px!important;padding-bottom:34px!important}html.research-interface .audience-hero h1{font-size:46px;letter-spacing:-2px}.audience-hero .audience-lede{font-size:16px}.audience-preview{padding:21px}.audience-paths{grid-template-columns:1fr;gap:0;padding:8px 0 18px;margin-bottom:24px}.audience-paths>a{padding:18px 0}.audience-paths>a+a{border-top:1px solid var(--research-line)}.audience-paths strong{font-size:18px}.audience-paths small{max-width:none}.audience-connect{align-items:flex-start;flex-direction:column;padding:21px;gap:16px}.audience-connect>a{white-space:normal}}
+
+/* Release facts and recent changes on the entry. Family tokens only; motion uses transform alone and stops under reduced motion. */
+.audience-facts{list-style:none;margin:0;padding:22px 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px;border-bottom:1px solid var(--research-line)}
+.audience-facts li{min-width:0;display:flex;flex-direction:column;gap:6px;padding-left:16px;border-left:1px solid var(--research-line-strong)}
+.audience-facts span{font-size:11px;color:var(--research-muted);letter-spacing:.02em}
+.audience-facts strong{font-size:15px;font-weight:500;color:var(--research-text);line-height:1.4}
+.audience-facts a{color:var(--research-accent);text-decoration:none}
+.audience-new{padding:6px 0 10px;margin:0 0 8px}
+.audience-new .rw-section-title{margin-bottom:20px}
+.audience-new-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.audience-new-grid article{display:flex;flex-direction:column;min-width:0;padding:22px 22px 20px;border:1px solid var(--research-line);border-radius:12px;background:var(--research-raised);transition:transform .25s ease}
+.audience-new-grid article:hover{transform:translateY(-2px);border-color:var(--research-line-strong)}
+.audience-new-grid .audience-new-label{font-size:11px;color:var(--research-accent);font-weight:500;letter-spacing:.04em;margin:0 0 12px}
+.audience-new-grid h3{font-size:18px;line-height:1.3;font-weight:500;letter-spacing:-.3px;margin:0 0 10px;color:var(--research-text)}
+.audience-new-grid p{font-size:13px;line-height:1.7;color:var(--research-muted);margin:0 0 18px;flex:1}
+.audience-new-grid .audience-new-links{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0;flex:0}
+.audience-new-grid a{color:var(--research-accent);font-size:13px;text-decoration:none}
+.audience-new-grid a:hover{text-decoration:underline}
+.audience-new-grid a:focus-visible,.audience-facts a:focus-visible{outline:var(--research-focus-width) solid var(--research-focus);outline-offset:var(--research-focus-offset)}
+@media(max-width:1000px){.audience-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.audience-new-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.audience-facts{grid-template-columns:1fr;gap:14px;padding:18px 0}.audience-new-grid{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.audience-new-grid article{transition:none}.audience-new-grid article:hover{transform:none}}

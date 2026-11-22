@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.beepboop2025/seiche",
-  "title": "Seiche \u2014 world-markets evidence terminal",
+  "title": "Seiche: World-markets evidence terminal",
   "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits.",
   "version": "0.16.14",
   "repository": {
@@ -9,6 +9,22 @@
     "source": "github"
   },
   "websiteUrl": "https://seiche.info",
+  "icons": [
+    {
+      "src": "https://seiche.info/icons/pwa-512.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    },
+    {
+      "src": "https://seiche.info/icons/pwa-192.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "192x192"
+      ]
+    }
+  ],
   "remotes": [
     {
       "type": "streamable-http",

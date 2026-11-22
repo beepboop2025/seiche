@@ -14,7 +14,7 @@ export const AGENT_SCENARIOS = Object.freeze({
       "Authenticated or public MCP client sends structured parameters.",
       "Seiche selects already-collected evidence; no request-time scrape occurs.",
       "Source freshness and unavailable inputs stay visible.",
-      "The caller—not Seiche—owns any downstream decision.",
+      "The caller, not Seiche, owns any downstream decision.",
     ],
     packet: {
       transport: "mcp",
@@ -62,7 +62,7 @@ export const AGENT_SCENARIOS = Object.freeze({
     label: "Private Agent Room · verification",
     title: "Replay the chain; keep the legal claim bounded",
     summary:
-      "An authorized agent verifies the full room history. The receipt proves the implemented signature and hash-link checks—not automatic compliance with any law or retention rule.",
+      "An authorized agent verifies the full room history. The receipt proves the implemented signature and hash-link checks, not automatic compliance with any law or retention rule.",
     stages: [
       "Authorized agent requests replay",
       "Every signature is checked",
