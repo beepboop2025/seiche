@@ -182,3 +182,49 @@ def test_page_chrome_has_no_dashes(repo):
     assert "—" not in chrome and "–" not in chrome
     sm = render_sitemap([meta])
     assert "—" not in sm and "–" not in sm
+
+
+def test_package_block_names_this_release_and_no_other_products_version():
+    """The block is rendered by the release it describes, so it cannot name an older one.
+
+    Until 0.16.15 it was typed by hand ("Reviewed 18 October 2026 ... 0.16.5") and stayed
+    there through nine releases. Other products' versions were typed in beside it and went
+    stale the same way; the distribution hub states those, so this page no longer does.
+    """
+    import re
+
+    from seiche import assemble, dispatch_pages
+
+    assert dispatch_pages.RELEASE_VERSION == assemble.VERSION
+    preamble = dispatch_pages._LLMS_PREAMBLE
+    start = preamble.index("## Current packages and agent integrations")
+    block = preamble[start:preamble.index("## Related products", start)]
+    assert f"Seiche Python/MCP {assemble.VERSION} is the release version of the source this page was built from." in block
+    assert "the signed tag for that release" in block and "this release was built from" not in block
+    assert f"https://github.com/beepboop2025/seiche/tree/v{assemble.VERSION}" in block
+    assert "https://pypi.org/project/seiche/)" in block
+    assert "Reviewed 18 October 2026" not in block
+    # The only version numbers in the block are this release's own.
+    assert set(re.findall(r"\b\d+\.\d+\.\d+\b", block)) == {assemble.VERSION}
+    assert "The hub states each current package version." in block
+    # The dated usage record keeps its own date.
+    assert "application windows end 17 October 2026" in block
+
+
+def test_llms_preamble_states_the_served_scope_not_the_withheld_board():
+    """The opening paragraph once said Seiche "publishes a live funding regime, forward
+    event odds, historical analogs" while a later paragraph said legacy forecasts were
+    unavailable. The preamble names the board as a source-rights projection instead."""
+    from seiche import dispatch_pages, public_rights
+
+    preamble = dispatch_pages._LLMS_PREAMBLE
+    opening = preamble[: preamble.index("Liquidity intelligence sits on two shelves")]
+    assert "Seiche publishes a live funding regime" not in opening
+    assert "source-rights projection" in opening
+    assert "withheld, never" in opening
+    assert "except Funding Pop, served research only with its skill" in opening
+    assert "query the live board\nover MCP" not in preamble
+    # The PROOF scoreboard's route is a legacy path, so the index cannot call it published.
+    assert "/api/public" in public_rights.LEGACY_PATHS
+    assert "The PROOF scoreboard publishes" not in preamble
+    assert "The misses are published beside the hits" not in preamble
