@@ -435,7 +435,15 @@ def test_financial_evidence_router_is_external_pinned_and_china_complete():
     assert ".agents/skills/financial-evidence" not in json.dumps(catalog)
 
     card = json.loads((PUBLIC / "product-card.json").read_text())
-    assert card["updated"] == "2026-10-02"
+    # The card moves with each release: its date is the release date in the
+    # release metadata (CITATION.cff, codemeta.json, .zenodo.json), not a literal.
+    released = re.search(
+        r'^date-released: "(\d{4}-\d{2}-\d{2})"$',
+        (ROOT / "CITATION.cff").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert released, "CITATION.cff has a quoted date-released"
+    assert card["updated"] == released.group(1)
     assert "financial-evidence-skills" in card["access"]["financial_evidence_skill"]
 
     china = (PUBLIC / "use-cases" / "china-economy-evidence" / "index.html").read_text()
