@@ -9,9 +9,12 @@ import {
 
 const publicFile = (name) => new URL(`../public/${name}`, import.meta.url);
 
-test("agent routes map only to shipped Seiche MCP tools", () => {
+test("agent routes map only to shipped Seiche MCP tools", async () => {
+  const card = JSON.parse(await readFile(publicFile("product-card.json"), "utf8"));
   assert.deepEqual(Object.keys(AGENT_SCENARIOS), ["context", "negotiate", "audit"]);
-  assert.equal(AGENT_SCENARIOS.context.packet.tool, "trade_safety_risk_context");
+  // The public context request names the product card's public money-market tool.
+  assert.equal(AGENT_SCENARIOS.context.packet.tool, card.access.public_money_market_mcp_tool);
+  assert.notEqual(AGENT_SCENARIOS.context.packet.tool, "trade_safety_risk_context");
   assert.equal(AGENT_SCENARIOS.context.packet.response_contract.cache_only, true);
   assert.equal(AGENT_SCENARIOS.context.packet.response_contract.executable, false);
   assert.equal(AGENT_SCENARIOS.negotiate.packet.tool, "agent_room_append_event");

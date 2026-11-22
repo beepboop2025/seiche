@@ -100,7 +100,7 @@
         "Compare ECB reference FX without executable-price claims."
       ],
       "version": "0.16.14",
-      "updatedAt": "2026-10-13T00:00:00Z",
+      "updatedAt": "2026-11-18T00:00:00Z",
       "metadata": {
         "authentication": "none",
         "access": "public-read-only",
@@ -225,18 +225,17 @@
         "series catalog",
         "data provenance",
         "health status",
-        "oil funding and market-structure context",
-        "FX materials passage"
+        "oil funding and market-structure context (unavailable pending source-rights qualification)",
+        "FX materials passage (unavailable pending source-rights qualification)"
       ],
       "representativeQueries": [
         "Give me an API for the current dollar funding regime.",
         "Retrieve repo, reserves and Treasury cash conditions with provenance.",
         "Check whether the Seiche data feeds are fresh.",
-        "Retrieve compact oil-funding, live-vs-reference market structure and FX-material transmission context.",
         "Retrieve a bounded money, FX, capital-markets and metadata-only China macro context with source clocks, status vocabulary and canonical citation URLs."
       ],
       "version": "0.16.14",
-      "updatedAt": "2026-10-13T00:00:00Z",
+      "updatedAt": "2026-11-18T00:00:00Z",
       "metadata": {
         "authentication": "none",
         "access": "public-read-only",
