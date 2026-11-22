@@ -22,7 +22,7 @@ export const ENTRIES: Entry[] = [
   { code: "GEO", title: "INDIA GEOGRAPHY", hint: "satellite comparison · district rainfall · lender geography", keywords: "geography satellite imagery India district monsoon soil moisture vegetation Bhoonidhi LiquiLens", run: { type: "tab", tab: "GEOGRAPHY" } },
   { code: "TOD", title: "TODAY", hint: "the argument · evidence · countercase · live relay", keywords: "today thesis editorial front page live current", run: { type: "tab", tab: "TODAY" } },
   { code: "INV", title: "ARTICLES", hint: "daily analysis · investigations · charts · counter-cases", keywords: "investigative journalism stories analysis articles longform", run: { type: "href", url: "/articles/" } },
-  { code: "DIS", title: "DISPATCHES", hint: "the daily letter", keywords: "letter desk note daily", run: { type: "tab", tab: "DISPATCHES" } },
+  { code: "DIS", title: "DISPATCHES", hint: "the dated letter archive", keywords: "letter desk note daily", run: { type: "tab", tab: "DISPATCHES" } },
   { code: "BRD", title: "BOARD", hint: "composite index · decomposition · ask", keywords: "dive index regime composite ask kink weather", run: { type: "tab", tab: "BOARD" } },
   { code: "MM", title: "MONEY MARKETS", hint: "clearing ladder · policy anchors · repo · liquidity", keywords: "money markets cash rates repo sofr effr iorb global benchmark policy corridor funding", run: { type: "tab", tab: "MONEY MARKETS" } },
   { code: "WB", title: "MARKET WORKBENCH", hint: "funding observations · FX crosses and history · China economic evidence", keywords: "workbench compare currency pairs exchange rates forex structured China Palimpsest annual reserves trade credit export", run: { type: "tab", tab: "WORKBENCH" } },

@@ -103,7 +103,7 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <span>Get the 11:30 UTC daily letter →</span>
+              <span>Follow the channel on Telegram →</span>
               <small>Free channel. Public data. Misses kept.</small>
             </a>
           </div>

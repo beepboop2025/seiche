@@ -1,6 +1,7 @@
 """The selection surface must stay crawlable, honest and machine-readable."""
 
 import json
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -217,7 +218,7 @@ def test_developer_activation_converts_to_attributed_ongoing_delivery():
 
     assert "https://t.me/LiquidityLabDesk" in page
     assert "https://t.me/seiche_desk_bot?start=agent_developers" in page
-    assert "11:30 UTC" in page
+    assert "11:30 UTC" not in page
     assert 'id="toolHandoff" hidden' in page
     assert "delete value.delivery" in script
     assert 'getElementById("toolHandoff").hidden = false' in script
@@ -241,14 +242,48 @@ def test_generated_discovery_indexes_include_the_selection_surface():
     assert "https://seiche.info/articles/feed.json" in dispatch_pages._LLMS_PREAMBLE
 
 
-def test_home_exposes_the_pre_open_daily_letter():
+def test_home_links_the_free_channel_without_a_daily_letter():
     today = (ROOT / "frontend" / "src" / "tabs" / "Today.tsx").read_text()
 
     assert "https://t.me/LiquidityLabDesk" in today
-    assert "Get the 11:30 UTC daily letter" in today
+    assert "Follow the channel on Telegram" in today
+    assert "daily letter" not in today.lower()
     assert "Free channel. Public data. Misses kept." in today
     assert 'target="_blank"' in today
     assert 'rel="noopener noreferrer"' in today
+
+
+def test_no_shipped_page_offers_a_daily_letter():
+    """Owner decision for 0.16.15: no daily letter runs; the dispatch archive
+    ends on 24 September 2026 and is described as a dated letter archive.
+    Archived issues under /dispatches/ and /articles/ keep their own text."""
+    import subprocess
+
+    claim = re.compile(r"daily letter|daily edition|11:30 UTC", re.IGNORECASE)
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z", "--", "frontend/index.html",
+             "frontend/public", "frontend/src"],
+            capture_output=True, check=True, timeout=30,
+        ).stdout.decode("utf-8")
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("git cannot list the committed pages in this install")
+    archives = ("frontend/public/dispatches/", "frontend/public/articles/")
+    pages = [
+        name for name in listed.split("\0")
+        if name and not name.startswith(archives)
+        and Path(name).suffix in {".html", ".txt", ".json", ".js", ".ts", ".tsx"}
+    ]
+    assert "frontend/public/developers.html" in pages
+    for name in pages:
+        assert not claim.search((ROOT / name).read_text(encoding="utf-8")), name
+    entry = {"slug": "2026-09-24-daily", "date": "2026-09-24", "title": "T", "summary": "S", "tag": "STRAIN"}
+    for rendered in (
+        dispatch_pages.render_archive([entry]),
+        dispatch_pages.render_feed([entry], {}),
+        dispatch_pages.render_llms_txt([entry], []),
+    ):
+        assert not claim.search(rendered)
 
 
 def test_clean_public_urls_match_cloudflare_redirect_targets():

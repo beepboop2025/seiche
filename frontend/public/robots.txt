@@ -81,8 +81,8 @@ User-agent: cohere-ai
 Disallow: /
 
 # Machine-readable index of this site for LLMs: https://seiche.info/llms.txt
-# Full-text corpus of the daily letters:        https://seiche.info/llms-full.txt
-# Atom feed of the daily letters:               https://seiche.info/dispatches/feed.xml
+# Full-text corpus of the dated letters:        https://seiche.info/llms-full.txt
+# Atom feed of the dated letters:               https://seiche.info/dispatches/feed.xml
 # Full-text daily article JSON Feed:             https://seiche.info/articles/feed.json
 # World markets evidence atlas:                  https://seiche.info/markets/
 # Forex reference ledger:                        https://seiche.info/markets/forex/

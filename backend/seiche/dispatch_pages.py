@@ -440,8 +440,8 @@ def render_archive(entries: list[dict]) -> str:
         "@context": "https://schema.org",
         "@type": "CollectionPage",
         "@id": f"{SITE}/dispatches/#archive",
-        "name": "Seiche dispatches: the daily funding stress letter",
-        "description": "Every daily letter the terminal has written, archived in full.",
+        "name": "Seiche dispatches: the dated funding stress letter archive",
+        "description": "Every dated letter the terminal has written, archived in full.",
         "isPartOf": {"@type": "WebSite", "@id": f"{SITE}/#website"},
         "hasPart": [
             {
@@ -454,17 +454,16 @@ def render_archive(entries: list[dict]) -> str:
         ],
     }
     intro = (
-        "<h1>Daily analysis</h1>"
+        "<h1>Dated letter archive</h1>"
         '<p class="lede">The dated letter on US money market plumbing, written from the same '
-        "public evidence the board runs on. The board checks six times a day; one daily edition "
-        "freezes the reading, leads with a genuinely fresh print when one exists, and says what "
-        "held when it does not. Every claim carries the number it stands on, and the misses stay "
-        "beside the hits.</p>"
+        "public evidence the board runs on. Each letter froze one reading of the board, led with a "
+        "genuinely fresh print when one existed, and said what held when it did not. Every claim "
+        "carries the number it stands on, and the misses stay beside the hits.</p>"
     )
     return _page(
-        title="Daily analysis · the Seiche funding stress letter",
+        title="Dated letter archive · the Seiche funding stress letter",
         description=(
-            "The archive of Seiche's daily letters on US money market plumbing: "
+            "The archive of Seiche's dated letters on US money market plumbing: "
             "funding stress readings, the dates that matter, and the desk's forward read, "
             "written from free public data with every number checkable."
         ),
@@ -704,8 +703,8 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<feed xmlns="http://www.w3.org/2005/Atom">\n'
-        "  <title>Seiche dispatches: the daily funding stress letter</title>\n"
-        "  <subtitle>US money market plumbing, read daily from free public data. "
+        "  <title>Seiche dispatches: the dated funding stress letter archive</title>\n"
+        "  <subtitle>US money market plumbing, read from free public data. "
         "Every claim carries its number.</subtitle>\n"
         f'  <link rel="alternate" type="text/html" href="{SITE}/dispatches/"/>\n'
         f'  <link rel="self" type="application/atom+xml" href="{SITE}/dispatches/feed.xml"/>\n'
@@ -891,7 +890,7 @@ identity and source observation freshness remain separate evidence states.
 - [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
 - [Daily articles]({SITE}/articles/): one evidence-led argument every day, with historical replays when the tape is quiet
 - [Daily article feeds]({SITE}/articles/feed.json): JSON Feed 1.1 with exact Markdown, publication receipt and provenance; Atom is at {SITE}/articles/feed.xml
-- [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
+- [Dispatch archive]({SITE}/dispatches/): every dated letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
 - [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file
 
