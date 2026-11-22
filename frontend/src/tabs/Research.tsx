@@ -87,7 +87,7 @@ export default function Research() {
       <h2>Funding and market context</h2>
       <p>Seiche’s completed snapshot · {data.funding_context?.status ?? "unavailable"} · as of {data.funding_context?.as_of ?? "unavailable"}</p>
       {data.funding_context?.summary?.domains?.map(domain => <p key={domain.id}>
-        <strong>{domain.id.replaceAll("_", " ")}</strong>: {domain.status} · {domain.as_of ?? "undated"}{domain.reading ? ` — ${domain.reading}` : ""}
+        <strong>{domain.id.replaceAll("_", " ")}</strong>: {domain.status} · {domain.as_of ?? "undated"}{domain.reading ? `; ${domain.reading}` : ""}
       </p>)}
       <a href="#MONEY%20MARKETS">Inspect the funding evidence and source clocks →</a>
     </section>}

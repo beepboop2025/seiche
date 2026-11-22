@@ -34,7 +34,7 @@ function buildItems(snap: Any): Item[] {
     { k: "IORB", v: fmt(val(h.iorb_pct), 2, "%") },
     {
       k: "SOFR−IORB",
-      v: spreadBp == null ? "—" : `${spreadBp > 0 ? "+" : ""}${fmt(spreadBp, 0, "bp")}`,
+      v: spreadBp == null ? "Unavailable" : `${spreadBp > 0 ? "+" : ""}${fmt(spreadBp, 0, "bp")}`,
       tone: spreadBp != null && spreadBp >= 5 ? "bad" : spreadBp != null && spreadBp > 0 ? "warn" : undefined,
     },
     { k: "RESERVES", v: `$${fmt(val(h.reserves_b), 0, "B")}` },

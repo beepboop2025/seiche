@@ -14,7 +14,7 @@ function TodayCard({ t, stk }: { t: Any; stk: Any }) {
     <div className="card span12">
       <h2>Today's Book</h2>
       <div className="sub">
-        the signal made accountable — explicit positions from a frozen rulebook · paper proxy, not advice
+        the signal made accountable: explicit positions from a frozen rulebook · paper proxy, not advice
       </div>
       <div className="tellhero">
         <div className="tellvalue" style={{ color: col }}>{t.stance?.toUpperCase()}</div>
@@ -24,7 +24,7 @@ function TodayCard({ t, stk }: { t: Any; stk: Any }) {
             ensemble P(event,5bd) {fmt(t.p_ensemble, 2)} · fleet dispersion {fmt(t.dispersion, 2)}
             {t.dispersion_gate_on ? " · GATE ON (disagreement → neutral)" : ""}
             {t.tell != null ? ` · Tell ${t.tell > 0 ? "+" : ""}${fmt(t.tell, 0)}` : ""} ·
-            {t.changed_vs_prior ? " FLIPPED today" : ` unchanged (was ${t.prior_stance ?? "—"})`}
+            {t.changed_vs_prior ? " FLIPPED today" : ` unchanged (was ${t.prior_stance ?? "Unavailable"})`}
           </div>
           {stk?.ok && <div className="coverage">{stk.verdict}</div>}
         </div>
@@ -59,11 +59,11 @@ function EnsembleCard({ s }: { s: Any }) {
       <div className="kv">
         <div className="item"><div className="k">P(event, 5bd)</div><div className="v">{fmt(s.p_now, 3)}
           {s.calibrated_band && <span className="dimsmall" title={s.calibrated_band.method}>
-            {" "}[{fmt(s.calibrated_band.p0, 2)}–{fmt(s.calibrated_band.p1, 2)}]</span>}
+            {" "}[{fmt(s.calibrated_band.p0, 2)} to {fmt(s.calibrated_band.p1, 2)}]</span>}
         </div></div>
         <div className="item"><div className="k">dispersion</div><div className="v">{fmt(s.dispersion_now, 3)}</div></div>
         {Object.entries<number | null>(s.members_now ?? {}).map(([m, p]) => (
-          <div className="item" key={m}><div className="k">{m}</div><div className="v">{p == null ? "—" : fmt(p, 3)}</div></div>
+          <div className="item" key={m}><div className="k">{m}</div><div className="v">{p == null ? "Unavailable" : fmt(p, 3)}</div></div>
         ))}
       </div>
       <table className="mini">
@@ -75,7 +75,7 @@ function EnsembleCard({ s }: { s: Any }) {
             <tr key={m}><td className="dimsmall">{m}</td><td className="num dimsmall">{fmt(b, 4)}</td>
               <td className="num dimsmall">{fmt(v.auroc_members?.[m], 3)}</td></tr>
           ))}
-          <tr><td className="dimsmall">climatology</td><td className="num dimsmall">{fmt(v.brier_climatology, 4)}</td><td className="num dimsmall">—</td></tr>
+          <tr><td className="dimsmall">climatology</td><td className="num dimsmall">{fmt(v.brier_climatology, 4)}</td><td className="num dimsmall">Not applicable</td></tr>
         </tbody>
       </table>
       <div className="sub" style={{ marginTop: 6 }}>{s.verdict}</div>
@@ -91,7 +91,7 @@ function EnsembleCard({ s }: { s: Any }) {
 }
 
 function BacktestCard({ b }: { b: Any }) {
-  const ci = b.ci95 ?? ["—", "—"];
+  const ci = b.ci95;
   const bench = b.benchmarks ?? {};
   return (
     <div className="card span7">
@@ -102,7 +102,7 @@ function BacktestCard({ b }: { b: Any }) {
       </div>
       <div className="kv">
         <div className="item"><div className="k">net Sharpe</div>
-          <div className="v">{fmt(b.sharpe, 2)} <span className="dimsmall">CI [{fmt(ci[0], 2)}, {fmt(ci[1], 2)}]</span></div></div>
+          <div className="v">{fmt(b.sharpe, 2)} <span className="dimsmall">CI {ci ? `[${fmt(ci[0], 2)}, ${fmt(ci[1], 2)}]` : "Unavailable"}</span></div></div>
         <div className="item"><div className="k">NW t-stat</div><div className="v">{fmt(b.nw_tstat, 2)}</div></div>
         <div className="item"><div className="k">return / vol</div><div className="v">{fmt(b.ann_return_pct, 1)}% / {fmt(b.ann_vol_pct, 1)}%</div></div>
         <div className="item"><div className="k">max drawdown</div><div className="v">{fmt(b.max_dd_pct, 1)}%</div></div>
@@ -168,7 +168,7 @@ function LiveCard({ lv }: { lv: Any }) {
   return (
     <div className="card span5">
       <h2>Live Track Record</h2>
-      <div className="sub">as-published positions only — hash-chained in the published site, replayed against realized returns</div>
+      <div className="sub">as-published positions only: hash-chained in the published site, replayed against realized returns</div>
       <div className="kv">
         <div className="item"><div className="k">days as-published</div><div className="v">{lv.n_days ?? 0}</div></div>
         {lv.since && <div className="item"><div className="k">since</div><div className="v">{lv.since}</div></div>}
@@ -194,7 +194,7 @@ function NavigatorCard({ n }: { n: Any }) {
     <div className="card span12">
       <h2>The Navigator</h2>
       <div className="sub">
-        an LLM forecaster made accountable — one committed P(event, 5bd) per data-day into the
+        an LLM forecaster made accountable: one committed P(event, 5bd) per data-day into the
         hash-chained record; no backtest is possible for an LLM (it has read the history), so the
         forward record below is its only evidence
       </div>
@@ -205,9 +205,9 @@ function NavigatorCard({ n }: { n: Any }) {
           <div className="coverage" style={{ color: judged ? (beats ? P.calm : P.stress) : undefined }}>
             forward record: {rec.ok
               ? judged
-                ? `Brier ${fmt(rec.brier, 4)} vs climatology ${fmt(rec.brier_climatology, 4)} over ${rec.n_resolved} resolved — ${rec.verdict}`
+                ? `Brier ${fmt(rec.brier, 4)} vs climatology ${fmt(rec.brier_climatology, 4)} over ${rec.n_resolved} resolved; ${rec.verdict}`
                 : rec.verdict
-              : rec.reason ?? "no record yet"} · committed {n.asof}{n.cached ? " (cached — today's number is already on the record)" : ""}
+              : rec.reason ?? "no record yet"} · committed {n.asof}{n.cached ? " (cached: today's number is already on the record)" : ""}
           </div>
         </div>
       </div>

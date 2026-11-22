@@ -46,7 +46,7 @@ function Tok({ v }: { v: string }) {
 }
 
 const corr = (c: Any) =>
-  c == null ? "—" : `${c.corr > 0 ? "+" : ""}${fmt(c.corr, 2)} [${fmt(c.ci95?.[0], 2)}, ${fmt(c.ci95?.[1], 2)}] · n ${c.n}`;
+  c == null ? "Unavailable" : `${c.corr > 0 ? "+" : ""}${fmt(c.corr, 2)} [${fmt(c.ci95?.[0], 2)}, ${fmt(c.ci95?.[1], 2)}] · n ${c.n}`;
 
 function CorrTable({ cells, horizons, title }: { cells: Any; horizons: number[]; title: string }) {
   return (
@@ -75,13 +75,13 @@ export default function Referee({ snap }: { snap: Any }) {
   return (
     <div className="grid">
       <div className="card span12">
-        <h2>The Referee — "global liquidity", tested on the layer anyone can check</h2>
+        <h2>The Referee: "global liquidity", tested on the layer anyone can check</h2>
         <div className="sub">
           the category's proprietary flagship publishes three quantitative claims with no error bars, no
-          out-of-sample tests, no revision record — so this page rebuilds the one component everyone
+          out-of-sample tests, no revision record, so this page rebuilds the one component everyone
           agrees on (G3 central bank assets in USD, monthly, 2003 onward) and referees the claims under
           the board's own standards. This is NOT a test of the proprietary index: if the full index beats
-          its public layer, that performance lives entirely in the unpublished layers — a claim its
+          its public layer, that performance lives entirely in the unpublished layers, a claim its
           publisher could settle tomorrow by releasing an error distribution.
         </div>
         <div className="kv">
@@ -90,21 +90,21 @@ export default function Referee({ snap }: { snap: Any }) {
             <div className="v">{fmt(comp.fed, 2)} / {fmt(comp.ecb, 2)} / {fmt(comp.boj, 2)}</div></div>
           <div className="item"><div className="k">yoy growth</div>
             <div className={`v ${(r.latest?.yoy_pct ?? 0) < 0 ? "warn" : ""}`}>
-              {r.latest?.yoy_pct != null ? `${r.latest.yoy_pct > 0 ? "+" : ""}${fmt(r.latest.yoy_pct, 1)}%` : "—"}</div></div>
+              {r.latest?.yoy_pct != null ? `${r.latest.yoy_pct > 0 ? "+" : ""}${fmt(r.latest.yoy_pct, 1)}%` : "Unavailable"}</div></div>
           <div className="item"><div className="k">window</div>
             <div className="v">{r.window?.[0]} → {r.window?.[1]} <span className="dimsmall">· {r.n_months}mo</span></div></div>
         </div>
         <Chart rows={yoyRows} series={[{ label: "G3 central bank assets, yoy %", color: P.accent }]} height={170} />
         <Method>
-          G3 only — no keyless PBoC or BoE feed exists, and the gap is stated, not interpolated over.
+          G3 only: no keyless PBoC or BoE feed exists, and the gap is stated, not interpolated over.
           Indexable twin of this tab with full prose: <a href="/referee">/referee</a>
         </Method>
       </div>
 
       <div className="card span12">
-        <h2>Claim 1 · "liquidity leads asset prices by 3–6 months" <Tok v={v1} /></h2>
+        <h2>Claim 1 · "liquidity leads asset prices by 3 to 6 months" <Tok v={v1} /></h2>
         <div className="sub">
-          yoy G3 growth against forward equity returns (Nasdaq Composite — the only broad index with
+          yoy G3 growth against forward equity returns (Nasdaq Composite, the only broad index with
           full-window public history); circular moving-block bootstrap on every interval
         </div>
         <div className="warehouse-row">
@@ -138,35 +138,35 @@ export default function Referee({ snap }: { snap: Any }) {
           <div className="sub" style={{ marginTop: 4 }}>
             net liquidity's walk-forward lands on exactly the era its famous level chart is drawn from
             ({nl.walkforward_oos.eval_window?.[0]} →): spread <b>{fmt(nl.walkforward_oos.spread_6m_logret * 100, 1)}pp</b>
-            {" "}[{fmt(nl.walkforward_oos.spread_ci95?.[0] * 100, 1)}, {fmt(nl.walkforward_oos.spread_ci95?.[1] * 100, 1)}] —
+            {" "}[{fmt(nl.walkforward_oos.spread_ci95?.[0] * 100, 1)}, {fmt(nl.walkforward_oos.spread_ci95?.[1] * 100, 1)}]:
             the level chart is the exhibit; growth out of sample is the honest test
           </div>
         )}
         {gr.liq_to_returns && gr.returns_to_liq && (
           <div className="sub">
             Granger, both directions: liquidity→returns p {fmt(gr.liq_to_returns.p, 2)} ·
-            returns→liquidity p {fmt(gr.returns_to_liq.p, 2)} ({gr.liq_to_returns.lags} lags) —
+            returns→liquidity p {fmt(gr.returns_to_liq.p, 2)} ({gr.liq_to_returns.lags} lags):
             no predictive content either way in this layer
           </div>
         )}
-        <Method>whatever the 3–6 month lead is, it is not in the central bank layer, gross or net</Method>
+        <Method>whatever the 3 to 6 month lead is, it is not in the central bank layer, gross or net</Method>
       </div>
 
       <div className="card span6">
-        <h2>Claim 2 · "leads the business cycle by 12–15 months" <Tok v={v2} /></h2>
-        <div className="sub">against US industrial production growth, 0–24 month leads</div>
+        <h2>Claim 2 · "leads the business cycle by 12 to 15 months" <Tok v={v2} /></h2>
+        <div className="sub">against US industrial production growth, 0 to 24 month leads</div>
         <div className="kv">
           <div className="item"><div className="k">contemporaneous</div>
             <div className="v" style={{ color: (c2.contemporaneous ?? 0) < 0 ? P.stress : undefined }}>
-              {c2.contemporaneous != null ? fmt(c2.contemporaneous, 2) : "—"}</div></div>
+              {c2.contemporaneous != null ? fmt(c2.contemporaneous, 2) : "Unavailable"}</div></div>
           <div className="item"><div className="k">peak lead</div>
-            <div className="v">{c2.peak_lead_months != null ? `${c2.peak_lead_months}mo` : "—"}</div></div>
+            <div className="v">{c2.peak_lead_months != null ? `${c2.peak_lead_months}mo` : "Unavailable"}</div></div>
           <div className="item"><div className="k">corr at peak</div><div className="v">{corr(c2.peak_detail)}</div></div>
           <div className="item"><div className="k">at the claimed 13mo</div><div className="v">{corr(c2.corr_at_claimed_13m)}</div></div>
         </div>
         <Method>
           two honest readings: either the lead is real but sits well past the claimed window, or the
-          negative contemporaneous sign is a policy reaction function — central banks expand when the
+          negative contemporaneous sign is a policy reaction function: central banks expand when the
           economy contracts, recoveries follow recessions, and the apparent long lead is partly the economy
           forecasting the central bank. Separating those needs exactly the private-credit layer that is not public.
         </Method>
@@ -177,7 +177,7 @@ export default function Referee({ snap }: { snap: Any }) {
         <div className="sub">detrended periodogram of yoy growth, with the resolution limit stated</div>
         <div className="kv">
           <div className="item"><div className="k">dominant period</div>
-            <div className="v">{c3.dominant_period_months != null ? `${fmt(c3.dominant_period_months, 0)}mo` : "—"}</div></div>
+            <div className="v">{c3.dominant_period_months != null ? `${fmt(c3.dominant_period_months, 0)}mo` : "Unavailable"}</div></div>
           <div className="item"><div className="k">resolution at 65mo</div>
             <div className="v">±{fmt(c3.spectral_resolution_at_65m_pm_months, 0)}mo</div></div>
           <div className="item"><div className="k">cycles in sample if true</div>
@@ -188,7 +188,7 @@ export default function Referee({ snap }: { snap: Any }) {
             <div className="v"><span className="dimsmall">{(c3.peak_to_peak_spacings_months ?? []).join(", ")}mo</span></div></div>
         </div>
         <Method>
-          untestable on post-2003 data — said with respect: the 1974-onward panel is the one genuinely
+          untestable on post-2003 data (said with respect): the 1974-onward panel is the one genuinely
           irreplaceable thing the category's founder owns, and the only instrument that could settle
           their own headline claim. We would rather they published the test than the assertion.
         </Method>
@@ -198,9 +198,9 @@ export default function Referee({ snap }: { snap: Any }) {
         <h2>What would change this page</h2>
         <div className="sub">
           a published lead-lag distribution on the full index, with revision errors and out-of-sample
-          splits — the standard this board holds itself to: every reading sealed before outcomes, every
+          splits, the standard this board holds itself to: every reading sealed before outcomes, every
           miss on the public record. Subsample stability of the fwd-6m correlation:
-          full {corr(r.subsample_stability_fwd6m?.full)} · 2003–14 {corr(r.subsample_stability_fwd6m?.first_half)} ·
+          full {corr(r.subsample_stability_fwd6m?.full)} · 2003 to 2014 {corr(r.subsample_stability_fwd6m?.first_half)} ·
           2015→ {corr(r.subsample_stability_fwd6m?.second_half)}
         </div>
         <Method>{r.method}</Method>

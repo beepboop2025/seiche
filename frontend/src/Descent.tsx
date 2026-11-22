@@ -134,7 +134,7 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
           </p>
           <p className="descent-line">
             One number for the state of dollar funding, composed from the Fed's own
-            plumbing data. Right now the basin reads <b>{c.regime ?? "—"}</b>. Scroll to
+            plumbing data. Right now the basin reads <b>{c.regime ?? "Unavailable"}</b>. Scroll to
             see where that number comes from.
           </p>
         </div>
@@ -155,14 +155,14 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
         <div className="descent-frame" ref={(el) => (frameEls.current[2] = el)}>
           <div className="descent-kicker">THE RECORD · why believe any of it</div>
           <div className="descent-big">
-            {bt.recall != null ? `${fmt(bt.recall * 100, 0)}%` : "—"}
+            {bt.recall != null ? `${fmt(bt.recall * 100, 0)}%` : "Unavailable"}
             <span className="descent-unit"> of spikes alerted early</span>
           </div>
           <p className="descent-line">
             Chronological transforms use no look ahead and misses are printed, but this
             historical record is {evidence.status ?? "FINAL_VINTAGE_CONSTRUCTION_PIT"} and
             validated-backtest eligible: {evidence.validated_backtest_eligible === true ? "YES" : "NO"}.
-            Median lead {bt.median_lead_d != null ? `${fmt(bt.median_lead_d, 0)} days` : "—"}.
+            Median lead {bt.median_lead_d != null ? `${fmt(bt.median_lead_d, 0)} days` : "Unavailable"}.
             The full boundary lives on the PROOF tab, failures included.
           </p>
           <p className="descent-line">

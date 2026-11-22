@@ -50,7 +50,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
     return (
       <div className="card span12">
         <h2>Time Machine</h2>
-        <div className="faults">replay needs the live backend (static snapshot deploys can't recompute history) — run `seiche serve` locally</div>
+        <div className="faults">replay needs the live backend (static snapshot deploys can't recompute history); run `seiche serve` locally</div>
       </div>
     );
   }
@@ -111,7 +111,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
                 <div className="allclear">▮ no crunch windows were flagged</div>
               ) : (
                 replay.engines.weather.crunch_windows.slice(0, 6).map((cw: Any) => (
-                  <div className="crunch" key={cw.date}><b>{cw.date}</b> — {cw.reason}</div>
+                  <div className="crunch" key={cw.date}><b>{cw.date}</b>: {cw.reason}</div>
                 ))
               )}
               <div className="method">{replay.vintage_note}</div>

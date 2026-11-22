@@ -13,7 +13,7 @@ const HARBOR_COLORS: Record<string, string> = {
 };
 
 function HarborsCard({ h }: { h: Any }) {
-  if (!h?.ok) return <Fault name="Harbors — World Money Markets" reason={h?.reason} span={12} />;
+  if (!h?.ok) return <Fault name="Harbors: World Money Markets" reason={h?.reason} span={12} />;
   const cyc = h.cycle ?? {};
   const monthly = new Set(
     (h.harbors ?? []).filter((x: Any) => String(x.cadence ?? "").startsWith("monthly")).map((x: Any) => x.harbor)
@@ -30,9 +30,9 @@ function HarborsCard({ h }: { h: Any }) {
   }));
   return (
     <div className="card span12" data-share-path={worldMarketSharePath("money-markets")}>
-      <h2>Harbors — World Money Markets</h2>
+      <h2>Harbors: World Money Markets</h2>
       <div className="sub">
-        each national money market read at its own water line — overnight anchor, currency, and whether
+        each national money market read at its own water line: overnight anchor, currency, and whether
         local policy is being forced · cycle: {cyc.easing ?? 0} easing · {cyc.holding ?? 0} holding ·{" "}
         {cyc.tightening ?? 0} tightening
         {cyc.us_ref ? ` · US ref EFFR ${fmt(cyc.us_ref.last_pct, 2)}%` : ""}
@@ -41,7 +41,7 @@ function HarborsCard({ h }: { h: Any }) {
         {(h.harbors ?? []).map((b: Any) => (
           <div className={`basin ${(b.stress ?? 0) >= 80 ? "hot" : ""}`} key={b.harbor}>
             <div className="name">{b.harbor}</div>
-            <div className="rate">{b.rate ? `${fmt(b.rate.last_pct, 2)}%` : "—"}</div>
+            <div className="rate">{b.rate ? `${fmt(b.rate.last_pct, 2)}%` : "Unavailable"}</div>
             <div className="z" style={{ color: (b.stress ?? 0) >= 80 ? P.strain : P.faint }}>
               {b.stress != null ? `stress ${fmt(b.stress, 0)}` : "accruing"}
               {b.regime ? ` · ${b.regime}` : ""} · {b.rate?.label ?? "rate pending"}
@@ -98,14 +98,14 @@ function MooringsCard({ m }: { m: Any }) {
     <div className="card span12">
       <h2>Stablecoin Moorings</h2>
       <div className="sub">
-        the offshore-dollar basin's tie lines — stablecoins hold $200B+ of T-bills; a peg break is a
+        the offshore-dollar basin's tie lines: stablecoins hold $200B+ of T-bills; a peg break is a
         funding event and crypto trades when funding markets sleep · score {fmt(m.score, 0)}
       </div>
       <div className="basingrid">
         {(m.pegs ?? []).map((p: Any) => (
           <div className={`basin ${p.flag ? "hot" : ""}`} key={p.symbol}>
             <div className="name">{p.symbol}</div>
-            <div className="rate">{p.dev_bp == null ? "—" : `${p.dev_bp > 0 ? "+" : ""}${fmt(p.dev_bp, 1)}bp`}</div>
+            <div className="rate">{p.dev_bp == null ? "Unavailable" : `${p.dev_bp > 0 ? "+" : ""}${fmt(p.dev_bp, 1)}bp`}</div>
             <div className="z" style={{ color: P.faint }}>${fmt(p.circulating_b, 1)}B circulating</div>
           </div>
         ))}
@@ -167,7 +167,7 @@ function CpSentinelCard({ e }: { e: Any }) {
       </div>
       <div className="kv">
         <div className="item"><div className="k">days since big exploit</div>
-          <div className="v">{lv.days_since_big_exploit ?? "—"}</div>
+          <div className="v">{lv.days_since_big_exploit ?? "Unavailable"}</div>
           {lv.last_big_exploit_date && (
             <div className="dimsmall" style={{ marginTop: 3 }}>last {lv.last_big_exploit_date}</div>
           )}
@@ -179,21 +179,21 @@ function CpSentinelCard({ e }: { e: Any }) {
           <div className={`v ${lv.window_active ? "warn" : ""}`}>{lv.window_active ? "ACTIVE" : "closed"}</div>
           {lv.last_event && (
             <div className="dimsmall" style={{ marginTop: 3 }}>
-              {lv.last_event.date} · Δ {lv.last_event.change_bp_so_far != null ? `${fmt(lv.last_event.change_bp_so_far, 1)}bp` : "—"} so far
+              {lv.last_event.date} · Δ {lv.last_event.change_bp_so_far != null ? `${fmt(lv.last_event.change_bp_so_far, 1)}bp` : "Unavailable"} so far
               {lv.last_event.hit_so_far != null && (lv.last_event.hit_so_far ? " · narrowing hit" : " · no hit")}
             </div>
           )}
         </div>
         <div className="item"><div className="k">hit rate vs placebo</div>
           <div className="v" style={{ fontSize: 13 }}>
-            {e.hit_rate != null ? `${fmt(e.hit_rate * 100, 0)}%` : "—"}
+            {e.hit_rate != null ? `${fmt(e.hit_rate * 100, 0)}%` : "Unavailable"}
             {e.hit_rate_ci95 && (
-              <span className="dimsmall"> (CI {fmt(e.hit_rate_ci95[0] * 100, 0)}–{fmt(e.hit_rate_ci95[1] * 100, 0)}%)</span>
+              <span className="dimsmall"> (CI {fmt(e.hit_rate_ci95[0] * 100, 0)} to {fmt(e.hit_rate_ci95[1] * 100, 0)}%)</span>
             )}
             {plc.hit_rate_mean != null && (
               <span className="dimsmall">
                 {" "}vs placebo {fmt(plc.hit_rate_mean * 100, 0)}%
-                {" "}({fmt((plc.hit_rate_p05 ?? 0) * 100, 0)}–{fmt((plc.hit_rate_p95 ?? 0) * 100, 0)}%)
+                {" "}({fmt((plc.hit_rate_p05 ?? 0) * 100, 0)} to {fmt((plc.hit_rate_p95 ?? 0) * 100, 0)}%)
               </span>
             )}
           </div>
@@ -214,15 +214,15 @@ function CpSentinelCard({ e }: { e: Any }) {
 }
 
 function FarBasinCard({ f }: { f: Any }) {
-  if (!f?.ok) return <Fault name="Far Basin — Palimpsest" reason={f?.reason} span={12} />;
+  if (!f?.ok) return <Fault name="Far Basin: Palimpsest" reason={f?.reason} span={12} />;
   const ch = f.channels ?? {};
   const st = f.status ?? {};
   const order: [string, Any][] = [["fear", ch.fear], ["n_new", ch.n_new], ["gfi", ch.gfi]];
   return (
     <div className="card span12">
-      <h2>Far Basin — Palimpsest ★</h2>
+      <h2>Far Basin: Palimpsest ★</h2>
       <div className="sub">
-        the policy-fear channel: what the Chinese state rushes to delete, read as a confession —
+        the policy-fear channel: what the Chinese state rushes to delete, read as a confession;
         censorship intensity from palimpsest.info, a signal no market data vendor carries · asof {f.asof}
       </div>
       <div className="basingrid">
@@ -274,7 +274,7 @@ function ThermohalineCard({ t }: { t: Any }) {
     <div className="card span12">
       <h2>Thermohaline</h2>
       <div className="sub">
-        the deep circulation under the daily plumbing — the offshore dollar stock (USD credit owed by
+        the deep circulation under the daily plumbing: the offshore dollar stock (USD credit owed by
         non-banks OUTSIDE the US, BIS global liquidity) and the credit-to-GDP gaps: every squeeze on
         this board is ultimately a rationing of this ${fmt(st.usd_trillions, 1)}T stock · quarterly,
         published ~2 quarters late by design ({t.publication_lag_days}d old print)
@@ -283,7 +283,7 @@ function ThermohalineCard({ t }: { t: Any }) {
         <div className="item"><div className="k">offshore USD credit</div>
           <div className="v">${fmt(st.usd_trillions, 2)}T</div></div>
         <div className="item"><div className="k">growth (yoy)</div>
-          <div className={`v ${hot ? "warn" : ""}`}>{st.yoy_pct != null ? `${st.yoy_pct > 0 ? "+" : ""}${fmt(st.yoy_pct, 1)}%` : "—"}
+          <div className={`v ${hot ? "warn" : ""}`}>{st.yoy_pct != null ? `${st.yoy_pct > 0 ? "+" : ""}${fmt(st.yoy_pct, 1)}%` : "Unavailable"}
             <span className="dimsmall"> ({ordinal(st.yoy_pctl)} pctl since 2000)</span></div></div>
         {t.composition?.loans && (
           <div className="item"><div className="k">bank loans leg</div>
@@ -353,7 +353,7 @@ function StraitCard({ headline, tails, harbors }: { headline: Any; tails: Any; h
         <div className={`basin ${dialHot ? "hot" : ""}`}>
           <div className="name">US · THE DIAL</div>
           <div className="rate" style={{ color: dialHot ? P.strain : undefined }}>
-            {dialBp == null ? "—" : `${dialBp > 0 ? "+" : ""}${fmt(dialBp, 0)}bp`}
+            {dialBp == null ? "Unavailable" : `${dialBp > 0 ? "+" : ""}${fmt(dialBp, 0)}bp`}
           </div>
           <div className="z" style={{ color: P.faint }}>
             SOFR minus IORB · {dialBp == null ? "pending" : dialBp > 0 ? "someone paid up for overnight dollars" : "soft floor, calm"}
@@ -367,7 +367,7 @@ function StraitCard({ headline, tails, harbors }: { headline: Any; tails: Any; h
         </div>
         <div className={`basin ${(india?.stress ?? 0) >= 80 ? "hot" : ""}`}>
           <div className="name">INDIA · THE WATER LINE</div>
-          <div className="rate">{india?.rate ? `${fmt(india.rate.last_pct, 2)}%` : "—"}</div>
+          <div className="rate">{india?.rate ? `${fmt(india.rate.last_pct, 2)}%` : "Unavailable"}</div>
           <div className="z" style={{ color: P.faint }}>
             {india?.rate?.label ?? "rate pending"}
             {india?.stress != null ? ` · stress ${fmt(india.stress, 0)}` : ""}
@@ -423,7 +423,7 @@ export default function Global({ snap }: { snap: Any }) {
       <div className="card span12" data-share-path={worldMarketSharePath("summary")}>
         <h2>Global Basin Coupling</h2>
         <div className="sub">
-          the dollar system as connected bodies of water — when the basins synchronize, one tide moves
+          the dollar system as connected bodies of water: when the basins synchronize, one tide moves
           everything · coupling score {fmt(e.score, 0)}
         </div>
         <div className="basingrid">
@@ -458,13 +458,13 @@ export default function Global({ snap }: { snap: Any }) {
       <div className="card span7">
         <h2>The Tide</h2>
         <div className="sub">
-          common-component share across basins + channels — high tide = one basin, globally fragile
+          common-component share across basins + channels: high tide = one basin, globally fragile
           · now {fmt(tide.absorption, 3)} ({ordinal(tide.pctl)} pctl of own history, {tide.n_series} series)
         </div>
         {tide.series?.length ? (
           <Chart rows={tide.series} series={[{ label: "tide (top-2 PC share)", color: P.accentSoft }]} />
         ) : (
-          <div className="sub">insufficient overlapping history yet — the tide needs ~8 months of panel</div>
+          <div className="sub">insufficient overlapping history yet; the tide needs ~8 months of panel</div>
         )}
         <Method>{e.method}</Method>
       </div>
@@ -484,14 +484,14 @@ export default function Global({ snap }: { snap: Any }) {
             ))}
           </tbody>
         </table>
-        {(e.edges ?? []).length === 0 && <div className="allclear">▮ basins decoupled — no edges above threshold</div>}
+        {(e.edges ?? []).length === 0 && <div className="allclear">▮ basins decoupled: no edges above threshold</div>}
       </div>
 
       <div className="card span12">
         <h2>Swap-Line Confession</h2>
         <div className="sub">
           a foreign central bank drawing USD means someone in its jurisdiction couldn't find dollars
-          privately — small-value test operations excluded ({sw.small_value_ops_excluded} filtered)
+          privately; small-value test operations excluded ({sw.small_value_ops_excluded} filtered)
         </div>
         <div className="kv">
           <div className="item"><div className="k">outstanding (H.4.1)</div>

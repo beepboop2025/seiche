@@ -45,7 +45,7 @@ export function recentMonths(value: unknown): Month[] {
 function districtModel(value: unknown, sources: Record<string, unknown>): District {
   const d = record(value);
   if (!validPlace(d.id) || !d.id.startsWith('in-dist-') || !text(d.name) || !text(d.state)) return fail();
-  const metrics: Metric[] = [ ['jjas', 'Monsoon rainfall', 'June–September'], ['ond', 'Post-monsoon rainfall', 'October–December'], ['fiscal_year', 'Full fiscal-year rainfall', 'April–March'], ['fiscal_year_to_date', 'Fiscal year to date', 'April onward'] ].map(([key, label, period]) => {
+  const metrics: Metric[] = [ ['jjas', 'Monsoon rainfall', 'June to September'], ['ond', 'Post-monsoon rainfall', 'October to December'], ['fiscal_year', 'Full fiscal-year rainfall', 'April to March'], ['fiscal_year_to_date', 'Fiscal year to date', 'April onward'] ].map(([key, label, period]) => {
     if (d[key] == null) return { label, value: 'Not available', date: 'Date unavailable', detail: 'No observation supplied.' };
     const r = record(d[key]);
     if (!(typeof r.year === 'number' && Number.isInteger(r.year) && r.year >= 1900 && r.year <= 2200 || typeof r.year === 'string' && /^\d{4}-\d{2}$/.test(r.year)) || r.through != null && !month(r.through)) return fail();

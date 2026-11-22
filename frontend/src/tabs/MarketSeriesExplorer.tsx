@@ -500,7 +500,7 @@ export default function MarketSeriesExplorer() {
             <span>Canonical market atlas · indexed observations</span>
             <h1 id="ma-title">Every market, with its evidence attached.</h1>
             <p>
-              Money, capital, foreign-exchange, policy and liquidity instruments share one survey plane—without erasing native units, revision history, data rights, or the three clocks that make a value knowable.
+              Money, capital, foreign-exchange, policy and liquidity instruments share one survey plane, without erasing native units, revision history, data rights, or the three clocks that make a value knowable.
             </p>
           </div>
           <div className="ma-hero__ledger" aria-label="Current market readout">

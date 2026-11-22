@@ -15,7 +15,7 @@ function RvMetric({ label, value, prefix = "", suffix = "", digits = 0, quality,
   return (
     <div className="item">
       <div className="k">{label}</div>
-      <div className={`v ${tone}`}>{value == null ? "—" : `${prefix}${fmt(value, digits)}${suffix}`}</div>
+      <div className={`v ${tone}`}>{value == null ? "Unavailable" : `${prefix}${fmt(value, digits)}${suffix}`}</div>
       {quality ? <div className="coverage">{quality}</div> : null}
     </div>
   );
@@ -26,7 +26,7 @@ function RvCard({ e }: { e: Any }) {
   return (
     <div className="card span8">
       <h2>RV X-Ray</h2>
-      <div className="sub">Treasury RV complex — CFTC leveraged-fund shorts × repo funding (T+3 by nature)</div>
+      <div className="sub">Treasury RV complex: CFTC leveraged-fund shorts × repo funding (T+3 by nature)</div>
       <div className="kv">
         <RvMetric label="pair proxy" value={e.pair_proxy_b} prefix="$" suffix="B" quality={rvMetricQualityLabel(e, "pair_proxy_b")} />
         <RvMetric label="gross lev short" value={e.gross_short_b} prefix="$" suffix="B" quality={rvMetricQualityLabel(e, "gross_short_b")} />
@@ -51,14 +51,14 @@ function RvCard({ e }: { e: Any }) {
           {e.scenarios.map((s: Any) => (
             <tr key={s.shock_bp}>
               <td>{s.shock_bp}bp</td>
-              <td className="num">{s.mtm_loss_b == null ? "—" : `$${fmt(s.mtm_loss_b, 1)}B`}</td>
-              <td className="num">{s.assumed_unwind_b == null ? "—" : `$${fmt(s.assumed_unwind_b, 0)}B`}</td>
-              <td className="num">{s.unwind_days_of_dvp == null ? "—" : fmt(s.unwind_days_of_dvp, 2)}</td>
+              <td className="num">{s.mtm_loss_b == null ? "Unavailable" : `$${fmt(s.mtm_loss_b, 1)}B`}</td>
+              <td className="num">{s.assumed_unwind_b == null ? "Unavailable" : `$${fmt(s.assumed_unwind_b, 0)}B`}</td>
+              <td className="num">{s.unwind_days_of_dvp == null ? "Unavailable" : fmt(s.unwind_days_of_dvp, 2)}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="coverage">Shock outputs are withheld unless every required current aggregate has complete expected-contract coverage; — means withheld or unavailable.</div>
+      <div className="coverage">Shock outputs are withheld unless every required current aggregate has complete expected-contract coverage; a withheld or missing output reads Unavailable.</div>
       <Method>{e.method}</Method>
     </div>
   );
@@ -69,7 +69,7 @@ function CrowdingCard({ e }: { e: Any }) {
   return (
     <div className="card span4">
       <h2>Crowding</h2>
-      <div className="sub">leveraged-fund net / open interest — extremes precede unwinds</div>
+      <div className="sub">leveraged-fund net / open interest: extremes precede unwinds</div>
       <table className="mini">
         <thead><tr><th>contract</th><th>net/OI</th><th>z</th><th>pctl</th></tr></thead>
         <tbody>
@@ -93,7 +93,7 @@ function WarehouseCard({ e }: { e: Any }) {
   return (
     <div className="card span12">
       <h2>Dealer Warehouse</h2>
-      <div className="sub">primary-dealer net UST inventory — a full warehouse is a spent shock absorber (weekly, T+9)</div>
+      <div className="sub">primary-dealer net UST inventory: a full warehouse is a spent shock absorber (weekly, T+9)</div>
       <div className="kv">
         <div className="item"><div className="k">net inventory</div><div className="v">${fmt(e.total_net_b, 0)}B</div></div>
         <div className="item"><div className="k">saturation</div>

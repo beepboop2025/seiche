@@ -111,7 +111,7 @@ function MonthlyRainfall({ months }: { months: Month[] }) {
         {(i === 0 || i === months.length - 1 || i % Math.ceil(months.length / 4) === 0) && <text className="geo-chart-label" x={x + step / 2} y="188" textAnchor="middle">{m.month}</text>}
       </g>; })}
     </svg>
-    <p className="geo-chart-legend"><span><i className="observed" />Observed rainfall</span><span><i className="normal" />1991–2020 normal</span><span>Missing = no bar</span></p>
+    <p className="geo-chart-legend"><span><i className="observed" />Observed rainfall</span><span><i className="normal" />1991 to 2020 normal</span><span>Missing = no bar</span></p>
     <details><summary>Monthly values and source</summary><div className="geo-table-wrap"><table><caption>CHIRPS rainfall. Blank measurements are shown as not available.</caption><thead><tr>{['Month', 'Rainfall (mm)', 'Normal (mm)', 'Departure (%)', 'Context'].map(h => <th scope="col" key={h}>{h}</th>)}</tr></thead><tbody>{months.map(m => <tr key={m.month}><th scope="row">{m.month}</th><td>{formatNumber(m.mm)}</td><td>{formatNumber(m.normal)}</td><td>{formatNumber(m.departure)}</td><td>{m.lowNormal ? 'Normal below 10 mm' : ''}</td></tr>)}</tbody></table></div></details>
   </section>;
 }
@@ -157,7 +157,7 @@ function DistrictEvidence({ view, select, onData }: { view: GeographyView; selec
       {data.total > data.districts.length && <p className="geo-page-note">Showing {data.districts.length} of {data.total} districts. Exports contain this page only.</p>}
       {data.districts.map(d => <DistrictView key={d.id} district={d} standalone={data.id.startsWith('in-dist-')} select={id => choose(id)} />)}
       {!data.districts.length && <p className="geo-muted">No district observations are available for this selection.</p>}
-      {data.total > 1 && <nav className="geo-pagination" aria-label="District pages"><button className="geo-secondary" disabled={data.offset === 0} onClick={() => choose(data.id, Math.max(0, data.offset - 5))}>Previous</button><span>{data.offset + 1}–{data.offset + data.districts.length} / {data.total}</span><button className="geo-secondary" disabled={data.nextOffset === null} onClick={() => { if (data.nextOffset !== null) choose(data.id, data.nextOffset); }}>Next</button></nav>}
+      {data.total > 1 && <nav className="geo-pagination" aria-label="District pages"><button className="geo-secondary" disabled={data.offset === 0} onClick={() => choose(data.id, Math.max(0, data.offset - 5))}>Previous</button><span>{data.offset + 1} to {data.offset + data.districts.length} / {data.total}</span><button className="geo-secondary" disabled={data.nextOffset === null} onClick={() => { if (data.nextOffset !== null) choose(data.id, data.nextOffset); }}>Next</button></nav>}
       {!!data.institutions.length && <details><summary>Linked cooperative banks ({data.institutions.length})</summary><ul>{data.institutions.map(bank => <li key={bank.id}><button className="geo-text-button" onClick={() => choose(bank.id)}>{bank.id}</button> <span className="geo-muted">{bank.basis}</span></li>)}</ul></details>}
       <details><summary>Sources and interpretation limits</summary><ul>{data.sources.map((s, i) => <li key={i}>{s.url ? <a href={s.url} target="_blank" rel="noopener noreferrer">{s.label}</a> : s.label}<p className="geo-muted">{s.detail}</p></li>)}</ul><ul>{data.limits.map((limit, i) => <li key={i}>{limit}</li>)}</ul></details>
     </div>}

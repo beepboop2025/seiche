@@ -54,7 +54,7 @@ test("untrusted source links and invalid source values cannot become clickable e
   assert.equal(safeSourceUrl("https://centralbank.ae/"), "https://centralbank.ae/");
   for (const value of [true, "", "NaN", Infinity]) { const raw = evidence(); raw.funding[0].value = value; assert.throws(() => normalizeGiftCity(raw)); }
   const raw = evidence(); raw.forex.rows[0].as_of = "2026-02-31"; assert.throws(() => normalizeGiftCity(raw));
-  assert.equal(formatValue(null), "—"); assert.equal(formatValue(undefined), "—"); assert.equal(formatValue(0), "0");
+  assert.equal(formatValue(null), "Unavailable"); assert.equal(formatValue(undefined), "Unavailable"); assert.equal(formatValue(0), "0");
 });
 
 test("a calculation receipt must bind the displayed assumptions and return explicit decimal results", () => {
