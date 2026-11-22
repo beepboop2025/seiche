@@ -6,9 +6,9 @@
   "board": "https://seiche.info/money-markets/",
   "pages": [
     {
-      "title": "What is the SOFR–IORB spread today?",
+      "title": "What is the SOFR-IORB spread today?",
       "slug": "sofr-iorb-spread",
-      "answer": "In Seiche’s retained observation for 2 October 2026, the SOFR–IORB spread was −2 basis points: SOFR was 3.88% and IORB was 3.90%. That is the latest paired observation in the desk captured on 6 October, not a 6 October market reading. Load the latest published evidence below to check whether a newer observation is available.",
+      "answer": "In Seiche’s retained observation for 2 October 2026, the SOFR-IORB spread was −2 basis points: SOFR was 3.88% and IORB was 3.90%. That is the latest paired observation in the desk captured on 6 October, not a 6 October market reading. Load the latest published evidence below to check whether a newer observation is available.",
       "description": "Read the SOFR minus IORB spread with matching source dates, a basis-point calculation and clear limits. Seiche explains what the funding signal can show.",
       "card_title": "SOFR minus IORB",
       "observations": [
@@ -167,7 +167,7 @@
           "title": "What would distinguish a brief move from broader pressure?",
           "paragraphs": [
             "Check whether the positive spread persists across observations and whether the upper tail of repo rates, repo volumes and facility use move with it. Compare the Treasury General Account and reserve balances using their own publication dates. Do not turn a single one-day spike into a bank-failure claim.",
-            "This retained desk contains zero positive SOFR–IORB observations out of the five observations ending 2 October. A new observation can change that count without changing the definition of the spread."
+            "This retained desk contains zero positive SOFR-IORB observations out of the five observations ending 2 October. A new observation can change that count without changing the definition of the spread."
           ]
         }
       ],
@@ -204,7 +204,7 @@
       ],
       "related": [
         [
-          "What is the SOFR–IORB spread today?",
+          "What is the SOFR-IORB spread today?",
           "https://seiche.info/questions/sofr-iorb-spread/"
         ],
         [
@@ -227,7 +227,7 @@
       "title": "Are bank reserves scarce or still ample?",
       "slug": "are-bank-reserves-scarce",
       "answer": "The reserve total alone cannot establish whether reserves are scarce or ample. Seiche retained $2,948.09 billion of reserve balances for 30 September 2026, up $17.897 billion over one week. Its separate 2 October observation shows SOFR 2 bp below IORB and zero reported Standing Repo Facility use. Those readings do not support a simple claim of immediate system-wide scarcity, but they do not prove every institution has ample funding.",
-      "description": "Assess reserve abundance using dated reserve balances, SOFR–IORB and facility use. See why an aggregate dollar threshold cannot settle the question.",
+      "description": "Assess reserve abundance using dated reserve balances, SOFR-IORB and facility use. See why an aggregate dollar threshold cannot settle the question.",
       "card_title": "Reserves: stock and price signals",
       "observations": [
         "2026-09-30",
@@ -323,7 +323,7 @@
       ],
       "related": [
         [
-          "What is the SOFR–IORB spread today?",
+          "What is the SOFR-IORB spread today?",
           "https://seiche.info/questions/sofr-iorb-spread/"
         ],
         [
