@@ -63,7 +63,7 @@ function FundingFlow() {
 }
 
 /** The live release from /api/health; null until it arrives or when it cannot be read. */
-function useSeicheVersion(): string | null {
+export function useSeicheVersion(): string | null {
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
