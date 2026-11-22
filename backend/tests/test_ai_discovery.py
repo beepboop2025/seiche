@@ -286,6 +286,28 @@ def test_no_shipped_page_offers_a_daily_letter():
         assert not claim.search(rendered)
 
 
+def test_article_archive_and_agent_handoff_promise_no_cadence():
+    """Articles ended on 24 September 2026 and no daily letter runs (owner
+    decision for 0.16.15), so the rendered article archive, its feeds,
+    llms.txt and the agent delivery handoff promise neither a daily article
+    nor an 11:30 UTC letter."""
+    from seiche import mcp_server
+
+    cadence = re.compile(
+        r"every day|daily (?:funding )?(?:analysis|articles?)|11:30 UTC|pre-US-open letter",
+        re.IGNORECASE,
+    )
+    for rendered in (
+        dispatch_pages.render_article_archive([]),
+        dispatch_pages.render_article_feed([], {}),
+        dispatch_pages.render_article_json_feed([], {}, {}),
+        dispatch_pages.render_llms_txt([], []),
+        json.dumps(mcp_server.telegram_delivery()),
+    ):
+        found = cadence.search(rendered)
+        assert found is None, found.group(0)
+
+
 def test_clean_public_urls_match_cloudflare_redirect_targets():
     for path, _, _ in dispatch_pages.BASE_URLS:
         assert not path.endswith(".html")

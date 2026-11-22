@@ -683,8 +683,7 @@ def telegram_delivery(ref: str = "agent_mcp") -> dict[str, str]:
         "channel": "telegram",
         "url": f"https://t.me/seiche_desk_bot?start={ref}",
         "outcome": (
-            "follow Seiche for one pre-US-open letter at 11:30 UTC plus "
-            "material funding-state alerts"
+            "follow Seiche for material funding-state alerts"
         ),
         "control": "/stop unsubscribes at any time",
     }

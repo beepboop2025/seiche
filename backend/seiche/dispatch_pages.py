@@ -540,10 +540,10 @@ def render_article_archive(entries: list[dict]) -> str:
         "@context": "https://schema.org",
         "@type": "CollectionPage",
         "@id": f"{SITE}/articles/#archive",
-        "name": "Seiche daily funding analysis",
+        "name": "Seiche funding analysis archive",
         "description": (
-            "One evidence-led article every day: current analysis when the board "
-            "changes materially, historical funding replays when it does not."
+            "Dated evidence-led articles: current analysis when the board "
+            "changed materially, historical funding replays when it did not."
         ),
         "isPartOf": {"@type": "WebSite", "@id": f"{SITE}/#website"},
         "hasPart": [
@@ -557,17 +557,17 @@ def render_article_archive(entries: list[dict]) -> str:
         ],
     }
     intro = (
-        "<h1>Funding analysis, every day</h1>"
-        '<p class="lede">When the board finds a material change, the article explains '
-        "the mechanism, evidence, counter-case, and next test. When it does not, the "
-        "desk opens one historical episode and shows what happened without manufacturing "
+        "<h1>Funding analysis archive</h1>"
+        '<p class="lede">When the board found a material change, the article explained '
+        "the mechanism, evidence, counter-case, and next test. When it did not, the "
+        "desk opened one historical episode and showed what happened without manufacturing "
         "a breaking-news claim. Follow the system into LiquiLens for institution risk and "
         "Undertow for market exits.</p>"
     )
     return _page(
-        title="Daily funding analysis · Seiche",
+        title="Funding analysis archive · Seiche",
         description=(
-            "Evidence-led daily analysis of dollar funding plumbing, with historical "
+            "The archive of evidence-led analysis of dollar funding plumbing, with historical "
             "replays on quiet days and explicit links to institution and market risk."
         ),
         canonical_path="/articles/",
@@ -605,7 +605,7 @@ def render_article_feed(entries: list[dict], bodies: dict[str, str]) -> str:
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<feed xmlns="http://www.w3.org/2005/Atom">\n'
-        "  <title>Seiche daily funding analysis</title>\n"
+        "  <title>Seiche funding analysis archive</title>\n"
         "  <subtitle>Current funding analysis when the evidence moves; historical replay when it does not.</subtitle>\n"
         f'  <link rel="alternate" type="text/html" href="{SITE}/articles/"/>\n'
         f'  <link rel="self" type="application/atom+xml" href="{SITE}/articles/feed.xml"/>\n'
@@ -669,7 +669,7 @@ def render_article_json_feed(
         )
     feed = {
         "version": "https://jsonfeed.org/version/1.1",
-        "title": "Seiche daily funding analysis",
+        "title": "Seiche funding analysis archive",
         "home_page_url": f"{SITE}/articles/",
         "feed_url": f"{SITE}/articles/feed.json",
         "description": (
@@ -888,13 +888,13 @@ identity and source observation freshness remain separate evidence states.
 - [Live board]({SITE}/): the current funding stress reading where its inputs are source-rights qualified; otherwise withheld
 - [Reviewed investigations]({SITE}/investigations/): long-form reporting with reproducible charts, explicit counter-cases and falsifiers
 - [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
-- [Daily articles]({SITE}/articles/): one evidence-led argument every day, with historical replays when the tape is quiet
-- [Daily article feeds]({SITE}/articles/feed.json): JSON Feed 1.1 with exact Markdown, publication receipt and provenance; Atom is at {SITE}/articles/feed.xml
+- [Article archive]({SITE}/articles/): dated evidence-led arguments, with historical replays when the tape was quiet
+- [Article feeds]({SITE}/articles/feed.json): JSON Feed 1.1 with exact Markdown, publication receipt and provenance; Atom is at {SITE}/articles/feed.xml
 - [Dispatch archive]({SITE}/dispatches/): every dated letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
 - [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file
 
-## Daily articles (markdown)
+## Articles (markdown)
 """
 
 
@@ -905,7 +905,7 @@ def render_llms_txt(entries: list[dict], articles: list[dict] | None = None) -> 
             f"- [{row['headline']}]({SITE}/articles/{row['slug']}.md): "
             f"{row['date']}, {str(row.get('article_type') or 'analysis').replace('_', ' ')}. {row['dek']}"
         )
-    lines.append("\n## Daily dispatches (markdown)")
+    lines.append("\n## Dispatches (markdown)")
     for e in entries:
         lines.append(
             f"- [{e['title']}]({SITE}/dispatches/{e['slug']}.md): {e['date']}, regime {e.get('tag', '?')}. {e['summary']}"
@@ -921,7 +921,7 @@ def render_llms_full(
 ) -> str:
     parts = [_LLMS_PREAMBLE.split("## Docs")[0].strip(), ""]
     parts.append(
-        "Below is the complete text of every daily article, then every fixed-order letter, newest first."
+        "Below is the complete text of every article, then every fixed-order letter, newest first."
     )
     for row in articles or []:
         parts += [

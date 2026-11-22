@@ -277,7 +277,8 @@ def test_public_api_discovery_is_curated(client):
     assert payload["mcp"]["first_tool"] == "source_rights_status"
     assert payload["mcp"]["authentication"] == "none for the available public research tools"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
-    assert "11:30 UTC" in payload["delivery"]["outcome"]
+    assert "11:30 UTC" not in payload["delivery"]["outcome"]
+    assert "material funding-state alerts" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
     assert payload["rest"]["usd_money_markets"] == "/api/money-markets"
     assert payload["rest"]["global_money_markets_v2"] == "/api/v2/money-markets"
