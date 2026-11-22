@@ -1,5 +1,42 @@
 # Publishing Seiche release surfaces
 
+## 0.16.15 free-access and website successor
+
+The 23 November candidate removes Seiche's dormant paid tiers, provisioning
+webhook and x402 hook (#444, #445), takes the em dash out of the MCP server
+title (#447), renders the four publish-time pages in the family shell (#450,
+#465) and ships the website batch and the source-rights copy (#443, #318,
+#446, #448, #451, #466) with the owner's 0.16.15 copy decisions. The package
+version is `0.16.15`. Version metadata is preparation only: require the exact
+signed runtime release (a new owner-signed Hetzner grant for this code), the
+normal full-suite and recovery gates, the immutable PyPI receipt and the
+registry receipt.
+
+The RBI SDL auction refresh (#464) is not in this release. It fails the
+market contracts gate and moves to the next runtime release.
+
+`ops/Caddyfile` drops `/api/provision` from the MCP routes and the payment and
+webhook signature headers from its CORS lists (#445). The production edge
+takes the same edit after the cutover, followed by a Caddy reload. No
+`SEICHE_X402_*` variable was set in any deployment, and nothing reads
+`SEICHE_PROVISION_SECRET` any more: remove it from the runtime environment if
+it is present.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r54`, for this successor.
+Preserve r53 on `26e0e053`. Corpus observations, counts, hashes and rights are
+unchanged. Sign r54 only after the exact new runtime and corpus evidence pass
+their ordinary checks; declaration is not publication. Sign r54 on the same
+commit as `v0.16.15`: the publication gate admits a receipt tag only on the
+workflow commit, the signed release commit or its reviewed descendant, so r53
+on `26e0e053` cannot serve this release. The runtime source and the
+publication source are the same commit, so no source bridge is used. Run a
+FULL publication from this source before any static-only publication.
+
+`ops/release/tests/test_native_migration_publication.py` pins the release
+metadata commit, the last `backend/seiche` change on this branch. Any later
+`backend/seiche` change, and any rewrite of the pinned commit, moves it again.
+
 ## 0.16.14 rates desk and MCP presentation successor
 
 The 15 November candidate adds official rates research (ECB government spot
