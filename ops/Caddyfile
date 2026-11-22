@@ -566,11 +566,11 @@ Disallow: /.well-known/api-catalog
     handle @preflight {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, PAYMENT-SIGNATURE"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID"
         respond 204
     }
     @mcp {
-        path /mcp /mcp/usage /api/provision
+        path /mcp /mcp/usage
     }
     handle @mcp {
         # The application enforces much smaller per-call schemas and a bounded
@@ -580,8 +580,8 @@ Disallow: /.well-known/api-catalog
             max_size 1MiB
         }
         header Access-Control-Allow-Origin "*"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, PAYMENT-SIGNATURE"
-        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, PAYMENT-REQUIRED, PAYMENT-RESPONSE, Warning, Deprecation, Sunset"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID"
+        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, Warning, Deprecation, Sunset"
         header X-Content-Type-Options "nosniff"
         import seiche_stateful_upstream
     }

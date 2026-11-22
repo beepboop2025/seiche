@@ -695,18 +695,6 @@ CRYPTO_EPISODE_APPROX = {"2025-12-15"}  # gradual unwind; anchor date approximat
 WRECKS_OFFSETS_BD = [21, 10, 5, 1, 0]   # business days before the anchor
 WRECKS_BLOB_KEY = "wrecks:v1"
 
-# x402 pay-per-call prices (USD per tools/call) for the machine-payable MCP
-# surface. Applies only to subscriber tools, only for anonymous callers, and
-# only when the operator selects a complete activation profile (see x402.py).
-# Public tools stay free.
-X402_PRICES_USD = {
-    "funding_stress_forecast": 0.02,
-    "replay_asof": 0.02,
-    "desk_brief": 0.02,
-    "positioning_book": 0.02,
-    "ask_desk": 0.05,
-}
-
 # ---------------------------------------------------------------------------
 # CFTC TFF: Treasury futures contract constants for the RV X-Ray.
 # face: contract face value ($). dv01: rough per-contract dollar value of 1bp

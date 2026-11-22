@@ -12,10 +12,8 @@ What it keeps: anonymous callers get 200 tool calls per UTC day per IP, free
 signed-in accounts 5000, operator accounts are uncapped, and stored values from
 before (pro, founder, enterprise) keep working with no data migration.
 
-Stated limits of this guard: the dormant x402 pay-per-call extension on /mcp
-(``seiche/x402.py``) awaits the owner's ruling and is not checked here, and the
-edge allow-list in ``ops/Caddyfile`` (which still names ``/api/provision``) is a
-release-owner change, not application code.
+Payment rails on routes and MCP tools (x402, 402 responses, payment headers,
+the edge allow-list) are guarded in ``test_seiche_no_payment_path.py``.
 """
 
 from __future__ import annotations
