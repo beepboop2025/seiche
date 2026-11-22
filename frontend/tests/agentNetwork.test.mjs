@@ -43,6 +43,7 @@ test("use-case page keeps execution, compliance, and payment claims bounded", as
   assert.match(html, /connect-src[^\"]*https:\/\/api\.seiche\.info/);
   assert.match(html, /Execution authority<\/strong><span>None\./);
   assert.match(html, /legal sufficiency requires independent assessment/);
-  assert.match(html, /Micropayments<\/strong><span>Dormant\./);
+  assert.match(html, /Micropayments<\/strong><span>None\. Seiche has no payment path/);
+  assert.doesNotMatch(html, /Dormant/);
   assert.doesNotMatch(html, /satisf(?:y|ies) (?:the )?SEC|CFTC compliance/i);
 });
