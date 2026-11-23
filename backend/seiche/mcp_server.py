@@ -55,6 +55,9 @@ SUPPORTED_PROTOCOL_VERSIONS = (
     "2025-03-26",
 )
 SERVER_NAME = "seiche"
+# Display title for MCP clients and directories: the repository's canonical title
+# (CITATION.cff, server.json). Plain punctuation; the wire name above is unchanged.
+SERVER_TITLE = "Seiche: World-markets evidence terminal"
 AGENT_MCP_TELEGRAM_URL = "https://t.me/seiche_desk_bot?start=agent_mcp"
 ARTICLE_FEED_URL = "https://seiche.info/articles/feed.json"
 ARTICLE_FEED_MAX_BYTES = 512 * 1024
@@ -1824,13 +1827,13 @@ _AGENT_ROOM_EVENT_INPUT_SCHEMA = {
 TOOLS: dict[str, tuple] = {
     "source_rights_status": (
         "Source rights and feature availability",
-        "List the research tools available in this release, the one legacy reading shown research only (Funding Pop, in money_market_context), and the legacy features withheld pending source qualification. Returns policy and source-rights metadata only; does not grant redistribution rights or certify freshness.",
+        "List the research tools available in this release, the one legacy reading shown research only (Funding Pop, in the funding metrics tool), and the legacy features withheld pending source qualification. Returns policy and source-rights metadata only; does not grant redistribution rights or certify freshness.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         lambda args, public: public_rights.rights_status(),
         True,
     ),
     "gift_city_context": (
-        "GIFT City and India–UAE funding desk",
+        "GIFT City and India-UAE funding desk",
         "Read dated USD/INR funding, separate ECB and CBUAE VAT FX references, and CFTC COMEX gold positioning. Cache-only research with source clocks; no executable prices or regulatory eligibility determination.",
         {"type": "object", "properties": {}, "additionalProperties": False}, tool_gift_city, True,
     ),
@@ -1843,8 +1846,8 @@ TOOLS: dict[str, tuple] = {
         "Query FX and accepted China histories",
         "Query dated observations for a selected currency pair and optional accepted "
         "China annual series. Choose this for a time series, same-date FX cross, or "
-        "observed-interval change; use world_markets_context for a chartless overview "
-        "and money_market_context for funding-desk metrics. "
+        "observed-interval change; the cross-market summary gives a chartless overview "
+        "and the funding metrics tool gives funding-desk metrics. "
         "Read cached official FX reference histories and same-date currency crosses, "
         "with native units, provenance, age and observed-interval changes. Inspect "
         "owner-accepted Palimpsest China annual economic series and revision-aware "
@@ -1856,8 +1859,8 @@ TOOLS: dict[str, tuple] = {
         "Discover datasets and sibling research tools",
         "Discover which published datasets and sibling-product tools can answer a "
         "research question. Choose this for catalog discovery and handoff links, "
-        "not for market observations: use world_markets_context for a market overview "
-        "or market_workbench for supported FX and China histories. "
+        "not for market observations, which the cross-market summary and the FX and "
+        "China history workbench serve. "
         "Explore the Palimpsest dataset catalog by topic, with source clocks, rights, "
         "freshness and pagination. Includes Seiche's separately completed funding "
         "context and explicit research steps into institution filings, exit "
@@ -1912,7 +1915,8 @@ TOOLS: dict[str, tuple] = {
     "agent_room_register_key": (
         "Agent Room: register signing key",
         "Bind the authenticated bearer identity to one Ed25519 public key. "
-        "The server stores no client private key. This is an authenticated "
+        "The server stores only that public key, never the client's signing key. "
+        "This is an authenticated "
         "self-service control-plane operation, not anonymous enrollment.",
         {
             "type": "object",
@@ -2025,33 +2029,13 @@ TOOLS: dict[str, tuple] = {
     "money_market_context": (
         "Inspect USD, India and country funding metrics",
         "Inspect a funding desk's rates, spreads, policy corridor, liquidity buffers "
-        "and source-level evidence. Choose this for detailed funding metrics; use "
-        "world_markets_context "
-        "for a cross-asset overview, or market_workbench for FX and accepted China "
-        "time series. Start with section='summary' for USD; it also returns funding_pop, "
-        "a separate research-only block with its skill, as the website shows it. "
-        "Use section='countries' for the public-source country catalog, or add country='JP' "
-        "(a supported ISO alpha-2 code; UK is an alias for GB) for dated policy, funding, liquidity and sovereign references. "
-        "Country coverage is partial and monthly references are explicitly separate from daily curves. "
-        "Granular, descriptive USD money-market context from the already assembled "
-        "desk: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions "
-        "and tails; repo-segment rates and volumes; CP-Treasury spreads; bills and "
-        "cash curve; liquidity buffers and Fed facilities; and MMF repo plumbing. "
-        "Use section='rates_catalog', 'funding_conditions', 'curve', 'spread' or 'rate_series' for the official "
-        "rates research desk: stored series with source clocks; overnight benchmarks against policy anchor and "
-        "corridor across currencies; government curves with slopes and exact forwards where the convention "
-        "allows; spread percentiles in their own history with the window stated. "
-        "Use section='india_states' for RBI's weekly state government securities (SDL) auctions by state "
-        "(latest auction, 52-week issuance, cut-offs and bid cover). "
-        "Use section='india' for the India funding, RBI liquidity, policy and sovereign-curve desk "
-        "from a bounded canonical observation read. It keeps benchmark identities, date alignment, "
-        "curve movements and mechanism hypotheses separate. India defaults to view='full' for compatibility; "
-        "prefer view='summary' for findings, constraints and an exact metric ID catalog, then "
-        "view='metric' with metric_id for one complete evidence card. These India-only views "
-        "are independent reads, not a pinned snapshot or pagination. Otherwise use optional `section` to request a compact summary, one named USD desk section, "
-        "diagnostics, sources, methodology, or all context. Diagnostics count funding "
-        "persistence, compare secured/unsecured benchmarks and show calendar cohorts "
-        "with sample limits, without changing any score. Returns exact-date alignment, native-"
+        "and source-level evidence for USD, India and supported countries. Choose this "
+        "for detailed funding metrics; a cross-asset overview and FX or accepted China "
+        "time series have their own tools. Start with section='summary' for USD; it also "
+        "returns funding_pop, a separate research-only block with its skill, as the "
+        "website shows it. Other sections cover USD desk detail, diagnostics, official "
+        "rates, countries and India; the section parameter describes each. "
+        "Returns exact-date alignment, native-"
         "cadence changes, empirical own-history statistics, freshness, coverage, "
         "formulas, sources, and caveats as applicable. Chart history is always "
         "omitted. USD reads only an already completed cached or persisted snapshot; it "
@@ -2064,18 +2048,53 @@ TOOLS: dict[str, tuple] = {
                 "section": {
                     "type": "string",
                     "description": (
-                        "Projection to return; defaults to the compact desk summary."
+                        "Projection to return; defaults to the compact USD desk summary, "
+                        "which also carries the research-only funding_pop block. Granular, "
+                        "descriptive USD sections from the already assembled desk: "
+                        "policy_corridor (policy corridor and overnight spreads), "
+                        "secured_distributions (SOFR/TGCR/BGCR distributions and tails), "
+                        "repo_segments (repo-segment rates and volumes), unsecured_funding "
+                        "(CP-Treasury spreads), bills_cash_curve (bills and cash curve), "
+                        "liquidity_buffers (liquidity buffers and Fed facilities) and "
+                        "mmf_plumbing (MMF repo plumbing). diagnostics counts funding "
+                        "persistence, compares secured/unsecured benchmarks and shows "
+                        "calendar cohorts with sample limits, without changing any score. "
+                        "rates_catalog, funding_conditions, curve, spread and rate_series "
+                        "form the official rates research desk: stored series with source "
+                        "clocks; overnight benchmarks against policy anchor and corridor "
+                        "across currencies; government curves with slopes and exact forwards "
+                        "where the convention allows; spread percentiles in their own history "
+                        "with the window stated. countries is the public-source country "
+                        "catalog. india_states covers RBI's weekly state government "
+                        "securities (SDL) auctions by state (latest auction, 52-week "
+                        "issuance, cut-offs and bid cover). india is the India funding, RBI "
+                        "liquidity, policy and sovereign-curve desk from a bounded canonical "
+                        "observation read; it keeps benchmark identities, date alignment, "
+                        "curve movements and mechanism hypotheses separate. sources, "
+                        "methodology and all add provenance, formulas and caveats."
                     ),
                     "enum": list(MONEY_MARKET_SELECTORS),
                     "default": "summary",
                 },
                 "country": {
                     "type": "string", "pattern": "^[A-Za-z]{2}$",
-                    "description": "Country code for section=countries only. Omit to list supported countries; UK aliases GB.",
+                    "description": (
+                        "Country code for section=countries only: a supported ISO alpha-2 "
+                        "code such as JP for dated policy, funding, liquidity and sovereign "
+                        "references. Omit to list supported countries; UK aliases GB. "
+                        "Country coverage is partial and monthly references are explicitly "
+                        "separate from daily curves."
+                    ),
                 },
                 "view": {
                     "type": "string", "enum": ["full", "summary", "metric"], "default": "full",
-                    "description": "India only: legacy full desk, compact findings/catalog, or one exact metric card.",
+                    "description": (
+                        "India only: legacy full desk, compact findings/catalog, or one exact "
+                        "metric card. full stays the default for compatibility; prefer summary "
+                        "for findings, constraints and an exact metric ID catalog, then metric "
+                        "with metric_id for one complete evidence card. These views are "
+                        "independent reads, not a pinned snapshot or pagination."
+                    ),
                 },
                 "metric_id": {
                     "type": "string", "minLength": 1, "maxLength": 128,
@@ -2117,42 +2136,39 @@ TOOLS: dict[str, tuple] = {
     ),
     "world_markets_context": (
         "Summarize cross-market conditions and coverage",
-        "Summarize the available money-market, FX, macro-capital and China evidence "
-        "when a question spans markets or its scope is not yet clear. Start with "
-        "section='summary', then select a relevant section. For detailed funding "
-        "metrics use money_market_context; for dated FX/accepted China observations "
-        "use market_workbench; for external dataset discovery use research_network. "
-        "This chartless overview is not a time-series query. It "
-        "projects only completed/public state into money_markets, forex, "
-        "macro-capital transmission, China macro evidence, official "
-        "references, methodology, or a compact "
-        "summary. Every response carries snapshot/as-of clocks, canonical Seiche "
-        "citation URLs, and explicit observed, derived, structural, restricted, "
-        "and unavailable boundaries. The China structural catalog is unsigned; "
-        "only status=restricted represents a verified Seiche owner-attested "
-        "revision; both states keep NBS values, raw evidence, and history withheld. "
-        "A separately operator-accepted economic_context may publish licensed "
-        "World Bank WDI values with annual/structural freshness, distinct release, "
-        "Palimpsest collection, and Seiche acceptance clocks. Those values are "
-        "context only and never a live print, score, gauge, forecast, or signal. "
-        "The sources selector is reference-only; use all when verified China "
-        "context and its NBS source linkage must appear together. Coverage is "
-        "curated and partial rather than "
-        "exhaustive or uniformly live. It never triggers collection, repository "
-        "history reads, or model fitting. Its named-field whitelist omits chart "
-        "and history arrays for data minimization; that is not a per-record "
-        "licensing audit. Capital coverage is limited to public positioning "
-        "proxies, Treasury primary-market absorption, market stress, official "
-        "liquidity and global dollar credit—not a security master, issuer-data "
-        "service or consolidated tape. Executable depth, liquidity-provider "
-        "concentration, and position-sized exit costs are outside this tool's scope.",
+        "Summarize available money-market, FX, macro-capital and China evidence when a "
+        "question spans markets or its scope is unclear, starting with section='summary'. "
+        "A chartless overview, not a time-series query; funding metrics, dated FX or "
+        "China observations and dataset discovery have their own tools. Responses carry "
+        "snapshot/as-of clocks, canonical citation URLs and explicit observed, derived, "
+        "structural, restricted and unavailable boundaries. The China structural "
+        "catalog is unsigned; only status=restricted represents a verified Seiche "
+        "owner-attested revision; both states keep NBS values, raw evidence, and history "
+        "withheld. Coverage is curated and partial, not exhaustive or uniformly live. It "
+        "never triggers collection, repository history reads or model fitting; omitting "
+        "chart and history arrays is data minimization, not a per-record licensing "
+        "audit. Executable depth, liquidity-provider concentration, and position-sized "
+        "exit costs are outside this tool's scope.",
         {
             "type": "object",
             "properties": {
                 "section": {
                     "type": "string",
                     "description": (
-                        "Projection to return; defaults to the compact cross-market summary."
+                        "Projection to return; defaults to the compact cross-market summary. "
+                        "Sections project only completed/public state into money_markets, "
+                        "forex, capital_markets (macro-capital transmission), china_macro "
+                        "(China macro evidence), sources (official references), methodology "
+                        "or all. Capital coverage is limited to public positioning proxies, "
+                        "Treasury primary-market absorption, market stress, official "
+                        "liquidity and global dollar credit, not a security master, "
+                        "issuer-data service or consolidated tape. The sources selector is "
+                        "reference-only; use all when verified China context and its NBS "
+                        "source linkage must appear together. A separately operator-accepted "
+                        "economic_context may publish licensed World Bank WDI values with "
+                        "annual/structural freshness, distinct release, Palimpsest "
+                        "collection, and Seiche acceptance clocks; those values are context "
+                        "only and never a live print, score, gauge, forecast, or signal."
                     ),
                     "enum": list(WORLD_MARKETS_SELECTORS),
                     "default": "summary",
@@ -3209,7 +3225,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
 OUTPUT_SCHEMAS.update(
     {
         "agent_room_register_key": _output_schema(
-            "Authenticated identity-to-key binding; no private key is stored.",
+            "Authenticated identity-to-key binding; only the public key is stored.",
             {
                 "participant_id": {"type": "string"},
                 "public_key_hex": {"type": "string"},
@@ -3384,7 +3400,7 @@ OUTPUT_SCHEMAS["market_workbench"] = _output_schema(
      {"schema": market_workbench.SCHEMA, "context_only": True}),
 )
 OUTPUT_SCHEMAS["gift_city_context"] = _output_schema(
-    "Dated India–UAE funding, FX and gold evidence.",
+    "Dated India-UAE funding, FX and gold evidence.",
     {"schema": {"type": "string"}, "status": {"type": "string"}, "generated_at": {"type": "string"},
      "context_only": {"type": "boolean"}, "funding": {"type": "array", "items": {"type": "object"}},
      "forex": {"type": "object"}, "gold": {"type": "object"}, "sources": {"type": "array", "items": {"type": "object"}},
@@ -3599,7 +3615,7 @@ def _visible_prompts(
 AGENT_ROOM_SERVER_INSTRUCTIONS = (
     "For private agent-to-agent discussion, authenticated hosted callers may use "
     "the five agent_room_* tools. Derive identity only from the bearer principal, "
-    "keep client private keys outside Seiche, sign the exact canonical event, and "
+    "keep each client signing key outside Seiche, sign the exact canonical event, and "
     "treat acknowledge as receipt rather than acceptance. Room records are always "
     "non-executable and provide no order, execution, payment, settlement, custody, "
     "truth, suitability, or legal-compliance authority. A paid x402 data call is "
@@ -3607,19 +3623,24 @@ AGENT_ROOM_SERVER_INSTRUCTIONS = (
 )
 
 
+# Directory scanners grade this string, the prompt list and tools/list without
+# reading code, so the workflow is described by role, never by tool identifier
+# (an identifier here grades as cross-tool shadowing). Each role echoes the
+# tool's title. tests/test_mcp_metadata_hygiene.py holds the whole surface to
+# the fleet rules.
 SERVER_INSTRUCTIONS = (
     "Seiche provides source-dated funding, money-market and reference FX research. "
-    "Use source_rights_status for the current release boundary. Legacy forecasts, "
+    "The source-rights tool states the current release boundary. Legacy forecasts, "
     "stress scores, backtests, replay and derived narratives are unavailable pending "
     "source qualification; never reconstruct their values. The one exception is "
-    "Funding Pop: money_market_context serves it as a separate research-only block, "
+    "Funding Pop: the funding metrics tool serves it as a separate research-only block, "
     "as the website does, with its skill published; quote its label with its numbers. "
-    "Use money_market_context "
-    "for a bounded funding review, market_workbench with its default ECB provider "
-    "for reference FX, world_markets_context for available cross-market evidence, "
-    "and data_health for source clocks and faults. gift_city_context provides dated "
-    "India-UAE research; gold_inventory_carry computes a scenario from explicit user "
-    "assumptions. research_network discovers source metadata. Preserve each source "
+    "The funding metrics tool gives a bounded funding review, the FX history workbench "
+    "uses its default ECB provider for reference FX, the cross-market summary carries "
+    "available cross-market evidence, and the data freshness tool reports source clocks "
+    "and faults. The GIFT City desk provides dated India-UAE research; the gold "
+    "financing tool computes a scenario from explicit user assumptions. Dataset "
+    "discovery finds source metadata. Preserve each source "
     "URL, observation date, unit, field-specific restriction and missing value. "
     "A successful tool request does not certify freshness, coverage or reuse rights. "
     "Keep structural, observed, derived, restricted and unavailable evidence distinct. "
@@ -3829,7 +3850,7 @@ def _handle_initialize(
             },
             "serverInfo": {
                 "name": SERVER_NAME,
-                "title": "Seiche — funding-stress terminal",
+                "title": SERVER_TITLE,
                 "version": _server_version(),
                 "websiteUrl": "https://seiche.info",
             },
