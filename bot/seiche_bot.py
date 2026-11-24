@@ -2071,9 +2071,9 @@ def fmt_channel_letter() -> str:
 
 # ------------------------------------------------- share, fleet, keyboards
 
-SHARE_TEXT = ("Free US funding stress early warning, straight from the Fed's "
-              "own public data. Regime gauge, forward odds, and a historical "
-              "diagnostic that publishes misses and eligibility flags. No "
+SHARE_TEXT = ("Free, open-source state estimation for US dollar funding "
+              "stress, built from official public data: a live regime gauge, "
+              "with the evidence organized and hypotheses tracked. No "
               "paywall, no sign in.")
 SHARE_URL = ("https://t.me/share/url?url=" + BOT_URL + "?start=ref_shared"
              + "&text=" + urllib.parse.quote(SHARE_TEXT))
@@ -2303,10 +2303,10 @@ def fmt_share(gauge: dict | None) -> str:
         line = (f"\nRight now the gauge reads <b>{esc(gauge['regime'])}</b> "
                 f"at {gauge.get('index', '?')}/100.")
     return ("<b>Know someone who watches money markets?</b>\n\n"
-            "Forward this desk to them. Free early warning on dollar funding "
-            "stress, built from the Fed's own published data, with diagnostic "
-            f"misses and eligibility flags on the record.{line}\n\nTap Share below, or "
-            f"send them {BOT_URL}")
+            "Forward this desk to them. Free, open-source state estimation "
+            "for dollar funding stress, built from official published data, "
+            f"with the evidence organized and hypotheses tracked.{line}\n\n"
+            f"Tap Share below, or send them {BOT_URL}")
 
 
 def _clip(value, limit: int) -> str:

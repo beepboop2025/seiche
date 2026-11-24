@@ -1,6 +1,8 @@
 """Public source, banking and history clients keep their native contracts."""
+import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -36,18 +38,119 @@ def test_banking_cutoff_uses_native_indian_reporting_day(monkeypatch, instant, c
         surfaces._date({'as_of': '2026-11-14'}, 'as_of', not_future=True)
 
 
-def source_schema():
-    paths = {}
-    for path in ('workspace', 'series_summary', 'tracked_institutions', 'catalog', 'series',
-                 'entities', 'observations', 'analysis', 'export.csv'):
-        paths['/' + path] = {'get': {'parameters': [
-            {'name': 'dataset', 'in': 'query', 'schema': {'type': 'string'}},
-            {'name': 'series', 'in': 'query', 'schema': {'type': 'string'}},
-            {'name': 'as_known_at', 'in': 'query', 'schema': {'type': 'string'}},
-        ]}}
-    return {'openapi': '3.1.0', 'info': {'version': '1.2.0'}, 'paths': paths,
-            'servers': [{'url': surfaces.SOURCE_ORIGIN}], 'externalDocs': {'url': surfaces.SOURCE_ORIGIN + '/'},
-            'x-mcp': {'url': surfaces.SOURCE_ORIGIN + '/mcp'}}
+# The upstream document exactly as https://api.seiche.info/api/v2/research-data/openapi.json
+# served it on 24 Nov 2026 (SHA256 17ff0a2ddcbff80250e12a4758753941c620db4daa6c1c7860d671e06d34057c,
+# x-research-source-sha 553bee704f40872e6c9279bf3d9b99e4dc009a85). Version 1.2.0 was the same
+# document with only info.version different.
+SOURCE_FIXTURE = Path(__file__).with_name('fixtures') / 'research-data-openapi-1.3.0.json'
+
+
+def source_schema(version='1.3.0'):
+    schema = json.loads(SOURCE_FIXTURE.read_text())
+    schema['info']['version'] = version
+    return schema
+
+
+def test_fixture_is_the_reviewed_upstream_document():
+    raw = SOURCE_FIXTURE.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == '17ff0a2ddcbff80250e12a4758753941c620db4daa6c1c7860d671e06d34057c'
+    schema = json.loads(raw)
+    assert schema['info']['version'] == '1.3.0' and schema['servers'] == [{'url': surfaces.SOURCE_ORIGIN}]
+    assert set(surfaces.SOURCE_PARAMETERS) == surfaces.SOURCE_READS | {''}
+
+
+@pytest.mark.parametrize('version', sorted(surfaces.REVIEWED_SOURCE_VERSIONS))
+def test_reviewed_source_contract_versions_serve_workspace_and_schema(platform, version):
+    client, _, _, requests, reply, _ = platform
+    set_json(reply, source_schema(version))
+    page = client.get('/v1/source-data/')
+    assert page.status_code == 200 and page.headers['content-type'].startswith('text/html')
+    assert str(requests[-1].url) == surfaces.SOURCE_ORIGIN + '/openapi.json'
+    # 1.3.0 names publishers in place of LiquiLens and Undertow source links.
+    assert 'Source-linked histories' not in page.text
+    assert 'name the publisher in place of a link and round observation counts down' in page.text
+    schema = client.get('/v1/source-data/openapi.json').json()
+    assert schema['info']['version'] == version
+    assert schema['servers'] == [{'url': BASE + '/v1/source-data'}]
+    assert schema['externalDocs'] == {'url': BASE + '/v1/source-data/'}
+    assert set(schema['paths']) == {'/' + x for x in surfaces.SOURCE_READS - {'healthz', 'openapi.json'}}
+    for name, path in schema['paths'].items():
+        for item in path['get']['parameters']:
+            if item['name'] == 'dataset':
+                assert item['schema']['enum'] == sorted(surfaces.SOURCE_DATASETS)
+            if item['name'] in {'series', 'entity', 'q'}:
+                assert item['schema']['maxLength'] == 150
+
+
+def _unreviewed(change):
+    schema = source_schema()
+    change(schema)
+    return schema
+
+
+@pytest.mark.parametrize('schema', [
+    source_schema('1.4.0'), source_schema('1.2.1'), source_schema(''),
+    _unreviewed(lambda s: s['info'].pop('version')), _unreviewed(lambda s: s.pop('info')),
+    _unreviewed(lambda s: s['info'].update(version=['1.3.0'])),
+    _unreviewed(lambda s: s['paths']['/catalog']['get']['parameters'].append(
+        {'name': 'url', 'in': 'query', 'required': False, 'schema': {'type': 'string'}})),
+    _unreviewed(lambda s: s['paths']['/series_summary']['get']['parameters'].append(
+        {'name': 'dataset_url', 'in': 'query', 'required': False, 'schema': {'type': 'string'}})),
+    _unreviewed(lambda s: s['paths']['/observations'].update(post={})),
+    _unreviewed(lambda s: s['paths'].pop('/analysis')),
+])
+def test_unreviewed_source_contract_fails_closed(platform, schema):
+    client, _, _, _, reply, _ = platform
+    set_json(reply, schema)
+    for route in ('/v1/source-data/', '/v1/source-data/openapi.json'):
+        response = client.get(route)
+        assert response.status_code == 502
+        assert response.json()['error']['code'] == 'upstream_contract'
+
+
+def test_gateway_allow_list_bounds_every_advertised_source_parameter():
+    """Operator review of 24 Nov 2026, kept as a check: every parameter the reviewed
+    document advertises is one this gateway forwards, with the same bounds."""
+    from starlette.datastructures import QueryParams
+    from seiche_agent_network.models import NetworkError
+
+    def call(operation, extra):
+        allowed = surfaces.SOURCE_PARAMETERS[operation]
+        base = {key: value for key, value in (('dataset', 'ofr-repo'), ('series', 'x')) if key in allowed}
+        return surfaces.source_request(operation, QueryParams({**base, **extra}))
+
+    def rejected(operation, extra):
+        with pytest.raises(NetworkError):
+            call(operation, extra)
+
+    schema = source_schema()
+    for path, item in schema['paths'].items():
+        operation = path[1:]
+        advertised = {parameter['name'] for parameter in item['get']['parameters']}
+        assert advertised == surfaces.SOURCE_PARAMETERS[operation], path
+        rejected(operation, {'unreviewed': '1'})
+        for parameter in item['get']['parameters']:
+            name, spec = parameter['name'], parameter['schema']
+            if spec['type'] == 'integer':
+                assert call(operation, {name: str(spec['maximum'])})[1][name] == str(spec['maximum'])
+                assert call(operation, {name: str(spec['minimum'])})[1][name] == str(spec['minimum'])
+                rejected(operation, {name: str(spec['maximum'] + 1)})
+            elif 'enum' in spec:
+                for value in spec['enum']:
+                    assert call(operation, {name: value})[1][name] == value
+                rejected(operation, {name: 'unreviewed'})
+            elif name == 'dataset':
+                rejected(operation, {name: 'unreviewed'})
+            elif name in {'series', 'entity', 'q'}:
+                assert call(operation, {name: 'a' * 150})[1][name] == 'a' * 150
+                rejected(operation, {name: 'a' * 151})
+            elif name in {'start', 'end'}:
+                assert call(operation, {name: '2026-01-02'})[1][name] == '2026-01-02'
+                rejected(operation, {name: '2026-02-30'})
+            else:
+                assert name == 'as_known_at'
+                assert call(operation, {name: '2026-01-02T01:02:03Z'})[1][name] == '2026-01-02T01:02:03Z'
+                rejected(operation, {name: '2026-01-02T01:02:03'})
 
 
 def test_source_ui_and_schema_resolve_on_owned_central_assets(platform):

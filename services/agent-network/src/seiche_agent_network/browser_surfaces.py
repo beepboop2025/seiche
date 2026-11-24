@@ -1,9 +1,10 @@
 """Explicit public browser contracts, with fixed origins and bounded selectors.
 
-Source Data 1.2.0 and Corpus 1.0.0 remain separate services from OpenBB. The
-admitted source identifiers are a reviewed inventory, never values learned from
-untrusted request payloads. Original source receipts and monitor hashes remain
-unchanged. Corpus bulk shards are intentionally outside this bounded transport.
+Source Data (reviewed contract versions 1.2.0 and 1.3.0) and Corpus 1.0.0 remain
+separate services from OpenBB. The admitted source identifiers are a reviewed
+inventory, never values learned from untrusted request payloads. Original source
+receipts and monitor hashes remain unchanged. Corpus bulk shards are intentionally
+outside this bounded transport.
 """
 from copy import deepcopy
 from datetime import date, datetime, timezone
@@ -32,6 +33,24 @@ SOURCE_DATASETS = {
 ECONOMY_SERIES = frozenset({"SOFR", "DGS2", "DGS10", "INR", "WRESBAL"})
 SOURCE_READS = frozenset({"catalog", "workspace", "analysis", "series", "entities", "observations",
                           "series_summary", "tracked_institutions", "export.csv", "openapi.json", "healthz"})
+_SELECTORS = frozenset({"dataset", "q", "limit", "offset"})
+_OBSERVATIONS = frozenset({"dataset", "series", "entity", "start", "end", "as_known_at", "limit", "offset"})
+# The only query parameters each reviewed read forwards. The upstream OpenAPI
+# document may advertise no other, so the schema served here never names a
+# parameter this gateway rejects.
+SOURCE_PARAMETERS = {
+    "": frozenset({"product"}), "catalog": frozenset({"product"}), "healthz": frozenset({"product"}),
+    "workspace": frozenset({"product"}), "analysis": frozenset({"product"}), "openapi.json": frozenset(),
+    "series": _SELECTORS, "entities": _SELECTORS, "observations": _OBSERVATIONS, "export.csv": _OBSERVATIONS,
+    "series_summary": frozenset({"dataset", "series", "entity", "window"}),
+    "tracked_institutions": frozenset({"scope", "q", "limit", "offset"}),
+}
+# Source Data OpenAPI versions an operator reviewed against this gateway. Review of
+# 24 Nov 2026: 1.3.0 differs from 1.2.0 only in info.version (the same nine GET
+# paths, parameters, bounds and responses). Its public view removes collection
+# detail from LiquiLens and Undertow partitions and keeps every field the packaged
+# workspace reads. Any other version fails closed until it is reviewed.
+REVIEWED_SOURCE_VERSIONS = frozenset({"1.2.0", "1.3.0"})
 PROVENANCE_HEADERS = frozenset({"x-research-source-sha", "x-seiche-release-sha",
                                "x-seiche-railway-deployment", "x-seiche-railway-authority",
                                "content-disposition", "etag"})
@@ -91,15 +110,7 @@ def source_request(operation, query):
     if operation not in SOURCE_READS | {""}:
         raise NetworkError("not_found", "Unknown reviewed source-data route", 404)
     try:
-        selectors = {"dataset", "q", "limit", "offset"}
-        observations = {"dataset", "series", "entity", "start", "end", "as_known_at", "limit", "offset"}
-        allowed = {
-            "": {"product"}, "catalog": {"product"}, "healthz": {"product"},
-            "workspace": {"product"}, "analysis": {"product"}, "openapi.json": set(),
-            "series": selectors, "entities": selectors, "observations": observations, "export.csv": observations,
-            "series_summary": {"dataset", "series", "entity", "window"},
-            "tracked_institutions": {"scope", "q", "limit", "offset"},
-        }[operation]
+        allowed = SOURCE_PARAMETERS[operation]
         params = _query(query, allowed)
         if "product" in params and params["product"] not in {"seiche", "liquilens", "undertow"}:
             raise ValueError()
@@ -211,9 +222,11 @@ def transform_source(operation, raw, media, status, base):
         return raw, media
     from .hosted_surfaces import strict_json
     schema = strict_json(raw)
-    if (not isinstance(schema, dict) or schema.get("info", {}).get("version") != "1.2.0"
+    if (not isinstance(schema, dict) or schema.get("info", {}).get("version") not in REVIEWED_SOURCE_VERSIONS
             or set(schema.get("paths", {})) != {"/" + x for x in SOURCE_READS - {"healthz", "openapi.json"}}
-            or any(not isinstance(path, dict) or set(path) != {"get"} for path in schema["paths"].values())):
+            or any(not isinstance(path, dict) or set(path) != {"get"} for path in schema["paths"].values())
+            or any(not {item["name"] for item in path["get"].get("parameters", [])} <= SOURCE_PARAMETERS[name[1:]]
+                   for name, path in schema["paths"].items())):
         raise ValueError("Source-data schema no longer matches the reviewed contract")
     if operation == "":
         html = Path(__file__).with_name("static").joinpath("source-data.html").read_text()

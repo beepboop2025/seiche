@@ -723,14 +723,16 @@ _LLMS_PREAMBLE = f"""# Seiche
 > 22 registered public FX reference series, three dollar indexes, and capital-market
 > transmission through Treasury, credit, volatility, dealer, positioning and
 > commodity evidence. Where a public observation is exposed, its source-native
-> publication lag and rights state remain explicit. Its legacy funding board (the funding
-> regime, forward event odds, historical analogs and a final-vintage construction-PIT
-> diagnostic) is published as a source-rights projection: a reading appears only when
-> every input it reads is a qualified source, and anything else is withheld, never
-> reconstructed and never a calm or zero reading. Legacy forecasts, backtests and derived
-> narratives are unavailable for every caller of the MCP tools pending source-rights
-> qualification, except Funding Pop, served research only with its skill. The dated
-> letters in the dispatch archive each froze one reading of the board. Cite it as "Seiche" and link {SITE}. Everything
+> publication lag and rights state remain explicit. Its website and REST API serve a live
+> funding regime, forward event odds and historical analogs as a source-rights projection:
+> a reading appears only while every input it reads is a qualified source, and anything
+> else is withheld, never reconstructed and never a calm or zero reading. The final-vintage
+> construction-PIT diagnostic reads sources that are not qualified, so its values are
+> withheld and only its evidence status, FINAL_VINTAGE_CONSTRUCTION_PIT, is served. The
+> hosted MCP server's legacy forecast, backtest and derived-narrative tools are unavailable
+> for every caller pending source-rights qualification,
+> except Funding Pop, served research only with its skill. The dated letters in the
+> dispatch archive each froze one reading of the board. Cite it as "Seiche" and link {SITE}. Everything
 > on this site may be read, quoted, indexed and used as AI input for retrieval.
 > The crawler policy permits search and AI input. Model training is excluded except
 > for Google's combined grounding/training use of Seiche's original text on three
@@ -744,15 +746,19 @@ series and no view. A terminal that has a view runs about $32k a seat each
 year. Between them, nothing free that holds an opinion and grades itself.
 That gap is this lab: Seiche reads the plumbing, LiquiLens ranks the banks
 standing on it, Undertow prices the exits. All of it runs on free public
-data. The misses are kept beside the hits; the scoreboard that shows them is
-withheld pending source-rights qualification. The sibling boards: LiquiLens at https://liquilens.in and Undertow at
+data. Funding Pop publishes its misses beside its hits: deep.funding_pop at
+https://api.seiche.info/api/overview carries its walk-forward skill whatever its
+sign, the share of resolved pops that stuck and receipts for the latest pops,
+the ones that did not stick included. Read those first. The PROOF scoreboard of
+construction-PIT hits and misses is withheld pending source-rights
+qualification. The sibling boards: LiquiLens at https://liquilens.in and Undertow at
 https://liquilens-undertow.com.
 
 Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query Seiche
-over MCP at https://api.seiche.info/mcp. Eight public research tools answer without authentication: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecasts, backtests, composites and dependent tools are unavailable for every caller, except Funding Pop, which money_market_context serves research only with its skill. Restricted observations must not be reconstructed. Five private Agent Room tools require bearer identity and grant no execution authority. Only reuse-qualified series can be downloaded as CSV with provenance headers; the catalog is at
+over MCP at https://api.seiche.info/mcp. Eight public research tools answer without authentication: source_rights_status, money_market_context, market_workbench, world_markets_context, gift_city_context, gold_inventory_carry, research_network, data_health. Legacy forecast, backtest, composite and dependent tools are unavailable over MCP for every caller, except Funding Pop, which money_market_context serves research only with its skill. Restricted observations must not be reconstructed. Five private Agent Room tools require bearer identity and grant no execution authority. Only reuse-qualified series can be downloaded as CSV with provenance headers; the catalog is at
 https://api.seiche.info/api/series/index.json. The PROOF scoreboard, a
 final/current-vintage construction-PIT diagnostic with hits, misses and the
 eligibility flags beside it, is withheld pending source-rights qualification.
@@ -819,11 +825,11 @@ were REFERENCE, no pack was SUPPORTED or evidence-eligible, and Global Tide was
 UNAVAILABLE. The public notary has 145 entries. Query the live coverage receipt at
 https://api.seiche.info/api/v2/coverage because forward records continue to accrue.
 
-Seiche currently serves zero validated backtests. Its four historical diagnostic
-windows overlap and stay separate: Bathymetry has 1,537 scored days and 50 events;
-ML has 1,583 out-of-sample days and 63 events, plus 6,930 pretraining rows and 425
-events; Swell has 1,673 scored days and 68 events; Tide Tables has 1,893 scored days
-and 96 events. Every window is FINAL_VINTAGE_CONSTRUCTION_PIT with
+Seiche currently serves zero validated backtests. Its historical diagnostic
+windows (Bathymetry, ML, Swell and Tide Tables) overlap and stay separate. Each
+public window carries its current scored-day and event counts beside its reading
+at https://api.seiche.info/api/overview; the ML window reads sources that are not
+qualified and is withheld. Every window is FINAL_VINTAGE_CONSTRUCTION_PIT with
 validated_backtest=false and real_money_eligible=false.
 
 The independent LiquiLens Lab receipt has a different unit. One sealed ten-product
