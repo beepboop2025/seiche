@@ -408,7 +408,8 @@ async def test_overlapping_older_capture_cannot_overwrite_newer_generation(isola
         monkeypatch.setattr(ecb_fx, "utcnow_iso", lambda: "2026-09-09T00:02:00+00:00")
         release_old.set()
         retained = await asyncio.wait_for(old_request, timeout=5)
-        assert "SeriesBatchConflictError" in faults[0]["detail"]
+        # Losing the commit race to a validated generation is not a source fault.
+        assert faults == []
         assert database_generation() == before_old_finishes
         assert retained["ECBFX_USD"].asof == winner["ECBFX_USD"].asof == "2026-09-09"
         assert retained["ECBFX_USD"].fetched_at == winner["ECBFX_USD"].fetched_at == "2026-09-09T00:01:00+00:00"

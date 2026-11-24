@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -19,7 +20,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pandas as pd
 
-from seiche import store
+from seiche import source_access, store
 from seiche.collectors import FileRawCaptureSink
 from seiche.sources._async_store import run_store
 from seiche.sources.base import RawCapture, Series, SourceFault, utcnow_iso
@@ -267,6 +268,30 @@ async def fetch(client: httpx.AsyncClient, faults: list[dict] | None = None, *,
             raise ValueError("DONIA committed generation failed validation")
         return {MNEMONIC: committed[0]}
     except Exception as exc:
+        if isinstance(exc, store.SeriesBatchConflictError):
+            # Another collector committed first (the source worker and the
+            # board build both refresh after a start). The manifest check kept
+            # this capture from replacing that generation; serving the
+            # validated generation it committed is not a source fault.
+            committed = await run_store(_load_cache)
+            if committed:
+                return {MNEMONIC: committed[0]}
+        refusal = source_access.refusal(SOURCE, exc)
+        if refusal is not None:
+            # Reviewed policy (seiche.source_access): an HTTP access refusal
+            # leaves the last good observation in place, shown stale with its
+            # reason, and is not a fault. Every other failure still faults.
+            current = await run_store(_load_cache)
+            await run_store(
+                source_access.record_refusal, refusal, refused_at=utcnow_iso(),
+                last_good_fetched_at=current[0].fetched_at if current else None,
+                last_good_observation_date=current[0].asof if current else None,
+            )
+            return {MNEMONIC: current[0]} if current else {}
+        # The private log names only the exception type, never its text.
+        logging.getLogger(__name__).warning(
+            "Source refresh failed: source=%s error_type=%s", SOURCE, type(exc).__name__,
+        )
         detail = f"{type(exc).__name__}: {exc}"
         if faults is not None:
             faults.append({"source": SOURCE, "detail": detail})
@@ -287,6 +312,9 @@ def read_reference(*, now: datetime) -> dict:
     try:
         cached = _load_cache(now=now)
         if cached is None:
+            refused = source_access.stale_override(SOURCE, MNEMONIC, current_fetched_at=None)
+            if refused is not None:
+                row.update(reason=refused["unavailable_reason"], access_refusal=refused["access_refusal"])
             return row
         item, manifest = cached
         freshness = cbuae_donia_freshness(item.asof, now=now)
@@ -295,6 +323,12 @@ def read_reference(*, now: datetime) -> dict:
         row.update(value=float(item.points.iloc[-1]), as_of=item.asof, fetched_at=item.fetched_at,
                    status=freshness["staleness"].upper(), reason=None, evidence=evidence,
                    freshness_basis=freshness["freshness_basis"])
+        # A refused collection never lets the retained observation read current.
+        refused = source_access.stale_override(SOURCE, MNEMONIC, current_fetched_at=item.fetched_at)
+        if refused is not None:
+            row.update(status="STALE", reason=refused["stale_reason"],
+                       freshness_basis=refused["freshness_basis"],
+                       access_refusal=refused["access_refusal"])
     except (KeyError, TypeError, ValueError, OSError, sqlite3.Error):
         pass
     return row

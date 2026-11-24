@@ -40,7 +40,22 @@ Duplicate, unordered, future,
 malformed or nonfinite observations fail validation. Missing historical points
 are omitted; a missing newest value is never forward-filled. The series and its
 capture metadata commit atomically. Refresh failures retain the last validated
-generation and its original clocks, while reporting a source fault.
+generation and its original clocks, while reporting a source fault. A refresh
+whose commit loses to another collector's (the source worker and the board
+build both refresh after a start) serves the validated generation that
+collector committed and is not a fault.
+
+One reviewed exception (owner decision of 2 November 2026, `seiche.source_access`):
+while centralbank.ae refuses the collector with HTTP 403 or 429, including a
+Cloudflare `cf-mitigated: challenge`, the refusal is not a source fault. The
+last validated observation keeps its own date and is shown stale, never
+current, with the reason "official source refuses automated access (HTTP 403
+challenge); last good observation retained", in the board provenance,
+`/api/health`, MCP `data_health` and the GIFT City desk. With no retained
+observation, DONIA is unavailable with the same reason. Every other DONIA
+failure (a parse error, a changed format, an unexpected URL or redirect, a 5xx,
+a timeout or a store error) still reports a fault, and no other source is
+covered. The next validated capture clears the reason.
 
 Reuse was reviewed on 6 October 2026 against the
 [CBUAE Open Data Policy](https://centralbank.ae/en/open-data-landing/open-data-policy/).

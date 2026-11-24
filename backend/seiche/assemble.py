@@ -40,7 +40,7 @@ import httpx
 import numpy as np
 import pandas as pd
 
-from seiche import alerts, rubric, store
+from seiche import alerts, rubric, source_access, store
 from seiche.config import (
     ALL_SERIES,
     ALERT_RULES,
@@ -434,6 +434,12 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
                 if fault not in faults:
                     faults.append(fault)
             except Exception as e:  # unexpected — still fail loud
+                # This escaped the adapter's own fault path. The private log
+                # names only the exception type, never its text.
+                logging.getLogger("seiche.assemble").warning(
+                    "Source group failed outside its fault path: group=%s error_type=%s",
+                    name, type(e).__name__,
+                )
                 faults.append({"source": name, "detail": f"{type(e).__name__}: {e}"})
 
         fred_mnems = [
@@ -2210,11 +2216,19 @@ def _provenance(src: dict) -> list[dict]:
             # route; the board keeps their size, not thousands of rows.
             row = (original_publishers.compact_provenance(series)
                    if _qualified_identity(mnemonic, series) else series.provenance())
-            prov.append({
+            entry = {
                 **row,
                 **metadata,
                 "availability": "empty" if series.asof is None else "available",
-            })
+            }
+            # A reviewed access refusal (seiche.source_access) shows the
+            # retained observation as stale with its reason, never current.
+            refused = source_access.stale_override(
+                spec.source, mnemonic, current_fetched_at=series.fetched_at,
+            )
+            if refused is not None:
+                entry.update(refused)
+            prov.append(entry)
         else:
             reason = (
                 "source_identity_mismatch" if mnemonic in invalid
@@ -2231,6 +2245,7 @@ def _provenance(src: dict) -> list[dict]:
                 "freshness_basis": "no admitted observation in this completed source snapshot",
                 "availability": "unavailable", "unavailable_reason": reason,
                 **metadata,
+                **(source_access.stale_override(spec.source, mnemonic, current_fetched_at=None) or {}),
             })
     for key, label in (
         ("nyfed_rates", "NY Fed secured rates"),
