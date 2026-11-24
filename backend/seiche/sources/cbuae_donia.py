@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -267,6 +268,14 @@ async def fetch(client: httpx.AsyncClient, faults: list[dict] | None = None, *,
             raise ValueError("DONIA committed generation failed validation")
         return {MNEMONIC: committed[0]}
     except Exception as exc:
+        if isinstance(exc, store.SeriesBatchConflictError):
+            # Another collector committed first (the source worker and the
+            # board build both refresh after a start). The manifest check kept
+            # this capture from replacing that generation; serving the
+            # validated generation it committed is not a source fault.
+            committed = await run_store(_load_cache)
+            if committed:
+                return {MNEMONIC: committed[0]}
         refusal = source_access.refusal(SOURCE, exc)
         if refusal is not None:
             # Reviewed policy (seiche.source_access): an HTTP access refusal
@@ -279,6 +288,10 @@ async def fetch(client: httpx.AsyncClient, faults: list[dict] | None = None, *,
                 last_good_observation_date=current[0].asof if current else None,
             )
             return {MNEMONIC: current[0]} if current else {}
+        # The private log names only the exception type, never its text.
+        logging.getLogger(__name__).warning(
+            "Source refresh failed: source=%s error_type=%s", SOURCE, type(exc).__name__,
+        )
         detail = f"{type(exc).__name__}: {exc}"
         if faults is not None:
             faults.append({"source": SOURCE, "detail": detail})

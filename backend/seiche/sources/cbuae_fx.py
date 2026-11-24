@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 import re
 import sqlite3
@@ -377,6 +378,18 @@ async def fetch(client: httpx.AsyncClient, faults: list[dict] | None = None, *,
             raise ValueError("CBUAE FX committed generation failed validation")
         return completed
     except Exception as exc:
+        if isinstance(exc, store.SeriesBatchConflictError):
+            # Another collector committed first (the source worker and the
+            # board build both refresh after a start). The manifest check kept
+            # this capture from replacing that generation; serving the
+            # validated generation it committed is not a source fault.
+            current = await run_store(_load_cache)
+            if current:
+                return current
+        # The private log names only the exception type, never its text.
+        logging.getLogger(__name__).warning(
+            "Source refresh failed: source=%s error_type=%s", SOURCE, type(exc).__name__,
+        )
         detail = f"{type(exc).__name__}: {exc}"
         if faults is not None:
             faults.append({"source": SOURCE, "detail": detail})

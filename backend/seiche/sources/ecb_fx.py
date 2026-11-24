@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 import re
 from datetime import UTC, date, datetime, timedelta
@@ -346,6 +347,18 @@ async def fetch(
             raise ValueError("ECB FX committed capture failed cache generation validation")
         return completed
     except Exception as exc:
+        if isinstance(exc, store.SeriesBatchConflictError):
+            # Another collector committed first (the source worker and the
+            # board build both refresh after a start). The manifest check kept
+            # this capture from replacing that generation; serving the
+            # validated generation it committed is not a source fault.
+            current = await run_store(_load_cache)
+            if current:
+                return current
+        # The private log names only the exception type, never its text.
+        logging.getLogger(__name__).warning(
+            "Source refresh failed: source=%s error_type=%s", SOURCE, type(exc).__name__,
+        )
         detail = f"{selected_mode}: {type(exc).__name__}: {exc}"
         if faults is not None:
             faults.append({"source": SOURCE, "detail": detail})

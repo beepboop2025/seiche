@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Show CBUAE DONIA as stale with a named reason, not as a source fault, while centralbank.ae refuses automated access (HTTP 403 or 429, including a Cloudflare challenge). The last good observation keeps its date; every other DONIA failure and every other source still fault (owner decision of 2 November). The System tab's source clock audit prints the reason under the source state.
+- Losing a commit race to another collector is no longer a source fault. The API's board build and the legacy source worker each run the source sweep as soon as they start, so both refresh any source whose cache is past its TTL. For the three collectors that commit through a capture manifest (CBUAE DONIA, ECB FX and CBUAE FX), the second to commit recorded `SeriesBatchConflictError`, which the board shows as INTERNAL_ERROR "collector failed" until the next board. The manifest check still keeps that capture from replacing the committed generation; the collector now serves the validated generation the other committed, without a fault. A conflict with no validated competing generation still faults.
+- A source group that fails outside its adapter's own fault path, and a failed DONIA, ECB FX or CBUAE FX refresh, write one private log line naming the exception type only, never its text, so the type behind an INTERNAL_ERROR fault can be read from the service log.
 
 ## 0.16.15: free access only, publish-time pages in the family shell, source-rights site copy (2026-11-23)
 

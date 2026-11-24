@@ -40,7 +40,10 @@ Duplicate, unordered, future,
 malformed or nonfinite observations fail validation. Missing historical points
 are omitted; a missing newest value is never forward-filled. The series and its
 capture metadata commit atomically. Refresh failures retain the last validated
-generation and its original clocks, while reporting a source fault.
+generation and its original clocks, while reporting a source fault. A refresh
+whose commit loses to another collector's (the source worker and the board
+build both refresh after a start) serves the validated generation that
+collector committed and is not a fault.
 
 One reviewed exception (owner decision of 2 November 2026, `seiche.source_access`):
 while centralbank.ae refuses the collector with HTTP 403 or 429, including a

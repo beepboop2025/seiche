@@ -434,6 +434,12 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
                 if fault not in faults:
                     faults.append(fault)
             except Exception as e:  # unexpected — still fail loud
+                # This escaped the adapter's own fault path. The private log
+                # names only the exception type, never its text.
+                logging.getLogger("seiche.assemble").warning(
+                    "Source group failed outside its fault path: group=%s error_type=%s",
+                    name, type(e).__name__,
+                )
                 faults.append({"source": name, "detail": f"{type(e).__name__}: {e}"})
 
         fred_mnems = [

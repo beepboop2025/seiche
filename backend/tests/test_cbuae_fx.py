@@ -305,7 +305,8 @@ async def test_concurrent_older_capture_cannot_replace_newer_generation(isolated
         manifest = store.load_blob(cbuae_fx.LATEST_CAPTURE_KEY)
         release.set()
         retained = await asyncio.wait_for(older, timeout=5)
-    assert "SeriesBatchConflictError" in faults[0]["detail"]
+    # Losing the commit race to a validated generation is not a source fault.
+    assert faults == []
     assert store.load_blob(cbuae_fx.LATEST_CAPTURE_KEY) == manifest
     assert retained["CBUAEFX_INR"].asof == newer["CBUAEFX_INR"].asof == "2026-10-02"
 
