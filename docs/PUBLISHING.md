@@ -1,5 +1,50 @@
 # Publishing Seiche release surfaces
 
+## 0.16.16 DONIA, MCP metadata and Market Atlas catalog successor
+
+The 24 November candidate shows CBUAE DONIA as stale, not as a fault, while
+the publisher refuses automated access, and stops recording a lost commit race
+between the API's board build and the source worker as a source fault (#472);
+accepts the reviewed research-data 1.3.0 contract in the agent gateway, makes
+`llms.txt` state what the website and REST API serve and replaces the
+early-warning product copy (#474); and describes MCP tools by role, gated by a
+metadata hygiene test (#471). The package version is `0.16.16`. Version
+metadata is preparation only: require the exact signed runtime release (a new
+owner-signed Hetzner grant for this code), the normal full-suite and recovery
+gates, the immutable PyPI receipt and the registry receipt.
+
+The Market Atlas corpus catalog entry moves to version `1.0.1`. Commit
+`e720a9e9` changed its title in 0.16.15 without a version change, so the entry
+no longer equalled the one at the signed tag `market-corpus-v1.0.0` and the
+publication gate refused the website publication. The gate binds the entry,
+less its publication receipt, to the signed tag named by its version: sign
+`market-corpus-v1.0.1` on the same commit as `v0.16.16`, and preserve
+`market-corpus-v1.0.0` on `43fcb34a`. The `/.well-known/mcp.json` corpus
+listing says `1.0.1` as well, because the gate requires the live discovery
+version to equal the catalog's. The MCP Registry listing for
+`io.github.beepboop2025/seiche-market-corpus` is published from
+financial-evidence-skills, not from this repository.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r55`, for this successor.
+Preserve r54 on `2a81c0f0`. Corpus observations, counts, hashes and rights are
+unchanged. Sign r55 only after the exact new runtime and corpus evidence pass
+their ordinary checks; declaration is not publication. Sign r55 on the same
+commit as `v0.16.16`: the publication gate admits a receipt tag only on the
+workflow commit, the signed release commit or its reviewed descendant, so r54
+on `2a81c0f0` cannot serve this release. The runtime source and the
+publication source are the same commit, so no source bridge is used. Run a
+FULL publication from this source before any static-only publication.
+
+The agent gateway in `services/agent-network` serves the 1.3.0 contract only
+after that service is deployed from this release. The Telegram bot that runs
+is fleet-bots `bots/seiche_bot.py`, which needs the same share-text edit as
+`bot/seiche_bot.py`. Not in this release: #464, #453, #462 and #473.
+
+`ops/release/tests/test_native_migration_publication.py` pins the release
+metadata commit, the last `backend/seiche` change on this branch. Any later
+`backend/seiche` change, and any rewrite of the pinned commit, moves it again.
+
 ## 0.16.15 free-access and website successor
 
 The 23 November candidate removes Seiche's dormant paid tiers, provisioning
