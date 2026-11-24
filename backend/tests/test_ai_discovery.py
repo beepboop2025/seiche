@@ -181,6 +181,42 @@ def test_security_txt_is_served_on_the_well_known_route():
     assert "Canonical: https://seiche.info/.well-known/security.txt" in response.text
 
 
+FUNDING_MANIFEST_URL = "https://github.com/beepboop2025/seiche/blob/main/funding.json"
+FUNDING_LIST_PATH = "/.well-known/funding-manifest-urls"
+
+
+def test_funding_manifest_urls_prove_provenance_for_floss_fund():
+    # FLOSS/fund reads the repository manifest at FUNDING_MANIFEST_URL; the
+    # seiche.info copy stays retired (docs/FRONTEND-PUBLICATION.md). A URL
+    # outside that repository needs a wellKnown list on its own host that
+    # names the manifest URL on an exact line: go-funding-json CheckProvenance
+    # compares each line byte for byte.
+    text = (ROOT / "funding.json").read_text()
+    assert "\u2014" not in text
+    assert "\u2013" not in text
+    manifest = json.loads(text)
+    repo = urlparse(FUNDING_MANIFEST_URL).path.split("/blob/", 1)[0] + "/"
+    entries = [manifest["entity"]["webpageUrl"]]
+    for project in manifest["projects"]:
+        entries += [project["webpageUrl"], project["repositoryUrl"]]
+    for entry in entries:
+        target = urlparse(entry["url"])
+        if target.netloc == "github.com" and (
+            target.path.rstrip("/") + "/"
+        ).startswith(repo):
+            assert "wellKnown" not in entry
+            continue
+        # seiche.info is the only other host whose list this repo publishes.
+        assert target.netloc == "seiche.info"
+        assert entry["wellKnown"] == "https://seiche.info" + FUNDING_LIST_PATH
+    listed = (PUBLIC / FUNDING_LIST_PATH.lstrip("/")).read_bytes()
+    assert listed == FUNDING_MANIFEST_URL.encode("ascii") + b"\n"
+    assert not (PUBLIC / "funding.json").exists()
+    headers = (PUBLIC / "_headers").read_text()
+    assert FUNDING_LIST_PATH + "\n" in headers
+    stanza = headers.split(FUNDING_LIST_PATH + "\n", 1)[1].split("\n\n", 1)[0]
+    assert "Content-Type: text/plain; charset=utf-8" in stanza
+
 def test_ard_catalog_is_advertised_on_every_discovery_surface():
     canonical = "https://seiche.info/.well-known/ai-catalog.json"
     assert f"Agentmap: {canonical}" in (PUBLIC / "robots.txt").read_text()
