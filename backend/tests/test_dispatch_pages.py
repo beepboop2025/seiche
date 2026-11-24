@@ -211,20 +211,73 @@ def test_package_block_names_this_release_and_no_other_products_version():
     assert "application windows end 17 October 2026" in block
 
 
+def _folded(text: str) -> str:
+    """The preamble as one line of prose: blockquote markers and wraps removed."""
+    return " ".join(line.lstrip("> ").strip() for line in text.splitlines() if line.strip())
+
+
 def test_llms_preamble_states_the_served_scope_not_the_withheld_board():
-    """The opening paragraph once said Seiche "publishes a live funding regime, forward
-    event odds, historical analogs" while a later paragraph said legacy forecasts were
-    unavailable. The preamble names the board as a source-rights projection instead."""
-    from seiche import dispatch_pages, public_rights
+    """What the website and REST API serve, said as the source-rights policy allows it.
+
+    Until 0.16.16 the live index said Seiche "publishes a live funding regime, forward
+    event odds, historical analogs and a final-vintage construction-PIT diagnostic with
+    the misses kept next to the hits". The first three are served (/api/gauge, and
+    deep.markov, deep.swell and deep.tidetables in /api/overview); the diagnostic is not:
+    deep.backtest is withheld, /api/public answers 403 and only the evidence status is
+    served. The hosted MCP's legacy tools are the only surface that serves none of them.
+    """
+    from seiche import dispatch_pages, evidence_boundary, public_rights
 
     preamble = dispatch_pages._LLMS_PREAMBLE
-    opening = preamble[: preamble.index("Liquidity intelligence sits on two shelves")]
-    assert "Seiche publishes a live funding regime" not in opening
-    assert "source-rights projection" in opening
-    assert "withheld, never" in opening
+    opening = _folded(preamble[: preamble.index("Liquidity intelligence sits on two shelves")])
+    assert ("Its website and REST API serve a live funding regime, forward event odds and "
+            "historical analogs as a source-rights projection") in opening
+    assert "withheld, never reconstructed" in opening
+    assert ("construction-PIT diagnostic reads sources that are not qualified, so its values "
+            f"are withheld and only its evidence status, {evidence_boundary.DEFAULT_STATUS}, "
+            "is served") in opening
+    assert "The hosted MCP server's legacy forecast, backtest and derived-narrative tools" in opening
     assert "except Funding Pop, served research only with its skill" in opening
+    assert "with the misses kept" not in opening and "Seiche publishes a live funding regime" not in opening
     assert "query the live board\nover MCP" not in preamble
+    # The regime word is served; only the hosted MCP's legacy tools are unavailable.
+    assert "withholds its regime" not in preamble.lower()
+
+    # The claims follow the policy: every input of the served readings may be
+    # public, and the diagnostic reads inputs that may not.
+    assert public_rights.engine_can_be_public("composite")
+    for name in ("markov", "swell", "tidetables", "funding_pop"):
+        assert public_rights.engine_can_be_public(name, public_rights.DEEP_INPUTS), name
+    for name in ("backtest", "ml"):
+        assert not public_rights.engine_can_be_public(name, public_rights.DEEP_INPUTS), name
+    assert "funding_stress_now" in public_rights.rights_status()["unavailable_tools"]
+
     # The PROOF scoreboard's route is a legacy path, so the index cannot call it published.
     assert "/api/public" in public_rights.LEGACY_PATHS
     assert "The PROOF scoreboard publishes" not in preamble
     assert "The misses are published beside the hits" not in preamble
+    folded = _folded(preamble)
+    assert ("The PROOF scoreboard of construction-PIT hits and misses is withheld pending "
+            "source-rights qualification") in folded
+    # Funding Pop's misses are public, research only, with its skill.
+    assert "Funding Pop publishes its misses beside its hits: deep.funding_pop" in folded
+    assert "the ones that did not stick included. Read those first." in folded
+    assert "funding_pop" in public_rights.rights_status()["research_only_readings"]
+
+
+def test_llms_preamble_types_no_diagnostic_counts_by_hand():
+    """The diagnostic windows' counts move with every board, so the index points at
+    the board that serves them. The typed counts had drifted (Bathymetry 1,537 scored
+    days against 1,611 served on 24 Nov 2026) and named the withheld ML window."""
+    import re
+
+    from seiche import dispatch_pages, public_rights
+
+    folded = _folded(dispatch_pages._LLMS_PREAMBLE)
+    assert not re.search(r"\d[\d,]* (?:scored|out-of-sample) days", folded)
+    assert ("Each public window carries its current scored-day and event counts beside its "
+            "reading at https://api.seiche.info/api/overview") in folded
+    assert "the ML window reads sources that are not qualified and is withheld" in folded
+    for name in ("bathymetry", "swell", "tidetables"):
+        assert public_rights.engine_can_be_public(name, public_rights.DEEP_INPUTS), name
+    assert not public_rights.engine_can_be_public("ml", public_rights.DEEP_INPUTS)
