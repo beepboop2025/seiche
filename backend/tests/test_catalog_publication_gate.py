@@ -198,7 +198,7 @@ def _market_receipts():
         "servers": [
             {
                 "name": gate.MARKET_CORPUS_NAME,
-                "version": "1.0.0",
+                "version": "1.0.1",
                 "transport": "streamable-http",
                 "url": gate.MARKET_CORPUS_MCP_URL,
                 "availability": "declared_endpoint_verify_with_corpus_health",
@@ -403,14 +403,14 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         gate,
         "_read_tagged_json",
         lambda _root, tag, _path: (
-            version_tag if tag == "market-corpus-v1.0.0" else current
+            version_tag if tag == "market-corpus-v1.0.1" else current
         ),
     )
 
     def verify_tag(_root, *, tag, head, git_config):
         assert head == expected_sha
         assert git_config == "trusted=true"
-        if tag == "market-corpus-v1.0.0":
+        if tag == "market-corpus-v1.0.1":
             return "a" * 40
         return expected_sha
 
@@ -428,7 +428,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
 
     def stale_receipt_tag(_root, *, tag, head, git_config):
         del head, git_config
-        return "a" * 40 if tag == "market-corpus-v1.0.0" else "d" * 40
+        return "a" * 40 if tag == "market-corpus-v1.0.1" else "d" * 40
 
     monkeypatch.setattr(gate, "_verify_annotated_signed_tag", stale_receipt_tag)
     monkeypatch.setattr(
@@ -464,7 +464,7 @@ def test_independent_corpus_receipt_retains_complete_application_history_checks(
         gate,
         "_verify_annotated_signed_tag",
         lambda _root, **kwargs: (
-            application if kwargs["tag"] == "market-corpus-v1.0.0" else receipt
+            application if kwargs["tag"] == "market-corpus-v1.0.1" else receipt
         ),
     )
     monkeypatch.setattr(gate, "verify_signed_release", lambda *_a, **_k: RELEASE_TAG)
@@ -561,7 +561,7 @@ def _sign_content_release(root, *, receipt=True):
     _content_git(root, "config", "user.signingkey", str(key))
     _content_git(root, "add", ".")
     _content_git(root, "commit", "-q", "--amend", "--no-edit", "-S")
-    tags = [RELEASE_TAG, "market-corpus-v1.0.0"]
+    tags = [RELEASE_TAG, "market-corpus-v1.0.1"]
     if receipt:
         tags.append(gate._market_corpus_publication_receipt(_market_entry())["tag"])
     for tag in tags:

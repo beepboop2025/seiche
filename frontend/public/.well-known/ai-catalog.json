@@ -139,7 +139,7 @@
         "name": "io.github.beepboop2025/seiche-market-corpus",
         "title": "Seiche Market Atlas: structured evidence corpus",
         "description": "Rights-aware attested evidence objects, structural inspection, bounded full-fidelity BIS records, revisions and canonical Seiche market discovery with explicit evidence clocks.",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "websiteUrl": "https://seiche.info/#corpus",
         "remotes": [
           {
@@ -179,7 +179,7 @@
         "Show the series key, dimensions, event time, knowledge time, revision and source attribution for a BIS record.",
         "Which Seiche canonical market partitions and protected exports are currently present?"
       ],
-      "version": "1.0.0",
+      "version": "1.0.1",
       "updatedAt": "2026-08-30T14:30:00Z",
       "metadata": {
         "authentication": "none",

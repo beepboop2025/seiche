@@ -507,7 +507,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                     "Rights-aware dataset receipts, bounded BIS records and "
                     "canonical Seiche market discovery with explicit evidence clocks."
                 ),
-                "version": "1.0.0",
+                "version": "1.0.1",
                 "transport": "streamable-http",
                 "url": "https://api.seiche.info/api/v2/corpus/mcp",
                 "authentication": {
