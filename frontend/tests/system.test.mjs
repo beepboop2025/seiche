@@ -66,6 +66,17 @@ test("missing freshness never defaults to fresh and aggregate dates stay explici
   assert.doesNotMatch(html, /FRESH/);
 });
 
+test("a source refused by its publisher shows its stale reason under its state", () => {
+  const reason = "official source refuses automated access (HTTP 403 challenge); last good observation retained";
+  const html = render({ provenance: [
+    { mnemonic: "DONIA", availability: "available", asof: "2026-10-06", fetched_at: "2026-10-06T11:00:00+00:00",
+      staleness: "stale", stale_reason: reason, freshness_basis: reason },
+    { mnemonic: "SOFR", availability: "available", asof: "2026-10-06", staleness: "fresh" },
+  ] });
+  assert.ok(html.includes(`<b>STALE</b><small>${reason}</small>`));
+  assert.ok(html.includes("<b>FRESH</b></td>"));
+});
+
 test("faults identify each failed series and distinguish retained observations", () => {
   const html = render({ faults: [
     { source: "fred", series: "SOFR", detail: "collector failed", cache_used: true },
