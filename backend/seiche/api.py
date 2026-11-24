@@ -213,7 +213,8 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Seiche",
     version=assemble.VERSION,
-    description="Funding-stress & leveraged-positioning early-warning terminal",
+    description=("Free, open-source funding-stress and leveraged-positioning research: "
+                 "state estimation, evidence organization and hypothesis tracking"),
     docs_url=None if _PROD else "/docs",
     redoc_url=None if _PROD else "/redoc",
     openapi_url=None if _PROD else "/openapi.json",

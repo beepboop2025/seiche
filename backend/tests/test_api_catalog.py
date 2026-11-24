@@ -114,3 +114,12 @@ def test_origin_catalog_media_hints_match_live_representations():
         entries["https://api.seiche.info/palimpsest/mcp"]["service-meta"][1]["type"]
         == "application/json"
     )
+
+
+def test_application_states_the_honest_promise_not_an_early_warning():
+    """Seiche's supportable promise is state estimation, evidence organization and
+    hypothesis tracking. Its live proof does not support an early-warning claim."""
+    description = app.description
+    assert "early-warning" not in description and "early warning" not in description.lower()
+    assert description.startswith("Free, open-source ")
+    assert "state estimation, evidence organization and hypothesis tracking" in description

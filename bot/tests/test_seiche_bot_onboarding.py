@@ -588,3 +588,17 @@ def test_set_channel_profile_rewrites_about_and_pins(monkeypatch):
     assert methods == ["setChatDescription", "pinChatMessage"]
     assert calls[0][1]["description"] == bot.LAB_CHANNEL_ABOUT
     assert calls[1][1]["message_id"] == 42
+
+
+def test_share_copy_states_the_honest_promise_not_an_early_warning():
+    """The share text travels without the desk around it, so it carries Seiche's
+    supportable promise and no withheld diagnostic."""
+    import urllib.parse
+
+    shared = (bot.SHARE_TEXT, bot.fmt_share({"regime": "STRAIN", "index": 46.2}), bot.fmt_share(None))
+    for text in shared:
+        assert "early warning" not in text.lower()
+        assert "state estimation" in text and "hypotheses tracked" in text
+        assert "misses and eligibility flags" not in text
+    assert "Right now the gauge reads <b>STRAIN</b> at 46.2/100." in shared[1]
+    assert bot.SHARE_URL.endswith("&text=" + urllib.parse.quote(bot.SHARE_TEXT))

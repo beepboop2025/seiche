@@ -109,8 +109,9 @@ def test_prerender_carries_the_board_and_the_letter(site):
     assert n == len(text)
     assert n > 5000, f"only {n} characters of no-JS body text"
 
-    # the masthead and what Seiche is
-    assert "SEI" in page and "funding-stress" in text
+    # the masthead and what Seiche is: its honest promise, not an early-warning claim
+    assert "SEI" in page and "funding-state estimation &amp; hypothesis tracking" in page
+    assert "early warning &middot;" not in page and "positioning early warning" not in text
     assert "free open source software (AGPL-3.0-or-later)" in text
 
     # the composite reading with its plain-English gloss

@@ -551,7 +551,7 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
 
     head = (
         _MASTHEAD
-        + f'<div class="date">funding-stress &amp; leveraged-positioning early warning '
+        + f'<div class="date">funding-state estimation &amp; hypothesis tracking '
         f'&middot; free public data only &middot; board built {_esc(_stamp(facts["generated_at"]))}</div>'
         f'<h1>{_esc(facts["headline"])}</h1>'
         f'<p class="lede">{_esc(facts["gloss"])} This page is the board written out for readers '
