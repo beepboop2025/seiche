@@ -883,8 +883,12 @@ def test_mcp_tool_selectors_are_public_chartless_and_cache_only(monkeypatch) -> 
         "history_included",
     ):
         assert china_schema["properties"][field] == {"const": False}
-    assert "world_markets_context" in mcp.SERVER_INSTRUCTIONS
-    assert "source_rights_status" in mcp.SERVER_INSTRUCTIONS
+    # The instructions route by role; a tool identifier there grades as
+    # cross-tool shadowing (see test_mcp_metadata_hygiene.py).
+    assert "the cross-market summary" in mcp.SERVER_INSTRUCTIONS
+    assert "The source-rights tool" in mcp.SERVER_INSTRUCTIONS
+    assert "world_markets_context" not in mcp.SERVER_INSTRUCTIONS
+    assert "source_rights_status" not in mcp.SERVER_INSTRUCTIONS
 
 
 def test_mcp_cold_cache_is_data_unavailable_not_a_tool_failure(monkeypatch) -> None:

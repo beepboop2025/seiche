@@ -334,7 +334,10 @@ def test_initialize_negotiates_version_and_advertises_tools():
     assert r["capabilities"]["tools"] == {"listChanged": False}
     assert r["serverInfo"]["name"] == "seiche"
     assert "instructions" in r and "funding" in r["instructions"].lower()
-    assert "source_rights_status" in r["instructions"]
+    # Instructions describe the workflow by role; a tool identifier there grades
+    # as cross-tool shadowing (see test_mcp_metadata_hygiene.py).
+    assert "source-rights tool" in r["instructions"]
+    assert "source_rights_status" not in r["instructions"]
     assert "unavailable" in r["instructions"]
 
 
