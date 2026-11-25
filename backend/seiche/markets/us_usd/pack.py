@@ -707,7 +707,7 @@ PACK = MarketPack(
         *_fed_h10(),
         InstrumentSpec(
             "US.FED.G17_INDUSTRIAL_PRODUCTION", "G17_INDUSTRIAL_PRODUCTION",
-            SemanticRole.INDUSTRIAL_PRODUCTION, "fed_g17", "index, 2017 = 100", _INDEX,
+            SemanticRole.INDUSTRIAL_PRODUCTION, "fed_g17", "index, 2022 = 100", _INDEX,
         ),
         # BEA nominal GDP (A191RC), USD millions at a seasonally adjusted annual
         # rate. Its role is context only; the FRED GDP copy stays metadata-only.

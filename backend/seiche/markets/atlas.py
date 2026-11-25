@@ -2651,11 +2651,13 @@ def build_global_money_market_atlas(
                     "Source: Board of Governors of the Federal Reserve System, G.17 "
                     "Industrial Production and Capacity Utilization. Board information "
                     "is public domain unless otherwise indicated. The total index is "
-                    "seasonally adjusted with 2017 = 100, revised in later releases and "
-                    "rebased at the Board's annual revisions; each revision is kept as "
-                    "its own vintage. Seiche statistics are not official Board analysis "
-                    "or endorsement. The release package supplies observation dates, "
-                    "not publication receipts; its acquisition establishes knowledge time."
+                    "seasonally adjusted with 2022 = 100 (2017 = 100 in releases before "
+                    "the Board's annual revision of 24 November 2026), revised in later "
+                    "releases and rebased at the Board's annual revisions; each revision "
+                    "is kept as its own vintage. Seiche statistics are not official "
+                    "Board analysis or endorsement. The release package supplies "
+                    "observation dates, not publication receipts; its acquisition "
+                    "establishes knowledge time."
                 ),
             },
             {

@@ -1,7 +1,8 @@
 """The Board's own release packages (PRATES, H.4.1, H.15, H.10, G.17): pinned, bounded, cited.
 
 Fixtures in ``fixtures/frb`` are trimmed copies of the packages published on
-2026-11-02 (see its README); the H.15 commercial paper values are synthetic.
+2026-11-02, and of the G.17 package republished at its 2026-11-24 annual
+revision (see its README); the H.15 commercial paper values are synthetic.
 """
 from __future__ import annotations
 
@@ -42,7 +43,10 @@ from seiche.sources.official import PRODUCTION_ADAPTER_KEYS, build_official_adap
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "frb"
-LEDGER = json.loads((ROOT / "docs" / "data-source-expansion.json").read_text())
+# The same trim of the 2026-11-02 G.17 package, the last before the Board
+# rebased the index from 2017 = 100 to 2022 = 100 on 2026-11-24.
+G17_2017_BASE = FIXTURES / "G17_data_2017_base.xml"
+LEDGER =json.loads((ROOT / "docs" / "data-source-expansion.json").read_text())
 RECORDS = {item["id"]: item for item in LEDGER["candidates"]}
 SERVED = tuple(package for package in frb.PACKAGES if package.rights_hold is None)
 NEW_ROLES = {
@@ -217,19 +221,81 @@ def test_h10_reads_rates_in_the_releases_own_direction_and_the_dollar_indexes():
 def test_g17_pins_one_data_set_of_the_three_that_repeat_the_total_index():
     points = parse(frb.G17)
     assert [(p.event_time.isoformat(), str(p.raw_value)) for p in points] == [
-        ("2026-06-30", "102.9610"), ("2026-07-31", "103.2006"),
-        ("2026-08-31", "103.2664"), ("2026-09-30", "103.9506"),
+        ("2026-06-30", "101.9827"), ("2026-07-31", "102.2082"),
+        ("2026-08-31", "102.0644"), ("2026-09-30", "102.6785"),
+        ("2026-10-31", "102.2421"),
     ]
     assert {p.instrument_id for p in points} == {"US.FED.G17_INDUSTRIAL_PRODUCTION"}
     assert all(p.publication_time_policy is PublicationTimePolicy.UNKNOWN for p in points)
     evidence = json.loads(points[-1].row_evidence)
     assert evidence["dataset"] == "IP_MAJOR_INDUSTRY_GROUPS"
-    assert evidence["declared"]["SA"] == "SA" and evidence["declared"]["UNIT"] == "Index:_2017_100"
+    assert evidence["declared"]["SA"] == "SA" and evidence["declared"]["UNIT"] == "Index:_2022_100"
     # The copies in the other two data sets are not a duplicate of the pinned one.
     xml = fixture(frb.G17)
     other_only = xml.replace('id="IP_MAJOR_INDUSTRY_GROUPS"', 'id="IP_RENAMED"')
     with pytest.raises(ValueError, match="missing"):
         parse(frb.G17, other_only)
+
+
+def _declared(xml: str, name: str) -> dict[str, str]:
+    opening = re.match(r"<kf:Series ([^>]*)>", series_block(xml, name))[1]
+    return dict(re.findall(r'(\w+)="([^"]*)"', opening))
+
+
+def test_g17_refuses_the_retired_2017_base_and_only_the_unit_moved():
+    """The Board rebased the index to 2022 = 100 on 2026-11-24: 2017 = 100 is now a changed package."""
+    retired = G17_2017_BASE.read_text()
+    with pytest.raises(ValueError, match=r"G\.17 series IP\.B50001\.S units, identity or frequency changed"):
+        parse(frb.G17, retired)
+    # The current package with only the old unit put back fails the same way.
+    current = fixture(frb.G17)
+    block = series_block(current, "IP.B50001.S")
+    reverted = current.replace(block, block.replace('UNIT="Index:_2022_100"', 'UNIT="Index:_2017_100"', 1))
+    with pytest.raises(ValueError, match="units, identity or frequency changed"):
+        parse(frb.G17, reverted)
+    # Between the two published packages only the unit declaration moved, and
+    # every shared month was restated: a revision, not only a rescaling.
+    old, new = _declared(retired, "IP.B50001.S"), _declared(current, "IP.B50001.S")
+    assert set(old) == set(new) and {key for key in old if old[key] != new[key]} == {"UNIT"}
+    assert (old["UNIT"], new["UNIT"]) == ("Index:_2017_100", "Index:_2022_100")
+    assert new == {**frb.G17.series[0].attributes, "SERIES_NAME": "IP.B50001.S"}
+    def levels(xml: str) -> dict[str, Decimal]:
+        rows = re.findall(r'OBS_VALUE="([^"]+)" TIME_PERIOD="([^"]+)"', series_block(xml, "IP.B50001.S"))
+        return {day: Decimal(value) for value, day in rows}
+
+    before, after = levels(retired), levels(current)
+    shared = sorted(set(before) & set(after))
+    assert shared == ["2026-06-30", "2026-07-31", "2026-08-31", "2026-09-30"]
+    assert all(after[day] != before[day] for day in shared)
+    assert len({round(after[day] / before[day], 4) for day in shared}) > 1
+
+
+def test_g17_release_package_and_indpro_contract_pin_the_same_declarations():
+    """The atlas adapter and the INDPRO capture read one Board series and move together."""
+    from seiche.sources import fed_releases
+
+    spec = frb.G17.series[0]
+    contract = fed_releases.CONTRACTS[spec.fred_id]
+    assert spec.fred_id == "INDPRO" and contract["release"] == "g17"
+    assert contract["dimensions"] == {**spec.attributes, "SERIES_NAME": spec.series_name}
+    assert contract["dimensions"]["UNIT"] == "Index:_2022_100"
+
+
+@pytest.mark.parametrize("package", frb.PACKAGES, ids=lambda item: item.adapter_id)
+def test_release_package_pins_agree_with_the_original_publisher_contracts(package):
+    """A declaration change (such as a rebase) cannot reach one reader of a series and miss the other."""
+    from seiche.sources import fed_releases
+
+    release = package.source_url.split("/releases/", 1)[1].split("/", 1)[0]
+    contracts = [item for item in fed_releases.CONTRACTS.values() if item["release"] == release]
+    for spec in package.series:
+        matching = [item["dimensions"] for item in contracts
+                    if item["dimensions"]["SERIES_NAME"] == spec.series_name]
+        # Every served series has an original-publisher contract; the held
+        # H.15 commercial paper copy has none (fed_cp reads the CP release).
+        assert bool(matching) is (package.rights_hold is None), spec.series_name
+        for dimensions in matching:
+            assert {key: dimensions.get(key) for key in spec.attributes} == dict(spec.attributes)
 
 
 def test_prates_serves_ioer_beside_iorb_under_its_own_identity():
@@ -656,18 +722,66 @@ async def test_h10_currentness_follows_the_weekly_monday_posting(tmp_path, monke
 @pytest.mark.asyncio
 async def test_g17_publication_time_stays_unknown_and_routine_runs_read_400_days(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "g17.sqlite")
-    captured = datetime(2026, 11, 2, 18, tzinfo=UTC)
+    captured = datetime(2026, 11, 24, 18, tzinfo=UTC)  # after the 17:00 UTC republication
     batch = await collect(frb.G17, captured)
     assert [row.event_time.date().isoformat() for row in batch.observations] == [
-        "2026-06-30", "2026-07-31", "2026-08-31", "2026-09-30"]
+        "2026-06-30", "2026-07-31", "2026-08-31", "2026-09-30", "2026-10-31"]
     assert all(row.source_publication_time is None for row in batch.observations)
     assert all(row.knowledge_time == captured for row in batch.observations)
     atlas = build_global_money_market_atlas([default_registry().get("US-USD")],
                                             {"US-USD": batch.observations}, as_of=captured)
     metric = next(item for item in atlas["markets"][0]["metrics"] if item["id"] == "US.FED.G17_INDUSTRIAL_PRODUCTION")
-    assert metric["value"] == 103.9506 and metric["unit"] == "index_points"
+    assert metric["value"] == 102.2421 and metric["unit"] == "index_points"
     assert metric["status"] == "UNKNOWN" and metric["published_at"] is None
     assert metric["attribution"] == frb.G17.attribution
+    assert default_registry().get("US-USD").instrument_map[
+        "US.FED.G17_INDUSTRIAL_PRODUCTION"].source_unit == "index, 2022 = 100"
+    assert frb.G17.routine_window_days == 400
+
+
+@pytest.mark.asyncio
+async def test_g17_rebase_is_a_new_vintage_for_every_month_a_run_reads(tmp_path, monkeypatch):
+    """Rows stored under the 2017 pin are revised, never overwritten, and no as-of read mixes bases.
+
+    Only the months a run actually returns are restated: a routine run returns
+    its 400-day window, a backfill returns everything from the configured start.
+    """
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "g17-rebase.sqlite")
+    repository = SQLiteMarketRepository()
+    instrument = "US.FED.G17_INDUSTRIAL_PRODUCTION"
+    # 0.16.16 stored the last 2017 = 100 package under the 2017 pin.
+    spec = frb.G17.series[0]
+    pinned_2017 = replace(frb.G17, series=(replace(spec, attributes={**spec.attributes, "UNIT": "Index:_2017_100"}),))
+    packages = frb.PACKAGES
+    monkeypatch.setattr(frb, "PACKAGES", tuple(pinned_2017 if item is frb.G17 else item for item in packages))
+    first = datetime(2026, 11, 2, 18, tzinfo=UTC)
+    stored = await collect(frb.G17, first, G17_2017_BASE.read_text())
+    store.save_observations(stored.observations)
+    monkeypatch.setattr(frb, "PACKAGES", packages)
+    # This change reads the rebased package.
+    second = datetime(2026, 11, 24, 18, tzinfo=UTC)
+    rebased = await collect(frb.G17, second)
+    store.save_observations(rebased.observations)
+    by_day = {row.event_time.date().isoformat(): row for row in rebased.observations}
+    for day, old in ((row.event_time.date().isoformat(), row) for row in stored.observations):
+        new = by_day[day]
+        assert new.quality is QualityState.REVISED and new.knowledge_time == second
+        assert new.revision_id.endswith("@capture-20261124T180000Z") and new.evidence_hash != old.evidence_hash
+        assert new.value != old.value
+    assert by_day["2026-10-31"].quality is QualityState.ESTIMATED  # a new month, not a revision
+
+    def levels(knowledge_time):
+        rows = repository.load_observations_as_of("US-USD", knowledge_time, instrument_ids=(instrument,))
+        return [(row.event_time.date().isoformat(), str(row.value)) for row in rows]
+
+    # Each knowledge time sees one base: the 2017 vintage before, the 2022 vintage after.
+    assert levels(first) == [("2026-06-30", "102.9610"), ("2026-07-31", "103.2006"),
+                             ("2026-08-31", "103.2664"), ("2026-09-30", "103.9506")]
+    assert levels(second) == [("2026-06-30", "101.9827"), ("2026-07-31", "102.2082"),
+                              ("2026-08-31", "102.0644"), ("2026-09-30", "102.6785"),
+                              ("2026-10-31", "102.2421")]
+    revisions = repository.load_observation_revisions("US-USD", second, instrument_ids=(instrument,))
+    assert len(revisions) == 9  # four 2017 vintages kept beside five 2022 rows
 
 
 @pytest.mark.asyncio

@@ -436,10 +436,14 @@ G17 = ReleasePackage(
     dataset_id="IP_MAJOR_INDUSTRY_GROUPS",
     date_rule=DateRule.MONTH_END,
     series=(
+        # The Board's annual revision of 2026-11-24 rebased the index from
+        # 2017 = 100 ("Index:_2017_100") to 2022 = 100 and revised its
+        # history. A package that still declares the 2017 base is a changed
+        # package and fails closed, like any other changed declaration.
         SeriesSpec("IP.B50001.S", "US.FED.G17_INDUSTRIAL_PRODUCTION", {
             "CURRENCY": "NA", "FREQ": "129", "SA": "SA", "SERIES_CODE": "B50001",
-            "UNIT": "Index:_2017_100", "UNIT_MULT": "1",
-        }, "Industrial production: total index, seasonally adjusted, 2017=100", "INDPRO"),
+            "UNIT": "Index:_2022_100", "UNIT_MULT": "1",
+        }, "Industrial production: total index, seasonally adjusted, 2022=100", "INDPRO"),
     ),
     attribution=f"Source: {BOARD}, G.17 Industrial Production and Capacity Utilization",
     registry_record="frb_g17_release",
@@ -448,7 +452,8 @@ G17 = ReleasePackage(
     # Published "around the middle of the month" on a release calendar the
     # package does not carry, so publication time is unknown.
     publication_time_policy=PublicationTimePolicy.UNKNOWN,
-    # The 2026-11-02 package is 8.6 MB zipped, 87 MB of XML and 17 members.
+    # The 2026-11-02 and 2026-11-24 packages are 8.6 MB zipped, 87 MB of XML
+    # and 17 members.
     max_archive_bytes=32_000_000,
     max_xml_bytes=400_000_000,
     max_members=32,

@@ -53,7 +53,12 @@ Definition details that must remain explicit:
   `seiche/source_decisions.json`); without that record a CP capture decodes
   with redistribution status `owner_decision_required`. Exports name the DTCC
   derivation and never carry the underlying trade records.
-- G.17: monthly total industrial production, seasonally adjusted, 2017=100.
+- G.17: monthly total industrial production, seasonally adjusted, 2022=100.
+  The Board's annual revision of 2026-11-24 rebased it from 2017=100 and
+  revised its history; the contract pins `Index:_2022_100`, so a package that
+  still declares `Index:_2017_100` fails closed. A capture is the whole series,
+  so a refresh replaces every level at once, and a capture stored under the
+  2017 contract no longer decodes: it is withheld, never served as 2022=100.
   Publisher month-end reference labels become month-start labels for the existing
   registry contract. Repeated copies across release tables must be identical.
 - PRATES: IOER is discontinued history; IORB is a distinct series. Their dates

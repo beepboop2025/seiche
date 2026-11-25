@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Read G.17 industrial production in its new base. The Board's annual revision of 24 November 2026 rebased the total index (`IP.B50001.S`) from 2017 = 100 to 2022 = 100 and revised its history, so the release package now declares `UNIT` `Index:_2022_100`. Both readers of the series, the `fed_g17` Market Atlas adapter and the `INDPRO` original-publisher capture, failed closed on the first fetch after the republication, as designed, and the board showed a `fed_g17` `VALIDATION_ERROR` fault. Both now pin `Index:_2022_100`; a package that still declares the 2017 base is a changed package and fails closed like any other changed declaration. The US-USD instrument reads "index, 2022 = 100" and the G.17 legal notice names both bases. The series resumes once this ships. The `INDPRO` capture is the whole series, so a refresh replaces every level at once, and a capture stored under the 2017 contract is withheld rather than relabelled. Atlas routine runs restate only the months inside their 400-day window as new vintages; the older history is restated when `fed_g17` is backfilled. A test now holds every Board release package pin and its original-publisher contract to the same declarations (#476).
+
 ## 0.16.16: DONIA stale not blocking, MCP metadata by role, honest llms.txt, Market Atlas 1.0.1 (2026-11-24)
 
 - Show CBUAE DONIA as stale with a named reason, not as a source fault, while centralbank.ae refuses automated access (HTTP 403 or 429, including a Cloudflare challenge). The last good observation keeps its date; every other DONIA failure and every other source still fault (owner decision of 2 November). The System tab's source clock audit prints the reason under the source state (#472).
