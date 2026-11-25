@@ -345,7 +345,7 @@
       "SA": "SA",
       "SERIES_CODE": "B50001",
       "SERIES_NAME": "IP.B50001.S",
-      "UNIT": "Index:_2017_100",
+      "UNIT": "Index:_2022_100",
       "UNIT_MULT": "1"
     },
     "duplicate_series_policy": "identical_only",

@@ -4,6 +4,7 @@ import io
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pandas as pd
@@ -110,6 +111,44 @@ def test_month_end_normalization_and_identical_duplicate_datasets():
         capture("g17", conflict)
     with pytest.raises(ValueError, match="month-end"):
         capture("g17", lambda root: root[0][0].set("TIME_PERIOD", "2020-01-30"))
+
+
+FRB_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "frb"
+
+
+def g17_package(fixture_name):
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("G17_data.xml", (FRB_FIXTURES / fixture_name).read_text())
+    return out.getvalue()
+
+
+def test_g17_rebase_replaces_the_whole_indpro_capture_and_withholds_the_2017_one(isolated, monkeypatch):
+    """The Board rebased INDPRO from 2017 = 100 to 2022 = 100 on 2026-11-24."""
+    # A capture's contract shares the CONTRACTS dimensions dict; copy it so
+    # the simulated 2017 contract below cannot alias into this capture.
+    rebased = copy.deepcopy(fed.parse_capture("g17", g17_package("G17_data.xml"), "2026-11-24T18:00:00+00:00"))
+    assert rebased["series"]["INDPRO"]["points"] == [
+        ["2026-06-01", 101.9827], ["2026-07-01", 102.2082], ["2026-08-01", 102.0644],
+        ["2026-09-01", 102.6785], ["2026-10-01", 102.2421]]
+    # The last 2017 = 100 package is now a changed package.
+    with pytest.raises(ValueError, match="INDPRO: Fed publisher dimensions changed"):
+        fed.parse_capture("g17", g17_package("G17_data_2017_base.xml"), "2026-11-24T18:00:00+00:00")
+    # The capture 0.16.16 stored under the 2017 contract stops decoding once
+    # the contract moves: INDPRO is withheld, never served as 2022 = 100.
+    dimensions = fed.CONTRACTS["INDPRO"]["dimensions"]
+    monkeypatch.setitem(dimensions, "UNIT", "Index:_2017_100")
+    store.save_blob(fed._key("g17"), fed.parse_capture(
+        "g17", g17_package("G17_data_2017_base.xml"), "2026-11-02T18:00:00+00:00"))
+    assert fed.load_series("INDPRO").points.tolist() == [102.961, 103.2006, 103.2664, 103.9506]
+    monkeypatch.setitem(dimensions, "UNIT", "Index:_2022_100")
+    assert fed.load_series("INDPRO") is None
+    # A refresh replaces every level of the series in one atomic capture.
+    store.save_blob(fed._key("g17"), rebased)
+    served = fed.load_series("INDPRO")
+    assert served.points.tolist() == [101.9827, 102.2082, 102.0644, 102.6785, 102.2421]
+    assert served.provenance()["publisher_dimensions"]["UNIT"] == "Index:_2022_100"
+    assert served.fetched_at == "2026-11-24T18:00:00+00:00"
 
 
 @pytest.mark.parametrize("status", ["NA", "ND", "NC"])

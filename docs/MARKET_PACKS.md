@@ -401,7 +401,7 @@ rows per series are bounded, and the fetch takes no redirects.
 | `fed_h41` | H.4.1 | reserves and total assets (existing) plus the TGA and currency week averages and primary credit, liquidity swaps, foreign official reverse repos and repos, and custody holdings of Treasuries, Wednesday levels | `CENTRAL_BANK_BALANCE_SHEET_ITEM` for the seven added lines | Thursday 16:30, as before |
 | `fed_h15` | H.15 | constant maturities 3M, 2Y, 10Y, 30Y; bills 4W and 3M, discount basis | `SOVEREIGN_YIELD`; bills `TBILL_DISCOUNT_RATE` | next business day 16:15, polled every 3 hours |
 | `fed_h10` | H.10 | 22 bilateral noon buying rates in the release's own direction and the Broad, AFE and EME nominal dollar indexes | `EXCHANGE_RATE`, `CURRENCY_INDEX` | weekly Monday 16:15 posting, polled every 6 hours |
-| `fed_g17` | G.17 | `IP.B50001.S`, total industrial production, seasonally adjusted, 2017=100 | `INDUSTRIAL_PRODUCTION` | unknown (mid-month), polled daily, 400-day routine window |
+| `fed_g17` | G.17 | `IP.B50001.S`, total industrial production, seasonally adjusted, 2022=100 (2017=100 before 2026-11-24) | `INDUSTRIAL_PRODUCTION` | unknown (mid-month), polled daily, 400-day routine window |
 
 None of the new roles is read by a capability, an event, the universal kernel,
 the v1 composite, the Tell, ML or any engine, and no new mnemonic collides with
@@ -434,10 +434,16 @@ copy stays off and each rate has one source. Registry record
 
 Registry records: `frb_prates_release`, `frb_h41_release` (extended),
 `frb_h15_release`, `frb_h15_commercial_paper`, `frb_h10_release` and
-`frb_g17_release`. G.17's annual revision on 2026-11-24 rebases the index to
-2022, which changes the pinned `UNIT` and faults `fed_g17` closed by design
-until the pin is reviewed. After release, a one-off
-`seiche market-backfill --market US-USD` gives the new series history; IOER
+`frb_g17_release`. G.17's annual revision on 2026-11-24 rebased the index from
+2017 to 2022 and revised its history, which changed the pinned `UNIT` and
+faulted `fed_g17` closed by design. The pin now reads `Index:_2022_100`, and a
+package that still declares `Index:_2017_100` fails closed. A routine run
+validates the whole package but stores only rows dated inside its 400-day
+window: it restates those months as new vintages and leaves every older month
+at its latest 2017-base vintage. Only a backfill, which reads from
+`SEICHE_CANONICAL_START`, restates the older history, and
+`seiche market-backfill --market US-USD` skips `fed_g17` while its completion
+marker (`US-USD--fed_g17.done` under `SEICHE_BACKFILL_STATE_DIR`) exists. IOER
 rows never fall in a routine window.
 
 ### US direct policy settings from the NY Fed (0.17.0 candidate, Stage 2b)
