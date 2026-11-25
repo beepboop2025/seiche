@@ -1,5 +1,48 @@
 # Publishing Seiche release surfaces
 
+## 0.16.17 G.17 2022 base successor
+
+The 25 November candidate reads G.17 industrial production in its new base
+(#476). The Board's annual revision of 24 November 2026 rebased the total
+index `IP.B50001.S` from 2017 = 100 to 2022 = 100 and revised its history; the
+`fed_g17` adapter and the `INDPRO` capture now pin `Index:_2022_100`, and a
+package that still declares the 2017 base fails closed. The package version is
+`0.16.17`. Version metadata is preparation only: require the exact signed
+runtime release (a new owner-signed Hetzner grant for this code), the normal
+full-suite and recovery gates, the immutable PyPI receipt and the registry
+receipt.
+
+The Market Atlas corpus catalog entry stays at version `1.0.1`, and no new
+corpus version tag is needed: the gate binds the entry, less its publication
+receipt, to the signed tag named by its version, `market-corpus-v1.0.1` on
+`4aecda69` is an ancestor of this release, and that part of the entry is
+unchanged. Preserve `market-corpus-v1.0.0` on `43fcb34a` and
+`market-corpus-v1.0.1` on `4aecda69`.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r56`, for this successor.
+Preserve r55 on `4aecda69`. Corpus observations, counts, hashes and rights are
+unchanged. Sign r56 only after the exact new runtime and corpus evidence pass
+their ordinary checks; declaration is not publication. Sign r56 on the same
+commit as `v0.16.17`: the publication gate admits a receipt tag only on the
+workflow commit, the signed release commit or its reviewed descendant, so r55
+on `4aecda69` cannot serve this release. The runtime source and the
+publication source are the same commit, so no source bridge is used. Run a
+FULL publication from this source before any static-only publication.
+
+#476 changes the pins the two G.17 readers check; it rewrites no stored row. A
+routine `fed_g17` run restates only the months inside its 400-day window as
+new vintages; an older stored month keeps its 2017-base vintage until a
+backfill re-reads `fed_g17`, and `seiche market-backfill --market US-USD`
+skips `fed_g17` while `US-USD--fed_g17.done` exists (see
+`docs/MARKET_PACKS.md`). Before release, check that every stored `fed_g17`
+month falls inside the first routine run's window, or plan that backfill. Not
+in this release: #475, #473, #464, #462 and #453.
+
+`ops/release/tests/test_native_migration_publication.py` pins the release
+metadata commit, the last `backend/seiche` change on this branch. Any later
+`backend/seiche` change, and any rewrite of the pinned commit, moves it again.
+
 ## 0.16.16 DONIA, MCP metadata and Market Atlas catalog successor
 
 The 24 November candidate shows CBUAE DONIA as stale, not as a fault, while

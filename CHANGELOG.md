@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.16.17: G.17 industrial production in its 2022 base (2026-11-25)
 
 - Read G.17 industrial production in its new base. The Board's annual revision of 24 November 2026 rebased the total index (`IP.B50001.S`) from 2017 = 100 to 2022 = 100 and revised its history, so the release package now declares `UNIT` `Index:_2022_100`. Both readers of the series, the `fed_g17` Market Atlas adapter and the `INDPRO` original-publisher capture, failed closed on the first fetch after the republication, as designed, and the board showed a `fed_g17` `VALIDATION_ERROR` fault. Both now pin `Index:_2022_100`; a package that still declares the 2017 base is a changed package and fails closed like any other changed declaration. The US-USD instrument reads "index, 2022 = 100" and the G.17 legal notice names both bases. The series resumes once this ships. The `INDPRO` capture is the whole series, so a refresh replaces every level at once, and a capture stored under the 2017 contract is withheld rather than relabelled. Atlas routine runs restate only the months inside their 400-day window as new vintages; the older history is restated when `fed_g17` is backfilled. A test now holds every Board release package pin and its original-publisher contract to the same declarations (#476).
+- The catalog declares the corpus receipt `market-corpus-receipt-corpus-7cb1695c6affa707-r56` for this release; r55 stays on the 0.16.16 release commit. The Market Atlas corpus entry stays at 1.0.1 under its signed tag `market-corpus-v1.0.1`, and corpus observations, counts, hashes and rights are unchanged.
 
 ## 0.16.16: DONIA stale not blocking, MCP metadata by role, honest llms.txt, Market Atlas 1.0.1 (2026-11-24)
 
