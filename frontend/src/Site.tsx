@@ -4,6 +4,7 @@ import { ConnectedUpgrades, useSeicheVersion } from "./ProductHome";
 import "./product-home.css";
 import "./audience-experience.css";
 import { FundingNow } from "./desk/RatesDesk";
+import PublishedRecord from "./PublishedRecord";
 const Terminal=lazy(()=>import("./App"));
 const COLAB_OFR="https://colab.research.google.com/github/beepboop2025/seiche/blob/26e0e053570934d2b0fc779428872b953c2f75a7/notebooks/seiche_direct_ofr_research.ipynb";
 type Shipped={label:string;title:string;text:string;links:readonly {href:string;action:string}[]};
@@ -51,7 +52,7 @@ export default function Site(){
       </div>
       <p><a href="/questions/">All funding questions →</a> · <a href="/use-cases/money-market-research/">Money-market research guide</a></p>
       <p>Bring the same evidence into your workflow: <a href="https://agents.seiche.info/v1/source-data/?product=seiche">inspect dated funding histories</a> or <a href="https://beepboop2025.github.io/financial-evidence-skills/agents/low-latency.md">receive source-status updates</a>. Status updates describe source freshness and permissions; they are not live market quotes.</p>
-    </section><section className="rw-follow audience-contact" aria-labelledby="practitioner-review-title">
+    </section><PublishedRecord/><section className="rw-follow audience-contact" aria-labelledby="practitioner-review-title">
       <div className="rw-section-title"><h2 id="practitioner-review-title">Bring a funding question from your work</h2><p>For treasury, finance, risk and research teams.</p></div>
       <p>Share a recurring task, what makes it difficult and what a useful result would look like. We would welcome a 20-minute video call or an in-person discussion in Jaipur. General examples are enough; no confidential records are needed.</p>
       <p>If there is a fit, we can explore a small product evaluation and future collaboration.</p>
