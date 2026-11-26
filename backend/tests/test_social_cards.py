@@ -352,10 +352,15 @@ def test_build_emits_real_views_unique_editorial_cards_and_fail_closed_states(
         digest = hashlib.sha256(payload).hexdigest()[:16]
         assert f".{digest}.png" in image_url
 
-    assert (
-        "https://seiche.info/views/world-markets/forex/"
-        in (site / "sitemap.xml").read_text()
-    )
+    # Views serve link unfurlers. Each one says noindex, and none is listed.
+    sitemap = (site / "sitemap.xml").read_text()
+    assert "/views/" not in sitemap
+    assert "<loc>https://seiche.info/</loc>" in sitemap
+    views = sorted((site / "views").rglob("index.html"))
+    assert views
+    for view in views:
+        head = view.read_text().split("</head>", 1)[0]
+        assert head.count('<meta name="robots" content="noindex">') == 1, view
     forex_view = (site / "views" / "world-markets" / "forex" / "index.html").read_text()
     # The source-rights notice replaces the former live-pricing claim.
     assert ".. Status" not in forex_view

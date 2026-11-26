@@ -188,6 +188,57 @@ def snapshot_lastmod(public_dir: Path) -> str | None:
     return _iso_date(data.get("generated_at")) if isinstance(data, dict) else None
 
 
+# A page states its own indexing decision in a robots meta tag: the share-card
+# views always say noindex, and the referee says it while its inputs are
+# withheld. The sitemap follows that statement instead of a list kept here.
+_META_TAG = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_ROBOTS_NAME = re.compile(r"""\bname\s*=\s*["']?(?:robots|googlebot)["'\s>/]""", re.IGNORECASE)
+_META_CONTENT = re.compile(r"""\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
+_SITEMAP_URL = re.compile(r"[ \t]*<url>\s*<loc>([^<]+)</loc>.*?</url>[ \t]*\n?", re.DOTALL)
+
+
+def declares_noindex(page: Path) -> bool:
+    """True when a page's own robots meta tag keeps it out of search indexes."""
+    if not page.is_file():
+        return False
+    head = page.read_text(encoding="utf-8").split("</head>", 1)[0]
+    for tag in _META_TAG.findall(head):
+        content = _META_CONTENT.search(tag)
+        if _ROBOTS_NAME.search(tag) and content:
+            directives = {
+                part.strip().lower() for part in (content.group(1) or content.group(2) or "").split(",")
+            }
+            if directives & {"noindex", "none"}:
+                return True
+    return False
+
+
+def prune_unindexable(site_dir: Path) -> list[str]:
+    """Drop each sitemap URL whose built page declares noindex.
+
+    This runs over the finished site, after every page (the referee included)
+    is rendered, so a page that publishes real content again returns to the
+    sitemap by itself. Returns the dropped paths.
+    """
+    sitemap = site_dir / "sitemap.xml"
+    if not sitemap.is_file():
+        return []
+    dropped: list[str] = []
+
+    def keep(match: re.Match) -> str:
+        route = html.unescape(match.group(1)).removeprefix(SITE)
+        if route.startswith("/") and declares_noindex(_page_source(site_dir, route)):
+            dropped.append(route)
+            return ""
+        return match.group(0)
+
+    document = sitemap.read_text(encoding="utf-8")
+    pruned = _SITEMAP_URL.sub(keep, document)
+    if pruned != document:
+        sitemap.write_text(pruned, encoding="utf-8")
+    return dropped
+
+
 def dispatch_path(slug: str) -> str:
     """Return the public clean URL while keeping the on-disk .html artifact."""
     return f"/dispatches/{slug}"
@@ -1039,6 +1090,8 @@ def render_sitemap(
     snapshot_date = snapshot_lastmod(public)
     rows = []
     for path, freq, prio in BASE_URLS:
+        if declares_noindex(_page_source(public, path)):
+            continue
         if path in archive_dates:
             page_lastmod = archive_dates[path]
         elif path in SNAPSHOT_ROUTES:

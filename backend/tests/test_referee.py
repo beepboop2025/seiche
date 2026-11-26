@@ -193,6 +193,40 @@ def test_missing_block_renders_the_notice():
     assert "not available today" in page
 
 
+def test_withheld_referee_leaves_the_sitemap_and_returns_with_content(tmp_path):
+    """No list decides this: the rendered page's own state does."""
+    import xml.etree.ElementTree as ET
+
+    from seiche.dispatch_pages import prune_unindexable, render_sitemap
+
+    namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    for snapshot, listed in (({"deep": {}}, False), ({"deep": {"refereegli": _blk()}}, True)):
+        site = tmp_path / ("published" if listed else "withheld")
+        site.mkdir()
+        (site / "sitemap.xml").write_text(render_sitemap([], [], public_dir=site))
+        (site / "referee.html").write_text(referee.render_referee_html(snapshot))
+        prune_unindexable(site)
+        locs = {node.findtext("s:loc", namespaces=namespace)
+                for node in ET.fromstring((site / "sitemap.xml").read_text()).findall("s:url", namespace)}
+        assert ("https://seiche.info/referee" in locs) is listed
+        assert "https://seiche.info/" in locs
+
+
+def test_only_the_withheld_notice_asks_not_to_be_indexed(tmp_path):
+    """The notice declares noindex so the sitemap leaves it out; the analysis
+    does not, so the page returns to the sitemap once it is published."""
+    from seiche.dispatch_pages import declares_noindex
+
+    notice = referee.render_referee_html({"deep": {}})
+    analysis = referee.render_referee_html({"deep": {"refereegli": _blk()}})
+    assert notice.count('<meta name="robots" content="noindex">') == 1
+    assert "noindex" not in analysis
+    (tmp_path / "notice.html").write_text(notice)
+    (tmp_path / "analysis.html").write_text(analysis)
+    assert declares_noindex(tmp_path / "notice.html")
+    assert not declares_noindex(tmp_path / "analysis.html")
+
+
 def test_missing_historical_evidence_fails_closed_on_the_page():
     blk = _blk()
     del blk["historical_evidence"]

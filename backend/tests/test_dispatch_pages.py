@@ -235,6 +235,49 @@ def test_question_pages_keep_their_reviewed_catalog_date():
         route: catalog["reviewed_on"] for route in routes}
 
 
+def _page_with_head(path, head):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"<!doctype html><html><head>{head}</head><body>page</body></html>")
+
+
+def test_final_sitemap_pass_drops_every_page_that_declares_noindex(tmp_path):
+    from seiche.dispatch_pages import declares_noindex, prune_unindexable
+
+    site = tmp_path / "dist"
+    site.mkdir()
+    (site / "sitemap.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        "  <url>\n    <loc>https://seiche.info/</loc>\n    <lastmod>2026-11-26</lastmod>\n  </url>\n"
+        "  <url>\n    <loc>https://seiche.info/referee</loc>\n  </url>\n"
+        "  <url>\n    <loc>https://seiche.info/dispatches/2026-09-24-daily</loc>\n  </url>\n"
+        "  <url><loc>https://seiche.info/views/board/composite/</loc>"
+        "<changefreq>daily</changefreq></url>\n"
+        "</urlset>\n")
+    _page_with_head(site / "index.html", '<meta name="robots" content="index,follow">')
+    _page_with_head(site / "referee.html", '<meta name="robots" content="noindex">')
+    _page_with_head(site / "dispatches" / "2026-09-24-daily.html", "<title>letter</title>")
+    _page_with_head(site / "views" / "board" / "composite" / "index.html",
+                    "<meta content='NOINDEX, follow' name='googlebot'>")
+    # A noindex word in the body is not a robots tag.
+    (site / "dispatches" / "2026-09-24-daily.html").write_text(
+        "<html><head></head><body>meta name=robots content=noindex</body></html>")
+
+    assert prune_unindexable(site) == ["/referee", "/views/board/composite/"]
+    dates = _sitemap_dates((site / "sitemap.xml").read_text())
+    assert dates == {"/": "2026-11-26", "/dispatches/2026-09-24-daily": None}
+    assert prune_unindexable(site) == []
+    assert not declares_noindex(site / "missing.html")
+
+
+def test_sitemap_step_skips_a_static_page_that_declares_noindex(tmp_path):
+    public = tmp_path / "public"
+    _page_with_head(public / "guide.html", '<meta name="robots" content="noindex, nofollow">')
+    dates = _sitemap_dates(render_sitemap([], [], public_dir=public))
+    assert "/guide" not in dates
+    assert "/support" in dates
+
+
 def test_missing_markdown_fails_loud(repo):
     root, d = repo
     (root / "frontend" / "public" / "dispatches" / f"{d['slug']}.md").unlink()

@@ -34,11 +34,11 @@ import sys
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
 
-from seiche import public_rights
+from seiche import dispatch_pages, public_rights
 
 SITE = "https://seiche.info"
 WIDTH = 1200
@@ -914,6 +914,7 @@ def _view_page(spec: CardSpec, image_url: str, *, open_url: str) -> str:
 <title>{html.escape(spec.title)} · Seiche</title>
 <meta name="description" content="{html.escape(spec.description, quote=True)}">
 <link rel="canonical" href="{html.escape(spec.canonical_url, quote=True)}">
+<meta name="robots" content="noindex">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="theme-color" content="#05060c">
 {meta}
@@ -1523,26 +1524,6 @@ def _write_view(site_dir: Path, spec: CardSpec, image_url: str, open_url: str) -
     return destination
 
 
-def _append_sitemap(site_dir: Path, specs: Iterable[CardSpec]) -> None:
-    path = site_dir / "sitemap.xml"
-    if not path.exists():
-        return
-    document = path.read_text()
-    urls = sorted({spec.canonical_url for spec in specs})
-    additions = []
-    for url in urls:
-        if f"<loc>{html.escape(url)}</loc>" in document:
-            continue
-        additions.append(
-            f"  <url><loc>{html.escape(url)}</loc><changefreq>daily</changefreq><priority>0.7</priority></url>"
-        )
-    if additions and "</urlset>" in document:
-        document = document.replace(
-            "</urlset>", "\n".join(additions) + "\n</urlset>", 1
-        )
-        path.write_text(document)
-
-
 def _open_url(spec: CardSpec) -> str:
     if spec.kind == "board":
         return f"{SITE}/#board"
@@ -1729,7 +1710,10 @@ def build(site_dir: Path) -> dict[str, Any]:
             {**asdict(spec), "image": image_url, "sha256_prefix": digest}
         )
 
-    _append_sitemap(site_dir, view_specs)
+    # Views exist for link unfurlers: each page says noindex and none is
+    # listed. This last pass over the finished site also leaves out any other
+    # page that declares noindex, such as a withheld referee notice.
+    dispatch_pages.prune_unindexable(site_dir)
     manifest = {
         "schema": "seiche.social-cards.v1",
         "generated_at": snapshot.get("generated_at"),

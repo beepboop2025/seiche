@@ -213,10 +213,14 @@ def _dark_page(reason: str) -> str:
         "computed; when the inputs are dark this notice is the whole "
         "content, by design.</p>"
     )
-    return _shell("The Referee", body)
+    # A notice is not the analysis: it asks search engines not to index it,
+    # and the sitemap leaves out any page that says so. Real content drops
+    # the tag, so the page returns to the sitemap on its own.
+    return _shell("The Referee", body, indexable=False)
 
 
-def _shell(title: str, body: str) -> str:
+def _shell(title: str, body: str, *, indexable: bool = True) -> str:
+    robots = "" if indexable else '\n<meta name="robots" content="noindex">'
     return f"""<!doctype html>
 {family_shell.HTML_OPEN}
 <head>
@@ -226,7 +230,7 @@ def _shell(title: str, body: str) -> str:
 <meta name="description" content="The global liquidity category's headline
 claims, tested on the publicly reconstructible layer, with bootstrap
 intervals, walk forward tests and both causal directions published.">
-<link rel="canonical" href="{REFEREE_URL}">
+<link rel="canonical" href="{REFEREE_URL}">{robots}
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="Seiche">
