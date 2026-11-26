@@ -255,6 +255,30 @@ class PublicCatalogContracts(unittest.TestCase):
         self.assertIn("Content-Type: application/ld+json; charset=utf-8", dcat_headers)
         self.assertIn("Access-Control-Allow-Origin: *", dcat_headers)
 
+    def test_landing_page_dates_repeat_the_catalog_record(self) -> None:
+        """The page's JSON-LD dates and its footer dates repeat the catalog
+        record it publishes, so none can drift on its own. The sitemap reads
+        the JSON-LD date (property test in test_dispatch_pages.py)."""
+        canonical = f"{WEBSITE}/datasets/direct-ofr/"
+        record = {item["@id"]: item for item in self.dcat["@graph"]}[f"{canonical}#catalog"]
+        issued = record["dct:issued"]["@value"]
+        modified = record["dct:modified"]["@value"]
+        landing = _read("frontend/public/datasets/direct-ofr/index.html")
+        pages = [
+            json.loads(block)
+            for block in re.findall(
+                r'<script type="application/ld\+json">(.*?)</script>', landing, re.S
+            )
+        ]
+        webpage = next(page for page in pages if page.get("@type") == "WebPage")
+        self.assertEqual(webpage["datePublished"], issued)
+        self.assertEqual(webpage["dateModified"], modified)
+        footer = landing.split("<footer>", 1)[1].split("</footer>", 1)[0]
+        self.assertEqual(
+            re.findall(r'<time datetime="([^"]+)">', footer), [issued, modified]
+        )
+        self.assertNotIn(".html", footer.split('<p class="company-line">', 1)[0])
+
     def test_directory_evidence_and_release_order_are_explicit(self) -> None:
         clients = _read("integrations/mcp-clients/README.md")
         self.assertIn("Rechecked on 11 October 2026", clients)
