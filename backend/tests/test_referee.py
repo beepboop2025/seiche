@@ -206,10 +206,11 @@ def test_withheld_referee_leaves_the_sitemap_and_returns_with_content(tmp_path):
         (site / "sitemap.xml").write_text(render_sitemap([], [], public_dir=site))
         (site / "referee.html").write_text(referee.render_referee_html(snapshot))
         prune_unindexable(site)
-        locs = {node.findtext("s:loc", namespaces=namespace)
-                for node in ET.fromstring((site / "sitemap.xml").read_text()).findall("s:url", namespace)}
-        assert ("https://seiche.info/referee" in locs) is listed
-        assert "https://seiche.info/" in locs
+        # Compare routes, not URL substrings: the sitemap lists absolute URLs.
+        routes = {node.findtext("s:loc", namespaces=namespace).removeprefix(referee.SITE)
+                  for node in ET.fromstring((site / "sitemap.xml").read_text()).findall("s:url", namespace)}
+        assert ("/referee" in routes) is listed
+        assert "/" in routes
 
 
 def test_only_the_withheld_notice_asks_not_to_be_indexed(tmp_path):
