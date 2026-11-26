@@ -26,6 +26,7 @@ everything else) is rendered into the page so the full letter is crawlable.
 
 from __future__ import annotations
 
+import datetime as dt
 import html
 import json
 import re
@@ -98,24 +99,93 @@ BASE_URLS = [
     ("/terms", "yearly", "0.2"),
 ]
 
-# Editorial market pages have their own reviewed publication clocks. Keep
-# those dates stable when the sitemap is rebuilt after a newer daily dispatch.
-BASE_LASTMODS = {
-    "/questions/": "2026-10-06",
-    "/questions/sofr-iorb-spread/": "2026-10-06",
-    "/questions/why-sofr-above-iorb/": "2026-10-06",
-    "/questions/are-bank-reserves-scarce/": "2026-10-06",
-    "/gift-city/": "2026-10-02",
-    "/use-cases/money-market-research/": "2026-08-24",
-    "/use-cases/capital-market-transmission/": "2026-08-24",
-    "/use-cases/china-economy-evidence/": "2026-08-24",
-    "/markets/": "2026-08-22",
-    "/markets/forex/": "2026-08-21",
-    "/markets/capital-markets/": "2026-08-21",
-    "/markets/china-macro/": "2026-08-22",
-    "/money-markets/": "2026-08-21",
-    "/datasets/direct-ofr/": "2026-08-22",
-}
+# A sitemap <lastmod> is never typed here. Each one repeats a date an artifact
+# already states for that page's content:
+#   - a dated letter or article: its index row;
+#   - an archive page: the newest row of its own archive;
+#   - a page rendered from the sealed snapshot: the snapshot's generated_at,
+#     which the homepage publishes as og:updated_time and the ampleness page
+#     prints as its board snapshot date;
+#   - any other base page: the dateModified (else datePublished) that its own
+#     JSON-LD declares under frontend/public.
+# A page with no such artifact gets no <lastmod>. An absent date is honest; a
+# borrowed or hand-copied one drifts, and crawlers then distrust every date.
+SNAPSHOT_ROUTES = ("/", "/ampleness")
+_JSONLD = re.compile(
+    r"<script[^>]*type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _iso_date(value: object) -> str | None:
+    """The calendar date of an ISO 8601 date or date-time string, else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return dt.date.fromisoformat(value.strip()[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def _newest_row_date(rows: list[dict]) -> str | None:
+    """The newest valid date among an archive's index rows."""
+    return max(filter(None, (_iso_date(row.get("date")) for row in rows)), default=None)
+
+
+def _page_source(public_dir: Path, route: str) -> Path:
+    """The file behind a clean URL: /x/ is x/index.html and /x is x.html."""
+    relative = route.strip("/")
+    if route.endswith("/"):
+        return public_dir / relative / "index.html"
+    return public_dir / f"{relative}.html"
+
+
+def declared_lastmod(public_dir: Path, route: str) -> str | None:
+    """The newest modification date a static page declares about itself.
+
+    Only top-level JSON-LD entities count (the document itself, or each item
+    of its @graph), so a hub that describes other pages never takes a child's
+    date. dateModified wins over datePublished. A missing page, an unparsable
+    block or an invalid date states nothing.
+    """
+    page = _page_source(public_dir, route)
+    if not page.is_file():
+        return None
+    modified: list[str] = []
+    published: list[str] = []
+    for block in _JSONLD.findall(page.read_text(encoding="utf-8")):
+        try:
+            document = json.loads(block)
+        except ValueError:
+            continue
+        entities: list[dict] = []
+        for node in document if isinstance(document, list) else [document]:
+            if isinstance(node, dict):
+                entities.append(node)
+                graph = node.get("@graph")
+                if isinstance(graph, list):
+                    entities.extend(item for item in graph if isinstance(item, dict))
+        for entity in entities:
+            for key, found in (("dateModified", modified), ("datePublished", published)):
+                date = _iso_date(entity.get(key))
+                if date:
+                    found.append(date)
+    dates = modified or published
+    return max(dates) if dates else None
+
+
+def snapshot_lastmod(public_dir: Path) -> str | None:
+    """The date of the sealed snapshot that the board pages are rendered from.
+
+    export_public.py writes data/overview.json before this step, and prerender
+    stamps the same generated_at on the homepage. A render without a snapshot
+    (local or test) dates nothing; a corrupt snapshot fails loud.
+    """
+    snapshot = public_dir / "data" / "overview.json"
+    if not snapshot.is_file():
+        return None
+    data = json.loads(snapshot.read_text(encoding="utf-8"))
+    return _iso_date(data.get("generated_at")) if isinstance(data, dict) else None
 
 
 def dispatch_path(slug: str) -> str:
@@ -952,18 +1022,29 @@ def render_llms_full(
     return "\n".join(parts) + "\n"
 
 
-def render_sitemap(entries: list[dict], articles: list[dict] | None = None) -> str:
+def render_sitemap(
+    entries: list[dict],
+    articles: list[dict] | None = None,
+    *,
+    public_dir: Path | None = None,
+) -> str:
     articles = articles or []
-    newest = max(
-        [str(e.get("date") or "") for e in entries]
-        + [str(row.get("date") or "") for row in articles],
-        default="",
-    )
+    public = public_dir if public_dir is not None else REPO_ROOT / "frontend" / "public"
+    # Each archive page changes when its own archive gains a row, never when
+    # the other one does; no other page borrows a letter or article date.
+    archive_dates = {
+        "/dispatches/": _newest_row_date(entries),
+        "/articles/": _newest_row_date(articles),
+    }
+    snapshot_date = snapshot_lastmod(public)
     rows = []
     for path, freq, prio in BASE_URLS:
-        page_lastmod = BASE_LASTMODS.get(path)
-        if page_lastmod is None and newest and freq == "daily":
-            page_lastmod = newest
+        if path in archive_dates:
+            page_lastmod = archive_dates[path]
+        elif path in SNAPSHOT_ROUTES:
+            page_lastmod = snapshot_date
+        else:
+            page_lastmod = declared_lastmod(public, path)
         lastmod = f"\n    <lastmod>{page_lastmod}</lastmod>" if page_lastmod else ""
         rows.append(
             f"  <url>\n    <loc>{SITE}{path}</loc>{lastmod}\n"
@@ -1136,7 +1217,7 @@ def build_all(repo_root: Path | None = None) -> list[str]:
 
     public = root / "frontend" / "public"
     for name, content in (
-        ("sitemap.xml", render_sitemap(entries, articles)),
+        ("sitemap.xml", render_sitemap(entries, articles, public_dir=public)),
         ("llms.txt", render_llms_txt(entries, articles)),
         ("llms-full.txt", render_llms_full(entries, texts, articles, article_texts)),
     ):
