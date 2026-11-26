@@ -1,13 +1,22 @@
 import { useEffect, useState } from "react";
-import { latestArticles, latestInvestigations, latestLetters, type RecordLink } from "./recordLinks";
+import { latestArticles, latestInvestigations, latestLetters, latestWeekly, type RecordLink } from "./recordLinks";
 
-type PublishedLinks = { articles: RecordLink[]; letters: RecordLink[]; investigations: RecordLink[] };
+type PublishedLinks = { articles: RecordLink[]; letters: RecordLink[]; investigations: RecordLink[]; weekly: RecordLink[] };
 
 const ARCHIVES = [
   { key: "articles", title: "Articles", href: "/articles/", index: "/articles/index.json", read: latestArticles },
   { key: "letters", title: "Dated letters", href: "/dispatches/", index: "/dispatches/index.json", read: latestLetters },
   { key: "investigations", title: "Investigations", href: "/investigations/", index: "/investigations/index.json", read: latestInvestigations },
+  { key: "weekly", title: "Seiche weekly note", href: "/weekly/", index: "/weekly/index.json", read: latestWeekly, optional: true },
 ] as const;
+
+/**
+ * The signed release that sets seiche.weekly_note.ENABLED sets this too. Until then
+ * /weekly/ does not exist, so the homepage neither requests nor lists it; after it,
+ * the weekly column appears once the archive holds a note.
+ */
+export const WEEKLY_LISTED = false;
+const LISTED = ARCHIVES.filter((archive) => !("optional" in archive) || WEEKLY_LISTED);
 
 async function readIndex(path: string, signal: AbortSignal): Promise<unknown> {
   try {
@@ -28,8 +37,12 @@ export default function PublishedRecord() {
   useEffect(() => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 15000);
-    Promise.all(ARCHIVES.map(async (archive) => [archive.key, archive.read(await readIndex(archive.index, controller.signal))] as const))
-      .then((entries) => setRecord(Object.fromEntries(entries) as PublishedLinks))
+    Promise.all(LISTED.map(async (archive) => [archive.key, archive.read(await readIndex(archive.index, controller.signal))] as const))
+      .then((entries) => {
+        const links: PublishedLinks = { articles: [], letters: [], investigations: [], weekly: [] };
+        for (const [key, rows] of entries) links[key] = rows;
+        setRecord(links);
+      })
       .finally(() => window.clearTimeout(timeout));
     return () => {
       window.clearTimeout(timeout);
@@ -39,7 +52,7 @@ export default function PublishedRecord() {
   return <section className="rw-follow audience-record" aria-labelledby="published-record-title" aria-busy={record === null}>
     <div className="rw-section-title"><h2 id="published-record-title">The published record</h2><p>Articles, dated letters and investigations, each kept with the date it was published.</p></div>
     <div className="rw-follow-grid">
-      {ARCHIVES.map((archive) => <article key={archive.key}>
+      {LISTED.filter((archive) => !("optional" in archive) || (record?.[archive.key].length ?? 0) > 0).map((archive) => <article key={archive.key}>
         <h3><a href={archive.href}>{archive.title}</a></h3>
         {record && record[archive.key].length > 0 && <ul>{record[archive.key].map((item) => <li key={item.href}><a href={item.href}>{item.title}</a> <time dateTime={item.date}>{item.date}</time></li>)}</ul>}
       </article>)}

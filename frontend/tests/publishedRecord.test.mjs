@@ -10,10 +10,10 @@ import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const transpile = async (path, context, jsx = false) => {
+const transpile = async (path, context, jsx = false, patch = (source) => source) => {
   const compilerOptions = { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 };
   if (jsx) compilerOptions.jsx = ts.JsxEmit.ReactJSX;
-  vm.runInNewContext(ts.transpileModule(await read(path), { compilerOptions }).outputText, context);
+  vm.runInNewContext(ts.transpileModule(patch(await read(path)), { compilerOptions }).outputText, context);
   return context.exports;
 };
 const record = await transpile("../src/recordLinks.ts", { exports: {} });
@@ -59,7 +59,7 @@ test("rows that do not validate are left out, and unreadable indexes yield nothi
   assert.deepEqual(plain(record.latestInvestigations({ articles: [{ slug: "draft", headline: "Draft", published_at: "2026-08-01T00:00:00Z", publication_status: "DRAFT" }] })), []);
 });
 
-async function renderRecord(fetchIndex) {
+async function renderRecord(fetchIndex, patch) {
   const state = [];
   const effects = [];
   let cursor = 0;
@@ -83,7 +83,7 @@ async function renderRecord(fetchIndex) {
       if (name === "./recordLinks") return record;
       throw new Error("Unexpected PublishedRecord dependency: " + name);
     },
-  }, true);
+  }, true, patch);
   const render = () => { cursor = 0; return renderToStaticMarkup(React.createElement(component.default)); };
   render();
   effects.splice(0).forEach((effect) => effect());
@@ -127,4 +127,23 @@ test("the homepage entry renders the record section outside any noscript block",
   const entry = site.slice(site.indexOf("{entry && <>"), site.indexOf("</>}<Suspense"));
   assert.ok(entry.includes("<PublishedRecord/>"), "rendered on the homepage entry only");
   assert.doesNotMatch(site, /<noscript/i);
+});
+
+test("the weekly column stays off until the release that enables the weekly note", async () => {
+  const weekly = [{ slug: "2026-11-30", date: "2026-11-30", headline: "SOFR up 4 basis points to 3.94% in the week to 2026-11-27" }];
+  assert.deepEqual(plain(record.latestWeekly(weekly)), [
+    { href: "/weekly/2026-11-30/", title: weekly[0].headline, date: "2026-11-30" },
+  ]);
+  const serve = (indexes) => async (url) => ({ ok: url in indexes, headers: { get: () => "application/json" }, json: async () => indexes[url] });
+  // Shipped off: nothing requests or lists /weekly/.
+  const off = await renderRecord(serve({ ...archives, "/weekly/index.json": weekly }));
+  assert.ok(!off.requests.some((request) => request.url === "/weekly/index.json"));
+  assert.ok(!hrefs(off.html).includes("/weekly/"));
+  // Turned on: the column appears only when the archive holds a note.
+  const on = (source) => source.replace("export const WEEKLY_LISTED = false;", "export const WEEKLY_LISTED = true;");
+  const listed = await renderRecord(serve({ ...archives, "/weekly/index.json": weekly }), on);
+  assert.ok(hrefs(listed.html).includes("/weekly/") && hrefs(listed.html).includes("/weekly/2026-11-30/"));
+  const empty = await renderRecord(serve({ ...archives }), on);
+  assert.ok(empty.requests.some((request) => request.url === "/weekly/index.json"));
+  assert.ok(!hrefs(empty.html).includes("/weekly/"));
 });

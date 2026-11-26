@@ -38,6 +38,10 @@ export const latestArticles = (index: unknown, limit = 3) =>
 export const latestLetters = (index: unknown, limit = 3) =>
   newest(rowsOf(index), "date", "title", (slug) => `/dispatches/${slug}`, limit);
 
+/** Seiche weekly notes: /weekly/{issue Monday}/, rows shaped like the article index. */
+export const latestWeekly = (index: unknown, limit = 3) =>
+  newest(rowsOf(index), "date", "headline", (slug) => `/weekly/${slug}/`, limit);
+
 /** Only investigations the index marks as published. */
 export const latestInvestigations = (index: unknown, limit = 3) => {
   const articles = index && typeof index === "object" ? (index as { articles?: unknown }).articles : undefined;
