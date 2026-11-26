@@ -324,6 +324,37 @@ def test_clean_public_urls_match_cloudflare_redirect_targets():
         )
 
 
+def test_internal_links_point_at_final_urls_not_html_redirects():
+    """Cloudflare Pages answers /x.html with a 308 to /x, so an internal link
+    to a .html page costs a crawler an extra fetch. Committed pages and
+    frontend source link the final URL. The one known exception is the
+    connected-upgrades block that liquilens-site generates into ProductHome.tsx
+    (scripts/build_upgrade_surfaces.py from updates/capabilities.json); it is
+    fixed at that source, never by hand here."""
+    import subprocess
+
+    internal_html = re.compile(
+        r"""href=["'{](?:https://seiche\.info)?(/[^"'#?\s{}]*\.html)(?=["'#?])""")
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z", "--", "frontend/index.html",
+             "frontend/public", "frontend/src"],
+            capture_output=True, check=True, timeout=30,
+        ).stdout.decode("utf-8")
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("git cannot list the committed pages in this install")
+    found = []
+    for name in filter(None, listed.split("\0")):
+        if Path(name).suffix not in {".html", ".tsx", ".ts", ".js"}:
+            continue
+        text = (ROOT / name).read_text(encoding="utf-8")
+        if name == "frontend/src/ProductHome.tsx":
+            start, end = "CONNECTED-UPGRADES:START", "CONNECTED-UPGRADES:END"
+            text = text.split(start, 1)[0] + text.split(end, 1)[-1]
+        found += [f"{name}: {path}" for path in internal_html.findall(text)]
+    assert found == []
+
+
 def test_terminal_navigation_exposes_the_selection_surface():
     app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
     site = (ROOT / "frontend" / "src" / "Site.tsx").read_text()
