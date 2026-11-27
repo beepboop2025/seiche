@@ -279,6 +279,8 @@ async def test_worker_retries_total_failure_before_ready(monkeypatch, caplog) ->
             await heartbeat_started.wait()
             raise _StopWorker
 
+    from seiche import sdl_publication
+    monkeypatch.setattr(sdl_publication, "update", lambda: events.append("state-auctions"))
     monkeypatch.setattr(ingest_runtime, "collect_legacy_once", collect_once)
     monkeypatch.setattr(ingest_runtime, "_write_worker_heartbeat", write_heartbeat)
     monkeypatch.setattr(ingest_runtime, "_heartbeat_loop", parked_heartbeat)
@@ -291,6 +293,7 @@ async def test_worker_retries_total_failure_before_ready(monkeypatch, caplog) ->
             repository=object(),
         )
 
+    assert events.count("state-auctions") == 1
     assert events.count("READY=1") == 1
     assert events.index("collect-2") < events.index("durable-heartbeat")
     assert events.index("durable-heartbeat") < events.index("READY=1")

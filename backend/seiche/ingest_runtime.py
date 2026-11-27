@@ -9,6 +9,7 @@ board assembler merely to load the CLI.
 from __future__ import annotations
 
 import asyncio
+import httpx
 import logging
 import os
 import re
@@ -335,6 +336,7 @@ async def run_legacy_worker(
             DEFAULT_HEARTBEAT_GRACE_SECONDS,
         ),
     )
+    next_sdl_check = 0.0
     ready = False
     heartbeat_enabled = asyncio.Event()
     heartbeat_write_lock = asyncio.Lock()
@@ -385,6 +387,15 @@ async def run_legacy_worker(
                         )
                         heartbeat_enabled.set()
                 _notify_fixed_status(summary["status"])
+                loop = asyncio.get_running_loop()
+                if loop.time() >= next_sdl_check:
+                    from seiche import sdl_publication
+                    try:
+                        await asyncio.to_thread(sdl_publication.update)
+                        next_sdl_check = loop.time() + 6 * 3600
+                    except (OSError, ValueError, RuntimeError, httpx.HTTPError) as error:
+                        LOGGER.warning("RBI state auction refresh failed (%s)", type(error).__name__)
+                        next_sdl_check = loop.time() + 1800
             except Exception as exc:  # noqa: BLE001 - retry the next full sweep
                 if ready:
                     heartbeat_enabled.clear()
