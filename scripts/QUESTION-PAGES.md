@@ -13,7 +13,9 @@ closed. The BTC reader reuses the existing exact-rung and depth/conversion guard
 
 When the product definition, method, coverage or evidence contract changes,
 review the relevant question copy, set its catalog `reviewed_on` to the genuine
-editorial date, render, and update the corresponding sitemap-generator dates.
+editorial date and render. Every rendered page, the index included, declares that
+date as its JSON-LD `dateModified`, and the sitemap generator reads it from there:
+there is no second copy of the date to update.
 Do not advance these dates just because a daily board, dispatch or regime changes.
 The canonical URL stays fixed. Dated letters and current boards remain indexable.
 

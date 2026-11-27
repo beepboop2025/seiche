@@ -93,8 +93,189 @@ def test_sitemap_has_base_pages_and_letters(repo):
     namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
     gift = next(node for node in ElementTree.fromstring(sm).findall("s:url", namespace)
                 if node.findtext("s:loc", namespaces=namespace) == "https://seiche.info/gift-city/")
-    assert gift.findtext("s:lastmod", namespaces=namespace) == "2026-10-02"
+    # Nothing in this tree dates the GIFT City page, so the sitemap states no
+    # date for it rather than borrowing the letter's.
+    assert gift.findtext("s:lastmod", namespaces=namespace) is None
     assert gift.findtext("s:changefreq", namespaces=namespace) == "monthly"
+
+
+SITEMAP_NS = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+
+
+def _sitemap_dates(sitemap: str) -> dict:
+    from xml.etree import ElementTree
+    return {
+        node.findtext("s:loc", namespaces=SITEMAP_NS).removeprefix("https://seiche.info"):
+            node.findtext("s:lastmod", namespaces=SITEMAP_NS)
+        for node in ElementTree.fromstring(sitemap).findall("s:url", SITEMAP_NS)
+    }
+
+
+def _jsonld_page(path, *entities):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    blocks = "".join(
+        f'<script type="application/ld+json">{entity}</script>' for entity in entities)
+    path.write_text(f"<!doctype html><html><head>{blocks}</head><body>page</body></html>")
+
+
+def test_sitemap_dates_come_from_each_page_artifact(tmp_path):
+    """Every base-page date is one an artifact states: the snapshot for the
+    board pages, the page's own JSON-LD for static pages, each archive's own
+    newest row. No page borrows the newest letter's date."""
+    public = tmp_path / "public"
+    (public / "data").mkdir(parents=True)
+    (public / "data" / "overview.json").write_text(
+        json.dumps({"generated_at": "2026-11-26T15:17:02+00:00"}))
+    _jsonld_page(
+        public / "use-cases" / "money-market-research" / "index.html",
+        json.dumps({"@context": "https://schema.org", "@graph": [
+            {"@type": "Organization", "name": "Seiche"},
+            {"@type": "WebPage", "datePublished": "2026-08-24", "dateModified": "2026-09-05"},
+        ]}),
+    )
+    # datePublished stands in when a page declares no modification date.
+    _jsonld_page(public / "use-cases.html",
+                 json.dumps({"@type": "WebPage", "datePublished": "2026-11-19"}))
+    # A date-time keeps the calendar date the page itself states.
+    _jsonld_page(
+        public / "investigations" / "the-282-billion-settlement-test" / "index.html",
+        json.dumps({"@type": "AnalysisNewsArticle",
+                    "datePublished": "2026-08-12T16:04:29+05:30",
+                    "dateModified": "2026-08-14T00:58:39+05:30"}),
+    )
+    # A hub never takes a date from an entity nested inside its own.
+    _jsonld_page(public / "markets" / "index.html", json.dumps({
+        "@type": "DataCatalog", "dateModified": "2026-08-22",
+        "dataset": [{"@type": "Dataset", "dateModified": "2026-11-01"}]}))
+    # Unparsable structured data and invalid dates state nothing.
+    _jsonld_page(public / "guide.html", "{not json")
+    _jsonld_page(public / "gift-city" / "index.html",
+                 json.dumps({"@type": "WebPage", "dateModified": "soon"}))
+    entries = [{"slug": "2026-09-24-daily", "date": "2026-09-24"},
+               {"slug": "2026-09-15-daily", "date": "2026-09-15"}]
+    articles = [{"slug": "2026-09-13-article", "date": "2026-09-13"}]
+
+    dates = _sitemap_dates(render_sitemap(entries, articles, public_dir=public))
+
+    assert dates["/"] == "2026-11-26"
+    assert dates["/ampleness"] == "2026-11-26"
+    assert dates["/use-cases/money-market-research/"] == "2026-09-05"
+    assert dates["/use-cases"] == "2026-11-19"
+    assert dates["/investigations/the-282-billion-settlement-test/"] == "2026-08-14"
+    assert dates["/markets/"] == "2026-08-22"
+    assert dates["/guide"] is None
+    assert dates["/gift-city/"] is None
+    assert dates["/dispatches/"] == "2026-09-24"
+    assert dates["/articles/"] == "2026-09-13"
+    # Pages rendered later in the pipeline that declare nothing get no date.
+    assert dates["/referee"] is None and dates["/methodology"] is None
+    assert dates["/dispatches/2026-09-24-daily"] == "2026-09-24"
+
+
+def test_board_pages_never_borrow_the_newest_letter_date(repo):
+    """Without a sealed snapshot the homepage and the ampleness page carry no
+    date: the archive's last letter says nothing about the live board."""
+    root, d = repo
+    build_all(repo_root=root)
+    dates = _sitemap_dates((root / "frontend" / "public" / "sitemap.xml").read_text())
+    assert dates["/dispatches/"] == d["date"]
+    assert dates["/"] is None
+    assert dates["/ampleness"] is None
+    assert dates["/referee"] is None
+
+
+def test_corrupt_snapshot_fails_loud(tmp_path):
+    public = tmp_path / "public"
+    (public / "data").mkdir(parents=True)
+    (public / "data" / "overview.json").write_text("{truncated")
+    with pytest.raises(ValueError):
+        render_sitemap([], [], public_dir=public)
+
+
+def test_committed_pages_and_rendered_sitemap_state_the_same_dates():
+    """Property over every committed base page: the rendered sitemap repeats
+    the newest dateModified (else datePublished) the page declares, or states
+    no date when the page declares none. Read with a plain regex here, not
+    the generator's parser, so the two must agree independently."""
+    import re
+    from seiche.dispatch_pages import BASE_URLS, REPO_ROOT, SNAPSHOT_ROUTES
+
+    public = REPO_ROOT / "frontend" / "public"
+    dates = _sitemap_dates(render_sitemap([], [], public_dir=public))
+    checked = 0
+    for route, _freq, _prio in BASE_URLS:
+        if route in SNAPSHOT_ROUTES or route in ("/dispatches/", "/articles/"):
+            continue
+        relative = route.strip("/")
+        page = (public / relative / "index.html" if route.endswith("/")
+                else public / f"{relative}.html")
+        if not page.is_file():
+            assert dates[route] is None, route
+            continue
+        blocks = " ".join(re.findall(
+            r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', page.read_text(), re.S))
+        modified = re.findall(r'"dateModified"\s*:\s*"(\d{4}-\d{2}-\d{2})', blocks)
+        published = re.findall(r'"datePublished"\s*:\s*"(\d{4}-\d{2}-\d{2})', blocks)
+        declared = max(modified or published, default=None)
+        assert dates[route] == declared, (route, dates[route], declared)
+        checked += 1
+    assert checked >= 20
+
+
+def test_question_pages_keep_their_reviewed_catalog_date():
+    """The editorial catalog's reviewed_on reaches the sitemap through the
+    pages it renders, for the index and for every answer."""
+    from seiche.dispatch_pages import REPO_ROOT
+
+    public = REPO_ROOT / "frontend" / "public"
+    catalog = json.loads((public / "questions" / "pages.json").read_text())
+    dates = _sitemap_dates(render_sitemap([], [], public_dir=public))
+    routes = ["/questions/"] + [f"/questions/{p['slug']}/" for p in catalog["pages"]]
+    assert {route: dates[route] for route in routes} == {
+        route: catalog["reviewed_on"] for route in routes}
+
+
+def _page_with_head(path, head):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"<!doctype html><html><head>{head}</head><body>page</body></html>")
+
+
+def test_final_sitemap_pass_drops_every_page_that_declares_noindex(tmp_path):
+    from seiche.dispatch_pages import declares_noindex, prune_unindexable
+
+    site = tmp_path / "dist"
+    site.mkdir()
+    (site / "sitemap.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        "  <url>\n    <loc>https://seiche.info/</loc>\n    <lastmod>2026-11-26</lastmod>\n  </url>\n"
+        "  <url>\n    <loc>https://seiche.info/referee</loc>\n  </url>\n"
+        "  <url>\n    <loc>https://seiche.info/dispatches/2026-09-24-daily</loc>\n  </url>\n"
+        "  <url><loc>https://seiche.info/views/board/composite/</loc>"
+        "<changefreq>daily</changefreq></url>\n"
+        "</urlset>\n")
+    _page_with_head(site / "index.html", '<meta name="robots" content="index,follow">')
+    _page_with_head(site / "referee.html", '<meta name="robots" content="noindex">')
+    _page_with_head(site / "dispatches" / "2026-09-24-daily.html", "<title>letter</title>")
+    _page_with_head(site / "views" / "board" / "composite" / "index.html",
+                    "<meta content='NOINDEX, follow' name='googlebot'>")
+    # A noindex word in the body is not a robots tag.
+    (site / "dispatches" / "2026-09-24-daily.html").write_text(
+        "<html><head></head><body>meta name=robots content=noindex</body></html>")
+
+    assert prune_unindexable(site) == ["/referee", "/views/board/composite/"]
+    dates = _sitemap_dates((site / "sitemap.xml").read_text())
+    assert dates == {"/": "2026-11-26", "/dispatches/2026-09-24-daily": None}
+    assert prune_unindexable(site) == []
+    assert not declares_noindex(site / "missing.html")
+
+
+def test_sitemap_step_skips_a_static_page_that_declares_noindex(tmp_path):
+    public = tmp_path / "public"
+    _page_with_head(public / "guide.html", '<meta name="robots" content="noindex, nofollow">')
+    dates = _sitemap_dates(render_sitemap([], [], public_dir=public))
+    assert "/guide" not in dates
+    assert "/support" in dates
 
 
 def test_missing_markdown_fails_loud(repo):

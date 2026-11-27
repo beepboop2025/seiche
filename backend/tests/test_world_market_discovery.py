@@ -309,9 +309,11 @@ def test_market_routes_are_in_every_static_discovery_queue():
 
 
 def test_rendered_sitemap_keeps_editorial_market_page_dates():
+    # A newer letter must not move any market page or the board's date.
     rendered = dispatch_pages.render_sitemap(
-        [{"slug": "newer-daily", "date": "2026-09-01"}],
+        [{"slug": "newer-daily", "date": "2099-01-01"}],
         [],
+        public_dir=PUBLIC,
     )
     root = ET.fromstring(rendered)
     namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -321,9 +323,19 @@ def test_rendered_sitemap_keeps_editorial_market_page_dates():
         )
         for node in root.findall("s:url", namespace)
     }
-    for route, lastmod in dispatch_pages.BASE_LASTMODS.items():
-        assert dates[f"https://seiche.info{route}"] == lastmod
-    assert dates["https://seiche.info/"] == "2026-09-01"
+    for route in (
+        "/markets/",
+        "/markets/forex/",
+        "/markets/capital-markets/",
+        "/markets/china-macro/",
+        "/money-markets/",
+    ):
+        page = (PUBLIC / route.strip("/") / "index.html").read_text()
+        declared = re.findall(r'"dateModified"\s*:\s*"(\d{4}-\d{2}-\d{2})', page)
+        assert declared, route
+        assert dates[f"https://seiche.info{route}"] == max(declared)
+    assert dates["https://seiche.info/dispatches/"] == "2099-01-01"
+    assert dates["https://seiche.info/"] != "2099-01-01"
 
 
 def test_machine_discovery_routes_world_markets_to_rest_and_mcp():
