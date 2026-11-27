@@ -290,8 +290,13 @@ def test_article_archive_and_agent_handoff_promise_no_cadence():
     """Articles ended on 24 September 2026 and no daily letter runs (owner
     decision for 0.16.15), so the rendered article archive, its feeds,
     llms.txt and the agent delivery handoff promise neither a daily article
-    nor an 11:30 UTC letter."""
-    from seiche import mcp_server
+    nor an 11:30 UTC letter.
+
+    Owner decision of 27 Nov 2026: one stated weekly cadence is allowed, the
+    Seiche weekly note's "A new note is published each Monday after 12:00
+    UTC." Its pages state that sentence and no other cadence, and nothing may
+    promise a daily letter."""
+    from seiche import mcp_server, weekly_note
 
     cadence = re.compile(
         r"every day|daily (?:funding )?(?:analysis|articles?)|11:30 UTC|pre-US-open letter",
@@ -306,6 +311,17 @@ def test_article_archive_and_agent_handoff_promise_no_cadence():
     ):
         found = cadence.search(rendered)
         assert found is None, found.group(0)
+
+    stated = re.compile(
+        r"\b(?:each|every)\s+(?:day|morning|evening|week|weekday|monday|tuesday|wednesday|thursday|friday|"
+        r"saturday|sunday)\b|\bdaily\b|\bweekly cadence\b",
+        re.IGNORECASE,
+    )
+    assert weekly_note.CADENCE == "A new note is published each Monday after 12:00 UTC."
+    archive = weekly_note.render_archive([])
+    assert archive.count(weekly_note.CADENCE) == 1
+    assert cadence.search(archive) is None
+    assert len(stated.findall(archive)) == archive.count(weekly_note.CADENCE)
 
 
 def test_clean_public_urls_match_cloudflare_redirect_targets():

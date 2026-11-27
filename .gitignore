@@ -26,3 +26,5 @@ frontend/public/referee.html
 
 # build artifacts (compiler output, not source)
 *.tsbuildinfo
+# Seiche weekly note pages are written by the publisher, never committed.
+frontend/public/weekly/
