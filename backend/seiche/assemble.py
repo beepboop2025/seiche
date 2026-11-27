@@ -1011,7 +1011,9 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
 
     # CAESar — tomorrow's (VaR, ES) bands from the pop statistic's own CAViaR
     # dynamics (the operational sibling of Rogue Wave's static tail law; context)
-    run("caesar", lambda: eng_caesar.analyze(spread_bp=drv["spread_bp"]))
+    run("caesar", lambda: eng_caesar.analyze(
+        spread_bp=drv["spread_bp"], reuse_live_fit=asof is None,
+    ))
 
     # --- Warehouse ---
     run("warehouse", lambda: eng_warehouse.analyze(
