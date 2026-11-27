@@ -3,7 +3,8 @@
 // CIN, a contact address and the privacy and terms links inside a footer.
 //
 // Left out on purpose: 404.html; articles/ and dispatches/ (written at publish time by
-// backend/seiche/dispatch_pages.py); methodology.html, skeptic.html, ampleness.html and referee.html
+// backend/seiche/dispatch_pages.py); weekly/ (written at publish time by backend/seiche/weekly_note.py,
+// from dispatch_pages.main); methodology.html, skeptic.html, ampleness.html and referee.html
 // (written at publish time by backend/seiche/methodology.py, skeptic.py, ampleness.py and referee.py,
 // before the publish job runs these tests, so a committed checkout never holds them); and the three
 // Google-Extended pages held to reviewed bytes by docs/google-extended-reviewed-pages.json, which
@@ -18,7 +19,7 @@ const PUBLIC = join(FRONTEND, "public");
 const REVIEWED = JSON.parse(readFileSync(join(FRONTEND, "..", "docs", "google-extended-reviewed-pages.json"), "utf8"))
   .pages.map((page) => page.source_file.replace(/^frontend\/public\//, ""));
 const PUBLISH_TIME = new Set(["methodology.html", "skeptic.html", "ampleness.html", "referee.html"]);
-const SKIP = (name) => name === "404.html" || /^(research-ui|articles|dispatches)\//.test(name)
+const SKIP = (name) => name === "404.html" || /^(research-ui|articles|dispatches|weekly)\//.test(name)
   || PUBLISH_TIME.has(name) || REVIEWED.includes(name);
 
 const ICONS = '<!-- SITE-ICONS:START --><link rel="icon" type="image/svg+xml" href="/favicon.svg">'
