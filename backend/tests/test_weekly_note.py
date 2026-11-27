@@ -187,7 +187,7 @@ def test_the_archive_is_absent_only_when_file_and_page_are_both_missing():
     with pytest.raises(SystemExit):
         weekly_note.fetch_archive(lambda url: replies[url])
     with pytest.raises(SystemExit):
-        weekly_note.fetch_archive(lambda url: (503, b""))
+        weekly_note.fetch_archive(lambda url: (503, b""), sleep=lambda seconds: None)
 
 
 def test_a_broken_or_altered_archive_stops_the_build():
@@ -291,3 +291,56 @@ def test_weekly_pages_meet_the_frontend_family_contract(name):
     assert "--accent:var(--research-accent" in page
     assert not re.search(r"fonts\.googleapis\.com|fonts\.gstatic\.com|[\u2013\u2014]", page)
     assert not weekly_note.DAILY_PROMISE.search(page)
+
+
+def _served_archive():
+    first = _published(compose(_snapshot(), ISSUE, []))
+    return first, json.dumps({"schema": weekly_note.SCHEMA, "notes": [first]}).encode()
+
+
+def test_a_failed_read_is_retried_then_served_by_the_pages_hostname():
+    first, body = _served_archive()
+    calls, pauses, logged = [], [], []
+
+    def get(url):
+        calls.append(url)
+        return (0, b"") if url.startswith("https://seiche.info/") else (200, body)
+
+    assert weekly_note.fetch_archive(get, sleep=pauses.append, log=logged.append) == [first]
+    assert calls == ["https://seiche.info/weekly/notes.json"] * 3 + ["https://seiche.pages.dev/weekly/notes.json"]
+    assert pauses == [weekly_note.RETRY_PAUSE_SECONDS] * 2
+    assert logged == [{"status": "archive_fallback", "source": "https://seiche.pages.dev",
+                       "site_failures": ["seiche.info HTTP 0"] * 3}]
+
+
+def test_a_transient_failure_recovers_on_seiche_info_itself():
+    first, body = _served_archive()
+    replies = iter([(503, b""), (200, body)])
+    assert weekly_note.fetch_archive(lambda url: next(replies), sleep=lambda seconds: None) == [first]
+
+
+def test_a_404_on_the_pages_hostname_never_counts_as_an_empty_archive():
+    def get(url):
+        return (403, b"") if url.startswith("https://seiche.info/") else (404, b"")
+
+    with pytest.raises(SystemExit, match="unreadable"):
+        weekly_note.fetch_archive(get, sleep=lambda seconds: None)
+
+
+def test_a_broken_archive_from_the_pages_hostname_still_stops_the_build():
+    first, _ = _served_archive()
+    altered = json.dumps({"schema": weekly_note.SCHEMA, "notes": [dict(first, sha256="0" * 64)]}).encode()
+
+    def get(url):
+        return (503, b"") if url.startswith("https://seiche.info/") else (200, altered)
+
+    with pytest.raises(SystemExit):
+        weekly_note.fetch_archive(get, sleep=lambda seconds: None, log=lambda record: None)
+
+
+def test_no_answer_at_all_reads_as_status_zero(monkeypatch):
+    def refuse(request, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(weekly_note.urllib.request, "urlopen", refuse)
+    assert weekly_note._get("https://seiche.info/weekly/notes.json") == (0, b"")

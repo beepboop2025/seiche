@@ -15,7 +15,10 @@ Inputs, all already in the build:
     series may show a value;
   - the money-market catalog, for the map a reader is sent to;
   - the published archive, https://seiche.info/weekly/notes.json, which keeps
-    every note. A build re-renders all of them and adds at most one.
+    every note. A build re-renders all of them and adds at most one. A read
+    that fails is retried and then answered by the same deployment at
+    seiche.pages.dev (see fetch_archive); only an archive that no hostname
+    serves, or one that is broken, stops the build.
 
 Gates (any failure publishes nothing, substitutes nothing and logs a
 SEICHE_WEEKLY_NOTE line with the reasons):
@@ -39,8 +42,10 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import html
+import http.client
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -64,6 +69,12 @@ OVERLAP_NOTES = 4
 FORM_MEMORY = 2
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 USER_AGENT = "seiche-weekly-note/1.0 (+https://seiche.info/weekly/)"
+# The same Cloudflare Pages deployment under its own hostname: it serves the
+# bytes seiche.info serves, outside the seiche.info zone's security rules, so a
+# challenge or a custom-domain fault there does not hide the archive.
+ARCHIVE_MIRROR = "https://seiche.pages.dev"
+READ_ATTEMPTS = 3
+RETRY_PAUSE_SECONDS = 20
 
 # key, money-market chart, column, label, unit, decimals, rights source,
 # headline key in the rights projection (or None), provenance mnemonic
@@ -341,29 +352,53 @@ def verify(document: dict) -> list[dict]:
 
 
 def _get(url: str) -> tuple[int, bytes]:
+    """(status, body). Status 0 means no HTTP answer: DNS, TLS, a timeout or a reset."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.status, response.read(MAX_ARCHIVE_BYTES + 1)
     except urllib.error.HTTPError as error:
         return error.code, b""
+    except (OSError, http.client.HTTPException):
+        return 0, b""
 
 
-def fetch_archive(get: Callable[[str], tuple[int, bytes]] = _get) -> list[dict]:
-    """The published archive. Absent only when both the file and its page are 404.
+def fetch_archive(get: Callable[[str], tuple[int, bytes]] = _get, *, mirror: str = ARCHIVE_MIRROR,
+                  attempts: int = READ_ATTEMPTS, pause: float = RETRY_PAUSE_SECONDS,
+                  sleep: Callable[[float], None] = time.sleep,
+                  log: Callable[[dict], None] | None = None) -> list[dict]:
+    """The published archive. Absent only when seiche.info answers 404 for both the file and its page.
 
-    Any other failure stops the build: the site is published with delete, so
-    a build that lost the archive would remove every published note.
+    The site is published with delete, so a build that lost the archive would
+    remove every published note: a build never proceeds without it. A failed
+    read of seiche.info (no answer, a challenge or a server error) is retried,
+    then answered by the same deployment at seiche.pages.dev, where a 404 never
+    counts as absence. The build stops only when neither hostname serves the
+    archive, or when the archive it serves is broken.
     """
-    status, body = get(SITE + ARCHIVE_PATH + ARCHIVE_FILE)
-    if status == 404:
-        page_status, _ = get(SITE + ARCHIVE_PATH)
-        if page_status == 404:
-            return []
-        raise SystemExit("weekly note archive: notes.json is missing while the archive page exists")
-    if status != 200 or len(body) > MAX_ARCHIVE_BYTES:
-        raise SystemExit(f"weekly note archive: unreadable (HTTP {status})")
-    return verify(json.loads(body))
+    failures = []
+    for attempt in range(attempts):
+        status, body = get(SITE + ARCHIVE_PATH + ARCHIVE_FILE)
+        if status == 404:
+            page_status, _ = get(SITE + ARCHIVE_PATH)
+            if page_status == 404:
+                return []
+            raise SystemExit("weekly note archive: notes.json is missing while the archive page exists")
+        if status == 200 and len(body) <= MAX_ARCHIVE_BYTES:
+            return verify(json.loads(body))
+        failures.append(f"seiche.info HTTP {status}")
+        if attempt + 1 < attempts:
+            sleep(pause)
+    for attempt in range(attempts):
+        status, body = get(mirror + ARCHIVE_PATH + ARCHIVE_FILE)
+        if status == 200 and len(body) <= MAX_ARCHIVE_BYTES:
+            notes = verify(json.loads(body))
+            (log or _log)({"status": "archive_fallback", "source": mirror, "site_failures": failures})
+            return notes
+        failures.append(f"{mirror.removeprefix('https://')} HTTP {status}")
+        if attempt + 1 < attempts:
+            sleep(pause)
+    raise SystemExit("weekly note archive: unreadable (" + "; ".join(failures) + ")")
 
 
 def _withdraw(note: dict, when: str | None) -> dict:
