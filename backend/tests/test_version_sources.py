@@ -2,7 +2,7 @@
 
 The MCP handshake, hosted registry listing, and build metadata describe the
 deployed server and must agree. The optional PyPI transport advertises the same
-0.16.17 distribution release and eight-tool public surface so the release and
+0.16.18 distribution release and eight-tool public surface so the release and
 immutable registry entry point at the same artifact.
 """
 
@@ -42,7 +42,7 @@ def test_hosted_version_sources_agree():
 
 
 def test_registry_stdio_package_matches_hosted_surface():
-    """The registry card pins the 0.16.17 / eight-tool public surface."""
+    """The registry card pins the 0.16.18 / eight-tool public surface."""
     server = _server_json()
     package = server["packages"][0]
     description = package["environmentVariables"][0]["description"]
@@ -50,7 +50,7 @@ def test_registry_stdio_package_matches_hosted_surface():
 
     assert package["registryType"] == "pypi"
     assert package["identifier"] == "seiche"
-    assert package["version"] == hosted == "0.16.17"
+    assert package["version"] == hosted == "0.16.18"
     assert package["transport"] == {"type": "stdio"}
     assert "eight public research tools" in description
     assert "source_rights_status" in description
@@ -60,7 +60,7 @@ def test_registry_stdio_package_matches_hosted_surface():
     assert "Legacy forecasts and backtests are unavailable" in description
     # owner ruling, 12 Nov 2026: Funding Pop is the one research-only exception
     assert "except Funding Pop, served research only with its skill" in description
-    assert "0.16.17" in description
+    assert "0.16.18" in description
 
 
 def test_pypi_readme_proves_the_official_mcp_registry_namespace():

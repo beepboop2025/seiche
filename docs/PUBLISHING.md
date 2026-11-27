@@ -1,5 +1,55 @@
 # Publishing Seiche release surfaces
 
+## 0.16.18 indexing fixes and weekly note successor
+
+The 27 November candidate carries the sitemap and homepage indexing fixes
+(#477, at `703c4e80`) and the Seiche weekly note (#478), switched on by the
+owner's decision of 27 November. Each sitemap date comes from the page's own
+artifact, the sitemap lists only pages that allow indexing, the homepage links
+the published record, and the weekly note publishes a facts-only page for each
+issue Monday once every gate passes (`seiche.weekly_note.ENABLED = True`,
+`WEEKLY_LISTED = true`). The package version is `0.16.18`. Version metadata is
+preparation only: require the exact signed runtime release (a new owner-signed
+Hetzner grant for this code), the normal full-suite and recovery gates, the
+immutable PyPI receipt and the registry receipt.
+
+The Market Atlas corpus catalog entry stays at version `1.0.1`, and no new
+corpus version tag is needed: the gate binds the entry, less its publication
+receipt, to the signed tag named by its version, `market-corpus-v1.0.1` on
+`4aecda69` is an ancestor of this release, and that part of the entry is
+unchanged. Preserve `market-corpus-v1.0.0` on `43fcb34a` and
+`market-corpus-v1.0.1` on `4aecda69`.
+
+The catalog declares a fresh publication binding,
+`market-corpus-receipt-corpus-7cb1695c6affa707-r57`, for this successor.
+Preserve r56 on `b7c1afe8`. Corpus observations, counts, hashes and rights are
+unchanged. Sign r57 only after the exact new runtime and corpus evidence pass
+their ordinary checks; declaration is not publication. Sign r57 on the same
+commit as `v0.16.18`: the publication gate admits a receipt tag only on the
+workflow commit, the signed release commit or its reviewed descendant, so r56
+on `b7c1afe8` cannot serve this release. The runtime source and the
+publication source are the same commit, so no source bridge is used. Run a
+FULL publication from this source before any static-only publication.
+
+#477 removes 48 URLs from the published sitemap on purpose: the 47 `/views/`
+share-card pages and `/referee`, which are still served and declare noindex. A
+continuity check of the first live sitemap must allow exactly those 48. The
+funding API card in the generated connected-upgrades block still links
+`/developers.html`: `703c4e80` reverts the regeneration that fixed it, because
+Seiche's copy of that block shows the live release from `/api/health` and the
+regeneration dropped that line. Every build with the weekly note on reads
+`https://seiche.info/weekly/notes.json`; on 27 November it and `/weekly/`
+answered 404 on seiche.info and seiche.pages.dev. A note is due from Monday
+12:00 UTC for the Monday to Friday before it, and the first is the note dated
+2026-11-30 (`FIRST_ISSUE`): a build before 30 November 12:00 UTC adds nothing
+and logs `before_first_issue`, and the first build from that time starts the
+archive with the note dated 2026-11-30 (observations of 23 to 27 November) if
+its gates pass. Not in this release: #475, #473, #464, #462 and #453.
+
+`ops/release/tests/test_native_migration_publication.py` pins the release
+metadata commit, the last `backend/seiche` change on this branch. Any later
+`backend/seiche` change, and any rewrite of the pinned commit, moves it again.
+
 ## 0.16.17 G.17 2022 base successor
 
 The 25 November candidate reads G.17 industrial production in its new base
