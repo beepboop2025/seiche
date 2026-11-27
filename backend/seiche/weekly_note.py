@@ -32,9 +32,16 @@ SEICHE_WEEKLY_NOTE line with the reasons):
   phrase_overlap  at most 20% of the note's 8-word phrases appear in any one
                   of the last four notes
 
-Nothing runs until a signed release sets ENABLED = True. The step is the
-existing "Render dispatch pages" step of the full publisher: dispatch_pages
-calls publish() after it writes the sitemap. No schedule or workflow changes.
+The step is on from 0.16.18: ENABLED = True (owner decision of 27 Nov 2026,
+after a test run over 14 published snapshots). It is the existing "Render
+dispatch pages" step of the full publisher: dispatch_pages calls publish()
+after it writes the sitemap. No schedule or workflow changes. ENABLED = False
+turns it off again, and publish(enabled=False) skips it for one call.
+
+The first note is the issue of Monday 30 November 2026 (FIRST_ISSUE, owner
+decision of 27 Nov 2026), due from 12:00 UTC that day. While the due issue is
+earlier, a build composes nothing, logs before_first_issue and still
+re-renders any archive it reads.
 """
 
 from __future__ import annotations
@@ -53,7 +60,7 @@ from typing import Callable
 
 from seiche import family_shell
 
-ENABLED = False
+ENABLED = True
 
 SITE = "https://seiche.info"
 ARCHIVE_PATH = "/weekly/"
@@ -62,6 +69,8 @@ INDEX_FILE = "index.json"
 SCHEMA = "seiche.weekly-notes.v1"
 ISSUE_WEEKDAY = 0  # Monday
 ISSUE_HOUR_UTC = 12
+# Owner decision of 27 Nov 2026: the first note is the issue of Monday 30 Nov 2026.
+FIRST_ISSUE = "2026-11-30"
 CADENCE = "A new note is published each Monday after 12:00 UTC."
 SHINGLE_WORDS = 8
 OVERLAP_LIMIT = 0.20
@@ -539,10 +548,13 @@ def _log(record: dict) -> None:
     print("SEICHE_WEEKLY_NOTE " + json.dumps(record, sort_keys=True), flush=True)
 
 
-def publish(public_dir: Path, *, enabled: bool | None = None, fetch=fetch_archive, log=_log) -> list[str]:
-    """Re-render the archive, add this week's note if it is due and passes every gate."""
+def publish(public_dir: Path, *, enabled: bool | None = None, fetch=fetch_archive, log=_log,
+            first_issue: str = FIRST_ISSUE) -> list[str]:
+    """Re-render the archive, add this week's note if it is due, is not earlier
+    than first_issue and passes every gate."""
     if not (ENABLED if enabled is None else enabled):
         return []
+    first = dt.date.fromisoformat(first_issue)
     public_dir = Path(public_dir)
     snapshot = json.loads((public_dir / "data" / "overview.json").read_text(encoding="utf-8"))
     generated = dt.datetime.fromisoformat(str(snapshot["generated_at"]).replace("Z", "+00:00"))
@@ -556,7 +568,10 @@ def publish(public_dir: Path, *, enabled: bool | None = None, fetch=fetch_archiv
             note = _withdraw(note, snapshot.get("generated_at"))
         kept.append(note)
     issue = issue_for(generated).isoformat()
-    if any(note["issue"] == issue for note in kept):
+    if dt.date.fromisoformat(issue) < first:
+        # Before the first issue nothing new is composed; the archive read above is still re-rendered.
+        log({"status": "before_first_issue", "issue": issue, "first_issue": first.isoformat()})
+    elif any(note["issue"] == issue for note in kept):
         log({"status": "already_published", "issue": issue})
     else:
         candidate = compose(snapshot, dt.date.fromisoformat(issue), kept)

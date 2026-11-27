@@ -97,7 +97,8 @@ test("the rendered section links the archives, the evidence maps and the newest 
   const { html, requests } = await renderRecord(async (url) => ({
     ok: true, headers: { get: () => "application/json" }, json: async () => archives[url],
   }));
-  assert.deepEqual(requests.map((request) => request.url).sort(), Object.keys(archives).sort());
+  // The weekly index is requested too (WEEKLY_LISTED, on from 0.16.18); an empty one lists nothing.
+  assert.deepEqual(requests.map((request) => request.url).sort(), [...Object.keys(archives), "/weekly/index.json"].sort());
   for (const request of requests) assert.equal(request.init.credentials, "omit");
   const links = hrefs(html);
   for (const hub of ["/articles/", "/dispatches/", "/investigations/", "/money-markets/", "/markets/"]) {
@@ -129,21 +130,25 @@ test("the homepage entry renders the record section outside any noscript block",
   assert.doesNotMatch(site, /<noscript/i);
 });
 
-test("the weekly column stays off until the release that enables the weekly note", async () => {
+test("the weekly column is on from 0.16.18, appears once the archive holds a note, and false turns it off", async () => {
   const weekly = [{ slug: "2026-11-30", date: "2026-11-30", headline: "SOFR up 4 basis points to 3.94% in the week to 2026-11-27" }];
   assert.deepEqual(plain(record.latestWeekly(weekly)), [
     { href: "/weekly/2026-11-30/", title: weekly[0].headline, date: "2026-11-30" },
   ]);
   const serve = (indexes) => async (url) => ({ ok: url in indexes, headers: { get: () => "application/json" }, json: async () => indexes[url] });
-  // Shipped off: nothing requests or lists /weekly/.
-  const off = await renderRecord(serve({ ...archives, "/weekly/index.json": weekly }));
-  assert.ok(!off.requests.some((request) => request.url === "/weekly/index.json"));
-  assert.ok(!hrefs(off.html).includes("/weekly/"));
-  // Turned on: the column appears only when the archive holds a note.
-  const on = (source) => source.replace("export const WEEKLY_LISTED = false;", "export const WEEKLY_LISTED = true;");
-  const listed = await renderRecord(serve({ ...archives, "/weekly/index.json": weekly }), on);
+  // Shipped on (owner decision, 27 Nov 2026): the column appears only when the archive holds a note.
+  const listed = await renderRecord(serve({ ...archives, "/weekly/index.json": weekly }));
   assert.ok(hrefs(listed.html).includes("/weekly/") && hrefs(listed.html).includes("/weekly/2026-11-30/"));
-  const empty = await renderRecord(serve({ ...archives }), on);
+  const empty = await renderRecord(serve({ ...archives }));
   assert.ok(empty.requests.some((request) => request.url === "/weekly/index.json"));
   assert.ok(!hrefs(empty.html).includes("/weekly/"));
+  // Turned off: nothing requests or lists /weekly/.
+  const off = (source) => {
+    const patched = source.replace("export const WEEKLY_LISTED = true;", "export const WEEKLY_LISTED = false;");
+    assert.notEqual(patched, source, "the shipped source sets WEEKLY_LISTED = true");
+    return patched;
+  };
+  const hidden = await renderRecord(serve({ ...archives, "/weekly/index.json": weekly }), off);
+  assert.ok(!hidden.requests.some((request) => request.url === "/weekly/index.json"));
+  assert.ok(!hrefs(hidden.html).includes("/weekly/"));
 });

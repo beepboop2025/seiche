@@ -11,11 +11,11 @@ const ARCHIVES = [
 ] as const;
 
 /**
- * The signed release that sets seiche.weekly_note.ENABLED sets this too. Until then
- * /weekly/ does not exist, so the homepage neither requests nor lists it; after it,
- * the weekly column appears once the archive holds a note.
+ * On from 0.16.18, with seiche.weekly_note.ENABLED (owner decision, 27 Nov 2026). The
+ * homepage requests /weekly/index.json, and the weekly column appears only once the
+ * archive holds a note. false stops both the request and the column.
  */
-export const WEEKLY_LISTED = false;
+export const WEEKLY_LISTED = true;
 const LISTED = ARCHIVES.filter((archive) => !("optional" in archive) || WEEKLY_LISTED);
 
 async function readIndex(path: string, signal: AbortSignal): Promise<unknown> {

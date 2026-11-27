@@ -1284,8 +1284,8 @@ def main(argv: list[str] | None = None) -> int:
     for p in build_all():
         print(f"wrote {p}")
     # The Seiche weekly note (owner decision, 27 Nov 2026) runs after the
-    # sitemap exists, so it can add its own rows. It does nothing until a
-    # signed release sets seiche.weekly_note.ENABLED.
+    # sitemap exists, so it can add its own rows. It is on from 0.16.18;
+    # seiche.weekly_note.ENABLED = False turns it off.
     from seiche import weekly_note
 
     for p in weekly_note.publish(REPO_ROOT / "frontend" / "public"):

@@ -1,5 +1,5 @@
 """The Seiche weekly note (owner decision, 27 Nov 2026): facts only, gated,
-and inert until a signed release sets weekly_note.ENABLED."""
+and on from 0.16.18 (weekly_note.ENABLED); False still turns it off."""
 
 import datetime as dt
 import json
@@ -66,11 +66,28 @@ def _published(note):
 
 # ---------------------------------------------------------------- the clock
 
-def test_the_step_is_off_until_a_signed_release_turns_it_on(tmp_path):
-    assert weekly_note.ENABLED is False
+def test_the_step_is_on_from_0_16_18_and_false_still_turns_it_off(tmp_path, monkeypatch):
+    """Owner decision of 27 Nov 2026, after a test run over 14 published
+    snapshots: 0.16.18 ships the note on. enabled=False for one call, or
+    ENABLED = False, still means no fetch and no files."""
+    assert weekly_note.ENABLED is True
     calls = []
-    assert weekly_note.publish(tmp_path, fetch=lambda: calls.append("fetch") or []) == []
-    assert calls == [] and not (tmp_path / "weekly").exists()
+
+    def fetch():
+        calls.append("fetch")
+        return []
+
+    # Shipped on: the module flag alone runs the step.
+    logs = []
+    public = _public(tmp_path / "on", _snapshot())
+    assert weekly_note.publish(public, fetch=fetch, log=logs.append)
+    assert calls == ["fetch"] and [entry["status"] for entry in logs] == ["published"]
+    # Off for one call, then off by the flag: nothing is fetched or written.
+    off = tmp_path / "off"
+    assert weekly_note.publish(off, enabled=False, fetch=fetch) == []
+    monkeypatch.setattr(weekly_note, "ENABLED", False)
+    assert weekly_note.publish(off, fetch=fetch) == []
+    assert calls == ["fetch"] and not off.exists()
 
 
 def test_a_note_is_due_from_monday_noon_utc_and_covers_monday_to_friday():
@@ -239,6 +256,45 @@ def test_publish_adds_the_due_note_pages_index_and_sitemap_rows_then_holds(tmp_p
     weekly_note.publish(again, enabled=True, fetch=lambda: archive["notes"], log=later.append)
     assert later == [{"status": "already_published", "issue": "2026-11-30"}]
     assert (again / "weekly" / "2026-11-30" / "index.html").read_text() == page
+
+
+def test_no_note_is_composed_before_the_first_issue(tmp_path):
+    """Owner decision of 27 Nov 2026: the first note is the issue of Monday
+    30 Nov 2026, due from 12:00 UTC. Before then the due issue is 23 Nov:
+    nothing is composed or written, and the build log says why."""
+    assert weekly_note.FIRST_ISSUE == "2026-11-30"
+    assert dt.date.fromisoformat(weekly_note.FIRST_ISSUE).weekday() == weekly_note.ISSUE_WEEKDAY
+    for clock in ("2026-11-27T02:04:05+00:00", "2026-11-30T11:59:59+00:00"):
+        public = _public(tmp_path / clock[:13], _snapshot(generated=clock))
+        logs = []
+        assert weekly_note.publish(public, enabled=True, fetch=lambda: [], log=logs.append) == []
+        assert logs == [{"status": "before_first_issue", "issue": "2026-11-23", "first_issue": "2026-11-30"}]
+        assert not (public / "weekly").exists()
+        assert "/weekly/" not in (public / "sitemap.xml").read_text()
+
+
+def test_the_first_issue_is_composed_from_monday_30_november_noon(tmp_path):
+    for clock in ("2026-11-30T12:00:00+00:00", "2026-12-01T09:00:00+00:00"):
+        public = _public(tmp_path / clock[:13], _snapshot(generated=clock))
+        logs = []
+        written = weekly_note.publish(public, enabled=True, fetch=lambda: [], log=logs.append)
+        assert [entry["status"] for entry in logs] == ["published"] and logs[0]["issue"] == "2026-11-30"
+        assert str(public / "weekly" / "2026-11-30" / "index.html") in written
+
+
+def test_before_the_first_issue_an_existing_archive_is_still_re_rendered(tmp_path):
+    """The guard composes nothing new and keeps everything else: an archive
+    that holds a note is re-rendered as on any build (first_issue injected)."""
+    archived = _published(compose(_snapshot(), ISSUE, []))
+    public = _public(tmp_path, _snapshot(generated="2026-12-07T13:00:00+00:00"))
+    logs = []
+    written = weekly_note.publish(public, enabled=True, fetch=lambda: [archived], log=logs.append,
+                                  first_issue="2026-12-14")
+    assert logs == [{"status": "before_first_issue", "issue": "2026-12-07", "first_issue": "2026-12-14"}]
+    assert str(public / "weekly" / "2026-11-30" / "index.html") in written
+    notes = weekly_note.verify(json.loads((public / "weekly" / "notes.json").read_text()))
+    assert [note["issue"] for note in notes] == ["2026-11-30"]
+    assert "<loc>https://seiche.info/weekly/2026-11-30/</loc>" in (public / "sitemap.xml").read_text()
 
 
 def test_a_refused_note_publishes_nothing_and_logs_why(tmp_path):
