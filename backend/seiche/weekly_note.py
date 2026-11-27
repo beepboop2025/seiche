@@ -113,6 +113,34 @@ DAILY_PROMISE = re.compile(
     r"daily letter|daily edition|11:30 UTC|every day|daily (?:funding )?(?:analysis|articles?)",
     re.IGNORECASE,
 )
+_ISSUE_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _monday_issue(value: object) -> bool:
+    """An issue is the ISO date of a Monday: it names the note's folder under weekly/."""
+    if not isinstance(value, str) or not _ISSUE_DATE.fullmatch(value):
+        return False
+    try:
+        day = dt.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return day.isoformat() == value and day.weekday() == ISSUE_WEEKDAY
+
+
+def _iso_instant(value: object) -> bool:
+    """A published_at clock: an ISO date and time whose first ten characters are the date."""
+    if not isinstance(value, str) or not _ISSUE_DATE.fullmatch(value[:10]):
+        return False
+    try:
+        dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def _terms_url(value: object) -> bool:
+    """A source's terms link: absent, or an http or https URL (never javascript: or a relative path)."""
+    return value is None or (isinstance(value, str) and value.startswith(("https://", "http://")))
 
 
 # --------------------------------------------------------------------- clock
@@ -244,7 +272,8 @@ def _sources(snapshot: dict, facts: list[dict]) -> list[dict]:
     known = (snapshot.get("rights_projection") or {}).get("sources") or {}
     used = sorted({fact["source"] for fact in facts if fact["kind"] in {"changed", "unchanged"}})
     return [{"key": key, "publisher": known[key].get("publisher"), "attribution": known[key].get("attribution"),
-             "terms_url": known[key].get("terms_url")} for key in used if key in known]
+             "terms_url": known[key].get("terms_url") if _terms_url(known[key].get("terms_url")) else None}
+            for key in used if key in known]
 
 
 def headline(note: dict) -> str | None:
@@ -347,15 +376,27 @@ def _digest(note: dict) -> str:
 
 
 def verify(document: dict) -> list[dict]:
-    """Return the archive's notes, or fail loud on any break in the chain."""
+    """Return the archive's notes, or fail loud on any break in the chain.
+
+    The archive arrives over the network and its hash chain describes only itself, so
+    each note's issue, clock and terms links are checked as untrusted input too."""
     if document.get("schema") != SCHEMA or not isinstance(document.get("notes"), list):
         raise SystemExit("weekly note archive: unexpected schema")
     previous = None
     for note in document["notes"]:
+        if not isinstance(note, dict) or not _monday_issue(note.get("issue")):
+            raise SystemExit("weekly note archive: an issue is not the ISO date of a Monday")
         if note.get("prev_sha256") != previous:
             raise SystemExit(f"weekly note archive: chain broken at {note.get('issue')}")
-        if note.get("status") != "withdrawn" and _digest(note) != note.get("sha256"):
-            raise SystemExit(f"weekly note archive: digest mismatch at {note.get('issue')}")
+        if note.get("status") != "withdrawn":
+            if _digest(note) != note.get("sha256"):
+                raise SystemExit(f"weekly note archive: digest mismatch at {note.get('issue')}")
+            if not _iso_instant(note.get("published_at")):
+                raise SystemExit(f"weekly note archive: published_at is not an ISO clock at {note['issue']}")
+            sources = note.get("sources")
+            if not isinstance(sources, list) or not all(
+                    isinstance(source, dict) and _terms_url(source.get("terms_url")) for source in sources):
+                raise SystemExit(f"weekly note archive: a terms link is not http or https at {note['issue']}")
         previous = note.get("sha256")
     return document["notes"]
 
@@ -480,7 +521,8 @@ def render_note(note: dict, money_map: str | None = None) -> str:
     lead = headline(note)
     items = "".join(f"<li>{_e(line)}</li>" for line in sentences(note))
     sources = "".join(
-        f'<li>{_e(source["attribution"])} <a href="{_e(source["terms_url"])}">Terms</a></li>' for source in note["sources"])
+        f'<li>{_e(source["attribution"])} <a href="{_e(source["terms_url"])}">Terms</a></li>' if source.get("terms_url")
+        else f'<li>{_e(source["attribution"])}</li>' for source in note["sources"])
     body = (
         family_shell.heading(_e(title))
         + f"<p><strong>{_e(lead)}.</strong></p>"
@@ -586,9 +628,12 @@ def publish(public_dir: Path, *, enabled: bool | None = None, fetch=fetch_archiv
             log({"status": "published", "issue": issue, "sha256": candidate["sha256"]})
     if not kept:
         return []
+    if not all(_monday_issue(note.get("issue")) for note in kept):
+        raise SystemExit("weekly note: an issue is not the ISO date of a Monday; nothing written")
     money_map = map_url(public_dir)
     out = public_dir / ARCHIVE_PATH.strip("/")
     out.mkdir(parents=True, exist_ok=True)
+    root = out.resolve()
     written = []
     for name, content in (
         (ARCHIVE_FILE, json.dumps({"schema": SCHEMA, "notes": kept}, indent=1, ensure_ascii=False) + "\n"),
@@ -600,6 +645,8 @@ def publish(public_dir: Path, *, enabled: bool | None = None, fetch=fetch_archiv
     for note in kept:
         if note.get("status") != "withdrawn":
             page = out / note["issue"] / "index.html"
+            if page.resolve().parent.parent != root:
+                raise SystemExit("weekly note: a note page resolves outside weekly/; stopped before writing it")
             page.parent.mkdir(parents=True, exist_ok=True)
             page.write_text(render_note(note, money_map), encoding="utf-8")
             written.append(str(page))

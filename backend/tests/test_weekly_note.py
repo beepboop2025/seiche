@@ -221,6 +221,42 @@ def test_a_broken_or_altered_archive_stops_the_build():
         weekly_note.verify({"schema": weekly_note.SCHEMA, "notes": [first, second]})
 
 
+def _one_note_archive(change):
+    """A valid one-note archive whose note is altered by `change` and then
+    re-digested, so only a field check, never the hash chain, can refuse it."""
+    note = _published(compose(_snapshot(), ISSUE, []))
+    change(note)
+    note["sha256"] = weekly_note._digest(note)
+    return {"schema": weekly_note.SCHEMA, "notes": [note]}
+
+
+@pytest.mark.parametrize("issue", ["../outside", "../../frontend", "/tmp/seiche-escape", "2026-11-30/..",
+                                   "2026-11-24", "2026-02-30", "２０２６-11-30", 20261130, None])
+def test_the_archive_refuses_an_issue_that_is_not_the_iso_date_of_a_monday(issue):
+    """The archive is read back from the site and its chain describes only
+    itself; an issue names a folder under weekly/, so it must be a Monday's
+    ISO date. The refusal does not echo the value it refused."""
+    with pytest.raises(SystemExit, match="an issue is not the ISO date of a Monday") as refused:
+        weekly_note.verify(_one_note_archive(lambda note: note.update(issue=issue)))
+    assert str(issue) not in str(refused.value)
+
+
+@pytest.mark.parametrize("terms_url", ["javascript:alert(1)", "/terms"])
+def test_the_archive_refuses_a_terms_link_that_is_not_http_or_https(terms_url):
+    with pytest.raises(SystemExit, match="a terms link is not http or https"):
+        weekly_note.verify(_one_note_archive(lambda note: note["sources"][0].update(terms_url=terms_url)))
+
+
+def test_the_archive_accepts_a_source_without_a_terms_link():
+    archive = _one_note_archive(lambda note: note["sources"][0].update(terms_url=None))
+    assert weekly_note.verify(archive)[0]["sources"][0]["terms_url"] is None
+
+
+def test_the_archive_refuses_a_published_at_that_is_not_an_iso_clock():
+    with pytest.raises(SystemExit, match="published_at is not an ISO clock"):
+        weekly_note.verify(_one_note_archive(lambda note: note.update(published_at="yesterday")))
+
+
 def _public(tmp_path, snapshot):
     public = tmp_path / "public"
     (public / "data").mkdir(parents=True)
@@ -320,6 +356,45 @@ def test_a_note_whose_source_is_later_restricted_is_withdrawn(tmp_path):
     assert stub["status"] == "withdrawn" and "facts" not in stub and stub["sha256"] == published["sha256"]
     assert not (public / "weekly" / "2026-11-23").exists()
     assert "2026-11-23" not in (public / "weekly" / "index.html").read_text()
+
+
+def test_publish_refuses_an_issue_that_would_leave_weekly_and_writes_nothing(tmp_path):
+    """An injected fetch bypasses verify(), so publish() checks every issue
+    itself before it writes anything."""
+    escaping = _one_note_archive(lambda note: note.update(issue="../../outside"))["notes"]
+    public = _public(tmp_path, _snapshot())
+    sitemap = (public / "sitemap.xml").read_text()
+    with pytest.raises(SystemExit, match="nothing written"):
+        weekly_note.publish(public, enabled=True, fetch=lambda: escaping, log=lambda record: None)
+    assert not (tmp_path / "outside").exists()
+    assert not (public / "weekly").exists()
+    assert (public / "sitemap.xml").read_text() == sitemap
+
+
+def test_publish_refuses_a_note_folder_that_resolves_outside_weekly(tmp_path):
+    """The symlink defence: a note page is written only inside weekly/."""
+    public = _public(tmp_path, _snapshot())
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (public / "weekly").mkdir()
+    (public / "weekly" / "2026-11-30").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(SystemExit, match="outside weekly/"):
+        weekly_note.publish(public, enabled=True, fetch=lambda: [], log=lambda record: None)
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_terms_link_that_is_not_http_or_https_is_composed_as_none_and_never_linked():
+    snapshot = _snapshot()
+    snapshot["rights_projection"]["sources"]["nyfed_original"]["terms_url"] = "javascript:x"
+    note = _published(compose(snapshot, ISSUE, []))
+    source = next(source for source in note["sources"] if source["key"] == "nyfed_original")
+    assert source["terms_url"] is None
+    page = weekly_note.render_note(note)
+    assert "javascript:" not in page
+    assert f"<li>{source['attribution']}</li>" in page
+    assert '<a href="https://example.org/fed_h15/terms">Terms</a>' in page
+    # The composer never writes a note that the next build's verify() refuses.
+    assert weekly_note.verify({"schema": weekly_note.SCHEMA, "notes": [note]}) == [note]
 
 
 # ----------------------------------------------------------- the family shell
