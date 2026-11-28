@@ -694,7 +694,7 @@ def render_skeptic_html(snap: dict) -> str:
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 {family_shell.STYLE}<style>{_CSS}{_EXTRA_CSS}</style>
 </head>
-<body>{family_shell.HEADER}
+<body>{family_shell.header("/skeptic")}
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
   <div class="faint"><a href="/">back to the board</a> &middot; <a href="/methodology">methodology</a> &middot; <a href="/guide">plain English guide</a></div>

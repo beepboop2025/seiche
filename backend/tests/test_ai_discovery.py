@@ -380,9 +380,12 @@ def test_terminal_navigation_exposes_the_selection_surface():
     for action in ("seiche:open-commands", "seiche:open-help"):
         assert action in header and action in app
     nav = (ROOT / "frontend" / "src" / "WorkspaceNavigation.tsx").read_text()
-    assert 'aria-label="Funding desk tools"' in nav
-    assert 'contextLink("/use-cases")' in nav
-    assert "Use cases" in nav
+    # The family menu: the tab row, the group's sub-tab row and the desk's own tools.
+    menu = (ROOT / "frontend" / "src" / "familyNav.ts").read_text()
+    assert 'aria-label="Seiche sections"' in nav
+    assert 'className="research-subtabs workspace-subtabs"' in nav
+    assert "href={contextLink(item.href)}" in nav
+    assert '{ label: "Use cases", href: "/use-cases" }' in menu
     commands = (ROOT / "frontend" / "src" / "commands.ts").read_text()
     assert 'url: "/guide"' in commands
     assert 'url: "/support"' in commands

@@ -390,7 +390,7 @@ def render_methodology_html(board_version: str | None = None) -> str:
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 {family_shell.STYLE}<style>{_CSS}</style>
 </head>
-<body>{family_shell.HEADER}
+<body>{family_shell.header("/methodology")}
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
   <div class="faint"><a href="/">back to the board</a> &middot; <a href="/guide">plain English guide</a></div>

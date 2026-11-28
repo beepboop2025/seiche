@@ -78,8 +78,10 @@ def test_articles_are_the_public_front_door_without_hiding_evidence():
     assert "<WorkspaceNavigation " in header
     assert "contextLink={contextLink}" in header
     navigation = (ROOT / "frontend" / "src" / "WorkspaceNavigation.tsx").read_text()
-    assert 'aria-label="Funding desk tools"' in navigation
-    assert '<a href={contextLink("/articles/")}>Published research</a>' in navigation
+    menu = (ROOT / "frontend" / "src" / "familyNav.ts").read_text()
+    assert 'aria-label="Seiche sections"' in navigation
+    assert "href={contextLink(item.href)}" in navigation
+    assert '{ label: "Published research", href: "/articles/" }' in menu
     assert '"Evidence and settings"' in navigation
     assert '"PROOF"' in navigation and '"REFEREE"' in navigation
 

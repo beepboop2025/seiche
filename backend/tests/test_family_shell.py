@@ -11,6 +11,7 @@ does run, and hold the backend's copy of the header to the frontend's.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 
@@ -43,10 +44,53 @@ def pages() -> dict[str, str]:
     return _pages()
 
 
+def _mast() -> str:
+    """The mast as a page shows it: header.html's grouping attributes never reach a page."""
+    mast = family_shell.TEMPLATE[: family_shell.TEMPLATE.index('<nav class="research-tabs"')]
+    return re.sub(r' data-(?:owns|for)="[^"]*"', "", mast).replace(
+        '<a class="research-skip" href="#main">Skip to content</a>', "")
+
+
+def _current(page: str) -> list[str]:
+    header = re.search(r'<header class="research-header">.*?</header>', page, re.S).group(0)
+    return re.findall(r'<a[^>]*aria-current="page"[^>]*>([^<]*)</a>', header)
+
+
 def test_the_backend_header_is_the_frontend_header_byte_for_byte():
     if not HEADER_FILE.is_file():
         pytest.skip("the frontend tree is not part of this install")
-    assert family_shell.HEADER == HEADER_FILE.read_text(encoding="utf-8").strip()
+    assert family_shell.TEMPLATE == HEADER_FILE.read_text(encoding="utf-8").strip()
+
+
+def test_the_backend_rule_is_the_static_page_rule():
+    """family_shell.header(path) is scripts/research_shell.py's research_header(path), path for path."""
+    script = REPO / "scripts" / "research_shell.py"
+    if not script.is_file() or not HEADER_FILE.is_file():
+        pytest.skip("the repository scripts are not part of this install")
+    spec = importlib.util.spec_from_file_location("seiche_research_shell", script)
+    shell = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shell)
+    paths = ["/", "/methodology", "/skeptic", "/ampleness", "/referee", "/weekly/", "/weekly/2026-11-30/",
+             "/articles/", "/articles/2026-09-24-a-note/", "/dispatches/", "/dispatches/2026-09-24-daily",
+             "/money-markets/", "/markets/forex/", "/gift-city/", "/developers", "/developers.html",
+             "/agents/quant/", "/guide", "/privacy", "/no-such-page/"]
+    for path in paths:
+        assert family_shell.header(path) == shell.research_header(path), path
+
+
+def test_the_header_groups_each_page_and_keeps_the_attributes_out():
+    assert re.findall(r'aria-current="page"[^>]*>([^<]*)<', family_shell.header("/methodology")) == [
+        "Seiche", "Research", "Methodology"]
+    assert re.findall(r'aria-current="page"[^>]*>([^<]*)<', family_shell.header("/dispatches/2026-09-24-daily")) == [
+        "Seiche", "Research", "Dispatches"]
+    assert re.findall(r'aria-current="page"[^>]*>([^<]*)<', family_shell.header("/developers")) == [
+        "Seiche", "API &amp; MCP", "Developer guide"]
+    for path in ("/", "/methodology", "/weekly/", "/privacy"):
+        page = family_shell.header(path)
+        assert not re.search(r"data-(?:owns|for)=", page), path
+        assert page.count('<nav class="research-subtabs"') <= 1, path
+    # Seiche is free: no Pricing link in its mast.
+    assert "Pricing" not in family_shell.TEMPLATE and "research-pricing" not in family_shell.TEMPLATE
 
 
 def test_the_shell_constants_match_the_static_page_shell_script():
@@ -68,8 +112,8 @@ def test_each_generated_page_meets_the_frontend_family_contract(pages, name):
     for href in STYLESHEETS:
         assert f'<link rel="stylesheet" href="{href}">' in page, f"{name} links {href}"
     assert page.count('<header class="research-header">') == 1, f"{name} has one family header"
-    mast = family_shell.HEADER[: family_shell.HEADER.index('<nav class="research-tabs"')]
-    assert mast.replace('<a class="research-skip" href="#main">Skip to content</a>', "") in page, name
+    assert _mast() in page, name
+    assert not re.search(r"data-(?:owns|for)=", page), f"{name} keeps the grouping attributes out"
     assert family_shell.CONTEXT in page, f"{name} context.js"
     skip = re.search(r'class="research-skip" href="#([^"]+)"', page)
     assert skip and re.search(rf'\bid="{re.escape(skip.group(1))}"', page), f"{name} skip link has a target"
@@ -191,3 +235,15 @@ def _is_tracked(path: Path) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
+
+
+@pytest.mark.parametrize(("name", "label"), [
+    ("methodology.html", "Methodology"), ("skeptic.html", "Skeptic pack"),
+    ("ampleness.html", None), ("referee.html", None),
+])
+def test_each_generated_page_sits_under_research(pages, name, label):
+    """Research is current on every page rendered at publish time, with the page's own sub-tab when it has one."""
+    current = _current(pages[name])
+    assert current[:2] == ["Seiche", "Research"], name
+    assert current[2:] == ([label] if label else []), name
+    assert pages[name].count('<nav class="research-subtabs" aria-label="Research">') == 1, name

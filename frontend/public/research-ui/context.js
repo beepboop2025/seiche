@@ -1,6 +1,6 @@
 /* VENDORED. Source: beepboop2025/liquilens-site research-ui/context.js at commit
-   dfb8f0899344b473c179d48ca08e94220333e868 (branch feat/site-redesign-20261112, draft PR #223), blob
-   177f59d5b8cf9b0e620809f65464b6dbaf12a847. Every byte after this comment is that blob,
+   dc3bdec46de6327bf5243b403fb223f2b0ab71dc (main, after PR #310 and #311), blob
+   ee3bca05a61e5fbdce0b60cab07d9c59adef3c28. Every byte after this comment is that blob,
    unedited. Do not edit here: re-vendor from the source (and update this header) whenever
    the family file changes. On Seiche pages it reads no API: return link, prefetch, current tab. */
 /* One institution context across every tab.
@@ -37,6 +37,22 @@ export function contextDestinations(slug, {snapshots = []} = {}) {
   }
   rows.push({key: 'ontology', label: 'Ontology record', path: '/ontology/', href: `/ontology/?q=${id}#lookup`});
   return rows;
+}
+
+/* Links that open without the institution, whichever family site they sit on: Undertow's private
+ * desk, and the routes where its Worker answers 400 to a query it does not define (any query on
+ * /corpus/ and /api/corpus-context.json, any but n=120 on /api/series/). The hosts are the ones
+ * that Worker serves. */
+const UNDERTOW_HOSTS = new Set(['liquilens-undertow.com', 'www.liquilens-undertow.com', 'undertow.liquilens.in']);
+const UNDERTOW_PLAIN = new Set(['/app/', '/corpus', '/corpus/', '/api/corpus-context.json']);
+
+/** A header link with the selected institution, or without it where it cannot travel. Pure, so it is tested without a browser. */
+export function contextHref(href, institution, base) {
+  const url = new URL(href, base);
+  const plain = UNDERTOW_HOSTS.has(url.hostname) && (UNDERTOW_PLAIN.has(url.pathname) || url.pathname.startsWith('/api/series/'));
+  if (institution && !plain) url.searchParams.set('institution', institution);
+  else url.searchParams.delete('institution');
+  return url.href;
 }
 
 /** Whether a link is a same-site page worth prefetching on intent. */
@@ -147,13 +163,8 @@ export function syncInstitutionContext() {
   if (header) {
     header.querySelector('[data-institution-context]')?.remove();
     const product = header.querySelector('.research-network [aria-current="page"]')?.textContent.trim();
-    const links = [...header.querySelectorAll('.research-network a, .research-tabs a, .research-identity')];
-    for (const link of links) {
-      const url = new URL(link.href, location.href);
-      if (institution && !(product === 'Undertow' && url.pathname === '/app/')) url.searchParams.set('institution', institution);
-      else url.searchParams.delete('institution');
-      link.href = url.href;
-    }
+    const links = [...header.querySelectorAll('.research-network a, .research-tabs a, .research-subtabs a, .research-identity')];
+    for (const link of links) link.href = contextHref(link.href, institution, location.href);
     if (institution && product === 'LiquiLens') {
       header.append(liquiLensBar(institution));
     } else if (institution) {
@@ -215,4 +226,12 @@ if (typeof document !== 'undefined') {
   window.addEventListener('research:context-changed', syncInstitutionContext);
   prefetchOnIntent();
   revealCurrentTab();
+}
+
+// These three research desks share the same public observation and identity contract.
+if (typeof document !== 'undefined') {
+  const markets = {'/world-economy/':'all','/china-economy/':'china','/capital-markets/':'all'};
+  const initial = markets[globalThis.location?.pathname];
+  if (initial) import('../world-economy/observations.mjs').then(({mountObservations}) =>
+    mountObservations(document.querySelector('main'), initial));
 }

@@ -400,12 +400,15 @@ def calls_md(week_md: str) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 # assembly
 # ---------------------------------------------------------------------------
+# The crumb names its pages as the family menu does (frontend/public/research-ui/header.html,
+# Research row); the full menu is the header above this block.
 _MASTHEAD = (
     '<div class="top"><a class="wordmark" href="/">SEI<span>CHE</span></a>'
-    '<span class="crumb"><a href="/dispatches/">dispatches</a> &middot; '
-    '<a href="/guide">guide</a> &middot; '
-    '<a href="/methodology">methodology</a> &middot; '
-    '<a href="/skeptic">skeptic pack</a></span></div>'
+    '<span class="crumb"><a href="/articles/">Published research</a> &middot; '
+    '<a href="/dispatches/">Dispatches</a> &middot; '
+    '<a href="/methodology">Methodology</a> &middot; '
+    '<a href="/skeptic">Skeptic pack</a> &middot; '
+    '<a href="/guide">Guide</a></span></div>'
 )
 
 

@@ -414,8 +414,10 @@ def test_weekly_pages_meet_the_frontend_family_contract(name):
     for href in ("/research-ui/research.css", "/research-ui/family-tokens.css", "/research-ui/seiche-pages.css"):
         assert f'<link rel="stylesheet" href="{href}">' in page
     assert page.count('<header class="research-header">') == 1
-    mast = family_shell.HEADER[: family_shell.HEADER.index('<nav class="research-tabs"')]
+    mast = family_shell.TEMPLATE[: family_shell.TEMPLATE.index('<nav class="research-tabs"')]
+    mast = re.sub(r' data-(?:owns|for)="[^"]*"', "", mast)
     assert mast.replace('<a class="research-skip" href="#main">Skip to content</a>', "") in page
+    assert '<a href="/articles/" aria-current="page">Research</a>' in page, "the weekly note sits under Research"
     assert family_shell.CONTEXT in page
     assert len(re.findall(r"<h1\b", page)) == 1 and f'<h1 id="{family_shell.SKIP_TARGET}">' in page
     assert page.index(family_shell.STYLE) < page.index("<style>")

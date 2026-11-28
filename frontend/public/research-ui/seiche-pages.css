@@ -9,6 +9,9 @@
 html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header), body > nav[aria-label="Primary"]) :is(.wordmark, .brand) { display: none; }
 html.research-interface main > nav[aria-label="Products"] { display: none; }
 
+/* The family sub-tab row lines up under the tab row on every page, whatever a page's own bare nav rules say. */
+html.research-interface .research-header .research-subtabs { justify-content: flex-start; width: 100%; }
+
 /* A page's own navigation: the family section switcher (a quiet row of underlined links). */
 html.research-interface :is(header.topbar, header.mast, body > .top, main > .top, header.support-header, body > header:not(.research-header)):not(:has(h1)) {
   box-sizing: border-box; max-width: 1400px; margin: 10px auto 0; padding: 10px 18px; min-height: 0;
