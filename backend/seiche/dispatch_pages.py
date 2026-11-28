@@ -33,6 +33,8 @@ import re
 import sys
 from pathlib import Path
 
+from seiche import family_shell
+
 SITE = "https://seiche.info"
 
 
@@ -420,18 +422,9 @@ h1 { font-size:clamp(26px,4.5vw,38px); font-weight:500; letter-spacing:-.02em; l
         font-family:var(--mono); font-size:12px; color:var(--faint); line-height:2; }
 """
 
-_FONTS = (
-    '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
-    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
-    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2'
-    '?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">'
-)
-
-_HEADER = (
-    '<div class="top"><a class="wordmark" href="/">SEI<span>CHE</span></a>'
-    '<span class="crumb"><a href="/articles/">articles</a> &middot; '
-    '<a href="/dispatches/">dispatches</a> &middot; <a href="/">live board</a></span></div>'
-)
+# The family header replaces the page's own masthead (SEICHE, articles, dispatches,
+# live board), and the family faces replace the web fonts: the archive and letter pages
+# carry the same shell as every other Seiche page (backend/seiche/family_shell.py).
 
 # Cookieless aggregate page counts (Cloudflare Web Analytics); the site CSP in
 # frontend/public/_headers whitelists exactly these two insights hosts.
@@ -462,8 +455,9 @@ def _page(
 ) -> str:
     t, d = _esc(title), _esc(description)
     url = SITE + canonical_path
+    body = body.replace("<h1>", f'<h1 id="{family_shell.SKIP_TARGET}">', 1)
     return f"""<!doctype html>
-<html lang="en">
+{family_shell.HTML_OPEN}
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -472,7 +466,6 @@ def _page(
 <link rel="canonical" href="{url}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="theme-color" content="#000000">
-{_FONTS}
 <meta property="og:type" content="{og_type}">
 <meta property="og:site_name" content="Seiche">
 <meta property="og:url" content="{url}">
@@ -486,14 +479,14 @@ def _page(
 {extra_head}<script type="application/ld+json">
 {json.dumps(jsonld, indent=1)}
 </script>
-<style>{_CSS}</style>
+{family_shell.STYLE}<style>{_CSS}</style>
 {_BEACON}
 </head>
 <body>
-{_HEADER}
+{family_shell.header(canonical_path)}
 {body}
 {_FOOTER}
-</body>
+{family_shell.CONTEXT}</body>
 </html>
 """
 

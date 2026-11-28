@@ -33,10 +33,11 @@ html.research-interface[data-surface="desk"] {
   --display: var(--research-font); --mono: var(--research-font);
 }
 
-/* ---- The family tab row with Seiche's tools: the menu must not be clipped by the row ---- */
+/* ---- The family tab rows, Seiche's tools at the end of the sub-tab row: the menu must not be clipped ---- */
 .research-header .workspace-tabs { align-items: stretch; }
 .research-header .workspace-tabs > a { display: inline-flex; align-items: center; line-height: 20px; }
-.research-header .workspace-tabs a:focus-visible,
+.research-header .workspace-subtabs { align-items: center; }
+.research-header :is(.workspace-tabs, .workspace-subtabs) a:focus-visible,
 .research-header .workspace-tools summary:focus-visible { outline-offset: -2px; border-radius: 3px; }
 .research-header .workspace-tools { margin-left: auto; position: relative; align-self: center; flex: 0 0 auto; }
 .research-header .workspace-tools summary {
@@ -61,17 +62,17 @@ html.research-interface[data-surface="desk"] {
 .research-header .workspace-tools__menu a:hover { color: var(--research-accent); }
 .research-header .workspace-tools__menu a[aria-current="page"] { color: var(--research-text); text-decoration: underline; text-underline-offset: 4px; }
 /* Menu links are not tabs: no tab underline, no tab padding. */
-.research-header .research-tabs .workspace-tools__menu a,
-.research-header .research-tabs .workspace-tools__menu a[aria-current="page"] { border-bottom: 0; padding: 7px 0; white-space: normal; }
-.research-header .workspace-tabs .cmdk {
+.research-header :is(.research-tabs, .research-subtabs) .workspace-tools__menu a,
+.research-header :is(.research-tabs, .research-subtabs) .workspace-tools__menu a[aria-current="page"] { border-bottom: 0; padding: 7px 0; white-space: normal; }
+.research-header :is(.workspace-tabs, .workspace-subtabs) .cmdk {
   flex: 0 0 auto; align-self: center; min-height: 28px; margin: 0; padding: 0 9px;
   border: 1px solid var(--research-line); border-radius: var(--research-radius-control); background: transparent;
   color: var(--research-muted); font: 12px/1 var(--research-code); cursor: pointer;
   transition: color var(--research-duration-fast) var(--research-ease), border-color var(--research-duration-fast) var(--research-ease);
 }
-.research-header .workspace-tabs .cmdk:hover { color: var(--research-text); border-color: var(--research-line-strong); }
-/* Wide screens: the row fits, so it does not scroll and the tools menu is never clipped. */
-@media (min-width: 761px) { .research-header .workspace-tabs { overflow: visible; } }
+.research-header :is(.workspace-tabs, .workspace-subtabs) .cmdk:hover { color: var(--research-text); border-color: var(--research-line-strong); }
+/* Wide screens: the rows fit, so they do not scroll and the tools menu is never clipped. */
+@media (min-width: 761px) { .research-header :is(.workspace-tabs, .workspace-subtabs) { overflow: visible; } }
 
 /* ---- The desk column ---- */
 .research-app { max-width: 1400px; padding: 0 var(--research-gutter) 60px; font-size: 14px; }
@@ -154,5 +155,5 @@ html.research-interface .research-app h1 { font-family: var(--research-display);
 /* Reduced motion is a designed variant: the same information, nothing moves. */
 @media (prefers-reduced-motion: reduce) {
   .research-app .tabview { animation: none; }
-  .research-header .workspace-tools summary, .research-header .workspace-tabs .cmdk { transition: none; }
+  .research-header .workspace-tools summary, .research-header :is(.workspace-tabs, .workspace-subtabs) .cmdk { transition: none; }
 }

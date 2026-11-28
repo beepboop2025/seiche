@@ -493,7 +493,7 @@ def _shell(title: str, canonical: str, description: str, jsonld: dict, body: str
 <script type="application/ld+json">{data}</script>
 {family_shell.STYLE}<style>{_PAGE_CSS}</style>
 </head>
-<body>{family_shell.HEADER}
+<body>{family_shell.header(canonical.removeprefix(SITE))}
 <main class="weekly">
 {body}
 </main>

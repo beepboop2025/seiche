@@ -192,6 +192,36 @@ def test_corrupt_snapshot_fails_loud(tmp_path):
         render_sitemap([], [], public_dir=public)
 
 
+def test_archive_and_letter_pages_carry_the_family_shell(repo):
+    """The family header replaces the old masthead (SEICHE, articles, dispatches, live board):
+    Research is current with the page's own sub-tab, the family stylesheets come first, the skip
+    link lands on the page's one heading, and no web font is loaded."""
+    import re
+
+    from seiche import family_shell
+    from seiche.dispatch_pages import render_article_archive
+
+    root, d = repo
+    build_all(repo_root=root)
+    public = root / "frontend" / "public"
+    pages = (
+        ("letter", (public / "dispatches" / f"{d['slug']}.html").read_text(), "Dispatches"),
+        ("letter archive", (public / "dispatches" / "index.html").read_text(), "Dispatches"),
+        ("article archive", render_article_archive([]), "Published research"),
+    )
+    for name, page, label in pages:
+        assert family_shell.HTML_OPEN in page, name
+        assert page.count('<header class="research-header">') == 1, name
+        header = re.search(r'<header class="research-header">.*?</header>', page, re.S).group(0)
+        assert re.findall(r'aria-current="page"[^>]*>([^<]*)<', header) == ["Seiche", "Research", label], name
+        assert not re.search(r"data-(?:owns|for)=", header), name
+        assert page.index(family_shell.STYLE) < page.index("<style>"), name
+        assert page.count(f'<h1 id="{family_shell.SKIP_TARGET}">') == 1, name
+        assert family_shell.CONTEXT in page, name
+        assert not re.search(r"fonts\.googleapis\.com|fonts\.gstatic\.com", page), name
+        assert 'class="crumb"' not in page and "live board</a>" not in page, name
+
+
 def test_committed_pages_and_rendered_sitemap_state_the_same_dates():
     """Property over every committed base page: the rendered sitemap repeats
     the newest dateModified (else datePublished) the page declares, or states

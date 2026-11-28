@@ -239,7 +239,7 @@ intervals, walk forward tests and both causal directions published.">
 <meta property="og:image" content="{SITE}/og.png">
 {family_shell.STYLE}<style>{_CSS}{_EXTRA_CSS}</style>
 </head>
-<body>{family_shell.HEADER}
+<body>{family_shell.header("/referee")}
 {body}
 {family_shell.CONTEXT}</body>
 </html>
